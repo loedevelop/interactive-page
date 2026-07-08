@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系統管理控制台 | LogOnEnglish</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../010_css/style.css?v=4">
+    
+    <style>
+        /* 管理者專屬深色主題 */
+        body {
+            display: block !important; 
+            height: auto !important; 
+            overflow: auto !important;
+            max-width: 1100px; 
+            margin: 0 auto; 
+            padding: 20px;
+            background-color: #1E293B; 
+            color: #F8FAFC;
+        }
+
+        .header {
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            background: #0F172A; 
+            padding: 20px 30px; 
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); 
+            margin-bottom: 25px; 
+            border: 1px solid #334155;
+        }
+
+        h1 { 
+            color: #38BDF8; 
+            margin: 0; 
+            font-size: 1.8rem; 
+            font-weight: 900; 
+        }
+        
+        .logout-btn {
+            background: transparent; 
+            border: 2px solid #EF4444; 
+            color: #EF4444;
+            padding: 8px 16px; 
+            border-radius: 10px; 
+            cursor: pointer; 
+            font-weight: 800; 
+            transition: 0.3s;
+        }
+
+        .logout-btn:hover { 
+            background: #EF4444; 
+            color: white; 
+        }
+
+        .dashboard-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); 
+            gap: 20px; 
+        }
+
+        .admin-card {
+            background: #0F172A; 
+            border: 1px solid #334155; 
+            border-radius: 15px;
+            padding: 25px; 
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2); 
+            display: flex; 
+            flex-direction: column;
+        }
+
+        .admin-card h3 {
+            color: #E2E8F0; 
+            margin-top: 0; 
+            border-bottom: 1px solid #334155;
+            padding-bottom: 10px; 
+            margin-bottom: 20px; 
+            display: flex; 
+            align-items: center; 
+            gap: 10px;
+        }
+
+        .stat-number { 
+            font-size: 3rem; 
+            font-weight: 900; 
+            color: #38BDF8; 
+            line-height: 1; 
+            margin-bottom: 10px; 
+        }
+
+        .btn-system {
+            background: #38BDF8; 
+            color: #0F172A; 
+            border: none; 
+            padding: 10px 20px;
+            border-radius: 8px; 
+            font-weight: 800; 
+            cursor: pointer; 
+            width: 100%; 
+            margin-top: 15px; 
+            transition: 0.2s;
+        }
+
+        .btn-system:hover { 
+            background: #7DD3FC; 
+            transform: translateY(-2px); 
+        }
+
+        .btn-system.danger { 
+            background: #EF4444; 
+            color: white; 
+        }
+
+        .btn-system.danger:hover { 
+            background: #F87171; 
+        }
+
+        .btn-system:disabled { 
+            background: #475569; 
+            color: #94A3B8; 
+            cursor: not-allowed; 
+            transform: none; 
+        }
+
+        .admin-radio-group { 
+            display: flex; 
+            flex-direction: column; 
+            gap: 12px; 
+            margin-top: 10px; 
+        }
+
+        .admin-radio-group label { 
+            cursor: pointer; 
+            color: #CBD5E1; 
+            font-weight: 700; 
+            display: flex; 
+            align-items: center; 
+        }
+
+        .admin-radio-group input[type="radio"] { 
+            transform: scale(1.2); 
+            margin-right: 10px; 
+            accent-color: #38BDF8; 
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>LogOnEnglish | 系統控制台 👑</h1>
+        <button class="logout-btn" onclick="adminLogout()">安全登出</button>
+    </div>
+
+    <div class="dashboard-grid">
+        <div class="admin-card">
+            <h3>📊 系統狀態概覽 (v4.0 雲端連線)</h3>
+            <div style="display:flex; justify-content: space-between; margin-bottom: 15px;">
+                <div>
+                    <div style="color: #94A3B8; font-weight: 800;">教職員總數</div>
+                    <div class="stat-number" id="stat-staff">--</div>
+                </div>
+                <div>
+                    <div style="color: #94A3B8; font-weight: 800;">活躍學生數</div>
+                    <div class="stat-number" id="stat-students">--</div>
+                </div>
+            </div>
+            <div id="db-status" style="color: #94A3B8; font-weight: 800; font-size: 0.9rem;">🔄 連線至 Supabase 中...</div>
+        </div>
+
+        <div class="admin-card">
+            <h3>⚙️ 全域/分校參數預設值</h3>
+            <p style="color: #94A3B8; margin-bottom: 10px; font-size: 0.9rem;">此為系統的「最底層保底設定」。若老師或班級未特別指定，將自動套用此規則。</p>
+            
+            <div style="margin-bottom: 20px; padding: 15px; background: #1E293B; border-radius: 8px; border: 1px dashed #475569;">
+                <div style="color: #38BDF8; font-weight: 800; margin-bottom: 5px;">👤 名單預設顯示模式</div>
+                <div class="admin-radio-group">
+                    <label>
+                        <input type="radio" name="global_name_mode" value="en_first" checked> 
+                        🇺🇸 模式 1：英文名字 + 護照姓氏 (預設)
+                    </label>
+                    <label>
+                        <input type="radio" name="global_name_mode" value="cn_first"> 
+                        🇹🇼 模式 2：中文全名 + (英文名字)
+                    </label>
+                </div>
+            </div>
+            
+            <div style="margin-top: auto;">
+                <button id="btn-save-global-settings" class="btn-system" onclick="saveGlobalSettings()">💾 儲存全域設定</button>
+                <div id="global-msg" style="text-align: center; margin-top: 10px; font-weight: bold; font-size: 0.9rem;"></div>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <h3>👩‍🏫 教師與全域帳號管理</h3>
+            <p style="color: #94A3B8; margin-bottom: 20px; font-size: 0.9rem;">建立新的教師帳號，或檢視全系統使用者名單 (v4.0 支援姓名防覆蓋保護)。</p>
+            <button class="btn-system" onclick="window.AdminUsers.openAddUserModal()">➕ 建立新帳號 (Safe Mode)</button>
+            <button class="btn-system" style="background: #334155; color: #F8FAFC;" onclick="window.AdminUsers.openUserList()">🔍 開啟全域使用者管理庫</button>
+        </div>
+
+        <div class="admin-card">
+            <h3>🛠️ 系統全域維護</h3>
+            <p style="color: #94A3B8; margin-bottom: 20px; font-size: 0.9rem;">執行系統級別的操作，請極度謹慎使用。</p>
+            <button class="btn-system" onclick="clearSystemCache()">🧹 清除系統全域快取</button>
+            <button class="btn-system danger" style="margin-top: 15px;" onclick="factoryReset()">☢️ 格式化 (清除所有資料)</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../020_js_core/config.js?v=4"></script>
+    <script src="../020_js_core/supabase-client.js?v=4"></script>
+    
+    <script src="../020_js_core/auth-guard.js?v=4"></script>
+    
+    <script src="admin-users.js?v=4"></script>
+
+    <script>
+        async function initAdminDashboard() {
+            const dbStatus = document.getElementById('db-status');
+            try {
+                if (!window.supabaseClient) throw new Error("Supabase 客戶端未載入");
+                
+                let sCount = 0;
+                let tCount = 0;
+
+                // 🌟 防彈版查詢 (自動降級)，防止 profiles 缺少 deleted_at 時當機
+                try {
+                    const { count: c1 } = await window.supabaseClient
+                        .from('profiles')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('default_role', 'student')
+                        .is('deleted_at', null);
+                        
+                    const { count: c2 } = await window.supabaseClient
+                        .from('profiles')
+                        .select('id', { count: 'exact', head: true })
+                        .in('default_role', ['primary_teacher', 'co_teacher', 'ta_senior', 'ta_junior', 'admin'])
+                        .is('deleted_at', null);
+                        
+                    sCount = c1 || 0; 
+                    tCount = c2 || 0;
+                } catch (e) {
+                    console.warn("Profiles 無 deleted_at 欄位，啟用降級查詢...");
+                    const { count: c1 } = await window.supabaseClient
+                        .from('profiles')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('default_role', 'student');
+                        
+                    const { count: c2 } = await window.supabaseClient
+                        .from('profiles')
+                        .select('id', { count: 'exact', head: true })
+                        .in('default_role', ['primary_teacher', 'co_teacher', 'ta_senior', 'ta_junior', 'admin']);
+                        
+                    sCount = c1 || 0; 
+                    tCount = c2 || 0;
+                }
+                
+                document.getElementById('stat-students').textContent = sCount;
+                document.getElementById('stat-staff').textContent = tCount;
+                
+                dbStatus.innerHTML = "🟢 Supabase 雲端資料庫連線正常";
+                dbStatus.style.color = "#2ECC71";
+
+                await loadGlobalSettings();
+            } catch (err) {
+                console.error("初始化失敗:", err);
+                dbStatus.innerHTML = "🔴 資料庫連線失敗: " + err.message;
+                dbStatus.style.color = "#EF4444";
+            }
+        }
+
+        async function loadGlobalSettings() {
+            try {
+                const { data } = await window.supabaseClient
+                    .from('system_settings')
+                    .select('value')
+                    .eq('setting_key', 'global_name_mode')
+                    .single();
+                    
+                if (data && data.value) {
+                    const rb = document.querySelector(`input[name="global_name_mode"][value="${data.value}"]`);
+                    if (rb) rb.checked = true;
+                }
+            } catch (err) { 
+                console.warn("尚未建立全域設定", err); 
+            }
+        }
+
+        async function saveGlobalSettings() {
+            const btn = document.getElementById('btn-save-global-settings');
+            const msg = document.getElementById('global-msg');
+            const selectedMode = document.querySelector('input[name="global_name_mode"]:checked').value;
+
+            btn.disabled = true; 
+            btn.textContent = "⏳ 儲存中..."; 
+            msg.textContent = "";
+
+            try {
+                const { error } = await window.supabaseClient
+                    .from('system_settings')
+                    .upsert({ 
+                        setting_key: 'global_name_mode', 
+                        value: selectedMode, 
+                        description: '系統全域預設姓名顯示模式'
+                    }, { onConflict: 'setting_key' });
+
+                if (error) throw error;
+                
+                msg.style.color = "#2ECC71"; 
+                msg.textContent = "✅ 全域設定已更新！";
+            } catch (err) {
+                msg.style.color = "#EF4444"; 
+                msg.textContent = "❌ 儲存失敗: " + err.message;
+            } finally {
+                btn.disabled = false; 
+                btn.textContent = "💾 儲存全域設定";
+                setTimeout(() => { msg.textContent = ""; }, 3000);
+            }
+        }
+
+        function clearSystemCache() {
+            if(confirm('確定要釋放系統快取嗎？這將重新整理所有本地暫存名單。')) {
+                Object.keys(localStorage).forEach(key => {
+                    if (key.includes('DataArk') || key.includes('Cache') || key === 'TeacherDB') {
+                        localStorage.removeItem(key);
+                    }
+                });
+                alert('✅ 全域快取已成功釋放！');
+            }
+        }
+
+        // 🌟 加入 try-catch 保護，防止過期 Token 鎖死管理員
+        async function adminLogout() {
+            if(confirm('確定要登出系統管理台嗎？')) {
+                try {
+                    if (typeof window.supabaseClient !== 'undefined') {
+                        await window.supabaseClient.auth.signOut();
+                    }
+                } catch(e) { 
+                    console.warn("雲端登出失敗，強制清除本地登入狀態。"); 
+                }
+                localStorage.clear(); 
+                sessionStorage.clear(); 
+                window.location.replace('../index.html');
+            }
+        }
+
+        function factoryReset() {
+            if(confirm('警告！這將清除瀏覽器中的所有登入狀態與快取。\n(不會刪除 Supabase 雲端資料)')) { 
+                localStorage.clear(); 
+                sessionStorage.clear();
+                alert('系統已重置！'); 
+                window.location.replace('../index.html'); 
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', initAdminDashboard);
+    </script>
+</body>
+</html>

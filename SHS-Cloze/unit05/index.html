@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動式克漏字教學系統 V15.0 (結構化資料版)</title>
+    <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+
+    <div id="modeDraggable" class="floating-mode-panel fit-content">
+        <select id="topicSelector" class="topic-selector" onmousedown="event.stopPropagation()" ontouchstart="event.stopPropagation()" onchange="switchTopic(this.value)">
+        </select>
+        
+        <div class="mode-switch-container flex-fit">
+            <div id="modeReading" class="mode-btn mode-inactive fit-auto" onclick="setMode('reading')">閱讀模式</div>
+            <div id="modeExplain" class="mode-btn mode-active fit-auto" onclick="setMode('explain')">解析模式</div>
+            
+            <div id="modePractice" class="mode-btn mode-inactive practice-wrapper" onclick="setMode('practice')">
+                <span style="white-space: nowrap;">練習模式</span>
+                
+                <div id="practiceSubBtns" class="practice-sub-btns" onclick="event.stopPropagation()">
+                    <button id="checkAllBtn" class="btn-check-all hidden">批改</button>
+                    <button id="revealAllBtn" class="btn-check-all hidden">解答</button>
+                    <button id="resetAllBtn" class="btn-check-all hidden">重來</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-wrapper"><div id="contentArea" class="article-container"></div></div>
+
+    <div id="mainModal" class="modal-overlay">
+        <div class="modal-content" id="draggableWindow">
+            <div class="modal-header" id="modalDragHandle">
+                <span class="header-title" id="modalTitleText">標題</span>
+                <div class="header-right"><button id="btnShowAnswer" class="btn-solution hidden" onclick="revealCurrentAnswer()">解答</button><span class="modal-close" onclick="closeModal()">&times;</span></div>
+            </div>
+            <div class="modal-body" id="modalBodyArea">
+                <div id="optionsPanel" class="hidden"><div id="optionsList" style="flex:1; overflow-y:auto;"></div><button onclick="submitCurrentAnswer()" class="btn-submit-single">提交答案</button></div>
+                <div id="dictViewPanel" class="hidden">
+                    <div class="dict-title-row"><span class="dict-title" id="viewTitle">Word</span><button class="btn-speak" onclick="speakWord()" title="朗讀英文">🔊</button></div>
+                    <div class="dict-forms" id="viewForms">Forms</div>
+                    <div id="viewPhonPos"><span style="font-style: italic; font-size:14px;" id="viewPhonetics">/phon/</span><span style="background:#eee; padding:2px 5px; border-radius:4px; margin-left:10px; font-size:13px;" id="viewPos">n.</span></div>
+                    <div style="font-size:17px; font-weight:bold; margin:8px 0;" id="viewMeaning">意思</div>
+                    <div class="dict-notes" id="viewNotes">筆記</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="teacher-fab-container">
+        <button class="fab-btn" onclick="toggleTeacherMenu()">教師功能</button>
+        <div id="teacherMenu" class="fab-menu hidden">
+            <button class="btn-add" onclick="openAddWordMode()">+ 新增單字</button>
+            <button class="btn-save" onclick="saveChanges()">💾 儲存修改</button>
+            <button class="btn-csv" onclick="openExportModal()">📥 匯出 CSV</button>
+            <button class="btn-csv" onclick="copyCode()" style="background:#f39c12;">📋 複製代碼</button>
+        </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+</body>
+</html>

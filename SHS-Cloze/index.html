@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動式克漏字教學系統 V12.0 (全大題完整版)</title>
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --correct-color: #2ecc71;
+            --wrong-color: #e74c3c;
+            --container-bg: #fdf6e3; 
+            --text-color: #333;
+            --highlight-color: #ffd700;
+            --navy: #34495e;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+            color: var(--text-color);
+            line-height: 1.8; margin: 0; padding: 0;
+        }
+
+        /* --- 懸浮控制模組 --- */
+        .floating-mode-panel {
+            position: fixed; bottom: 20px; left: 20px; z-index: 900; 
+            background: rgba(234, 237, 237, 0.95); padding: 8px 12px; 
+            border-radius: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            border: 1px solid #ddd; display: flex; flex-direction: row; align-items: center; gap: 10px;
+            cursor: move;
+        }
+        
+        .topic-selector {
+            padding: 6px 12px; border-radius: 20px; border: 1px solid #ccc; outline: none; 
+            font-weight: bold; color: var(--navy); background: #fff; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); 
+            cursor: pointer; max-width: 200px;
+        }
+
+        .mode-switch-container { display: flex; align-items: center; gap: 5px; background: #d5dbdb; padding: 4px; border-radius: 30px;}
+        .mode-btn { cursor: pointer; padding: 6px 16px; border-radius: 20px; font-size: 14px; font-weight: bold;}
+        .mode-active { background-color: var(--primary-color); color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}
+        .mode-inactive { color: #555; }
+        .mode-inactive:hover { background-color: #caced0; }
+        
+        .btn-check-all { background-color: #d35400; border: none; color: white; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 14px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}
+        .btn-check-all:hover { background-color: #e67e22; }
+
+        /* --- 右下角教師工具箱 --- */
+        .teacher-fab-container { position: fixed; bottom: 20px; right: 20px; z-index: 910; display: flex; flex-direction: column-reverse; align-items: flex-end;}
+        .fab-btn { 
+            background: #34495e; color: white; border: none; padding: 10px 18px; 
+            border-radius: 30px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.2); font-size: 14px;
+        }
+        .fab-menu { 
+            background: white; margin-bottom: 10px; padding: 10px; border-radius: 8px; 
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2); display: flex; flex-direction: column; gap: 8px; border: 1px solid #eee;
+        }
+        .fab-menu button { padding: 8px 12px; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 13px; font-weight: bold; text-align: center;}
+        .fab-menu .btn-add { background-color: #2980b9; }
+        .fab-menu .btn-csv { background-color: #8e44ad; }
+        .fab-menu .btn-save { background-color: #2ecc71; }
+
+        /* --- 文章區塊 --- */
+        .main-wrapper { max-width: 900px; margin: 40px auto 0; padding: 0 20px 100vh 20px; }
+        .article-container { 
+            background: var(--container-bg); padding: 40px; border-radius: 12px; 
+            border: 1px solid #e5dec1; box-shadow: 0 4px 20px rgba(0,0,0,0.05); font-size: 19px; 
+        }
+        .dict-highlight { background-color: var(--highlight-color); padding: 2px 4px; border-radius: 3px; cursor: pointer; font-weight: bold; }
+
+        /* --- 填空區塊 --- */
+        .cloze-wrapper {
+            display: inline-flex; align-items: center; background: #e0e0e0;
+            border-radius: 6px; cursor: pointer; margin: 0 4px; vertical-align: bottom;
+            border: 1px solid #ccc; transition: all 0.2s; overflow: hidden; height: 32px; box-sizing: border-box;
+        }
+        .cloze-wrapper:hover { border-color: var(--primary-color); background: #d5d5d5; }
+        
+        .cloze-label {
+            background: var(--primary-color); color: white; font-weight: bold;
+            padding: 0 8px; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 15px;
+        }
+        .cloze-text { display: inline-flex; justify-content: center; align-items: center; font-weight: bold; color: #333; height: 100%;}
+
+        .cloze-wrapper.wrong { background: #e0e0e0; border-color: #ccc; }
+        .cloze-wrapper.wrong .cloze-text { color: var(--wrong-color); text-decoration: line-through; }
+
+        .cloze-wrapper.answered-black, .cloze-wrapper.answered-red {
+            background: transparent; border-color: transparent; pointer-events: none;
+        }
+        .cloze-wrapper.answered-black .cloze-label, .cloze-wrapper.answered-red .cloze-label {
+            background: var(--navy); border-radius: 6px; 
+        }
+        .cloze-wrapper.answered-black .cloze-text { color: black; }
+        .cloze-wrapper.answered-red .cloze-text { color: var(--wrong-color); }
+
+        /* --- 彈窗設計 --- */
+        .modal-overlay { display: none; position: fixed; z-index: 999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.15);}
+        .modal-content {
+            background-color: #fcfcfc; border-radius: 8px; box-shadow: 0 15px 50px rgba(0,0,0,0.4);
+            position: absolute; display: flex; flex-direction: column;
+            resize: both; overflow: hidden; min-width: 320px;
+        }
+        
+        .modal-header {
+            background: #e8e8e8; padding: 6px 12px; cursor: move; 
+            display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #ccc;
+        }
+        .header-title { font-weight: bold; color: #444; font-size: 15px; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .btn-solution { background: #9b59b6; color: white; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        .btn-solution:hover { background: #8e44ad; }
+        .modal-close { font-size: 22px; font-weight: bold; color: #999; cursor: pointer; line-height: 1; margin-top: -2px;}
+
+        .modal-body { padding: 15px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
+        .modal-body.no-padding { padding: 0 !important; }
+        
+        /* 選項面板樣式 */
+        #optionsPanel { flex: 1; display: flex; flex-direction: column; }
+        .option-wrapper { 
+            display: flex; align-items: center; padding: 12px 15px; margin: 0; 
+            background: #fff; border-bottom: 1px solid #eee; cursor: pointer; 
+        }
+        .option-wrapper:hover { background: #f0f7ff; }
+        .option-letter { font-weight: bold; color: var(--primary-color); width: 35px; flex-shrink: 0;}
+        .option-text { flex-grow: 1; text-align: left; font-weight: bold;}
+        .strike-btn { padding: 4px 10px; font-size: 12px; cursor: pointer; background: #fff; border: 1px solid #e74c3c; color: #e74c3c; border-radius: 4px; margin-left: auto; font-weight: bold;}
+        
+        .is-selected { background: #eef5ff; box-shadow: inset 4px 0 0 var(--primary-color);}
+        .is-struck { background: #fdfdfd !important; cursor: not-allowed !important; }
+        .is-struck .option-text, .is-struck .option-letter { text-decoration: line-through; color: #e74c3c; opacity: 0.5; }
+        .is-struck .strike-btn { background: #e74c3c; color: #fff; border-color: #e74c3c;}
+        .is-confirmed-wrong { background: #fafafa !important; cursor: not-allowed !important; }
+        .is-confirmed-wrong .option-text, .is-confirmed-wrong .option-letter { text-decoration: line-through; color: #e74c3c; opacity: 0.5; }
+        .is-confirmed-wrong .strike-btn { display: none; }
+        .is-correct-answer { background: #f0fdf4 !important; box-shadow: inset 4px 0 0 var(--correct-color); }
+
+        .btn-submit-single { width: 100%; background-color: #f39c12; color: white; border: none; padding: 14px; cursor: pointer; font-weight: bold; font-size: 16px; margin-top: auto;}
+        .btn-submit-single:hover { background-color: #e67e22; }
+
+        /* 字典介面 */
+        .dict-title-row { display: flex; align-items: center; gap: 10px; margin-bottom: 2px;}
+        .dict-title { font-size: 22px; color: var(--primary-color); font-weight: bold; }
+        .btn-speak { background: none; border: none; font-size: 20px; cursor: pointer; padding: 0; filter: grayscale(100%); transition: filter 0.2s;}
+        .btn-speak:hover { filter: grayscale(0%); transform: scale(1.1); }
+        .dict-forms { color: #e67e22; font-weight: bold; font-family: monospace; margin-bottom: 8px; font-size: 14px;}
+        .cf-tag { background: #e1f0fa; color: #2980b9; padding: 2px 6px; border-radius: 4px; margin-right: 6px; font-weight: bold; font-size: 13px;}
+        .dict-notes { background: #fff3cd; padding: 12px; border-radius: 5px; border-left: 5px solid #ffc107; font-size: 15px;}
+
+        /* 編輯表單 */
+        .edit-form-group { margin-bottom: 8px; }
+        .edit-form-group label { display: block; font-weight: bold; font-size: 13px; color: #666; margin-bottom: 2px; }
+        .edit-form-group input, .edit-form-group textarea, .edit-form-group select { padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: inherit;}
+        
+        .cf-row { display: flex; gap: 5px; margin-bottom: 5px; align-items: center; }
+        .cf-k-select { width: 90px; }
+        .cf-v { flex: 1; width: 100%;}
+        .cf-row button { background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 16px; margin-left: auto;}
+        
+        .readonly-input { background-color: #f0f0f0; border: 1px dashed #999 !important; color: #666; cursor: not-allowed; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <!-- 懸浮模式切換 (加入下拉選單) -->
+    <div id="modeDraggable" class="floating-mode-panel">
+        <select id="topicSelector" onmousedown="event.stopPropagation()" ontouchstart="event.stopPropagation()" onmousedown="event.stopPropagation()" ontouchstart="event.stopPropagation()" class="topic-selector" onchange="switchTopic(this.value)">
+            <!-- Options dynamically loaded -->
+        </select>
+        <div class="mode-switch-container">
+            <div id="modeExplain" class="mode-btn mode-active" onclick="setMode(true)">解析模式</div>
+            <div id="modePractice" class="mode-btn mode-inactive" onclick="setMode(false)">練習模式</div>
+        </div>
+        <button id="checkAllBtn" class="btn-check-all hidden" onclick="checkAllAnswers()">一鍵批改全卷</button>
+    </div>
+
+    <!-- 右下角教師工具箱 -->
+    <div class="teacher-fab-container" id="teacherTools">
+        <div id="teacherMenu" class="fab-menu hidden">
+            <span style="font-size:11px; color:#888; text-align:center;">(反白按右鍵可新增)</span>
+            <button onclick="openAddWordMode()" class="btn-add">➕ 新增單字</button>
+            <button onclick="exportToCSV()" class="btn-csv">📊 匯出表單</button>
+            <button onclick="openExportModal()" class="btn-save">📥 儲存更新</button>
+        </div>
+        <button class="fab-btn" onclick="toggleTeacherMenu()">⚙️ 教師工具</button>
+    </div>
+
+    <div class="main-wrapper">
+        <div id="contentArea" class="article-container"></div>
+    </div>
+
+    <div id="mainModal" class="modal-overlay">
+        <div class="modal-content" id="draggableWindow">
+            <div class="modal-header" id="modalDragHandle">
+                <span class="header-title" id="modalTitleText">標題</span>
+                <div class="header-right">
+                    <button id="btnShowAnswer" class="btn-solution hidden" onclick="revealCurrentAnswer()">解答</button>
+                    <span class="modal-close" onclick="closeModal()">&times;</span>
+                </div>
+            </div>
+            <div class="modal-body" id="modalBodyArea">
+                
+                <div id="optionsPanel" class="hidden">
+                    <div id="optionsList" style="flex:1; overflow-y:auto;"></div>
+                    <button onclick="submitCurrentAnswer()" class="btn-submit-single">提交答案</button>
+                </div>
+
+                <div id="dictViewPanel" class="hidden">
+                    <div class="dict-title-row">
+                        <span class="dict-title" id="viewTitle">Word</span>
+                        <button class="btn-speak" onclick="speakWord()" title="朗讀英文">🔊</button>
+                    </div>
+                    <div class="dict-forms" id="viewForms">Forms</div>
+                    <div id="viewPhonPos">
+                        <span style="font-style: italic; font-size:14px;" id="viewPhonetics">/phon/</span>
+                        <span style="background:#eee; padding:2px 5px; border-radius:4px; margin-left:10px; font-size:13px;" id="viewPos">n.</span>
+                    </div>
+                    <div style="font-size:17px; font-weight:bold; margin:8px 0;" id="viewMeaning">意思</div>
+                    <div id="viewCustomContainer" style="margin-bottom:10px; font-size:14px; color:#333;"></div>
+                    <div class="dict-notes" id="viewNotes">筆記</div>
+                    <button onclick="switchToEdit()" style="margin-top:12px; cursor:pointer; padding:5px 10px; border-radius:4px; border:1px solid #ccc; background:#f9f9f9; font-weight:bold;">✏️ 編輯</button>
+                </div>
+
+                <div id="editPanel" class="hidden">
+                    <div class="edit-form-group">
+                        <label>🔒 系統搜尋鍵 (亮黃燈用)</label>
+                        <input type="text" id="editSearchKey" style="width:100%;">
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <div class="edit-form-group" style="flex:1">
+                            <label>🏷️ 彈窗大標題</label>
+                            <input type="text" id="editPopupTitle" style="width:100%;">
+                        </div>
+                        <div class="edit-form-group" style="flex:1">
+                            <label>🔄 動詞變形 <span onclick="autoGenForms()" style="color:#8e44ad; cursor:pointer;">[🔄 還原/自動]</span></label>
+                            <input type="text" id="editVerbForms" style="width:100%;">
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <input type="text" id="editPos" placeholder="詞性" style="width:60px;">
+                        <input type="text" id="editPhonetics" placeholder="音標" style="flex:1">
+                        <input type="text" id="editMeaning" placeholder="意思" style="flex:2">
+                    </div>
+                    
+                    <div class="edit-form-group" style="background: #f4f6f7; padding: 8px; border-radius: 4px; border: 1px dashed #ccc;">
+                        <label style="color:#2980b9;">📝 擴充欄位 <button onclick="addCustomFieldRow()" style="float:right; background:none; border:none; color:#2980b9; cursor:pointer; font-weight:bold;">➕ 新增</button></label>
+                        <div id="customFieldsContainer"></div>
+                    </div>
+
+                    <div class="edit-form-group">
+                        <label>💡 筆記 (Enter換行)</label>
+                        <textarea id="editNotes" style="width:100%; height:60px;"></textarea>
+                    </div>
+                    <div style="display:flex; gap:10px; margin-top:10px;">
+                        <button onclick="saveChanges()" style="background:green; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">💾 暫存</button>
+                        <button onclick="closeModal()" style="background:#999; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">取消</button>
+                        <button id="btnDelete" onclick="deleteWord()" style="background:red; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; margin-left:auto; font-weight:bold;">🗑️ 刪除</button>
+                    </div>
+                </div>
+
+                <div id="exportPanel" class="hidden">
+                    <h3 style="color:green; margin-top:0;">📥 打包匯出代碼</h3>
+                    <button onclick="copyCode()" style="background:#9b59b6; color:white; border:none; padding:10px; width:100%; border-radius:4px; cursor:pointer; font-weight:bold;">📋 一鍵複製完整原始碼</button>
+                    <textarea id="exportText" style="width:100%; height:120px; margin-top:10px; font-family:monospace; font-size:11px;" readonly></textarea>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 老師講義資料庫 -->
+    <textarea id="rawTextData" style="display:none;">
+[字典開始]
+helicopter parent (helicopter parents) | helicopter parent |  | ph. | /ˈhelɪkɑːptər ˈperənt/ ; /ˈhelɪkɑːptər ˈperənts/ | 直升機父母[指過度介入子女生活的父母] | 字首::a;;頻率::4;;難度::3 | 📚 背景知識：指如同直升機般盤旋在子女上空，過度介入與保護的父母。 ✨ helicopter parents 文化聯想 🎯 "Teachers often find it challenging to communicate with overly anxious helicopter parents."
+counseling session (counseling sessions) | counseling session |  | ph. | /ˈkaʊnsəlɪŋ ˈseʃən/ ; /ˈkaʊnsəlɪŋ ˈseʃənz/ | 諮商對話／心理輔導期 | 字首::a;;頻率::4;;難度::3 | ✨ attend a counseling session 🎯 "The school requires students with behavioral issues to attend a counseling session."
+intrusiveness | intrusiveness |  | n. | /ɪnˈtruːsɪvnəs/ | 干涉／侵入性 | 頻率::3;;難度::5 | ✨ sense of intrusiveness 🎯 "The new surveillance policy caused a deep sense of intrusiveness among the staff."
+anxiety (anxieties) | anxiety |  | n. | /æŋˈzaɪəti/ ; /æŋˈzaɪətiz/ | 焦慮／不安[不可數] ； 令人焦慮的事物[可數] | 字首::- an;;頻率::5;;難度::3 | ✨ suffer from anxiety 🎯 "Many modern teenagers suffer from severe anxiety due to academic pressure."
+hover over | hover over |  | ph. | /ˈhʌvər ˈoʊvər/ | 盤旋於⋯⋯之上／守候在⋯⋯身旁 | 字首::to;;頻率::4;;難度::3 | ✨ hover over 🎯 "The manager tends to hover over his employees, making them feel extremely uncomfortable."
+overprotect (overprotected, overprotects, overprotecting) | overprotect | overprotect(s) - overprotected x2 - overprotecting | v. | /ˌoʊvərprəˈtekt/ | [三態++]過度保護 | 字首::to;;頻率::4;;難度::4 | 🚀 protect 衍生單字 ✨ protective (adj.) 🎯 "She is fiercely protective of her children, always keeping them safe."
+coddle (coddling, coddled, coddles) | coddle | coddle(s) - coddled x2 - coddling | v. | /ˈkɑːdl/ | [三態++]溺愛／悉心照料 | 字首::to;;頻率::3;;難度::5 | ✨ coddle children 🎯 "Parents who coddle their children may hinder their ability to become truly independent."
+breed (breeding, breeds, bred) | breed | breed(s) - bred x2 - breeding | v./n. | /briːd/ ; /bred/ | [三態++]孕育／繁殖／導致 ／ 品種 ； 種類 | 字首::to/a;;頻率::4;;難度::4 | ✨ breed resentment 🎯 "Unfair company policies will inevitably breed resentment among the hard-working employees."
+thrive (thrives, thrived, thriving) | thrive | thrive(s) - thrived x2 - thriving | v. | /θraɪv/ | [三態++]繁榮／興旺／茁壯成長 | 字首::to;;頻率::4;;難度::4 | ✨ thrive on 🎯 "Some exceptional athletes actually thrive on stress and perform much better under pressure."
+threaten (threatening, threatens, threatened) | threaten | threaten(s) - threatened x2 - threatening | v. | /ˈθretn/ | [三態++]威脅／恐嚇 | 字首::to;;頻率::5;;難度::3 | ✨ threaten to V 🎯 "The unhappy workers threaten to go on strike if their basic demands are not met."
+cope with adversity | cope with adversity |  | ph. | /koʊp wɪθ ədˈvɜːrsəti/ | 應對逆境／克服困境 | 字首::to;;頻率::4;;難度::4 | 📚 背景知識：adversity 指長期的困境或不幸。 🎯 "Learning to successfully cope with adversity is absolutely essential for personal growth."
+contribute to | contribute to |  | ph. | /kənˈtrɪbjuːt tu/ | 促成⋯⋯／對⋯⋯有貢獻／導致⋯⋯ | 字首::to;;頻率::5;;難度::3 | ✨ contribute to society 🎯 "Volunteering at the local shelter is a great way to contribute to society."
+deem (deeming, deems, deemed) | deem | deem(s) - deemed x2 - deeming | v. | /diːm/ | [三態++]認為／視為 | 字首::to;;頻率::4;;難度::4 | ✨ deem it necessary to V 🎯 "The wise principal deemed it necessary to implement stricter safety rules."
+protest (protests, protesting, protested) | protest | protest(s) - protested x2 - protesting | v./n. | /prəˈtest/ ; /ˈproʊtest/ | [三態++]抗議／反對 ／ 抗議活動 ； 反對意見 | 字首::to/a;;頻率::4;;難度::3 | 📚 語意雙關與重音變化：動詞重音在後，名詞重音在前。 🎯 "Thousands of citizens gathered downtown to protest against the unfair new tax law."
+demand (demanded, demanding, demands) | demand | demand(s) - demanded x2 - demanding | v./n. | /dɪˈmænd/ | [三態++]要求／請求 ／ 要求 ； 需求 | 字首::to a -;;頻率::5;;難度::3 | ✨ in high demand 🎯 "Experienced software engineers are currently in high demand in the job market."
+command (commanding, commands, commanded) | command | command(s) - commanded x2 - commanding | v./n. | /kəˈmænd/ | [三態++]命令／指揮 ／ 命令 ； 控制權 | 字首::to/a;;頻率::4;;難度::4 | ✨ have a good command of 🎯 "She has a remarkably good command of both spoken English and written French."
+recommend (recommended, recommending, recommends) | recommend | recommend(s) - recommended x2 - recommending | v. | /ˌrekəˈmend/ | [三態++]推薦／建議 | 字首::to;;頻率::5;;難度::3 | ✨ recommend V-ing 🎯 "The experienced doctor highly recommended getting at least eight hours of sleep."
+comment (comments, commenting, commented) | comment | comment(s) - commented x2 - commenting | v./n. | /ˈkɑːment/ | [三態++]評論／發表意見 ／ 評論 ； 意見 | 字首::to/a -;;頻率::5;;難度::3 | ✨ no comment 🎯 "The corrupt politician quickly declined to answer and simply said 'no comment'."
+fragile | fragile |  | adj. | /ˈfrædʒəl/ ; /ˈfrædʒaɪl/ | 脆弱的／易碎的 | 頻率::4;;難度::3 | ✨ fragile ego 🎯 "He has a very fragile ego and completely breaks down when facing constructive criticism."
+alert (alerting, alerted, alerts) | alert | alert(s) - alerted x2 - alerting | adj./v./n. | /əˈlɜːrt/ | 警覺的 ／ [三態++]使警覺 ／ 警報 ； 警戒狀態 | 字首::to/an -;;頻率::4;;難度::3 | ✨ on high alert 🎯 "The entire military base was placed on high alert immediately after the security incident."
+implicit | implicit |  | adj. | /ɪmˈplɪsɪt/ | 暗示的／含蓄的 | 頻率::4;;難度::4 | 📚 異構對照解析：[implicit] <> [explicit] 🎯 "She made a very clear implicit threat during the intense board meeting." 🎯 "He gave explicit instructions on exactly what to do next."
+explicit | explicit |  | adj. | /ɪkˈsplɪsɪt/ | 明確的／直截了當的 | 頻率::4;;難度::4 | 📚 異構對照解析：[explicit] <> [implicit] 🎯 "The documentary contains highly explicit scenes of historical violence." 🎯 "There was an implicit agreement between the two rival companies."
+inferior (inferiors) | inferior |  | n./adj. | /ɪnˈfɪriər/ | 較差的／次等的 ／ 下屬 ； 晚輩 | 字首::an/;;頻率::4;;難度::4 | 📚 異構對照解析：[inferior] <> [superior] (皆搭配 to 介系詞) 🎯 "This cheap product is definitely inferior to the premium one we bought last year." 🎯 "Her academic qualifications are vastly superior to his."
+superior (superiors) | superior |  | adj./n. | /suːˈpɪriər/ | 上司，長官／優越的，上級的 | 字首::a x;;頻率::4;;難度::4 | 📚 異構對照解析：[superior] <> [inferior] (皆搭配 to 介系詞) 🎯 "She was a remarkably superior officer and effortlessly commanded respect from everyone." 🎯 "He constantly felt inferior when unfairly comparing himself to his successful peers."
+whenever difficulty arises | whenever difficulty arises |  | ph. | /wenˈevər ˈdɪfɪkəlti əˈraɪzɪz/ | 每當困難發生時 | 頻率::3;;難度::3 | ✨ overcome difficulty 🎯 "They faithfully supported each other whenever difficulty arises in their marriage."
+be apt to V | be apt to V |  | ph. | /bi æpt tə/ | 傾向於⋯⋯／易於⋯⋯ | 頻率::4;;難度::4 | ✨ be apt to forget 🎯 "Exhausted people are highly apt to forget important things when they are under chronic stress."
+at the very least | at the very least |  | ph. | /ət ðə ˈveri liːst/ | 至少／起碼 | 頻率::4;;難度::3 | 🎯 "You should at the very least formally apologize for your careless mistake."
+to a degree that | to a degree that |  | ph. | /tə ə dɪˈɡriː ðæt/ | 到⋯⋯的程度 | 頻率::4;;難度::4 | 🎯 "She was completely stressed to a degree that it seriously affected her physical health."
+later in life | later in life |  | ph. | /ˈleɪtər ɪn laɪf/ | 在生命晚期／在未來的生活中 | 頻率::4;;難度::3 | 🎯 "Good habits successfully formed in childhood often persist much later in life."
+at a distance | at a distance |  | ph. | /ət ə ˈdɪstəns/ | 保持距離／在遠處 | 頻率::4;;難度::3 | 🎯 "The hungry tiger quietly watched its unaware prey from at a distance."
+in the long run | in the long run |  | ph. | /ɪn ðə lɔːŋ rʌn/ | 從長遠來看／終究 | 頻率::4;;難度::3 | 🎯 "Consistently investing in quality education definitely pays off in the long run."
+for some reason | for some reason |  | ph. | /fɔːr sʌm ˈriːzn/ | 由於某種原因 | 頻率::5;;難度::2 | 🎯 "For some unknown reason, the vital document absolutely won't open on my computer."
+peer (peers) | peer |  | n. | /pɪr/ ; /pɪrz/ | 同儕／同輩 | 字首::a x;;頻率::4;;難度::3 | ✨ peer pressure 🎯 "Teenagers are often heavily influenced by their peers when making important life decisions."
+tragedy (tragedies) | tragedy |  | n. | /ˈtrædʒədi/ ; /ˈtrædʒədiz/ | 悲劇／慘劇 | 字首::a x;;頻率::4;;難度::3 | ✨ end in tragedy 🎯 "The sudden car accident was a terrible tragedy that devastated the whole community."
+blame (blamed, blames, blaming) | blame | blame(s) - blamed x2 - blaming | v./n. | /bleɪm/ | [三態++]責備／歸咎於 ／ 責備 ； 責任 | 字首::to -;;頻率::5;;難度::3 | ✨ take the blame 🎯 "She unjustly blamed her diligent colleague for the major project failure." 🎯 "The courageous manager took full blame for the team's unfortunate mistake."
+neglect (neglecting, neglects, neglected) | neglect | neglect(s) - neglected x2 - neglecting | v./n. | /nɪˈɡlekt/ | [三態++]忽視／疏忽 ／ 忽視 ； 疏漏 | 字首::to -;;頻率::4;;難度::4 | ✨ neglect of duty 🎯 "He seriously neglected his academic studies while addicted to online gaming." 🎯 "The child suffered from severe emotional neglect during his early formative years."
+progress (progressed, progressing, progresses) | progress | progress(es) - progressed x2 - progressing | v./n. | /prəˈɡres/ ; /ˈprɑːɡres/ | [三態++]進步／進展 ／ 進步 ； 發展 | 字首::to -;;頻率::4;;難度::3 | 📚 語意雙關與重音變化：動詞重音在後，名詞重音在前。 🎯 "The medical research is slowly but steadily progressing toward a viable cure." 🎯 "We have made significant progress in reducing global carbon emissions this year."
+enable (enabling, enabled, enables) | enable | enable(s) - enabled x2 - enabling | v. | /ɪˈneɪbl/ | [三態++]使能夠／賦予⋯⋯能力 | 字首::to;;頻率::4;;難度::4 | ✨ enable sb to V 🎯 "This generous scholarship will enable her to pursue higher education abroad."
+be bound to V | be bound to V |  | ph. | /bi baʊnd tu/ | 注定會⋯⋯／一定會⋯⋯ | 頻率::4;;難度::4 | ✨ be bound to happen 🎯 "If you never study, you are bound to fail the final examination."
+be inclined to V | be inclined to V |  | ph. | /bi ɪnˈklaɪnd tu/ | 傾向於⋯⋯ | 頻率::4;;難度::4 | ✨ be inclined to agree 🎯 "I am strongly inclined to believe his seemingly honest explanation."
+fail to V | fail to V |  | ph. | /feɪl tu/ | 未能⋯⋯／無法⋯⋯ | 頻率::5;;難度::3 | ✨ fail to understand 🎯 "Many stubborn people completely fail to realize the severe consequences of their actions."
+in return | in return |  | ph. | /ɪn rɪˈtɜːrn/ | 作為回報／作為交換 | 頻率::4;;難度::3 | ✨ demand nothing in return 🎯 "He generously helped me out, and asked for absolutely nothing in return."
+in reward | in reward |  | ph. | /ɪn rɪˈwɔːrd/ | 作為獎勵 | 頻率::3;;難度::3 | ✨ in reward for 🎯 "She received a substantial cash bonus in reward for her outstanding performance."
+at best | at best |  | ph. | /ət best/ | 充其量／頂多 | 頻率::4;;難度::3 | ✨ at best an estimate 🎯 "The poorly planned project will at best break even financially."
+not merely to V | not merely to V |  | ph. | /nɑːt ˈmɪrli tu/ | 不僅僅是為了⋯⋯ | 頻率::3;;難度::4 | 🎯 "He exercises daily not merely to lose weight, but to maintain overall physical health."
+regardless of | regardless of |  | ph. | /rɪˈɡɑːrdləs əv/ | 不管⋯⋯／不顧⋯⋯ | 頻率::5;;難度::4 | ✨ regardless of the cost 🎯 "She is determined to finish the marathon regardless of feeling physically exhausted."
+by chance | by chance |  | ph. | /baɪ tʃæns/ | 偶然地／意外地 | 頻率::4;;難度::3 | ✨ meet by chance 🎯 "I ran into my old high school teacher purely by chance at the supermarket."
+keep traditional values alive | keep traditional values alive |  | ph. | /kiːp trəˈdɪʃənl ˈvæljuːz əˈlaɪv/ | 保持傳統價值觀的活力／傳承傳統價值觀 | 頻率::3;;難度::4 | 🎯 "The elderly villagers work extremely hard to keep traditional values alive for the next generation."
+nevertheless | nevertheless |  | adv. | /ˌnevərðəˈles/ | 然而／不過 | 頻率::4;;難度::4 | 🎯 "The weather was incredibly stormy; nevertheless, they decided to continue the hike."
+common | common |  | adj. | /ˈkɑːmən/ | 常見的／普遍的 | 頻率::5;;難度::2 | 
+brothel (brothels) | brothel |  | n. | /ˈbrɑːθl/ ; /ˈbrɑːθlz/ | 妓院 | 字首::a x;;頻率::1;;難度::5 | ✨ visit a brothel 🎯 The undercover police officer had to secretly visit a brothel to gather crucial evidence.
+get to know | get to know |  | ph. | /ɡet tu noʊ/ | 逐漸認識／逐漸了解 | 頻率::4;;難度::3 | ✨ get to know each other 🎯 It takes a lot of time and patience to truly get to know each other.
+express (expressing, expressed, expresses) | express | express(es) - expressed x2 - expressing | v. | /ɪkˈspres/ | [三態++]表達 | 字首::to;;頻率::5;;難度::3 | ✨ express oneself 🎯 Art provides a wonderful medium for young children to freely express themselves.
+in one's surroundings | in one's surroundings |  | ph. | /ɪn wʌnz səˈraʊndɪŋz/ | 在某人的周圍環境中 | 頻率::3;;難度::4 | 🎯 Wild animals usually adapt to the specific conditions in their surroundings to survive.
+set up | set up |  | ph. | /set ʌp/ | 建立／設立 | 字首::to;;頻率::5;;難度::3 | ✨ set up a company 🎯 The ambitious entrepreneur firmly decided to set up a tech company after graduating.
+before long | before long |  | ph. | /bɪˈfɔːr lɔːŋ/ | 不久之後 | 頻率::4;;難度::3 | 🎯 If you keep practicing diligently, you will become completely fluent in the language before long.
+come a long way | come a long way |  | ph. | /kʌm ə lɔːŋ weɪ/ | 取得長足進步／大有進展 | 字首::to;;頻率::4;;難度::4 | 🎯 Modern communication technology has come a long way since the invention of the telephone.
+reach out to | reach out to |  | ph. | /riːtʃ aʊt tu/ | 向⋯⋯伸出援手／聯絡⋯⋯ | 字首::to;;頻率::4;;難度::3 | ✨ reach out to the community 🎯 The local charity is reaching out to the community to provide essential food for the homeless.
+end up | end up |  | ph. | /end ʌp/ | 最終成為／結果是 | 字首::to;;頻率::5;;難度::3 | ✨ end up doing nothing 🎯 If we continue to argue all day without a compromise, we will just end up doing nothing productive.
+Technology is advancing in leaps and bounds. | Technology is advancing in leaps and bounds. |  | sent. | /tekˈnɑːlədʒi ɪz ədˈvænsɪŋ ɪn liːps ənd baʊndz/ | 科技正突飛猛進地發展 | 頻率::5;;難度::3 | ✨ in leaps and bounds 🎯 "Under her strict guidance, my English speaking skills improved in leaps and bounds."
+advance with | advance with |  | ph. | /ədˈvæns wɪθ/ | 與⋯⋯共同進步 | 字首::to;;頻率::4;;難度::4 | 🎯 "We must constantly update our knowledge to effectively advance with the rapidly changing world."
+advance (advances, advancing, advanced) | advance | advance(s) - advanced x2 - advancing | v./n./adj. | /ədˈvæns/ | [三態++]前進，進步 ／ 發展，進展 ／ 事前的 | 字首::to/an -/;;頻率::4;;難度::4 | ✨ in advance 🎯 "The commanding officer sternly ordered the brave troops to immediately advance towards the heavily guarded enemy line."
+We were born into an age of digital technology. | We were born into an age of digital technology. |  | sent. | /wi wɜːr bɔːrn ˈɪntə ən eɪdʒ əv ˈdɪdʒɪtl tekˈnɑːlədʒi/ | 我們出生在數位科技的時代 | 頻率::4;;難度::3 | 
+a huge variety of information | a huge variety of information |  | ph. | /ə hjuːdʒ vəˈraɪəti əv ˌɪnfərˈmeɪʃn/ | 大量的資訊 | 頻率::4;;難度::3 | 🎯 "The modern internet effortlessly provides us with a huge variety of information on almost any topic."
+reach one's potential | reach one's potential |  | ph. | /riːtʃ wʌnz pəˈtenʃl/ | 發揮某人的潛力 | 字首::to;;頻率::4;;難度::3 | 🎯 "A truly dedicated teacher always helps all students to fully reach their natural potential."
+form the basis to V | form the basis to V |  | ph. | /fɔːrm ðə ˈbeɪsɪs tu/ | 構成⋯⋯的基礎 | 字首::to;;頻率::4;;難度::3 | 🎯 "Mutual trust and deep respect always form the basis to build a strong and lasting relationship."
+be better suited to | be better suited to |  | ph. | /bi ˈbetər ˈsuːtɪd tu/ | 更適合⋯⋯ | 字首::to;;頻率::4;;難度::3 | 🎯 "This notably mild coastal climate is much better suited to growing sweet strawberries."
+an allocated amount of time | an allocated amount of time |  | ph. | /ən ˈæləkeɪtɪd əˈmaʊnt əv taɪm/ | 分配好的時間量 | 頻率::4;;難度::4 | 🎯 "Each student is carefully given an allocated amount of time to thoroughly complete the difficult exam."
+allocated | allocated |  | adj. | /ˈæləkeɪtɪd/ | 分配好的，指定的 | 頻率::4;;難度::4 | 🎯 "Please ensure you completely finish the entire task within the newly allocated timeframe."
+allocate (allocated, allocating, allocates) | allocate | allocate(s) - allocated x2 - allocating | v. | /ˈæləkeɪt/ | [三態++]分配，撥付 | 字首::to;;頻率::4;;難度::5 | ✨ allocate resources 🎯 "The government firmly decided to urgently allocate more financial resources to the struggling healthcare system."
+be subjected to | be subjected to |  | ph. | /bi səbˈdʒektɪd tu/ | 遭受⋯⋯，承受⋯⋯ | 字首::to;;頻率::4;;難度::4 | 🎯 "The newly developed spacecraft materials must be subjected to extremely high temperatures during rigorous testing."
+subject (subjecting, subjected, subjects) | subject | subject(s) - subjected x2 - subjecting | v./n./adj. | /səbˈdʒekt/ ; /ˈsʌbdʒɪkt/ | [三態++]使臣服，使遭受 ／ 主題，科目 ／ 隸屬的 | 字首::to a x;;頻率::4;;難度::4 | 📚 語意雙關與重音變化：動詞重音在後，名詞與形容詞重音在前。 🎯 "The highly tyrannical king violently subjected the neighboring peaceful tribes to his cruel rule."
+conventional | conventional |  | adj. | /kənˈvenʃənl/ | 傳統的，常規的 | 頻率::4;;難度::4 | 📚 背景知識：指符合社會習俗或傳統標準的。 🎯 "The conservative senior professor still strongly prefers using conventional teaching methods over modern digital tools."
+take steps backwards into the past | take steps backwards into the past |  | ph. | /teɪk steps ˈbækwərdz ˈɪntə ðə pæst/ | 倒退回過去 | 字首::to;;頻率::3;;難度::4 | 🎯 "Completely ignoring the latest scientific discoveries is entirely like taking steps backwards into the past."
+a major source of information | a major source of information |  | ph. | /ə ˈmeɪdʒər sɔːrs əv ˌɪnfərˈmeɪʃn/ | 主要資訊來源 | 頻率::4;;難度::3 | 🎯 "The internet has quickly become a major source of information for students today."
+primary school (primary schools) | primary school |  | ph. | /ˈpraɪmeri skuːl/ ; /ˈpraɪmeri skuːlz/ | 小學 | 字首::- a;;頻率::5;;難度::2 | 🎯 "My younger brother is currently attending a local primary school."
+consider | consider |  | ph. | /kənˈsɪdər tə bi/ | 認為⋯⋯是 | 字首::to;;頻率::4;;難度::3 | ✨ consider to be 🎯 "Many experts consider the new policy to be highly effective."
+turn to | turn to |  | ph. | /tɜːrn tu/ | 轉向⋯⋯求助／開始使用⋯⋯ | 字首::to;;頻率::4;;難度::3 | ✨ turn to for help 🎯 "Whenever she faces insurmountable difficulties, she always turns to her reliable friends for help."
+extracurricular reading material (extracurricular reading materials) | extracurricular reading material |  | ph. | /ˌekstrəkəˈrɪkjələr ˈriːdɪŋ məˈtɪriəl/ ; /ˌekstrəkəˈrɪkjələr ˈriːdɪŋ məˈtɪriəlz/ | 課外讀物 | 字首::a;;頻率::4;;難度::4 | 🎯 "The enthusiastic teacher actively encouraged her students to explore various extracurricular reading materials."
+investigate (investigating, investigates, investigated) | investigate | investigate(s) - investigated x2 - investigating | v. | /ɪnˈvestɪɡeɪt/ | [三態++]調查／研究 | 字首::to;;頻率::4;;難度::4 | ✨ investigate the cause 🎯 "The diligent police officers are currently trying to investigate the exact cause of the mysterious fire."
+questionnaire (questionnaires) | questionnaire |  | n. | /ˌkwestʃəˈner/ ; /ˌkwestʃəˈnerz/ | 問卷 | 字首::a x;;頻率::4;;難度::4 | ✨ fill out a questionnaire 🎯 "Please take a few minutes to carefully fill out this brief customer satisfaction questionnaire."
+respondent (respondents) | respondent |  | n. | /rɪˈspɑːndənt/ ; /rɪˈspɑːndənts/ | 受訪者／回覆者 | 字首::a x;;頻率::4;;難度::4 | 🎯 "Over sixty percent of the respondents strongly agreed with the survey's conclusions."
+fill out sth | fill out sth |  | ph. | /fɪl aʊt/ | 填寫 | 字首::to;;頻率::5;;難度::3 | ✨ fill out a form 🎯 "You must completely fill out the detailed application form before the strict deadline."
+complain about | complain about |  | ph. | /kəmˈpleɪn əˈbaʊt/ | 抱怨⋯⋯ | 字首::to;;頻率::5;;難度::3 | 🚀 complain 衍生單字 ✨ complaint (n.) 🎯 "The angry customer filed a formal complaint about the terrible restaurant service."
+museum feet | museum feet |  | ph. | /mjuːˈziːəm fiːt/ | 博物館疲勞症[指逛博物館後腳痠的感覺] | 頻率::1;;難度::4 | ✨ museum feet 文化聯想 🎯 "After touring the massive art gallery for five hours, we all suffered from severe museum feet."
+the time span | the time span |  | ph. | /ðə taɪm spæn/ | 時間跨度／一段時間 | 頻率::3;;難度::4 | 📚 背景知識：span 原意為跨度，在此指持續的時間長度。 🎯 "The incredible time span of the historical exhibition covers exactly two entire centuries."
+a work of art | a work of art |  | ph. | /ə wɜːrk əv ɑːrt/ | 一件藝術品 | 頻率::4;;難度::2 | 🎯 "The beautifully sculpted marble statue in the center hall is truly a magnificent work of art."
+a feeling of boredom and monotony | a feeling of boredom and monotony |  | ph. | /ə ˈfiːlɪŋ əv ˈbɔːrdəm ənd məˈnɑːtəni/ | 無聊與單調的感覺 | 頻率::3;;難度::5 | 🚀 boredom 衍生單字 ✨ bore (v.) 🎯 "His incredibly long lectures always bore the energetic young students to death." ✨ monotonous (adj.) 🎯 "The tired factory worker repeatedly performs the exact same monotonous task every single day."
+build up | build up |  | ph. | /bɪld ʌp/ | 累積／逐漸增強 | 字首::to;;頻率::4;;難度::3 | ✨ build up over time 🎯 "The dangerous geological pressure inside the active volcano will continue to strictly build up over time."
+impatience and fatigue | impatience and fatigue |  | ph. | /ɪmˈpeɪʃns ənd fəˈtiːɡ/ | 不耐煩與疲勞 | 頻率::3;;難度::5 | 🚀 fatigue 衍生單字 ✨ fatigued (adj.) 🎯 "The highly fatigued truck drivers were strongly advised to immediately take a long rest."
+focus on | focus on |  | ph. | /ˈfoʊkəs ɑːn/ | 專注於⋯⋯／集中於⋯⋯ | 字首::to;;頻率::5;;難度::2 | ✨ focus deeply on 🎯 "You desperately need to focus deeply on your advanced academic studies to successfully pass the final exam."
+keep one's eyes and minds sharp | keep one's eyes and minds sharp |  | ph. | /kiːp wʌnz aɪz ənd maɪndz ʃɑːrp/ | 保持眼睛與頭腦敏銳 | 字首::to;;頻率::4;;難度::4 | 🎯 "Solving complex mathematical puzzles daily is a fantastic way to deliberately keep one's eyes and minds sharp."
+fortunately | fortunately |  | adv. | /ˈfɔːrtʃənətli/ | 幸運地／幸好 | 頻率::4;;難度::3 | 🚀 fortunate (adj.) 🎯 "We were incredibly fortunate to safely escape the rapidly burning building completely uninjured."
+permanently | permanently |  | adv. | /ˈpɜːrmənəntli/ | 永久地 | 頻率::4;;難度::4 | 📚 異構對照解析：[permanently] <> [temporarily] 🎯 "The severe industrial accident tragically permanently damaged his vital hearing abilities." 🎯 "The popular local department store is only temporarily closed for necessary structural renovations."
+affect (affected, affecting, affects) | affect | affect(s) - affected x2 - affecting | v. | /əˈfekt/ | [三態++]影響 | 字首::to;;頻率::5;;難度::3 | 🚀 affect 衍生單字 ✨ effect (n.) 🎯 "The newly implemented environmental protection policy had a profoundly positive effect on the entire modern city."
+no less than | no less than |  | ph. | /noʊ les ðæn/ | 多達⋯⋯／不下於⋯⋯ | 頻率::4;;難度::4 | 📚 異構對照解析：[no less than] <> [no more than] 🎯 "The brilliant young author astonishingly published no less than five bestselling fantasy novels this year." 🎯 "She surprisingly brought no more than twenty dollars to the highly expensive luxury restaurant."
+a great solution to | a great solution to |  | ph. | /ə ɡreɪt səˈluːʃn tu/ | ⋯⋯的一個絕佳解決方案 | 頻率::4;;難度::4 | 🎯 "Renewable energy provides a great solution to the growing global environmental crisis."
+brief animated video (brief animated videos) | brief animated video |  | ph. | /briːf ˈænɪmeɪtɪd ˈvɪdioʊ/ ; /briːf ˈænɪmeɪtɪd ˈvɪdioʊz/ | 簡短的動畫影片 | 字首::a;;頻率::3;;難度::3 | 🎯 "The clever teacher used brief animated videos to effectively explain the complex scientific theory."
+in an effort to V | in an effort to V |  | ph. | /ɪn ən ˈefərt tu/ | 為了努力⋯⋯／試圖⋯⋯ | 頻率::4;;難度::4 | 🎯 "The struggling company strictly cut costs in an effort to finally avoid complete financial bankruptcy."
+complex medical concept (complex medical concepts) | complex medical concept |  | ph. | /kəmˈpleks ˈmedɪkl ˈkɑːnsept/ ; /kəmˈpleks ˈmedɪkl ˈkɑːnsepts/ | 複雜的醫學概念 | 字首::a;;頻率::5;;難度::4 | 🎯 "The brilliant professor patiently explained the complex medical concepts to the eager young medical students."
+greater improvement in sth | greater improvement in sth |  | ph. | /ˈɡreɪtər ɪmˈpruːvmənt ɪn/ | 在⋯⋯方面有更大的進步 | 頻率::4;;難度::3 | 🎯 "He showed significantly greater improvement in math after attending the intensive weekend tutoring sessions."
+be not limited to sth | be not limited to sth |  | ph. | /bi nɑːt ˈlɪmɪtɪd tu/ | 不侷限於⋯⋯ | 字首::to;;頻率::4;;難度::4 | 🎯 "The incredible benefits of regular exercise are certainly not limited to just physical health improvements."
+linguistic | linguistic |  | adj. | /lɪŋˈɡwɪstɪk/ | 語言的／語言學的 | 頻率::5;;難度::4 | 📚 背景知識：指與語言或語言學相關的。 🚀 linguist 延伸單字 🎯 "Her extensive linguistic research thoroughly explored the complex origins of several ancient European languages."
+make | make |  | ph. | /meɪk əˈveɪləbl tu/ | 使某物可供某人使用 | 字首::to;;頻率::4;;難度::4 | 🎯 "The local public library bravely made thousands of free e-books available to all registered members."
+learning disability (learning, disability, disabilities) | learning disability | learning disability - learning disabilities | ph. | /ˈlɜːrnɪŋ ˌdɪsəˈbɪləti/ ; /ˈlɜːrnɪŋ ˌdɪsəˈbɪlətiz/ | 學習障礙 | 字首::a;;頻率::4;;難度::4 | 🎯 "The specialized school expertly provides dedicated support for energetic children with severe learning disabilities."
+integrate A into B | integrate A into B |  | ph. | /ˈɪntɪɡreɪt ˈɪntu/ | 將A整合進B中 | 字首::to;;頻率::5;;難度::4 | 🎯 "The progressive architect managed to flawlessly integrate natural elements into the modern building design."
+keep | keep |  | ph. | /kiːp ɪnˈɡeɪdʒd/ | 讓某人保持參與感／使某人保持專注 | 字首::to;;頻率::4;;難度::4 | 🎯 "The passionate speaker skillfully used funny stories to constantly keep the restless audience engaged."
+communicate with facial expression and beep (communicate with facial expression and beeps) | communicate with facial expression and beep |  | ph. | /kəˈmjuːnɪkeɪt wɪθ ˈfeɪʃl ɪkˈspreʃnz ənd biːps/ | 用面部表情和嗶嗶聲溝通 | 字首::to;;頻率::3;;難度::3 | 🎯 "The friendly robot playfully communicates with facial expressions and beeps to entertain the sick children."
+relate to | relate to |  | ph. | /rɪˈleɪt tu/ | 對⋯⋯產生共鳴／理解⋯⋯ | 字首::to;;頻率::4;;難度::4 | 🎯 "Many frustrated teenagers can deeply relate to the angry protagonist in this popular young adult novel."
+limitation (limitations) | limitation |  | n. | /ˌlɪmɪˈteɪʃn/ ; /ˌlɪmɪˈteɪʃnz/ | 限制／侷限性 | 字首::a x;;頻率::4;;難度::4 | ✨ know one's limitations 🎯 "We must clearly recognize the obvious limitations of this current artificial intelligence technology."
+push beyond one's limits | push beyond one's limits |  | ph. | /pʊʃ bɪˈjɑːnd wʌnz ˈlɪmɪts/ | 超越某人的極限 | 字首::to;;頻率::4;;難度::4 | 🎯 "The demanding coach constantly inspires the young athletes to bravely push beyond their physical limits."
+mobile device (mobile devices) | mobile device |  | ph. | /ˈmoʊbl dɪˈvaɪs/ ; /ˈmoʊbl dɪˈvaɪsɪz/ | 行動裝置 | 字首::a;;頻率::4;;難度::3 | 🎯 "Most modern teenagers are heavily addicted to constantly checking their sleek mobile devices for new messages."
+for free | for free |  | ph. | /fɔːr friː/ | 免費地 | 頻率::5;;難度::2 | 🎯 "Many people expect to download high-quality software for free from the Internet."
+exchange free music across the Internet | exchange free music across the Internet |  | ph. | /ɪksˈtʃeɪndʒ friː ˈmjuːzɪk əˈkrɔːs ði ˈɪntərnet/ | 在網路上交換免費音樂 | 字首::to;;頻率::3;;難度::3 | 🎯 "Early peer-to-peer software allowed users to easily exchange free music across the Internet."
+make a living | make a living |  | ph. | /meɪk ə ˈlɪvɪŋ/ | 謀生／維持生計 | 字首::to;;頻率::5;;難度::2 | ✨ make a living from 🎯 "It is incredibly difficult for independent artists to make a living solely from their music sales."
+copyrighted material (copyrighted materials) | copyrighted material |  | ph. | /ˈkɑːpiraɪtɪd məˈtɪriəl/ ; /ˈkɑːpiraɪtɪd məˈtɪriəlz/ | 受版權保護的資料 | 字首::a;;頻率::4;;難度::4 | 🎯 "The court strictly ordered the website to stop users from exchanging copyrighted materials illegally."
+be concerned about a new online threat to | be concerned about a new online threat to |  | ph. | /bi kənˈsɜːrnd əˈbaʊt ə nuː ˈɑːnlaɪn θret tu/ | 擔憂對⋯⋯的一種新興網路威脅 | 字首::to;;頻率::3;;難度::4 | 🎯 "Major record companies are deeply concerned about a new online threat to their business streaming."
+streaming technology | streaming technology |  | ph. | /ˈstriːmɪŋ tekˈnɑːlədʒi/ | 串流技術 | 頻率::5;;難度::3 | 🎯 "Modern streaming technology allows thousands of radio stations to broadcast smoothly to global audiences."
+broadcast live on the Web | broadcast live on the Web |  | ph. | /ˈbrɔːdkæst laɪv ɑːn ðə web/ | 在網路上現場直播 | 字首::to;;頻率::4;;難度::3 | 🎯 "The highly anticipated concert will be broadcast live on the Web for international fans."
+ordinary radio station (ordinary radio stations) | ordinary radio station |  | ph. | /ˈɔːrdneri ˈreɪdioʊ ˈsteɪʃn/ ; /ˈɔːrdneri ˈreɪdioʊ ˈsteɪʃnz/ | 普通的廣播電台 | 字首::an;;頻率::4;;難度::3 | 🎯 "He still prefers listening to an ordinary radio station while driving to work every morning."
+pay royalties | pay royalties |  | ph. | /peɪ ˈrɔɪəltiz/ | 支付版稅 | 字首::to;;頻率::4;;難度::4 | 🎯 "The streaming platform must legally pay royalties to the original songwriters and performers."
+entire CD collection (entire CD collections) | entire CD collection |  | ph. | /ɪnˈtaɪər ˌsiːˈdiː kəˈlekʃn/ ; /ɪnˈtaɪər ˌsiːˈdiː kəˈlekʃnz/ | 整個CD收藏 | 字首::an;;頻率::3;;難度::3 | 🎯 "He proudly broadcasted his entire CD collection using the newly downloaded software."
+come up with a fair plan | come up with a fair plan |  | ph. | /kʌm ʌp wɪθ ə fer plæn/ | 想出一個公平的計畫 | 字首::to;;頻率::4;;難度::3 | 🎯 "The recording industry urgently needs to come up with a fair plan to properly compensate artists."
+keep track of | keep track of |  | ph. | /kiːp træk əv/ | 追蹤⋯⋯／記錄⋯⋯ | 字首::to;;頻率::5;;難度::3 | ✨ keep track of details 🎯 "It is almost impossible to keep track of who broadcasts what on the vast internet."
+extended cell phone use | extended cell phone use |  | ph. | /ɪkˈstendɪd sel foʊn juːs/ | 長時間的手機使用 | 字首::to;;頻率::4;;難度::4 | 🎯 "Many reliable studies clearly indicate that extended cell phone use can negatively affect sleep patterns."
+brain tumor (brain tumors) | brain tumor |  | ph. | /ˈbreɪn ˈtuːmər/ ; /ˈbreɪn ˈtuːmərz/ | 腦部腫瘤 | 字首::a;;頻率::4;;難度::5 | 🎯 "Doctors sternly warned that prolonged exposure to high radiation might increase the risk of developing brain tumors."
+full effect(s) of cell phone radiation | full effect(s) of cell phone radiation |  | ph. | /fʊl ɪˈfekts əv sel foʊn ˌreɪdiˈeɪʃn/ | 手機輻射的全面影響 | 字首::the;;頻率::3;;難度::4 | 🎯 "The full effects of cell phone radiation on the developing human brain are still largely unknown to science."
+how much radiation is too much | how much radiation is too much |  | ph. | /haʊ mʌtʃ ˌreɪdiˈeɪʃn ɪz tuː mʌtʃ/ | 多少輻射量才算過量 | 頻率::4;;難度::3 | 🎯 "Scientists are still actively debating exactly how much radiation is too much for daily exposure."
+what damage results from it | what damage results from it |  | ph. | /wʌt ˈdæmɪdʒ rɪˈzʌlts frəm ɪt/ | 會導致什麼樣的損害 | 頻率::4;;難度::3 | 🎯 "We desperately need to fully understand what damage results from it before releasing the controversial new technology."
+be exposed to radiation | be exposed to radiation |  | ph. | /bi ɪkˈspoʊzd tə ˌreɪdiˈeɪʃn/ | 暴露於輻射中 | 字首::to;;頻率::5;;難度::4 | 🎯 "It is highly dangerous for young children to be exposed to radiation for extended periods of time."
+develop cancer | develop cancer |  | ph. | /dɪˈveləp ˈkænsər/ | 罹患癌症 | 字首::to;;頻率::5;;難度::4 | 🎯 "Heavy smokers are significantly more likely to slowly develop cancer later in their adult lives."
+suggest limiting contact with radiation | suggest limiting contact with radiation |  | ph. | /səɡˈdʒest ˈlɪmɪtɪŋ ˈkɑːntækt wɪθ ˌreɪdiˈeɪʃn/ | 建議限制與輻射的接觸 | 字首::to;;頻率::4;;難度::4 | 🎯 "Health experts strongly suggest limiting contact with radiation to properly protect vulnerable developing brains."
+be concerned about the potential threat of radiation | be concerned about the potential threat of radiation |  | ph. | /bi kənˈsɜːrnd əˈbaʊt ðə pəˈtenʃl θret əv ˌreɪdiˈeɪʃn/ | 擔憂輻射的潛在威脅 | 字首::to;;頻率::4;;難度::4 | 🎯 "Many anxious parents are deeply concerned about the potential threat of radiation from modern wireless devices."
+be not stunned by these findings | be not stunned by these findings |  | ph. | /bi nɑːt stʌnd baɪ ðiːz ˈfaɪndɪŋz/ | 對這些發現並不感到震驚 | 字首::to;;頻率::3;;難度::5 | 🚀 stun 衍生單字 ✨ stunning (adj.) 🎯 "Experienced researchers were not stunned by these findings because they had already expected similar results."
+have a tendency to V | have a tendency to V |  | ph. | /hæv ə ˈtendənsi tu/ | 有⋯⋯的傾向 | 字首::to;;頻率::4;;難度::4 | 🎯 "Careless teenagers often have a tendency to completely ignore serious health and safety warnings."
+be immune to danger (be immune to dangers) | be immune to danger |  | ph. | /bi ɪˈmjuːn tə ˈdeɪndʒərz/ | 對危險免疫／不受危險影響 | 字首::to;;頻率::4;;難度::5 | 🎯 "Absolutely no one is magically immune to dangers when driving recklessly on incredibly icy mountain roads."
+This is far from the truth. | This is far from the truth. |  | sent. | /ðɪs ɪz fɑːr frəm ðə truːθ/ | 這完全不是事實／這與事實相去甚遠 | 頻率::5;;難度::3 | 🎯 "He confidently claims to be completely innocent, but the concrete evidence strongly shows this is far from the truth."
+reject into | reject into |  | ph. | /rɪˈdʒekt ˈɪntu/ | 拒絕並丟入⋯⋯[為選項誘答字] | 字首::to;;頻率::2;;難度::4 | 🎯 "The faulty machine will automatically reject into the waste bin any manufactured products that fail the strict quality test."
+be fearful of | be fearful of |  | ph. | /bi ˈfɪrfl əv/ | 害怕⋯⋯／擔心⋯⋯ | 字首::to;;頻率::4;;難度::3 | 🎯 "Small children are naturally fearful of loud sudden noises and dark unknown spaces in the house."
+as for | as for |  | ph. | /æz fɔːr/ | 至於⋯⋯ | 頻率::5;;難度::3 | 🎯 "Most employees quickly agreed with the new policy; as for the stubborn manager, he strongly opposed it."
+at all | at all |  | ph. | /ət ɔːl/ | 根本／究竟 | 頻率::5;;難度::2 | 🎯 "I honestly don't mind at all if you accidentally arrive a little late for the important morning meeting."
+by all means | by all means |  | ph. | /baɪ ɔːl miːnz/ | 務必／盡一切辦法 | 頻率::4;;難度::4 | 🎯 "If you desperately need more time to finish the complex project, by all means, just take it."
+at any cost | at any cost |  | ph. | /ət ˈeni kɔːst/ | 不惜任何代價 | 頻率::4;;難度::3 | 🎯 "The highly ambitious politician is fiercely determined to win the upcoming presidential election at any cost."
+once and for all | once and for all |  | ph. | /wʌns ənd fɔːr ɔːl/ | 一勞永逸地 | 頻率::4;;難度::4 | 🎯 "We must strictly settle this bitter financial dispute once and for all before it completely ruins our friendship."
+far from | far from |  | ph. | /fɑːr frəm/ | 遠非⋯⋯／完全不⋯⋯ | 頻率::5;;難度::3 | 🎯 "The final scientific results of the complex chemical experiment were far from what we had originally expected."
+children's encounter(s) with poetry | children's encounter(s) with poetry |  | ph. | /ˈtʃɪldrənz ɪnˈkaʊntərz wɪθ ˈpoʊətri/ | 兒童與詩歌的相遇 | 頻率::3;;難度::4 | 🎯 "A child's first positive encounter with poetry can spark a lifelong love for literature."
+three types of response | three types of response |  | ph. | /θriː taɪps əv rɪˈspɑːns/ | 三種類型的反應 | 頻率::4;;難度::3 | 🎯 "The psychologist observed three distinct types of response to the sudden stressful situation."
+exploration (explorations) | exploration |  | n. | /ˌekspləˈreɪʃn/ ; /ˌekspləˈreɪʃnz/ | 探索[不可數] ； 一次探索[可數單數] ； 探索活動[絕對複數] | 字首::- a x;;頻率::4;;難度::4 | 🚀 explore 衍生單字 ✨ explore (v.) 🎯 "Ambitious scientists continue to bravely explore the vast unknown regions of deep space."
+deepening understanding | deepening understanding |  | ph. | /ˈdiːpənɪŋ ˌʌndərˈstændɪŋ/ | 加深理解 | 頻率::4;;難度::4 | 🎯 "Constant active reading is absolutely essential for deepening understanding of complex historical events."
+happen simultaneously | happen simultaneously |  | ph. | /ˈhæpən ˌsaɪmlˈteɪniəsli/ | 同時發生 | 字首::to;;頻率::4;;難度::5 | 🚀 simultaneously 衍生單字 ✨ simultaneous (adj.) 🎯 "The simultaneous global release of the highly anticipated movie and the video game was a massive marketing success."
+find delight in | find delight in |  | ph. | /faɪnd dɪˈlaɪt ɪn/ | 在⋯⋯中找到樂趣 | 字首::to;;頻率::4;;難度::4 | 🚀 delight 衍生單字 ✨ delighted (adj.) 🎯 "She was absolutely delighted to finally receive the prestigious academic award." ✨ delightful (adj.) 🎯 "We spent a truly delightful evening chatting with our old friends." 🎯 "The enthusiastic young children find immense delight in playing outside in the fresh snow."
+poem (poems) | poem |  | n. | /ˈpoʊəm/ ; /ˈpoʊəmz/ | 一首詩 ； 詩[絕對複數] | 字首::a x;;頻率::5;;難度::2 | 📚 背景知識：poem 是單篇的詩，poetry 是詩的總稱(不可數)。 ✨ recite a poem 🎯 "Every nervous student in the advanced literature class had to loudly recite a classic poem entirely from memory."
+be ready and eager to explore further-more books | be ready and eager to explore further-more books |  | ph. | /bi ˈredi ənd ˈiːɡər tu ɪkˈsplɔːr ˈfɜːrðər mɔːr bʊks/ | 準備好並渴望探索更多書籍 | 字首::to;;頻率::3;;難度::4 | 🎯 "After finishing the first exciting chapter, the curious students were ready and eager to explore further-more books in the fantasy series."
+see implication(s) beyond the obvious | see implication(s) beyond the obvious |  | ph. | /siː ˌɪmplɪˈkeɪʃnz bɪˈjɑːnd ði ˈɑːbviəs/ | 看見明顯事物之外的涵義 | 字首::to;;頻率::3;;難度::5 | 🚀 implication 衍生單字 ✨ imply (v.) 🎯 "Her sudden bitter silence seemed to strongly imply that she completely disagreed with our final decision."
+read for hidden meaning (read for hidden meanings) | read for hidden meaning |  | ph. | /riːd fɔːr ˈhɪdn ˈmiːnɪŋz/ | 為了尋找隱藏的涵義而閱讀 | 字首::to;;頻率::4;;難度::4 | 🎯 "Analyzing classic English literature often requires advanced students to carefully read for hidden meanings."
+identify with the poet | identify with the poet |  | ph. | /aɪˈdentɪfaɪ wɪθ ðə ˈpoʊət/ | 與詩人產生共鳴／認同詩人 | 字首::to;;頻率::4;;難度::4 | ✨ identify with 🎯 "Many confused teenagers can easily identify with the deeply rebellious main character in this popular modern novel."
+take a thoughtful look at | take a thoughtful look at |  | ph. | /teɪk ə ˈθɔːtfl lʊk ət/ | 深思熟慮地審視⋯⋯ | 字首::to;;頻率::4;;難度::4 | 📚 異構對照解析：[thoughtful] <> [thoughtless] 🎯 "We desperately need to take a thoughtful look at our current financial situation before safely making any big investments." 🎯 "It was incredibly thoughtless of him to carelessly make such cruel remarks about her physical appearance."
+what lies beneath the surface | what lies beneath the surface |  | ph. | /wʌt laɪz bɪˈniːθ ðə ˈsɜːrfɪs/ | 隱藏在表面之下的事物 | 頻率::4;;難度::4 | ✨ surface 文化聯想 🎯 "Our initial quick investigation into the massive corporate corruption scandal has barely scratched the surface of the real problem."
+separate (separating, separates, separated) | separate | separate(s) - separated x2 - separating | v./adj. | /ˈsepəreɪt/ ; /ˈseprət/ | [三態++]分開／分離 ／ 分開的／單獨的 | 字首::to/-/;;頻率::4;;難度::3 | 📚 語意雙關與重音變化：動詞發音字尾為 /eɪt/，形容詞發音字尾為 /ət/。 🎯 "The strict teacher decided to forcefully separate the two constantly talkative students." 🎯 "The unhappy married couple have been sleeping in completely separate bedrooms for over a year."
+innocent | innocent |  | adj. | /ˈɪnəsnt/ | 無辜的／天真的 | 頻率::4;;難度::4 | 📚 異構對照解析：[innocent] <> [guilty] 🎯 "The impartial jury firmly believed that the accused young man was completely innocent of the terrible crime." 🎯 "The corrupt local politician was finally found guilty of actively taking large illegal bribes."
+applaud individual(s) who are self-taught | applaud individual(s) who are self-taught |  | ph. | /əˈplɔːd ˌɪndɪˈvɪdʒuəlz hu ɑːr ˌself ˈtɔːt/ | 讚賞自學的人 | 字首::to;;頻率::3;;難度::4 | 🎯 "We should always applaud individuals who are self-taught because of their immense dedication."
+recognize (recognized, recognizes, recognizing) | recognize | recognize(s) - recognized x2 - recognizing | v. | /ˈrekəɡnaɪz/ | [三態++]認出／承認／表彰 | 字首::to;;頻率::4;;難度::3 | ✨ recognize sb's effort 🎯 "The entire community gathered to publicly recognize her outstanding volunteer work."
+craft (crafts) | craft |  | n. | /kræft/ | 工藝／手藝 | 字首::a x;;頻率::4;;難度::4 | ✨ master a craft 🎯 "It takes many years of dedicated practice to truly master the traditional craft."
+responsibility (responsibilities) | responsibility |  | n. | /rɪˌspɑːnsəˈbɪləti/ ; /rɪˌspɑːnsəˈbɪlətiz/ | 責任[不可數]；一項責任[可數單數]；諸多責任[絕對複數] | 字首::- a x;;頻率::5;;難度::3 | ✨ take responsibility 🎯 "It is your primary responsibility to ensure the absolute safety of all the young passengers."
+take responsibility for | take responsibility for |  | ph. | /teɪk rɪˌspɑːnsəˈbɪləti fɔːr/ | 對⋯⋯負起責任 | 字首::to;;頻率::5;;難度::3 | 🎯 "A mature adult must always bravely take full responsibility for their own actions."
+savvy | savvy |  | n. | /ˈsævi/ | 常識／理解能力 | 頻率::3;;難度::5 | ✨ computer savvy 🎯 "He lacks the necessary political savvy to successfully navigate this highly complex diplomatic situation."
+use one's computer savvy to create a website | use one's computer savvy to create a website |  | ph. | /juːz wʌnz kəmˈpjuːtər ˈsævi tu kriˈeɪt ə ˈwebsaɪt/ | 利用某人的電腦知識來建立網站 | 頻率::3;;難度::4 | 🎯 "She successfully used her impressive computer savvy to create a highly profitable e-commerce website."
+struggling farmer (struggling farmers) | struggling farmer |  | ph. | /ˈstrʌɡlɪŋ ˈfɑːrmər/ ; /ˈstrʌɡlɪŋ ˈfɑːrmərz/ | 苦苦掙扎的農民 | 頻率::3;;難度::3 | 🎯 "The new government subsidy aims to urgently help struggling farmers survive the severe drought."
+dedicate (dedicated, dedicating, dedicates) | dedicate | dedicate(s) - dedicated x2 - dedicating | v. | /ˈdedɪkeɪt/ | [三態++]奉獻／致力於 | 字首::to;;頻率::4;;難度::4 | ✨ dedicate oneself to V-ing 🎯 "She firmly decided to dedicate her entire life to fiercely fighting against global poverty."
+enthusiasm | enthusiasm |  | n. | /ɪnˈθuːziæzəm/ | 熱情／熱忱 | 頻率::4;;難度::4 | ✨ have enthusiasm for 🎯 "The energetic young teacher possesses an incredible enthusiasm for teaching complex science subjects."
+be geared toward | be geared toward |  | ph. | /bi ɡɪrd ˈtɔːwərd/ | 針對⋯⋯設計／適合⋯⋯ | 頻率::4;;難度::5 | 🎯 "This specialized training program is specifically geared toward aspiring young software engineers."
+prove quite a feat | prove quite a feat |  | ph. | /pruːv kwaɪt ə fiːt/ | 證明是一項壯舉 | 頻率::3;;難度::5 | 🎯 "Climbing the treacherous mountain in winter will definitely prove quite a feat for any climber."
+previously | previously |  | adv. | /ˈpriːviəsli/ | 以前／先前 | 頻率::4;;難度::4 | 📚 異構對照解析：[previously] <> [currently] 🎯 "The abandoned building was previously used as a busy local post office." 🎯 "She is currently working as a senior manager at a large international bank."
+earn a lot of success | earn a lot of success |  | ph. | /ɜːrn ə lɑːt əv səkˈses/ | 獲得巨大的成功 | 頻率::4;;難度::3 | 🎯 "Through years of hard work, the brilliant entrepreneur finally earned a lot of success."
+in profit (in profits) | in profit |  | ph. | /ɪn ˈprɑːfɪt/ ; /ɪn ˈprɑːfɪts/ | 在利潤方面／獲利 | 頻率::4;;難度::4 | 🎯 "The successful tech startup generated over two million dollars in pure profits last year."
+educational aid (educational aids) | educational aid |  | ph. | /ˌedʒuˈkeɪʃənl eɪd/ ; /ˌedʒuˈkeɪʃənl eɪdz/ | 教育輔助工具 | 頻率::4;;難度::4 | 🎯 "Interactive digital whiteboards are excellent educational aids for engaging modern students."
+disadvantaged student (disadvantaged students) | disadvantaged student |  | ph. | /ˌdɪsədˈvæntɪdʒd ˈstuːdnt/ ; /ˌdɪsədˈvæntɪdʒd ˈstuːdnts/ | 弱勢學生 | 頻率::4;;難度::4 | 🎯 "The local charity provides free daily meals and tutoring for severely disadvantaged students."
+cannot afford tutoring | cannot afford tutoring |  | ph. | /ˈkænɑːt əˈfɔːrd ˈtuːtərɪŋ/ | 負擔不起家教費用 | 頻率::4;;難度::3 | 🎯 "Many low-income families simply cannot afford tutoring for their struggling children."
+humble | humble |  | adj. | /ˈhʌmbl/ | 謙虛的／卑微的 | 頻率::4;;難度::4 | 📚 異構對照解析：[humble] <> [arrogant] 🎯 "Despite his massive wealth and fame, he always remains an incredibly humble and approachable person." 🎯 "The arrogant young actor completely ignored his adoring fans outside the theater."
+humble beginning (humble beginnings) | humble beginning |  | ph. | /ˈhʌmbl bɪˈɡɪnɪŋ/ ; /ˈhʌmbl bɪˈɡɪnɪŋz/ | 卑微的出身／微賤的起點 | 頻率::4;;難度::4 | 🎯 "Despite her incredibly humble beginnings, she eventually became a highly respected national leader."
+vendor (vendors) | vendor |  | n. | /ˈvendər/ ; /ˈvendərz/ | 小販／供應商 | 字首::a x;;頻率::4;;難度::4 | ✨ street vendor 🎯 "The busy night market is filled with enthusiastic street vendors selling delicious local food."
+children in the same position | children in the same position |  | ph. | /ˈtʃɪldrən ɪn ðə seɪm pəˈzɪʃn/ | 處境相同的兒童 | 頻率::4;;難度::3 | 🎯 "She dedicated her entire life to fiercely protecting vulnerable children in the same position."
+counterpart (counterparts) | counterpart |  | n. | /ˈkaʊntərpɑːrt/ ; /ˈkaʊntərpɑːrt/ | 相對應的人或物 | 字首::a x;;頻率::4;;難度::5 | 🎯 "The foreign minister quickly met with his European counterpart to carefully discuss the new trade agreement."
+fill sth with sth | fill sth with sth |  | ph. | /fɪl wɪθ/ | 用⋯⋯填滿⋯⋯ | 頻率::4;;難度::2 | 🎯 "The passionate author decided to fill her personal website with highly inspiring daily stories."
+If it were not for | If it were not for |  | ph. | /ɪf ɪt wɜːr nɑːt fɔːr/ | 要不是因為⋯⋯ | 頻率::5;;難度::4 | 📚 假設語氣用法，表示與現在事實相反。 🎯 "If it were not for his generous financial support, the crucial project would have completely failed."
+looming | looming |  | adj. | /ˈluːmɪŋ/ | 迫近的／隱約出現的 | 頻率::4;;難度::5 | ✨ a looming crisis 🎯 "The sudden dark clouds in the distance clearly indicated a massive looming storm."
+be as looming as ever | be as looming as ever |  | ph. | /bi æz ˈluːmɪŋ æz ˈevər/ | 依然迫在眉睫／陰影依舊籠罩 | 頻率::3;;難度::5 | 🎯 "Despite the recent peace talks, the terrifying threat of war seems to be as looming as ever."
+go to great lengths to V | go to great lengths to V |  | ph. | /ɡoʊ tə ɡreɪt leŋθs tu/ | 竭盡全力去⋯⋯／不遺餘力地⋯⋯ | 頻率::4;;難度::5 | 🎯 "A loving mother will always go to great lengths to protect her precious children from any harm."
+in one's eyes | in one's eyes |  | ph. | /ɪn wʌnz aɪz/ | 在某人眼中／依某人看來 | 頻率::4;;難度::2 | 🎯 "In her critical eyes, the newly proposed marketing strategy is completely flawed and unworkable."
+the public | the public |  | ph. | /ðə ˈpʌblɪk/ | 公眾／大眾 | 頻率::4;;難度::3 | 🎯 "The government must quickly and transparently respond to the growing concerns of the general public."
+put all the blame on | put all the blame on |  | ph. | /pʊt ɔːl ðə bleɪm ɑːn/ | 將所有責難歸咎於⋯⋯ | 頻率::4;;難度::3 | 🎯 "It is completely unfair to put all the blame on the inexperienced new employee for the team's failure."
+be shouldered by parents and society | be shouldered by parents and society |  | ph. | /bi ˈʃoʊldərd baɪ ˈperənts ənd səˈsaɪəti/ | 由父母與社會承擔 | 頻率::4;;難度::4 | 🚀 shoulder 衍生單字 ✨ shoulder (v.) 🎯 "The eldest son had to bravely shoulder the heavy financial burden of his entire family after the tragic accident."
+nurture and train the young generation | nurture and train the young generation |  | ph. | /ˈnɜːrtʃər ənd treɪn ðə jʌŋ ˌdʒenəˈreɪʃn/ | 培育與訓練年輕一代 | 頻率::3;;難度::4 | 🎯 "Schools and families have a vital mission to properly nurture and train the young generation for future global challenges."
+build a positive attitude towards life | build a positive attitude towards life |  | ph. | /bɪld ə ˈpɑːzətɪv ˈætɪtuːd ˈtɔːrdz laɪf/ | 建立對生活的積極態度 | 頻率::4;;難度::3 | 🎯 "Parents must constantly encourage their growing children to actively build a positive attitude towards life."
+compromise with | compromise with |  | ph. | /ˈkɑːmprəmaɪz wɪθ/ | 與⋯⋯妥協 | 頻率::4;;難度::4 | 🎯 "The stubborn factory manager finally decided to peacefully compromise with the unhappy striking workers."
+give way to one's attitude | give way to one's attitude |  | ph. | /ɡɪv weɪ tə wʌnz ˈætɪtuːd/ | 對某人的態度讓步 | 頻率::4;;難度::4 | 🎯 "Parents should firmly discipline naughty children instead of constantly giving way to their bad attitude."
+youngster (youngsters) | youngster |  | n. | /ˈjʌŋstər/ ; /ˈjʌŋstərz/ | 一個年輕人 ； 年輕人 | 字首::a x;;頻率::4;;難度::3 | 🎯 "Many energetic youngsters enthusiastically participated in the local community weekend volunteer program."
+self-centered | self-centered |  | adj. | /ˌself ˈsentərd/ | 以自我為中心的／自私的 | 頻率::4;;難度::4 | 📚 異構對照解析：[self-centered] <> [altruistic] 🎯 "His extremely self-centered behavior quickly alienated all of his former close friends." 🎯 "The truly altruistic doctor spent her entire life tirelessly helping the poor in remote villages."
+realize one's potential without spoiling | realize one's potential without spoiling |  | ph. | /ˈriːəlaɪz wʌnz pəˈtenʃl wɪˈðaʊt ˈspɔɪlɪŋ/ | 發揮潛力而不寵壞⋯⋯ | 頻率::4;;難度::4 | 🎯 "A genuinely good coach knows exactly how to help talented athletes realize their potential without spoiling them."
+take one's side | take one's side |  | ph. | /teɪk wʌnz saɪd/ | 站在某人的一邊／袒護某人 | 頻率::5;;難度::3 | 🎯 "It is a common terrible mistake for overprotective parents to blindly take their children's side in every single dispute."
+suicide (suicides) | suicide |  | n. | /ˈsuːɪsaɪd/ ; /ˈsuːɪsaɪdz/ | 自殺行為 ； 一件自殺案 ； 多起自殺案 | 字首::- a x;;頻率::4;;難度::4 | 📚 背景知識：青少年自殺是一個複雜的社會問題，需要多方共同關注。 🚀 suicide 延伸單字 ✨ suicidal (adj.) 🎯 "It is absolutely crucial to immediately recognize and seriously address any potential suicidal warning signs."
+play an important role in | play an important role in |  | ph. | /pleɪ ən ɪmˈpɔːrtnt roʊl ɪn/ | 在⋯⋯扮演重要角色／對⋯⋯有重要影響 | 頻率::5;;難度::3 | 🎯 "Regular daily exercise plays an absolutely important role in maintaining excellent physical and mental health."
+the upbringing of children | the upbringing of children |  | ph. | /ði ˈʌpbrɪŋɪŋ əv ˈtʃɪldrən/ | 兒童的教養 | 頻率::4;;難度::4 | 🎯 "Both loving parents should be equally and actively involved in the proper upbringing of children."
+under more pressure | under more pressure |  | ph. | /ˈʌndər mɔːr ˈpreʃər/ | 承受更多壓力 | 頻率::5;;難度::2 | 🎯 "Modern university students are constantly under more pressure to succeed academically than any previous generations."
+lack the love and attention | lack the love and attention |  | ph. | /læk ðə lʌv ənd əˈtenʃn/ | 缺乏愛與關注 | 頻率::4;;難度::3 | 🎯 "Lonely children who completely lack the love and attention they desperately need often develop serious behavioral issues."
+Intelligence is inborn children do not have a choice. | Intelligence is inborn children do not have a choice. |  | sent. | /ɪnˈtelɪdʒəns ɪz ˌɪnˈbɔːrn ˈtʃɪldrən du nɑːt hæv ə tʃɔɪs/ | 智力是天生的兒童沒有選擇的餘地 | 頻率::4;;難度::4 | 🎯 "While some firmly believe intelligence is inborn children do not have a choice, others argue that environment is equally important."
+accept | accept |  | ph. | /əkˈsept fɔːr wʌt ðeɪ ɑːr/ | 接受他們原本的樣子 | 頻率::4;;難度::3 | 🎯 "True lifelong friends will always unconditionally accept you for what you are, completely despite your many minor flaws."
+do one's best | do one's best |  | ph. | /du wʌnz best/ | 盡某人最大的努力 | 頻率::5;;難度::2 | 🎯 "Even if you eventually fail the difficult test, the most incredibly important thing is that you honestly did your absolute best."
+the tragedy of a young person dying | the tragedy of a young person dying |  | ph. | /ðə ˈtrædʒədi əv ə jʌŋ ˈpɜːrsn ˈdaɪɪŋ/ | 一個年輕人死去的悲劇 | 頻率::4;;難度::4 | 🎯 "The sudden terrible tragedy of a young person dying deeply shocked and profoundly saddened the entire small rural community."
+overwhelming frustration | overwhelming frustration |  | ph. | /ˌoʊvərˈhwelmɪŋ frʌˈstreɪʃn/ | 壓倒性的挫折感／極度的沮喪 | 頻率::4;;難度::5 | 🚀 overwhelm 衍生單字 ✨ overwhelmed (adj.) 🎯 "The recently hired young nurse quickly felt completely overwhelmed by the heavily demanding daily hospital workload."
+be devastating to | be devastating to |  | ph. | /bi ˈdevəsteɪtɪŋ tu/ | 對⋯⋯是毀滅性的／對⋯⋯造成巨大破壞 | 頻率::4;;難度::5 | 🎯 "The massive unexpected earthquake was absolutely devastating to the incredibly fragile local island economy."
+multimedia computer (multimedia computers) | multimedia computer |  | ph. | /ˌmʌltiˈmiːdiə kəmˈpjuːtər/ ; /ˌmʌltiˈmiːdiə kəmˈpjuːtərz/ | 多媒體電腦 | 字首::x;;頻率::3;;難度::3 | 🎯 "Modern schools increasingly use advanced multimedia computers to greatly enhance daily student learning."
+ideal education tool (ideal education tools) | ideal education tool |  | ph. | /aɪˈdiːəl ˌedʒuˈkeɪʃn tuːl/ ; /aɪˈdiːəl ˌedʒuˈkeɪʃn tuːlz/ | 理想的教育工具 | 字首::an;;頻率::4;;難度::4 | 🎯 "The vast global internet has quickly become an ideal education tool for dedicated independent learners."
+moreover | moreover |  | adv. | /mɔːrˈoʊvər/ | 此外／而且 | 頻率::5;;難度::4 | 🎯 "The apartment rent is quite reasonable; moreover, the location is absolutely perfect for our needs."
+be set to challenge all ability level (be set to challenge all ability levels) | be set to challenge all ability level |  | ph. | /bi set tə ˈtʃælɪndʒ ɔːl əˈbɪləti ˈlevl/ ; /bi set tə ˈtʃælɪndʒ ɔːl əˈbɪləti ˈlevlz/ | 被設定為挑戰所有能力層級 | 頻率::4;;難度::4 | 🎯 "The highly adaptive educational software can easily be set to challenge all ability levels in the classroom."
+a sense of achievement | a sense of achievement |  | ph. | /ə sens əv əˈtʃiːvmənt/ | 成就感 | 頻率::4;;難度::3 | ✨ gain a sense of achievement 🎯 "Successfully finishing the brutal marathon gave her a profound sense of achievement."
+point out that | point out that |  | ph. | /pɔɪnt aʊt ðæt/ | 指出⋯⋯ | 頻率::5;;難度::2 | 🎯 "The cautious financial manager was quick to point out that the annual budget was incredibly tight."
+learning method (learning methods) | learning method |  | ph. | /ˈlɜːrnɪŋ ˈmeθəd/ ; /ˈlɜːrnɪŋ ˈmeθədz/ | 學習方法 | 頻率::5;;難度::3 | 🎯 "Visual learners typically prefer a completely different learning method than auditory learners do."
+methodically | methodically |  | adv. | /məˈθɑːdɪkli/ | 有條理地／井然有序地 | 頻率::3;;難度::5 | 🚀 method 衍生單字 ✨ methodical (adj.) 🎯 "The highly experienced detective methodically examined the entire crime scene for any tiny hidden clues."
+indeed | indeed |  | adv. | /ɪnˈdiːd/ | 確實／的確 | 頻率::5;;難度::3 | 🎯 "The initial test results are indeed very promising for the company's future long-term growth."
+multimedia technology | multimedia technology |  | ph. | /ˌmʌltiˈmiːdiə tekˈnɑːlədʒi/ | 多媒體科技 | 頻率::4;;難度::4 | 🎯 "Advanced multimedia technology has completely transformed how modern classroom presentations are delivered."
+greatly heighten the appeal of classroom computer (greatly heighten the appeal of classroom computers) | greatly heighten the appeal of classroom computer |  | ph. | /ˈɡreɪtli ˈhaɪtn ði əˈpiːl əv ˈklæsruːm kəmˈpjuːtərz/ | 大大提升教室電腦的吸引力 | 頻率::3;;難度::5 | 🎯 "Interactive educational games have greatly heightened the appeal of classroom computers for young energetic students."
+cost a great deal | cost a great deal |  | ph. | /kɔːst ə ɡreɪt diːl/ | 花費巨大／所費不貲 | 頻率::4;;難度::3 | 🎯 "Professionally repairing the severely damaged luxury car will certainly cost a great deal of money."
+keep up | keep up |  | ph. | /kiːp ʌp/ | 跟上／保持 | 頻率::5;;難度::2 | ✨ keep up with sb/sth 🎯 "She had to walk much faster just to keep up with her surprisingly energetic older brother."
+contrarily | contrarily |  | adv. | /kənˈtrerəli/ | 相反地 | 頻率::3;;難度::5 | 📚 異構對照解析：[contrarily] <> [similarly] 🎯 "Everyone angrily expected him to fail; contrarily, he easily succeeded beyond all their wildest imaginations." 🎯 "She always dressed very formally; similarly, her husband always wore an elegant dark suit to work."
+exploit (exploited, exploits, exploiting) | exploit | exploit(s) - exploited x2 - exploiting | v./n. | /ɪkˈsplɔɪt/ ; /ˈeksplɔɪt/ | [三態++]剝削／利用 ／ 壯舉 ； 功績 | 字首::to a x;;頻率::4;;難度::5 | 📚 語意雙關與重音變化：動詞重音在後，名詞重音在前。 🎯 "The greedy massive corporation cruelly exploited its highly vulnerable overseas factory workers." 🎯 "The brave young knight's legendary exploits were widely celebrated in traditional local folk songs."
+consult (consults, consulting, consulted) | consult | consult(s) - consulted x2 - consulting | v. | /kənˈsʌlt/ | [三態++]諮詢／請教 | 字首::to;;頻率::5;;難度::4 | ✨ consult a doctor 🎯 "You should immediately consult a professional medical doctor if the severe stomach pain persistently continues."
+assemble (assembling, assembled, assembles) | assemble | assemble(s) - assembled x2 - assembling | v. | /əˈsembl/ | [三態++]組裝／集合 | 字首::to;;頻率::4;;難度::4 | ✨ assemble a team 🎯 "The wise project manager quickly assembled a highly dedicated expert team to successfully tackle the urgent crisis."
+enormously | enormously |  | adv. | /ɪˈnɔːrməsli/ | 巨大地／極大地 | 頻率::4;;難度::4 | 🚀 enormous 衍生單字 ✨ enormous (adj.) 🎯 "The popular new downtown restaurant was enormously successful during its very first incredibly busy month."
+heighten (heightens, heightened, heightening) | heighten | heighten(s) - heightened x2 - heightening | v./adj. | /ˈhaɪtn/ | [三態++]提高／加強 ／ 增高的／加劇的 | 字首::to -;;頻率::4;;難度::4 | ✨ heightened awareness 🎯 "The constant alarming daily news reports steadily heightened general public anxiety about the struggling national economy."
+Nintendo | Nintendo |  | n. | /nɪnˈtendoʊ/ | 任天堂[日本電子遊戲公司] | 頻率::5;;難度::2 | 📚 背景知識：任天堂是一家總部位於日本京都的跨國電子遊戲與玩具製造公司。 🚀 Nintendo 延伸單字 ✨ game console (n.) 🎯 "Millions of excited gamers eagerly purchased the newly released Nintendo game console on its launch day."
+by the end of the year | by the end of the year |  | ph. | /baɪ ði end əv ðə jɪr/ | 在年底前 | 頻率::5;;難度::2 | 🎯 "The ambitious software company confidently expects to sell over twenty million units by the end of the year."
+game cartridge (game cartridges) | game cartridge |  | ph. | /ɡeɪm ˈkɑːrtrɪdʒ/ ; /ɡeɪm ˈkɑːrtrɪdʒɪz/ | 遊戲卡匣 | 頻率::4;;難度::4 | 🎯 "Older classic game consoles strictly required players to physically insert heavy game cartridges to play."
+spin off a TV show and a magazine | spin off a TV show and a magazine |  | ph. | /spɪn ɔːf ə ˌtiːˈviː ʃoʊ ənd ə ˈmæɡəziːn/ | 衍生出電視節目與雜誌 | 頻率::3;;難度::4 | 🚀 spin off 衍生單字 ✨ spin-off (n.) 🎯 "The incredibly popular fantasy video game eventually spun off a highly successful TV show and a monthly magazine."
+draw sb into fantasy world (draw sb into fantasy worlds) | draw sb into fantasy world |  | ph. | /drɔː ˈɪntə ˈfæntəsi wɜːrldz/ | 將某人吸引進奇幻世界 | 頻率::4;;難度::4 | 🎯 "The beautifully designed 3D graphics effortlessly draw young children into immersive fantasy worlds for hours on end."
+fantasy (fantasies) | fantasy |  | n. | /ˈfæntəsi/ ; /ˈfæntəsiz/ | 幻想 ； 狂想[絕對複數] | 字首::a x;;頻率::4;;難度::4 | ✨ live in a fantasy 🎯 "He unfortunately spends entirely too much time living in a completely unrealistic fantasy instead of facing harsh reality."
+make sb the hero(es) of great adventure (make sb the hero(es) of great adventures) | make sb the hero(es) of great adventure |  | ph. | /meɪk ðə ˈhɪroʊz əv ɡreɪt ədˈventʃərz/ | 使某人成為偉大冒險的英雄 | 頻率::3;;難度::4 | 🎯 "Interactive storytelling games effectively make the passionate players the main heroes of great epic adventures."
+violent | violent |  | adj. | /ˈvaɪələnt/ | 暴力的／猛烈的 | 頻率::5;;難度::3 | 🚀 violence 衍生單字 ✨ violence (n.) 🎯 "The deeply concerned parents severely restricted their kids from playing extremely violent video games."
+electronically | electronically |  | adv. | /ɪˌlekˈtrɑːnɪkli/ | 電子地／透過電子設備地 | 頻率::4;;難度::4 | 🎯 "Modern global banking systems allow international customers to safely transfer large sums of money electronically."
+opponent (opponents) | opponent |  | n. | /əˈpoʊnənt/ ; /əˈpoʊnənts/ | 對手／競爭者 | 字首::an x;;頻率::4;;難度::4 | 📚 異構對照解析：[opponent] <> [ally] 🎯 "The highly skilled chess player quickly defeated all his fierce opponents in the final national tournament." 🎯 "During the devastating global war, the small isolated nation desperately needed a strong military ally."
+victim (victims) | victim |  | n. | /ˈvɪktɪm/ ; /ˈvɪktɪmz/ | 受害者／犧牲品 | 字首::a x;;頻率::5;;難度::3 | ✨ innocent victim 🎯 "The local charity organization generously provides necessary financial support for the innocent victims of the devastating earthquake."
+be harmful to | be harmful to |  | ph. | /bi ˈhɑːrmfl tu/ | 對⋯⋯有害 | 頻率::5;;難度::3 | 🎯 "Numerous scientific medical studies strongly indicate that excessive smoking is incredibly harmful to human health."
+addictive | addictive |  | adj. | /əˈdɪktɪv/ | 使人上癮的 | 頻率::4;;難度::4 | 🚀 addiction 衍生單字 ✨ addict (n.) 🎯 "Some brightly colored smartphone puzzle games are deliberately designed to be highly addictive for young energetic users."
+grow out of one's addiction (grow out of one's addictions) | grow out of one's addiction |  | ph. | /ɡroʊ aʊt əv wʌnz əˈdɪkʃnz/ | 擺脫某人的沉迷／戒除某人的成癮 | 頻率::4;;難度::4 | 🎯 "With proper dedicated professional counseling, struggling teenagers can successfully grow out of their serious internet addictions."
+no more mindless than | no more mindless than |  | ph. | /noʊ mɔːr ˈmaɪndləs ðæn/ | 不比⋯⋯更無腦／和⋯⋯一樣沒意義 | 頻率::3;;難度::5 | 📚 異構對照解析：[no more... than] (兩者皆非) <> [no less... than] (兩者皆是) 🎯 "Playing certain simple repetitive video games is no more mindless than passively watching television all day long." 🎯 "His brilliant heartfelt performance was absolutely no less impressive than the veteran lead actor's dramatic masterpiece."
+spontaneously | spontaneously |  | adv. | /spɑːnˈteɪniəsli/ | 自發地／不由自主地 | 頻率::3;;難度::5 | 🚀 spontaneous 衍生單字 ✨ spontaneous (adj.) 🎯 "The massive excited crowd spontaneously erupted into incredibly loud cheers when the beloved legendary singer finally appeared."
+intimately | intimately |  | adv. | /ˈɪntɪmətli/ | 親密地／熟悉地 | 頻率::4;;難度::5 | 🎯 "The two brilliant research scientists worked intimately together on the complex biological project for over a decade."
+dispose of | dispose of |  | ph. | /dɪˈspoʊz əv/ | 處理掉⋯⋯／清除⋯⋯ | 頻率::4;;難度::5 | 🎯 "The massive chemical factory must safely and strictly legally dispose of all highly dangerous toxic waste materials."
+be incredible to | be incredible to |  | ph. | /bi ɪnˈkredəbl tu/ | 對某人來說難以置信 | 頻率::4;;難度::4 | 🎯 "It is still completely incredible to me that he actually survived that horrible and terrifying car accident without a scratch."
+be effective on | be effective on |  | ph. | /bi ɪˈfektɪv ɑːn/ | 對⋯⋯有效 | 頻率::5;;難度::3 | 🎯 "This incredibly powerful new experimental medicine is particularly effective on elderly patients suffering from chronic joint pain."
+far from | far from |  | ph. | /fɑːr frəm/ | 遠非⋯⋯／完全不⋯⋯ | 頻率::5;;難度::3 | 🎯 "The complex final scientific results of the difficult experiment were completely far from what we originally expected to find."
+coming-of-age novel (coming-of-age novels) | coming-of-age novel |  | ph. | /ˈkʌmɪŋ əv eɪdʒ ˈnɑːvl/ ; /ˈkʌmɪŋ əv eɪdʒ ˈnɑːvlz/ | 成長小說 | 字首::x;;頻率::4;;難度::4 | ✨ coming-of-age 文化聯想 🎯 "This beautifully written coming-of-age novel perfectly captures the intense joy and painful confusion of growing up."
+common theme(s) of adolescence | common theme(s) of adolescence |  | ph. | /ˈkɑːmən θiːmz əv ˌædəˈlesns/ | 青春期的共同主題 | 字首::the;;頻率::4;;難度::4 | 🎯 "Rebellion and the desperate search for personal identity are certainly the common themes of adolescence."
+American literature | American literature |  | ph. | /əˈmerɪkən ˈlɪtrətʃər/ | 美國文學 | 頻率::5;;難度::3 | 🎯 "Mark Twain is universally considered to be a highly prominent and influential figure in American literature."
+tale (tales) | tale |  | ph. | /teɪl/ ; /teɪlz/ | 故事[絕對複數] | 字首::x;;頻率::5;;難度::3 | 🎯 "The tired old sailor vividly told fascinating tales of his incredibly wild adventures at sea."
+character (characters) | character |  | n. | /ˈkærəktər/ ; /ˈkærəktərz/ | 角色[絕對複數] | 字首::x;;頻率::5;;難度::2 | 🎯 "The talented young author expertly developed several highly complex characters in her latest fantasy novel."
+appear in both novel (appear in both novels) | appear in both novel |  | ph. | /əˈpɪr ɪn boʊθ ˈnɑːvl/ ; /əˈpɪr ɪn boʊθ ˈnɑːvlz/ | 在兩部小說中都有出現 | 頻率::4;;難度::3 | 🎯 "These incredibly fascinating recurring minor characters consistently appear in both novels by the same author."
+be narrated by | be narrated by |  | ph. | /bi ˈnæreɪtɪd baɪ/ | 由⋯⋯敘述 | 頻率::4;;難度::4 | 🚀 narrate 衍生單字 ✨ narrative (n.) 🎯 "The award-winning historical documentary is beautifully narrated by a famous veteran British actor."
+strike a chord with many a reader | strike a chord with many a reader |  | ph. | /straɪk ə kɔːrd wɪθ ˈmeni ə ˈriːdər/ | 引起許多讀者的共鳴 | 頻率::3;;難度::5 | 📚 背景知識：strike a chord 原指彈奏和弦，引申為扣人心弦、引起共鳴。many a + 單數名詞，為文學用法，意指「許多的」。 🎯 "The speaker's incredibly passionate words successfully struck a chord with many a reader in the large audience."
+relate to us all | relate to us all |  | ph. | /rɪˈleɪt tu ʌs ɔːl/ | 與我們所有人產生共鳴／與我們所有人息息相關 | 頻率::5;;難度::3 | 🎯 "The profound underlying universal message of this classic tragic story deeply relates to us all."
+capture the audience with his easy talk and humor | capture the audience with his easy talk and humor |  | ph. | /ˈkæptʃər ði ˈɔːdiəns wɪθ hɪz ˈiːzi tɔːk ənd ˈhjuːmər/ | 用他輕鬆的談吐和幽默吸引了觀眾 | 頻率::4;;難度::4 | 🎯 "The incredibly charismatic guest speaker effortlessly captures the audience with his easy talk and humor."
+with nostalgia and fondness | with nostalgia and fondness |  | ph. | /wɪθ nɑːˈstældʒə ənd ˈfɑːndnəs/ | 帶著懷舊與喜愛之情 | 頻率::3;;難度::5 | 🚀 nostalgia 衍生單字 ✨ nostalgic (adj.) 🎯 "The elderly gentleman fondly looked back on his precious childhood memories with deep nostalgia and fondness."
+face a crisis of conscience | face a crisis of conscience |  | ph. | /feɪs ə ˈkraɪsɪs əv ˈkɑːnʃəns/ | 面臨良心危機 | 頻率::3;;難度::5 | 🎯 "The fiercely honest police officer bravely faces a crisis of conscience when asked to secretly hide the vital evidence."
+wrestle with one's conscience | wrestle with one's conscience |  | ph. | /ˈresl wɪθ wʌnz ˈkɑːnʃəns/ | 與某人的良心交戰 | 頻率::3;;難度::5 | 🎯 "He had to agonizingly wrestle with his conscience all night before finally deciding to tell the ugly truth."
+one's dilemma is central to the novel | one's dilemma is central to the novel |  | ph. | /wʌnz dɪˈlemə ɪz ˈsentrəl tə ðə ˈnɑːvl/ | 某人的進退兩難是這部小說的核心 | 頻率::4;;難度::4 | 🎯 "The brave young hero's intense moral dilemma is central to the novel and completely drives the entire dramatic plot."
+be torn between A and B | be torn between A and B |  | ph. | /bi tɔːrn bɪˈtwiːn/ | 在⋯⋯之間掙扎／左右為難 | 頻率::4;;難度::4 | 🎯 "She is currently painfully torn between pursuing her true artistic passion and keeping her incredibly stable boring job."
+figure out right from wrong | figure out right from wrong |  | ph. | /ˈfɪɡjər aʊt raɪt frəm rɔːŋ/ | 分辨是非 | 頻率::5;;難度::3 | 🎯 "Loving parents must carefully and patiently guide their growing children to clearly figure out right from wrong."
+reconcile what they have been taught about the world with the way the world really is | reconcile what they have been taught about the world with the way the world really is |  | ph. | /ˈrekənsaɪl wʌt ðeɪ hæv bɪn tɔːt əˈbaʊt ðə wɜːrld wɪθ ðə weɪ ðə wɜːrld ˈrɪəli ɪz/ | 將他們被教導的世界觀與世界的真實樣貌調和 | 頻率::3;;難度::5 | 🎯 "It is often extremely difficult for young adults to successfully reconcile what they have been taught about the world with the way the world really is."
+fateful night | fateful night |  | ph. | /ˈfeɪtfl naɪt/ | 那個決定命運的夜晚 | 字首::the;;頻率::3;;難度::4 | 🎯 "Everything in his previously quiet and peaceful life completely changed forever on that dark fateful night."
+secretly witness the murder of | secretly witness the murder of |  | ph. | /ˈsiːkrətli ˈwɪtnəs ðə ˈmɜːrdər əv/ | 秘密目擊某人的謀殺案 | 頻率::4;;難度::4 | 🎯 "The terrified young boy happened to secretly witness the brutal murder of the cruel local gang leader."
+murderer (murderers) | murderer |  | n. | /ˈmɜːrdərər/ ; /ˈmɜːrdərərz/ | 謀殺者／兇手 | 字首::a x;;頻率::4;;難度::4 | 🎯 "The ruthless and extremely dangerous serial murderer was finally captured by the police after a massive nationwide manhunt."
+vengeance | vengeance |  | n. | /ˈvendʒəns/ | 復仇[不可數] | 頻率::3;;難度::5 | 📚 異構對照解析：[vengeance] <> [forgiveness] 🎯 "The angry defeated warrior fiercely swore terrible vengeance against the cruel enemies who completely destroyed his quiet village." 🎯 "She bravely chose the highly difficult path of true forgiveness instead of blindly seeking endless destructive revenge."
+see an innocent man convicted | see an innocent man convicted |  | ph. | /siː ən ˈɪnəsnt mæn kənˈvɪktɪd/ | 看到一個無辜的人被定罪 | 頻率::4;;難度::5 | 🚀 convict 衍生單字 ✨ conviction (n.) 🎯 "The passionate young defense lawyer simply could not bear seeing an innocent man convicted of the terrible crime."
+deal with | deal with |  | ph. | /diːl wɪθ/ | 處理⋯⋯／應付⋯⋯／探討⋯⋯ | 頻率::5;;難度::2 | 🎯 "The newly elected mayor desperately needs to effectively deal with the rapidly rising urban crime rate."
+boyhood adventure (boyhood adventures) | boyhood adventure |  | ph. | /ˈbɔɪhʊd ədˈventʃər/ ; /ˈbɔɪhʊd ədˈventʃərz/ | 男孩時期的冒險 | 字首::- a x;;頻率::4;;難度::3 | 🎯 "The exciting classic book vividly describes his incredible and highly dangerous boyhood adventures in the deep dark forest."
+come across Jim | come across Jim |  | ph. | a slave from the town | /kʌm əˈkrɔːs dʒɪm ə sleɪv frəm ðə taʊn/ | 頻率::偶然遇到來自鎮上的奴隸吉姆;;難度::4 | 3
+escape to a free state | escape to a free state |  | ph. | /ɪˈskeɪp tu ə friː steɪt/ | 逃往自由州 | 頻率::4;;難度::3 | 🎯 "The desperate runaway slaves bravely attempted to quietly escape to a free state under the dark cover of night."
+struggle with the concept of slavery | struggle with the concept of slavery |  | ph. | /ˈstrʌɡl wɪθ ðə ˈkɑːnsept əv ˈsleɪvəri/ | 與奴隸制的概念抗爭／在奴隸制的概念中掙扎 | 頻率::4;;難度::4 | 🎯 "The highly educated young man deeply struggles with the cruel concept of slavery in his deeply divided society."
+maturity | maturity |  | n. | /məˈtʃʊrəti/ | 成熟[不可數] | 頻率::4;;難度::4 | 🚀 mature 衍生單字 ✨ mature (adj.) 🎯 "She consistently showed surprisingly great maturity and calm judgment when suddenly handling the difficult family crisis."
+in common | in common |  | ph. | /ɪn ˈkɑːmən/ | 共同點／共通之處 | 頻率::5;;難度::2 | ✨ have a lot in common 🎯 "Despite their completely different cultural backgrounds, the two close friends actually have a lot in common."
+in fact | in fact |  | ph. | /ɪn fækt/ | 事實上 | 頻率::5;;難度::1 | 🎯 "He often deliberately seems extremely arrogant; in fact, he is just very shy and deeply insecure."
+reconcile (reconciled, reconciles, reconciling) | reconcile | reconcile(s) - reconciled x2 - reconciling | v. | /ˈrekənsaɪl/ | [三態++]調和／使和解 | 字首::to;;頻率::4;;難度::5 | 📚 智慧策展引擎觸發：++ 字族窮舉與全句型武裝。 ✨ reconcile A with B 🎯 "It is often incredibly difficult to successfully reconcile his highly idealistic theories with the harsh practical reality."
+reconcile oneself to | reconcile oneself to |  | ph. | /ˈrekənsaɪl wʌnˈself tu/ | 妥協於⋯⋯／接受⋯⋯ | 頻率::3;;難度::5 | 📚 介系詞防呆強制顯性化：to 為介系詞，後須接 N. 或 V-ing。 🎯 "After the sudden unexpected accident, he sadly had to reconcile himself to never playing professional sports again."
+reconciliation (reconciliations) | reconciliation |  | n. | /ˌrekənsɪliˈeɪʃn/ ; /ˌrekənsɪliˈeɪʃnz/ | 和解[不可數] ； 一次和解[可數單數] ； 多次和解[絕對複數] | 字首::- a x;;頻率::4;;難度::5 | ✨ reach a reconciliation 🎯 "The two bitterly rival nations finally reached a historic peace reconciliation after decades of brutal and destructive war."
+irreconcilable | irreconcilable |  | adj. | /ɪˈrekənsaɪləbl/ | 不可調和的／無法妥協的 | 頻率::3;;難度::6 | 📚 異構對照解析：[irreconcilable] <> [reconcilable] 🎯 "The furious married couple quickly filed for a bitter divorce due to completely irreconcilable differences." 🎯 "With proper open communication, most minor family conflicts are actually quite easily reconcilable."
+in a steady decrease | in a steady decrease |  | ph. | /ɪn ə ˈstedi dɪˈkriːs/ | 穩定下降中 | 頻率::4;;難度::3 | 🎯 "The city's overall annual birthrate has been in a steady decrease over the past long decade."
+realize that crisis is at hand | realize that crisis is at hand |  | ph. | /ˈriːəlaɪz ðæt ˈkraɪsɪs ɪz ət hænd/ | 意識到危機迫在眉睫 | 頻率::4;;難度::4 | 🎯 "The government must quickly realize that crisis is at hand and desperately take immediate action."
+provide great encouragement for | provide great encouragement for |  | ph. | /prəˈvaɪd ɡreɪt ɪnˈkɜːrɪdʒmənt fɔːr/ | 為⋯⋯提供極大的鼓勵 | 頻率::4;;難度::3 | 🎯 "The newly implemented tax policy will officially provide great encouragement for young married couples to have more children."
+in spite of cash encouragement | in spite of cash encouragement |  | ph. | /ɪn spaɪt əv kæʃ ɪnˈkɜːrɪdʒmənt/ | 儘管有現金獎勵 | 頻率::4;;難度::4 | 🎯 "The national birthrate unfortunately remained very low in spite of cash encouragement from the local authorities."
+share the burden of | share the burden of |  | ph. | /ʃer ðə ˈbɜːrdn əv/ | 分擔⋯⋯的負擔 | 頻率::4;;難度::3 | 🎯 "Modern working fathers are socially expected to actively share the burden of successfully raising young children."
+Swedish ministry | Swedish ministry |  | ph. | /ˈswiːdɪʃ ˈmɪnɪstri/ | 瑞典部會 | 字首::the;;頻率::3;;難度::4 | 🎯 "The official Swedish ministry recently announced a highly progressive and fully comprehensive new family support policy."
+take one's paid leave | take one's paid leave |  | ph. | /teɪk wʌnz peɪd liːv/ | 休某人的有薪假 | 頻率::5;;難度::2 | 🎯 "All hard-working corporate employees have the absolute legal right to fully take their paid leave."
+paid leave | paid leave |  | ph. | /peɪd liːv/ | 有薪假 | 頻率::5;;難度::2 | 🎯 "Most modern competitive companies now proudly offer several weeks of fully paid leave for all new parents."
+parental leave | parental leave |  | ph. | /pəˈrentl liːv/ | 育嬰假 | 頻率::5;;難度::3 | 🎯 "Generous parental leave policies significantly help both exhausted mothers and fathers properly bond with their beautiful newborns."
+take parental leave | take parental leave |  | ph. | /teɪk pəˈrentl liːv/ | 休育嬰假 | 頻率::4;;難度::3 | 🎯 "It is becoming increasingly common and socially acceptable for modern new fathers to bravely take parental leave."
+qualify for paid maternity leave | qualify for paid maternity leave |  | ph. | /ˈkwɑːlɪfaɪ fɔːr peɪd məˈtɜːrnəti liːv/ | 符合帶薪產假的資格 | 頻率::4;;難度::4 | 🎯 "New female employees usually must work for a full calendar year to completely qualify for paid maternity leave."
+use a mere 12 of it | use a mere 12 of it |  | ph. | /juːz ə mɪr twelv əv ɪt/ | 僅使用了其中的一小部分 | 頻率::3;;難度::4 | 🎯 "Despite secretly having generous vacation time available, many highly anxious workers use a mere 12 of it."
+not take even a single day off work | not take even a single day off work |  | ph. | /nɑːt teɪk ˈiːvn ə ˈsɪŋɡl deɪ ɔːf wɜːrk/ | 連一天的假都不請 | 頻率::4;;難度::3 | 🎯 "He is so deeply dedicated to his crucial new project that he will not take even a single day off work."
+make employer(s) reluctant to V | make employer(s) reluctant to V |  | ph. | /meɪk ɪmˈplɔɪərz rɪˈlʌktənt tu/ | 使雇主不情願去⋯⋯ | 頻率::4;;難度::4 | 🎯 "Extremely strict traditional labor laws can sometimes completely make employers reluctant to officially hire inexperienced young workers."
+permanent | permanent |  | adj. | /ˈpɜːrmənənt/ | 永久的／長期的 | 頻率::4;;難度::4 | 📚 異構對照解析：[permanent] <> [temporary] 🎯 "After successfully completing her rigorous probation period, she finally secured a highly sought-after permanent job at the company." 🎯 "The busy retail store is currently heavily hiring many temporary workers for the upcoming chaotic holiday shopping season."
+use it or lose it | use it or lose it |  | ph. | /juːz ɪt ɔːr luːz ɪt/ | 不用就作廢／逾期作廢 | 頻率::4;;難度::3 | 📚 背景知識：這是一句常見的英文慣用語，指某項權利或能力如果不主動使用就會永遠失去。 🎯 "The extremely strict company policy regarding unused annual vacation days is basically use it or lose it."
+build up a relationship | build up a relationship |  | ph. | /bɪld ʌp ə rɪˈleɪʃnʃɪp/ | 建立關係 | 頻率::4;;難度::3 | 🎯 "It absolutely takes a lot of precious time and dedicated sincere effort to truly build up a relationship with a difficult new client."
+Norway | Norway |  | n. | /ˈnɔːrweɪ/ | 挪威 | 頻率::4;;難度::3 | 📚 背景知識：位於北歐斯堪地那維亞半島的發達國家，以其極度完善的社會福利與高昂生活水準聞名。 🎯 "Norway is consistently globally ranked as one of the absolutely best countries in the entire world to safely live in."
+a similar policy | a similar policy |  | ph. | /ə ˈsɪmələr ˈpɑːləsi/ | 一項類似的政策 | 頻率::4;;難度::3 | 🎯 "Several progressive neighboring European countries have successfully implemented a similar policy regarding free public childcare."
+work wonder (work wonders) | work wonder |  | ph. | /wɜːrk ˈwʌndər/ ; /wɜːrk ˈwʌndərz/ | 創造奇蹟／產生奇效 | 頻率::4;;難度::4 | 🎯 "A genuinely good night's sleep can absolutely work wonders for your chronically tired physical and delicate mental health."
+The population explosion is out of control. | The population explosion is out of control. |  | sent. | /ðə ˌpɑːpjuˈleɪʃn ɪkˈsploʊʒn ɪz aʊt əv kənˈtroʊl/ | 人口爆炸失控了 | 頻率::3;;難度::4 | 🎯 "Many deeply worried global demographic experts strongly believe that the rapid population explosion is out of control."
+[字典結束]
+[TOPIC:第1回 - 一_綜合測驗]
+[文章開始]
+Some parents are called "helicopter parents" because they hover over their children and make a lot of noise rescuing them whenever difficulty arises. They might protest <%>what</%> they deem an unfair grade or <%>demand</%> to know what is being said in counseling sessions. At the very least, helicopter parents want to know what the university is doing to help their children thrive. If something occurs that they don't like, they're <%>apt</%> to dial the university president directly. <br><br>
+Some experts believe that these parents contribute to the development of psychological problems in their children by overprotecting them and keeping them from learning how to cope with adversity. Such intrusiveness breeds anxiety because it contains the <%>implicit</%> message that "You are fragile and need continuing help." Their children are coddled and protected <%>to a degree</%> that threatens their ability later in life to form healthy relationships and proper job skills. <br><br>
+[文章結束]
+[選項開始]
+1. (A) that (B) what (C) which (D) when
+2. (A) demand (B) command (C) comment (D) recommend
+3. (A) apt (B) alert (C) addicted (D) accustomed
+4. (A) inferior (B) superior (C) implicit (D) explicit
+5. (A) at a distance (B) to a degree (C) in the long run (D) for some reason
+[選項結束]
+
+[TOPIC:第1回 - 一_綜合測驗 (2)]
+[文章開始]
+A recent survey reported that young people prefer to spend time with their peers, and that they only see their parents to ask for money. Many also seem to think that their wishes are more important than <%>those</%> of their parents. At best, this causes problems in the family and makes everyone's life less enjoyable. In worse cases, tragedies can happen. Reports of young people <%>failing to</%> take care of elderly parents have become common. <br><br>
+As Taiwan's economy has developed, people's lifestyles have changed. The neglect not only comes from the kids: Busy parents give less time and attention to their children, <%>causing</%> the children to have less love and respect for their parents <%>in return</%>. <br><br>
+Nevertheless, children and parents should stop and think before it is too late. The idea is <%>not to</%> blame anyone, but to find a way to keep traditional values alive as we progress into the next century. <br><br>
+[文章結束]
+[選項開始]
+6. (A) X (B) that (C) these (D) those
+7. (A) are bound to (B) are inclined to (C) failing to (D) feeling like
+8. (A) which makes (B) which lets (C) enabling (D) causing
+9. (A) in reward (B) in return (C) by returns (D) by chance
+10. (A) not to (B) not merely to (C) instead of (D) regardless of
+[選項結束]
+
+[TOPIC:第1回 - 二_文意選填]
+[文章開始]
+Zana Briski is a professional photographer. In 1997, she was on a <%>mission</%> to Kolkata to learn about women living in a brothel. As she was <%>keeping</%> a record of their daily lives with photos, she got to know the kids there, too. When they showed an interest in her camera, she taught them how to take a picture with it. Little did she know that these lessons would <%>end up</%> changing the kids as well as their lives. Through photography, the children learned to express <%>themselves</%> and to see beauty and art in their surroundings. <br><br>
+Briski <%>set up</%> a program called Kids with Cameras to help the kids. She displayed and sold photos taken by those kids to raise money for their education; <%>in addition</%>, she made a film about how photography had changed the lives of children in poor societies. Similar programs, <%>before long</%>, appeared in Jerusalem, Cairo and Haiti. With the help of those programs, many kids in those countries have been sent to good schools and offered a chance to start new lives. <br><br>
+The kids from the <%>original</%> program in Kolkata also have come a long way. Many now attend private schools in India. Most importantly, because of Kids with Cameras, people are now more <%>aware of</%> these children in poor areas. Now, Kids with Cameras has joined another organization called Kids with Destiny. They're <%>reaching</%> out to even more kids in need. <br><br>
+[文章結束]
+[選項開始]
+(A) set up (B) themselves (C) before long (D) in addition (E) keeping (F) original (G) mission (H) aware of (I) end up (J) reaching
+[選項結束]
+
+[TOPIC:第1回 - 三_篇章結構]
+[文章開始]
+Young people have access to a huge variety of information. Although what is taught in school forms the basis to either get a job or to prepare for higher learning, <%>it does not allow students to reach their potential by using other medium of learning which might be better suited to their natural abilities.</%> <br><br>
+People may say that kids today are lazy and watch too much television, or spend too long on the computer. Could it not be possible that this is the way to stimulate us young minds? We were born into an age of digital technology, <%>so it's useless to try to make us take steps backwards into the past.</%> With all this new technology, why should we be subjected to traditional styles of learning? <br><br>
+We are taught study skills to lessen the long hours of exam preparation and to prevent late-night cramming sessions. We then sit an exam with an allocated amount of time, <%>so it's not how much you've learned but how quickly you can write it down.</%> This method is out of date because the grades acquired from these exams are supposed to reflect students' ability to understand information. How can they possibly show a student's understanding when the material isn't taught in the most stimulating way? <br><br>
+Technology is advancing in leaps and bounds, <%>and young students should be the first to learn about it so we can advance with it.</%> In the conventional classroom, where there should be the most interest and enthusiasm to learn, there is the least. <%>Knowledge is what takes us into the future and it should be carried by the future leaders of the world, who are young students.</%> <br><br>
+[文章結束]
+[選項開始]
+(A) it does not allow students to reach their potential by using other medium of learning which might be better suited to their natural abilities.
+(B) so it's not how much you've learned but how quickly you can write it down.
+(C) It helps develop students' greatest abilities and make possible the discovery and pursuit of their dreams.
+(D) so it's useless to try to make us take steps backwards into the past.
+(E) Knowledge is what takes us into the future and it should be carried by the future leaders of the world, who are young students. (F) and young students should be the first to learn about it so we can advance with it.
+[選項結束]
+
+[TOPIC:第2回 - 一_綜合測驗]
+[文章開始]
+The Internet has replaced books as a major source of information for Taiwanese primary school students, according to a recent survey. The survey was conducted last December, and it <%>found</%> that 77 percent of the students considered the Internet to be the most convenient source of information. Fourteen percent of the respondents said they often <%>turned to</%> books for information instead of going online. Of all the students surveyed, 27 percent said they had never used the Net. <br><br>
+The survey randomly selected 4,200 students in 26 primary schools in various parts of Taiwan to investigate their reading habits. A total of 4,017 questionnaires were properly <%>filled out</%> by the respondents. <br><br>
+According to the survey, five percent of the school children indicated that they did not read any <%>extracurricular</%> reading materials. Of those who read such materials, 25 percent liked to read comics, 20 percent fables and stories, 15 percent books on natural sciences, and 12.3 percent books on technology. The survey <%>further</%> indicated that 45 percent of the school children read at least five books ever month; another 45 percent of them read less than three per month. <br><br>
+[文章結束]
+[選項開始]
+1. (A) took (B) put (C) knew (D) found
+2. (A) used up (B) went off (C) turned to (D) made into
+3. (A) taken in (B) given off (C) filled out (D) picked on
+4. (A) story (B) comic (C) technology (D) extracurricular
+5. (A) thus (B) further (C) otherwise (D) for instance
+[選項結束]
+
+[TOPIC:第2回 - 一_綜合測驗 (2)]
+[文章開始]
+Young visitors to museums often complain about having museum feet, the tired feeling one gets after spending too much time in a museum. A case of museum feet makes one feel like saying: "This is <%>boring</%> I could have done the painting myself. When can we sit down? What time is it?" <br><br>
+Studies of museum behavior show that the average visitor spends about four seconds looking at one object. For young visitors, the time span can be <%>even</%> shorter. Children are more interested in smells, sounds, and the "feel" of a place than looking at a work of art. If they stay in a museum too long, a feeling of boredom and monotony will build up, leading <%>eventually</%> to impatience and fatigue. <br><br>
+To <%>avoid</%> museum feet, try not to have children look at too many things in one visit. It is reported that young visitors get more out of a visit if they focus on <%>no more than</%> nine objects. One and a half hours is the ideal time to keep their eyes and minds sharp, and their feet happy! <br><br>
+[文章結束]
+[選項開始]
+6. (A) boring (B) difficult (C) cool (D) exciting
+7. (A) almost (B) also (C) even (D) meanwhile
+8. (A) efficiently (B) eventually (C) fortunately (D) permanently
+9. (A) affect (B) approach (C) assure (D) avoid
+10. (A) no better than (B) no less than (C) no more than (D) no sooner than
+[選項結束]
+
+[TOPIC:第2回 - 二_文意選填]
+[文章開始]
+The problem of how to make learning fun and effective is a question teachers are always asking. Now we have a great <%>solution</%> to it: BrainPOP. It is an educational program <%>consisting</%> of brief animated videos in which a man named Tim and his robot friend Moby discuss various subjects. <br><br>
+It was developed by Pediatrician Avraham Kadar in an <%>effort</%> to explain complex medical concepts to children he was treating in 1999. Thousands of students and teachers have benefited from it ever <%>since</%>. By <%>comparing</%> students who use BrainPOP with those who don't, researchers found BrainPOP users showed greater improvement in vocabulary, reading comprehension, language skills and science than other students. <br><br>
+In fact, the benefits are not <%>limited</%> to native English speakers. One award-winning Canadian school with students from many different linguistic backgrounds made BrainPOP <%>available</%> to all its teachers and found it helpful. Similarly, a school in the U.S. for students with learning disabilities also found the program effective. The reason is simple. Because BrainPOP <%>integrates</%> pictures into its presentations instead of solely relying on language, it keeps students engaged, making it easy for them to understand ideas presented in the videos. <br><br>
+In addition, students love the character Moby, a robot that cannot speak but communicates with facial <%>expressions</%> and beeps. They can <%>relate</%> to the robot's limitations and thus are willing to push beyond their own limits and learn. Now BrainPOP also provides apps for mobile devices. Students can use it in the classroom, at home and everywhere. BrainPOP helps students truly enjoy learning. <br><br>
+[文章結束]
+[選項開始]
+(A) effort (B) integrates (C) since (D) relate (E) solution (F) limited (G) comparing (H) available (I) consisting (J) expressions
+[選項結束]
+
+[TOPIC:第2回 - 三_篇章結構]
+[文章開始]
+Everyone likes to get something for free. That's why a lot of people use software like Napster, which allows them to exchange free music across the Internet. <%>With all this free music, why buy expensive CDs?</%> Well, for one reason, the artists who write the songs need to make a living from their CDs. Artists get little, if nothing, from Napster. But recently U.S. courts have ordered Napster to stop its users from exchanging copyrighted material. <%>That could be the end of this free online service.</%> <br><br>
+Now artists and record companies are concerned about a new online threat to their business: streaming. <%>Using streaming technology, thousands of radio stations around the world broadcast live on the Web.</%> At an ordinary radio station, the station pays royalties for the songs they broadcast. <%>But online, no one keeps track of who broadcasts what.</%> Right now just about anyone with technical skill can stream music online. <br><br>
+On a site like Shoutcast.com, for example, computer users who download the software can broadcast their entire CD collection if they want to. <%>Streaming is big business now and can't be stopped like Napster.</%> The recording industry needs to come up with a fair plan to let listeners have their music and artists their royalties. <br><br>
+[文章結束]
+[選項開始]
+(A) With all this free music, why buy expensive CDs?
+(B) Using streaming technology, thousands of radio stations around the world broadcast live on the Web.
+(C) Streaming is big business now and can't be stopped like Napster.
+(D) With so many ways to stream an endless amount of music, it can be hard to pick the right option.
+(E) That could be the end of this free online service. (F) But online, no one keeps track of who broadcasts what.
+[選項結束]
+
+[TOPIC:第3回 - 一_綜合測驗]
+[文章開始]
+Many studies indicate that extended cell phone use can lead to brain tumors. The full effects of cell phone radiation are unknown. We don't know exactly how much radiation is too much or <%>what damage</%> results from it. Some studies show that mice <%>exposed to</%> radiation for only a few minutes a day develop cancer. Scientists suggest limiting contact with radiation, especially for young people with developing brains. <br><br>
+A recent study in Taiwan showed that the average time teenagers spent on their cell phones was <%>up to</%> 2.6 hours a day. Not surprisingly, few of the respondents were concerned about the potential threat of radiation. The researchers were not stunned by these findings. Cell phones have become a major part of teenagers' lives. At the same time, teens have a tendency to believe that they are <%>immune</%> to dangers, but this is <%>far from</%> the truth. Young people are the future of a nation, and no nation can afford to lose its future. <br><br>
+[文章結束]
+[選項開始]
+1. (A) how dangerous (B) which part (C) that harm (D) what damage
+2. (A) supposed to (B) exposed to (C) reject into (D) fearful of
+3. (A) as for (B) or so (C) up to (D) at all
+4. (A) brave (B) immune (C) potential (D) fragile
+5. (A) by all means (B) at any cost (C) once and for all (D) far from
+[選項結束]
+
+[TOPIC:第3回 - 一_綜合測驗 (2)]
+[文章開始]
+Children's encounters with poetry should include three types of response enjoyment, exploration, and deepening understanding. These do not occur always as <%>separate</%> steps but may happen simultaneously. Certainly, children must start with enjoyment <%>or</%> their interest in poetry dies. But if from the beginning they find delight in the poems they hear or read, they are ready and eager to <%>explore</%> further-more books and more poems of different sorts. Even the youngest children can learn to see implications <%>beyond</%> the obvious. To read for hidden meanings is to identify with the poet, to ask the poet's questions. This is reading for deeper understanding, <%>taking</%> a thoughtful look at what lies beneath the surface. Enjoyment, exploration, and deeper understanding must all be part of children's experience with poetry if we are to help them to love it. <br><br>
+[文章結束]
+[選項開始]
+6. (A) childish (B) artistic (C) separate (D) innocent
+7. (A) or (B) and (C) so (D) then
+8. (A) escape (B) explore (C) accustom (D) appear
+9. (A) near (B) among (C) beyond (D) without
+10. (A) take (B) takes (C) to take (D) taking
+[選項結束]
+
+[TOPIC:第3回 - 二_文意選填]
+[文章開始]
+We often applaud individuals who are self-taught. In them, we recognize the determination to master a subject or craft they have <%>enthusiasm</%> for. However, what about a person who not only takes <%>responsibility</%> for her own education but also uses those skills to help others? That is what Shen Hsin-Ling did, using her computer <%>savvy</%> to create a website that helps struggling farmers. <br><br>
+From the age of 11, Shen knew she wanted to <%>dedicate</%> her life to helping others. At this young age, she also created her first website, changing many farmers' lives forever. The website, <%>geared</%> toward Taiwanese farmers, helped them sell fresh produce. This proved quite a feat as farmers who <%>previously</%> had only been able to sell their produce in limited markets could now promote their goods all around Taiwan. Shen earned a lot of success from designing this website. In fact, she made over NT$6 million in profits, which went back to the needy. <br><br>
+Some of her other websites also provide educational aids for disadvantaged students who cannot afford tutoring. Coming from <%>humble</%> beginnings, Shen had grown up poor as the child of vendors. She knew children in the same position were often prevented from having tutors and receiving the same quality of education as their richer <%>counterparts</%> Shen thus used materials from libraries, bookstores, and even her personal classes to fill her website with free educational resources. <br><br>
+If it were not for Shen, the real struggles that many farmers and students face would be as <%>looming</%> as ever. Shen now still goes to great <%>lengths</%> to help anyone in need. In her eyes, having a successful life means helping those in need. <br><br>
+[文章結束]
+[選項開始]
+(A) previously (B) savvy (C) counterparts (D) enthusiasm (E) dedicate (F) lengths (G) looming (H) responsibility (I) geared (J) humble
+[選項結束]
+
+[TOPIC:第3回 - 三_篇章結構]
+[文章開始]
+The public should not put all the blame on the teachers and the education system for the recent student suicides. <%>The responsibility should also be shouldered by parents and society.</%> We should nurture and train the young generation to face difficulties and problems and help them build a positive attitude towards life. However, most of us seem to be compromising with them and giving way to their attitude. <%>Youngsters have become very self-centered because they think that they can get whatever they want.</%> Adults should try to help youngsters realize their potential without spoiling them. <br><br>
+<%>The role of teachers have become more difficult.</%> Parents tend to take their children's side when they complain about their teacher. Now teachers have to worry about homework or punishment being used as excuses for suicide. <br><br>
+Family education plays an important role in the upbringing of children. Children raised by a single parent are usually under more pressure. <%>It may be because they lack the love and attention which children in two-parent families get.</%> <br><br>
+Parents and society should accept the differences in abilities and talents between individuals. <%>Intelligence is inborn; children do not have a choice.</%> So we should accept them for what they are and encourage them to do their best. <br><br>
+[文章結束]
+[選項開始]
+(A) The role of teachers have become more difficult.
+(B) The responsibility should also be shouldered by parents and society.
+(C) It may be because they lack the love and attention which children in two-parent families get.
+(D) Youngsters have become very self-centered because they think that they can get whatever they want.
+(E) The tragedy of a young person dying because of overwhelming frustration is devastating to the family, friends, and community. (F) Intelligence is inborn; children do not have a choice.
+[選項結束]
+
+[TOPIC:第4回 - 一_綜合測驗]
+[文章開始]
+If children learn best when they are enjoying themselves, then multimedia computers are an ideal education tool. For many children, computing is fun, better than painting and music. It is like playing games. Some may like using the computer for writing <%>because</%> it is neater than writing with a pen. Moreover, the computer can be set to <%>challenge</%> all ability levels and give each child a sense of achievement. It has been pointed out that using the mouse and keyboard often works <%>particularly well</%> with slow learners. Also, poor readers seem better able to recognize the meaning of words on screen than on paper. As <%>in</%> the younger age-group, teenagers also enjoy the fact that using the computer feels more play than work. It also affects their learning method, enabling them to discover things methodically. They play around and explore. Indeed, multimedia technology has greatly <%>heightened</%> the appeal of classroom computers. Although that may cost a great deal, computers are so much a part of modern life that we believe schools have to go on spending to keep up. <br><br>
+[文章結束]
+[選項開始]
+1. (A) therefore (B) contrarily (C) similarly (D) because
+2. (A) exploit (B) challenge (C) consult (D) assemble
+3. (A) especially good (B) specific best (C) particularly well (D) enormously nice
+4. (A) that (B) in (C) with (D) about
+5. (A) decreased (B) influenced (C) minimized (D) heightened
+[選項結束]
+
+[TOPIC:第4回 - 一_綜合測驗 (2)]
+[文章開始]
+A new video game has become much more popular in America than soccer and bicycles. The game is called Nintendo because it's made by Nintendo, a Japanese company. <%>By</%> the end of the year, the game will be in 20 million American homes. About 50 million game cartridges are sold every year. <br><br>
+The game is so popular that it has spun off a TV show and a magazine. Children can even buy underwear and lunchboxes <%>with</%> Nintendo heroes' pictures on them. The game draws children into fantasy worlds by making them the heroes of great adventures. Most of the fantasies are violent. To win one game, a player has to <%>electronically</%> "kill" at least 50 opponents. The last victim is the player's own brother, who has just stolen his girlfriend. <br><br>
+Some parents say these games are <%>harmful to</%> children because they're addictive. But children grow out of their addictions, and playing Nintendo games probably is <%>no more</%> mindless than watching TV. But the games are very violent. And children who play them too often may grow up to be violent adults. <br><br>
+[文章結束]
+[選項開始]
+6. (A) To (B) From (C) By (D) On
+7. (A) from (B) except (C) among (D) with
+8. (A) spontaneously (B) unfortunately (C) intimately (D) electronically
+9. (A) disposed of (B) incredible to (C) harmful to (D) effective on
+10. (A) no more (B) rather (C) even though (D) far from
+[選項結束]
+
+[TOPIC:第4回 - 二_文意選填]
+[文章開始]
+Coming-of-age novels strike a chord with many a reader. The common themes of adolescence and the journey from childhood to <%>maturity</%> relate to us all. Mark Twain's classics, The Adventures of Tom Sawyer and Adventures of Huckleberry Finn, are two of the best-loved <%>such</%> tales in American literature. They not only have the same setting and many themes <%>in common</%>, but also share the same characters. In fact, Tom and Huck are best friends, and there are members of the St. Petersburg community who appear in both novels. Both <%>deal</%> with boyhood adventure and the ways in which children learn about the adult world. They must <%>reconcile</%> what they have been taught about the world with the way the world really is. <br><br>
+Tom Sawyer, 1876, is narrated by Tom as an adult recalling his childhood experiences- like falling in love-with nostalgia and fondness. The reader learns about the <%>fateful</%> night when Tom and Huck secretly witness the murder of Dr. Robinson. When the killer tries to frame Muff Potter for the crime, Tom faces a <%>crisis</%> of conscience. He is torn between telling the court what really happened and risking the murderer's vengeance, or seeing an innocent man <%>convicted</%>. <br><br>
+Huckleberry Finn is still a boy who tells of his own adventures. He captures the audience with his easy talk and humor. Like his best friend, he must <%>wrestle</%> with his conscience to figure out right from wrong. Huck runs away from his violent father and comes across Jim, a slave from the town. Jim's trying to escape to a free state, and Huck, who is enjoying the freedom of living outside society's rules, struggles with the concept of slavery. He does not know if he should help Jim, and his dilemma is <%>central</%> to the novel. <br><br>
+[文章結束]
+[選項開始]
+(A) fateful (B) convicted (C) reconcile (D) central (E) maturity (F) deal (G) crisis (H) wrestle (I) such (J) in common
+[選項結束]
+
+[TOPIC:第4回 - 三_篇章結構]
+[文章開始]
+The birthrate in Europe has been in a steady decrease since the 1960s. European countries do realize that crisis is at hand. <%>They are providing great encouragement for parents to create more babies in the 21st century.</%> <br><br>
+Affairs Ministry concluded that, in spite of cash encouragement, some women just don't want to be left holding the baby. "What we know is that it's good for the birthrate if men and women share the burden of having children," says Soren Kindlund, family policy adviser at the Swedish ministry. Even though Swedish parents can take their paid leave as they wish, men use a mere 12% of it. <%>60% of fathers do not take even a single day off work.</%> <br><br>
+Experts fear that the tendency for women to use most of the parental leave could make employers reluctant to give young women the permanent jobs they need to qualify for paid maternity leave. <%>Therefore, Sweden decided to allow new fathers two months' paid leave, with a warning: use it or lose it.</%> <br><br>
+Kindlund admits that men are under pressure to stay at work, even though parental pay comes out of the public purse. "It's not popular among bosses and perhaps with other men in the workplace," he says. <%>But it's good for the father and for the child if they can build up a relationship.</%> <br><br>
+<%>In Norway, a similar policy has worked wonders.</%> 70% of dads in Norway now take parental leave, and the birthrate of 1.85 children per woman is one of the highest in Europe. <br><br>
+[文章結束]
+[選項開始]
+(A) 60% of fathers do not take even a single day off work.
+(B) They are providing great encouragement for parents to create more babies in the 21st century.
+(C) Therefore, Sweden decided to allow new fathers two months' paid leave, with a warning: use it or lose it.
+(D) In Norway, a similar policy has worked wonders.
+(E) But it's good for the father and for the child if they can build up a relationship. (F) That is, the population explosion is out of control.
+[選項結束]
+
+    </textarea>
+
+    <script>
+        let dictionaryData = [];
+        let isExplanationMode = true; 
+        let parsedOptions = {}; 
+        let currentTargetWrapper = null; 
+        let currentEditingDictId = null;
+        let selectedOptionText = ""; 
+        let allTopics = {{}};
+
+        window.onload = function() {{ 
+            parseRawData(); 
+            initSystem(); 
+            initDraggableModal('draggableWindow', 'modalDragHandle', 'modalStateV12'); 
+            initDraggableModal('modeDraggable', null, 'modeStateV12'); 
+            
+            document.getElementById('contentArea').addEventListener('contextmenu', (e) => {{
+                if(!isExplanationMode) return;
+                let txt = window.getSelection().toString().trim();
+                if(txt) {{ e.preventDefault(); openAddWordMode(txt); }}
+            }});
+
+            document.getElementById('mainModal').addEventListener('mousedown', function(e) {{
+                if(e.target === this) closeModal();
+            }});
+        }};
+
+        function parseRawData() {{
+            const rawData = document.getElementById('rawTextData').value;
+            
+            // 1. 載入全域字典
+            const dictMatch = rawData.match(/\[字典開始\]([\s\S]*?)\[字典結束\]/);
+            dictionaryData = [];
+            if(dictMatch) {{
+                dictMatch[1].trim().split('\n').forEach(line => {{
+                    const p = line.split('|').map(s=>s.trim());
+                    if(p.length < 5) return;
+                    let searchKey, popupTitle, verbForms, pos, phonetics, meaning, customField, notes;
+                    if(p.length >= 8) [searchKey, popupTitle, verbForms, pos, phonetics, meaning, customField, notes] = p;
+                    else [searchKey, popupTitle, verbForms, pos, phonetics, meaning, notes] = p, customField="";
+                    
+                    let base = searchKey; let variants = [];
+                    const vM = searchKey.match(/^([^(]+)\(([^)]+)\)/);
+                    if (vM) {{ base = vM[1].trim(); variants = vM[2].split(',').map(v=>v.trim()); }}
+                    dictionaryData.push({{ searchKey, popupTitle, verbForms, base, variants, pos, phonetics, meaning, customField, notes }});
+                }});
+            }}
+
+            // 2. 載入所有大題
+            const topicMatches = [...rawData.matchAll(/\[TOPIC:(.*?)\]\n([\s\S]*?)(?=\[TOPIC:|$)/g)];
+            const selector = document.getElementById('topicSelector');
+            selector.innerHTML = "";
+            topicMatches.forEach((match) => {{
+                const title = match[1];
+                const content = match[2];
+                allTopics[title] = content;
+                const opt = document.createElement('option');
+                opt.value = title;
+                opt.innerText = title;
+                selector.appendChild(opt);
+            }});
+        }}
+
+        function switchTopic(title) {{
+            initSystem(title);
+        }}
+
+        function speakWord() {{
+            const word = document.getElementById('viewTitle').innerText.replace(/\.\.\./g, '').trim();
+            if(!word) return;
+            const audioPath = `./audio/${{word.toLowerCase()}}.mp3`;
+            const audio = new Audio(audioPath);
+            audio.play().catch(e => {{
+                console.log("找不到本地 MP3，使用內建語音代替");
+                const utterance = new SpeechSynthesisUtterance(word);
+                utterance.lang = 'en-US';
+                window.speechSynthesis.speak(utterance);
+            }});
+        }}
+
+        function toggleTeacherMenu() {{ document.getElementById('teacherMenu').classList.toggle('hidden'); }}
+
+        function setMode(toExplain) {{
+            isExplanationMode = toExplain;
+            document.getElementById('modeExplain').className = isExplanationMode ? "mode-btn mode-active" : "mode-btn mode-inactive";
+            document.getElementById('modePractice').className = !isExplanationMode ? "mode-btn mode-active" : "mode-btn mode-inactive";
+            document.getElementById('checkAllBtn').classList.toggle('hidden', isExplanationMode);
+            document.querySelectorAll('.dict-highlight').forEach(el => {{
+                el.style.backgroundColor = isExplanationMode ? "var(--highlight-color)" : "transparent";
+                el.style.pointerEvents = isExplanationMode ? "auto" : "none";
+            }});
+            closeModal();
+        }}
+
+        function initSystem(targetTitle = null) {{
+            const selector = document.getElementById('topicSelector');
+            if (targetTitle) selector.value = targetTitle;
+            const title = selector.value;
+            const content = allTopics[title];
+            if(!content) return;
+
+            const articleMatch = content.match(/\[文章開始\]([\s\S]*?)\[文章結束\]/);
+            const optionsMatch = content.match(/\[選項開始\]([\s\S]*?)\[選項結束\]/);
+            
+            parsedOptions = {{}};
+            const optLines = (optionsMatch ? optionsMatch[1] : "").trim().split('\n');
+            optLines.forEach(line => {{
+                const numMatch = line.match(/^(\d+)\./);
+                if (numMatch) {{
+                    const qNum = numMatch[1];
+                    const optRegex = /\(([A-D])\)\s*([^()]+)(?=\s*\([A-D]\)|\s*$)/g;
+                    let m; parsedOptions[qNum] = [];
+                    while ((m = optRegex.exec(line)) !== null) {{
+                        parsedOptions[qNum].push({{ letter: m[1], text: m[2].trim() }});
+                    }}
+                }}
+            }});
+
+            let html = articleMatch ? articleMatch[1].trim() : "";
+            
+            // 抓出當前這篇文章擁有的題號陣列 (以防這篇是從 6 或是 11 開始)
+            const qKeys = Object.keys(parsedOptions).map(Number).sort((a,b)=>a-b);
+            let qCount = 0;
+
+            html = html.replace(/<%>([^<]+)<\/%>/g, (m, ans) => {{
+                const qNum = qKeys[qCount] || (qCount + 1); 
+                qCount++;
+                let maxLen = 0;
+                if(parsedOptions[qNum]) parsedOptions[qNum].forEach(o => {{
+                    let len = o.text.replace(/[^\x00-\xff]/g, "xx").length;
+                    if(len > maxLen) maxLen = len;
+                }});
+                const textWidth = `width: calc(${{maxLen}}ch + 15px); min-width: calc(${{maxLen}}ch + 15px);`;
+                const wrapper = `
+                    <span class="cloze-wrapper" id="wrap-${{qNum}}" data-qnum="${{qNum}}" data-ans="${{ans.trim()}}" data-wrong-attempt="false" onclick="openOptions(${{qNum}}, this)">
+                        <span class="cloze-label" id="qlabel-${{qNum}}">${{qNum}}.</span>
+                        <span class="cloze-text" id="qtext-${{qNum}}" style="${{textWidth}}"></span>
+                    </span>`;
+                return wrapper;
+            }});
+
+            dictionaryData.forEach((w, i) => {{
+                [w.base, ...w.variants].forEach(word => {{
+                    if(!word) return;
+                    const reg = new RegExp(`\\b(${{word}})\\b`, 'gi');
+                    html = html.replace(reg, `<span class="dict-highlight" onclick="openDict(${{i}})">$1</span>`);
+                }});
+            }});
+
+            document.getElementById('contentArea').innerHTML = html;
+            setMode(isExplanationMode);
+        }}
+
+        function openModal(type, title) {{
+            document.getElementById('modalTitleText').innerText = title;
+            document.getElementById('optionsPanel').classList.add('hidden');
+            document.getElementById('dictViewPanel').classList.add('hidden');
+            document.getElementById('editPanel').classList.add('hidden');
+            document.getElementById('exportPanel').classList.add('hidden');
+            document.getElementById('btnShowAnswer').classList.add('hidden');
+            
+            const modalBody = document.getElementById('modalBodyArea');
+            if(type === 'options') modalBody.classList.add('no-padding');
+            else modalBody.classList.remove('no-padding');
+
+            const win = document.getElementById('draggableWindow');
+            const saved = localStorage.getItem('modalStateV12');
+            if(type === 'options') {{
+                win.style.transform = 'translateX(-50%)';
+                win.style.left = '50%'; win.style.top = 'auto'; win.style.bottom = '30px';
+                win.style.width = '360px'; win.style.height = 'auto';
+                document.getElementById('btnShowAnswer').classList.remove('hidden');
+            }} else if(saved) {{
+                const s = JSON.parse(saved);
+                win.style.transform = 'none'; win.style.left = s.x+'px'; win.style.top = s.y+'px';
+                win.style.width = s.w+'px'; win.style.height = s.h+'px';
+            }} else {{
+                win.style.left = '50%'; win.style.top = '15%'; win.style.transform = 'translateX(-50%)';
+                win.style.width = '450px'; win.style.height = 'auto';
+            }}
+            document.getElementById('mainModal').style.display = 'block';
+        }}
+        function closeModal() {{ document.getElementById('mainModal').style.display = 'none'; }}
+
+        // --- 選項與批改 ---
+        function openOptions(qNum, wrapperEl) {{
+            if (isExplanationMode) return;
+            currentTargetWrapper = wrapperEl;
+            const targetTextSpan = currentTargetWrapper.querySelector('.cloze-text');
+            
+            openModal('options', `第 ${{qNum}} 題選項`);
+            const list = document.getElementById('optionsList');
+            list.innerHTML = "";
+            selectedOptionText = "";
+
+            const isAlreadyRevealed = currentTargetWrapper.classList.contains('answered-black') || currentTargetWrapper.classList.contains('answered-red');
+            const correctText = currentTargetWrapper.getAttribute('data-ans');
+
+            if(parsedOptions[qNum]) {{
+                parsedOptions[qNum].forEach(opt => {{
+                    const div = document.createElement('div');
+                    div.className = 'option-wrapper';
+                    if(!isAlreadyRevealed && targetTextSpan.innerText === opt.text) div.classList.add('is-selected');
+                    if(isAlreadyRevealed && opt.text === correctText) div.classList.add('is-correct-answer');
+
+                    div.innerHTML = `
+                        <span class="option-letter">(${{opt.letter}})</span>
+                        <span class="option-text">${{opt.text}}</span>
+                        <button class="strike-btn" onclick="toggleStrike(event, this)">✗ 刪去</button>
+                    `;
+
+                    div.onclick = () => {{
+                        if(div.classList.contains('is-struck') || div.classList.contains('is-confirmed-wrong') || isAlreadyRevealed) return;
+                        document.querySelectorAll('.option-wrapper').forEach(el => el.classList.remove('is-selected'));
+                        div.classList.add('is-selected');
+                        selectedOptionText = opt.text;
+                        targetTextSpan.innerText = opt.text; 
+                        currentTargetWrapper.classList.remove('wrong');
+                    }};
+                    list.appendChild(div);
+                }});
+            }}
+            document.getElementById('optionsPanel').classList.remove('hidden');
+        }}
+
+        function toggleStrike(e, btn) {{
+            e.stopPropagation();
+            const wrapper = btn.closest('.option-wrapper');
+            wrapper.classList.toggle('is-struck');
+            btn.innerText = wrapper.classList.contains('is-struck') ? "復原" : "✗ 刪去";
+            const currentText = wrapper.querySelector('.option-text').innerText;
+            const targetTextSpan = currentTargetWrapper.querySelector('.cloze-text');
+            if(wrapper.classList.contains('is-struck') && targetTextSpan.innerText === currentText) {{
+                targetTextSpan.innerText = "";
+                wrapper.classList.remove('is-selected');
+                selectedOptionText = "";
+            }}
+        }}
+
+        function submitCurrentAnswer() {{
+            const targetTextSpan = currentTargetWrapper.querySelector('.cloze-text');
+            if(!selectedOptionText && !targetTextSpan.innerText) {{ alert("請先選擇一個答案！"); return; }}
+            
+            const correctText = currentTargetWrapper.getAttribute('data-ans');
+            const userText = targetTextSpan.innerText.trim();
+            const qNum = currentTargetWrapper.getAttribute('data-qnum');
+
+            if(userText === correctText) {{
+                const hasWrongAttempt = currentTargetWrapper.getAttribute('data-wrong-attempt') === 'true';
+                currentTargetWrapper.className = hasWrongAttempt ? 'cloze-wrapper answered-red' : 'cloze-wrapper answered-black';
+                updateQuestionLabel(qNum, correctText);
+                closeModal();
+            }} else {{
+                currentTargetWrapper.setAttribute('data-wrong-attempt', 'true');
+                currentTargetWrapper.classList.add('wrong');
+                const activeOpt = document.querySelector('.option-wrapper.is-selected');
+                if(activeOpt) {{
+                    activeOpt.classList.remove('is-selected');
+                    activeOpt.classList.add('is-confirmed-wrong');
+                }}
+            }}
+        }}
+
+        function revealCurrentAnswer() {{
+            const correctText = currentTargetWrapper.getAttribute('data-ans');
+            const qNum = currentTargetWrapper.getAttribute('data-qnum');
+            const targetTextSpan = currentTargetWrapper.querySelector('.cloze-text');
+            
+            targetTextSpan.innerText = correctText;
+            currentTargetWrapper.className = 'cloze-wrapper answered-red'; 
+            updateQuestionLabel(qNum, correctText);
+
+            document.querySelectorAll('.option-wrapper').forEach(el => {{
+                const textSpan = el.querySelector('.option-text');
+                if(textSpan && textSpan.innerText === correctText) el.classList.add('is-correct-answer');
+            }});
+        }}
+
+        function updateQuestionLabel(qNum, correctText) {{
+            let letter = "";
+            if(parsedOptions[qNum]) {{
+                const opt = parsedOptions[qNum].find(o => o.text === correctText);
+                if(opt) letter = opt.letter;
+            }}
+            const labelSpan = document.getElementById(`qlabel-${{qNum}}`);
+            if(labelSpan && letter) labelSpan.innerText = `${{qNum}}. (${{letter}})`;
+        }}
+
+        function checkAllAnswers() {{
+            document.querySelectorAll('.cloze-wrapper').forEach(wrapper => {{
+                if(wrapper.classList.contains('answered-black') || wrapper.classList.contains('answered-red')) return;
+                const targetTextSpan = wrapper.querySelector('.cloze-text');
+                const u = targetTextSpan.innerText.trim(); 
+                const c = wrapper.getAttribute('data-ans');
+                const qNum = wrapper.getAttribute('data-qnum');
+                if(u) {{
+                    if(u === c) {{
+                        wrapper.className = 'cloze-wrapper answered-black';
+                        updateQuestionLabel(qNum, c);
+                    }} else {{
+                        wrapper.className = 'cloze-wrapper wrong';
+                    }}
+                }}
+            }});
+        }}
+
+        function renderCustomFieldsView(cfStr) {{
+            const container = document.getElementById('viewCustomContainer');
+            container.innerHTML = "";
+            let cfArray = (cfStr||"").split(';;').filter(s => s.trim());
+            cfArray.forEach(cf => {{
+                let parts = cf.split('::');
+                if(parts.length===2) container.innerHTML += `<div style="margin-bottom:4px;"><span class="cf-tag">${{parts[0]}}</span> ${{parts[1]}}</div>`;
+                else container.innerHTML += `<div style="margin-bottom:4px;">${{cf}}</div>`;
+            }});
+        }}
+
+        function openDict(idx) {{
+            currentEditingDictId = idx;
+            const d = dictionaryData[idx];
+            openModal('dict', '單字解析');
+            document.getElementById('viewTitle').innerText = d.popupTitle || d.base;
+            document.getElementById('viewForms').innerText = d.verbForms || "";
+            document.getElementById('viewForms').classList.toggle('hidden', !d.verbForms);
+            document.getElementById('viewPhonetics').innerText = d.phonetics;
+            document.getElementById('viewPos').innerText = d.pos;
+            document.getElementById('viewMeaning').innerText = d.meaning;
+            renderCustomFieldsView(d.customField);
+            document.getElementById('viewNotes').innerHTML = d.notes.replace(/🎯/g, '<br>🎯').replace(/(<br>\s*)+/g, '<br>');
+            document.getElementById('dictViewPanel').classList.remove('hidden');
+        }}
+
+        // --- 下拉選單版擴充欄位 ---
+        function addCustomFieldRow(key="", val="") {{
+            const div = document.createElement('div'); div.className = "cf-row";
+            const options = ["同義字", "反義字", "衍生字", "搭配詞", "字根", "片語"];
+            let isCustom = key && !options.includes(key);
+            
+            let selectHtml = `<select class="cf-k-select" onchange="this.nextElementSibling.style.display = this.value==='自訂' ? 'inline-block' : 'none'">`;
+            options.forEach(opt => selectHtml += `<option value="${{opt}}" ${{key===opt?'selected':''}}>${{opt}}</option>`);
+            selectHtml += `<option value="自訂" ${{isCustom?'selected':''}}>自訂...</option></select>`;
+
+            div.innerHTML = `
+                ${{selectHtml}}
+                <input type="text" class="cf-k-custom" style="display:${{isCustom?'inline-block':'none'}}; width:80px; margin-left:5px;" placeholder="標題" value="${{isCustom?key:''}}">
+                <input type="text" class="cf-v" placeholder="內容" value="${{val}}">
+                <button type="button" onclick="this.parentElement.remove()">✖</button>
+            `;
+            document.getElementById('customFieldsContainer').appendChild(div);
+        }}
+
+        function getCustomFieldsString() {{
+            let arr = [];
+            document.querySelectorAll('.cf-row').forEach(row => {{
+                let selectVal = row.querySelector('.cf-k-select').value;
+                let k = selectVal === '自訂' ? row.querySelector('.cf-k-custom').value.trim() : selectVal;
+                let v = row.querySelector('.cf-v').value.trim();
+                k = k.replace(/::/g,'').replace(/;;/g,'');
+                v = v.replace(/::/g,'').replace(/;;/g,'');
+                if(k && v) arr.push(`${{k}}::${{v}}`);
+            }});
+            return arr.join(';;');
+        }}
+
+        function renderCustomFieldsEdit(cfStr) {{
+            const container = document.getElementById('customFieldsContainer');
+            container.innerHTML = "";
+            let cfArray = (cfStr||"").split(';;').filter(s => s.trim());
+            if(cfArray.length === 0) addCustomFieldRow("同義字", "");
+            cfArray.forEach(cf => {{
+                let parts = cf.split('::');
+                addCustomFieldRow(parts[0]||"", parts[1]||cf);
+            }});
+        }}
+
+        function switchToEdit() {{
+            const d = dictionaryData[currentEditingDictId];
+            document.getElementById('dictViewPanel').classList.add('hidden');
+            document.getElementById('editPanel').classList.remove('hidden');
+            document.getElementById('editSearchKey').value = d.searchKey;
+            document.getElementById('editSearchKey').readOnly = true;
+            document.getElementById('editSearchKey').classList.add('readonly-input');
+            document.getElementById('editPopupTitle').value = d.popupTitle;
+            document.getElementById('editVerbForms').value = d.verbForms;
+            document.getElementById('editPos').value = d.pos;
+            document.getElementById('editPhonetics').value = d.phonetics;
+            document.getElementById('editMeaning').value = d.meaning;
+            renderCustomFieldsEdit(d.customField);
+            document.getElementById('editNotes').value = d.notes.replace(/<br>/g, '\n');
+        }}
+
+        function openAddWordMode(txt="") {{
+            currentEditingDictId = -1;
+            openModal('edit', '新增單字');
+            document.getElementById('editPanel').classList.remove('hidden');
+            document.getElementById('editSearchKey').value = txt;
+            document.getElementById('editSearchKey').readOnly = false;
+            document.getElementById('editSearchKey').classList.remove('readonly-input');
+            document.getElementById('editPopupTitle').value = txt;
+            document.getElementById('editVerbForms').value = "";
+            document.getElementById('editPos').value = "";
+            document.getElementById('editPhonetics').value = "";
+            document.getElementById('editMeaning').value = "";
+            renderCustomFieldsEdit("");
+            document.getElementById('editNotes').value = "";
+        }}
+
+        function autoGenForms() {{
+            const key = document.getElementById('editSearchKey').value.trim();
+            if(!key) return;
+            const verb = key.split(' ')[0];
+            let s = verb.match(/(sh|ch|s|x|z)$/i) ? "(es)" : "(s)";
+            let ed = verb.endsWith('e') ? verb+'d' : verb+'ed';
+            let ing = verb.endsWith('e') ? verb.slice(0,-1)+'ing' : verb+'ing';
+            document.getElementById('editVerbForms').value = `${{verb}}${{s}} - ${{ed}} x2 - ${{ing}}`;
+        }}
+
+        function saveChanges() {{
+            const pipe = (s) => s.replace(/\|/g, '｜');
+            const searchKey = pipe(document.getElementById('editSearchKey').value.trim());
+            const popupTitle = pipe(document.getElementById('editPopupTitle').value.trim());
+            const verbForms = pipe(document.getElementById('editVerbForms').value.trim());
+            const pos = pipe(document.getElementById('editPos').value.trim());
+            const phonetics = pipe(document.getElementById('editPhonetics').value.trim());
+            const meaning = pipe(document.getElementById('editMeaning').value.trim());
+            const customField = getCustomFieldsString();
+            const notes = pipe(document.getElementById('editNotes').value.trim()).replace(/\n/g, '<br>');
+
+            if(!searchKey || !meaning) return alert("請填寫搜尋標籤與意思！");
+            
+            const obj = {{ searchKey, popupTitle, verbForms, pos, phonetics, meaning, customField, notes }};
+            if(currentEditingDictId === -1) dictionaryData.push(obj);
+            else {{
+                obj.base = dictionaryData[currentEditingDictId].base;
+                obj.variants = dictionaryData[currentEditingDictId].variants;
+                dictionaryData[currentEditingDictId] = obj;
+            }}
+            rebuildRaw(); parseRawData(); initSystem(); closeModal();
+        }}
+
+        function deleteWord() {{
+            if(confirm("確定刪除？")) {{ dictionaryData.splice(currentEditingDictId, 1); rebuildRaw(); parseRawData(); initSystem(); closeModal(); }}
+        }}
+
+        function rebuildRaw() {{
+            const ta = document.getElementById('rawTextData');
+            let dTxt = "[字典開始]\n";
+            dictionaryData.forEach(d => {{ dTxt += `${{d.searchKey}} | ${{d.popupTitle}} | ${{d.verbForms}} | ${{d.pos}} | ${{d.phonetics}} | ${{d.meaning}} | ${{d.customField}} | ${{d.notes}}\n`; }});
+            ta.value = ta.value.replace(/\[字典開始\]([\s\S]*?)\[字典結束\]/, dTxt + "[字典結束]");
+            
+            // Note: in a real full rebuild, we'd also rebuild allTopics.
+        }}
+
+        function openExportModal() {{
+            openModal('export', '同步至 GitHub');
+            document.getElementById('exportPanel').classList.remove('hidden');
+            const ta = document.getElementById('rawTextData');
+            ta.innerHTML = ta.value;
+            document.getElementById('exportText').value = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+        }}
+
+        function copyCode() {{
+            document.getElementById('exportText').select(); document.execCommand('copy');
+            alert("已複製！請貼回 GitHub 覆蓋 index.html 並存檔。");
+        }}
+
+        function exportToCSV() {{
+            let allCustomKeys = new Set();
+            dictionaryData.forEach(d => {{
+                if (d.customField) {{
+                    d.customField.split(';;').forEach(pair => {{
+                        let k = pair.split('::')[0].trim();
+                        if (k) allCustomKeys.add(k);
+                    }});
+                }}
+            }});
+            let customKeysArray = Array.from(allCustomKeys);
+
+            let csv = "\uFEFF大標題,變形提示,詞性,音標,中文意思,解析與筆記";
+            customKeysArray.forEach(k => {{ csv += `,${{k}}`; }});
+            csv += "\n";
+
+            dictionaryData.forEach(d => {{
+                const esc = (s) => `"${{(s||'').replace(/"/g, '""').replace(/<br>/g, '\n')}}"`;
+                let row = `${{esc(d.popupTitle)}},${{esc(d.verbForms)}},${{esc(d.pos)}},${{esc(d.phonetics)}},${{esc(d.meaning)}},${{esc(d.notes)}}`;
+
+                let customDict = {{}};
+                if (d.customField) {{
+                    d.customField.split(';;').forEach(pair => {{
+                        let parts = pair.split('::');
+                        if (parts.length === 2) customDict[parts[0].trim()] = parts[1].trim();
+                    }});
+                }}
+
+                customKeysArray.forEach(k => {{ row += `,${{esc(customDict[k] || "")}}`; }});
+                csv += row + "\n";
+            }});
+
+            const b = new Blob([csv], {{type:'text/csv;charset=utf-8'}});
+            const l = document.createElement('a'); 
+            l.href = URL.createObjectURL(b); l.download = "聯集結構化單字表.csv"; l.click();
+        }}
+
+        function initDraggableModal(windowId, handleId, storageKey) {{
+            const win = document.getElementById(windowId);
+            const head = handleId ? document.getElementById(handleId) : win; 
+            let isDrag = false; let ox, oy;
+            head.onmousedown = (e) => {{
+                if(e.target.tagName==='BUTTON' || e.target.tagName==='INPUT' || e.target.tagName==='SELECT' || e.target.tagName==='OPTION' || e.target.classList.contains('mode-btn') || e.target.classList.contains('modal-close')) return;
+                isDrag = true;
+                const rect = win.getBoundingClientRect();
+                win.style.transform = 'none';
+                win.style.left = rect.left + 'px'; win.style.top = rect.top + 'px';
+                ox = e.clientX - rect.left; oy = e.clientY - rect.top;
+            }};
+            document.addEventListener('mousemove', (e) => {{
+                if(!isDrag) return;
+                win.style.left = (e.clientX - ox) + 'px'; win.style.top = (e.clientY - oy) + 'px';
+            }});
+            document.addEventListener('mouseup', () => {{
+                if(isDrag) {{
+                    isDrag = false;
+                    const r = win.getBoundingClientRect();
+                    if(storageKey === 'modalStateV12' && !document.getElementById('optionsPanel').classList.contains('hidden')) return;
+                    localStorage.setItem(storageKey, JSON.stringify({{x:r.left, y:r.top, w:r.width, h:r.height}}));
+                }}
+            }});
+            if(storageKey === 'modalStateV12') {{
+                new ResizeObserver(() => {{
+                    if(document.getElementById('optionsPanel').classList.contains('hidden')){{
+                        const r = win.getBoundingClientRect();
+                        if(r.width > 100) localStorage.setItem(storageKey, JSON.stringify({{x:r.left, y:r.top, w:r.width, h:r.height}}));
+                    }}
+                }}).observe(win);
+            }}
+        }}
+    </script>
+</body>
+</html>

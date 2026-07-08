@@ -1,0 +1,2242 @@
+[
+    {
+        "verbID": "1",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "bet",
+        "verbBaseCN": "打賭／打賭，賭注",
+        "verbAll": "bet(s) - bet - bet - betting",
+        "verbAllCN": "打賭[三態++]／打賭，賭注",
+        "verbForm": [
+            "bet",
+            "bets",
+            "bet",
+            "bet",
+            "betting"
+        ]
+    },
+    {
+        "verbID": "2",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "broadcast",
+        "verbBaseCN": "廣播，播送／廣播節目",
+        "verbAll": "broadcast(s) - broadcast - broadcast - broadcasting",
+        "verbAllCN": "廣播，播送[三態++]／廣播節目",
+        "verbForm": [
+            "broadcast",
+            "broadcasts",
+            "broadcast",
+            "broadcast",
+            "broadcasting"
+        ]
+    },
+    {
+        "verbID": "3",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "burst",
+        "verbBaseCN": "爆裂，爆發／爆裂，破裂",
+        "verbAll": "burst(s) - burst - burst - bursting",
+        "verbAllCN": "爆裂，爆發[三態++]／爆裂，破裂",
+        "verbForm": [
+            "burst",
+            "bursts",
+            "burst",
+            "burst",
+            "bursting"
+        ]
+    },
+    {
+        "verbID": "4",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "cast",
+        "verbBaseCN": "投，擲，選派角色／演員陣容",
+        "verbAll": "cast(s) - cast - cast - casting",
+        "verbAllCN": "投，擲，選派角色[三態++]／演員陣容",
+        "verbForm": [
+            "cast",
+            "casts",
+            "cast",
+            "cast",
+            "casting"
+        ]
+    },
+    {
+        "verbID": "5",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "cost",
+        "verbBaseCN": "花費／成本，代價",
+        "verbAll": "cost(s) - cost - cost - costing",
+        "verbAllCN": "花費[三態++]／成本，代價",
+        "verbForm": [
+            "cost",
+            "costs",
+            "cost",
+            "cost",
+            "costing"
+        ]
+    },
+    {
+        "verbID": "6",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "cut",
+        "verbBaseCN": "切，割，剪／切口／削減的",
+        "verbAll": "cut(s) - cut - cut - cutting",
+        "verbAllCN": "切，割，剪[三態++]／切口／削減的",
+        "verbForm": [
+            "cut",
+            "cuts",
+            "cut",
+            "cut",
+            "cutting"
+        ]
+    },
+    {
+        "verbID": "7",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "hit",
+        "verbBaseCN": "打擊，碰撞／點擊，熱門事物",
+        "verbAll": "hit(s) - hit - hit - hitting",
+        "verbAllCN": "打擊，碰撞[三態++]／點擊，熱門事物",
+        "verbForm": [
+            "hit",
+            "hits",
+            "hit",
+            "hit",
+            "hitting"
+        ]
+    },
+    {
+        "verbID": "8",
+        "part": "v./n./adj.",
+        "pre": "to/-/",
+        "verbBase": "hurt",
+        "verbBaseCN": "傷害，疼痛／痛苦／受傷的",
+        "verbAll": "hurt(s) - hurt - hurt - hurting",
+        "verbAllCN": "傷害，疼痛[三態++]／痛苦／受傷的",
+        "verbForm": [
+            "hurt",
+            "hurts",
+            "hurt",
+            "hurt",
+            "hurting"
+        ]
+    },
+    {
+        "verbID": "9",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "let",
+        "verbBaseCN": "讓，允許／出租，重發球",
+        "verbAll": "let(s) - let - let - letting",
+        "verbAllCN": "讓，允許[三態++]／出租，重發球",
+        "verbForm": [
+            "let",
+            "lets",
+            "let",
+            "let",
+            "letting"
+        ]
+    },
+    {
+        "verbID": "10",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "put",
+        "verbBaseCN": "放置／賣出選擇權",
+        "verbAll": "put(s) - put - put - putting",
+        "verbAllCN": "放置[三態++]／賣出選擇權",
+        "verbForm": [
+            "put",
+            "puts",
+            "put",
+            "put",
+            "putting"
+        ]
+    },
+    {
+        "verbID": "11",
+        "part": "v./adj.",
+        "pre": "to/",
+        "verbBase": "quit",
+        "verbBaseCN": "退出，放棄／擺脫了的",
+        "verbAll": "quit(s) - quit - quit - quitting",
+        "verbAllCN": "退出，放棄[三態++]／擺脫了的",
+        "verbForm": [
+            "quit",
+            "quits",
+            "quit",
+            "quit",
+            "quitting"
+        ]
+    },
+    {
+        "verbID": "12",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "read",
+        "verbBaseCN": "閱讀／讀物",
+        "verbAll": "read(s) - read - read - reading",
+        "verbAllCN": "閱讀[三態++]／讀物",
+        "verbForm": [
+            "read",
+            "reads",
+            "read",
+            "read",
+            "reading"
+        ]
+    },
+    {
+        "verbID": "13",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "set",
+        "verbBaseCN": "設定，放置，日落／套裝／固定的",
+        "verbAll": "set(s) - set - set - setting",
+        "verbAllCN": "設定，放置，日落[三態++]／套裝／固定的",
+        "verbForm": [
+            "set",
+            "sets",
+            "set",
+            "set",
+            "setting"
+        ]
+    },
+    {
+        "verbID": "14",
+        "part": "v./adj.",
+        "pre": "to/",
+        "verbBase": "shut",
+        "verbBaseCN": "關閉／關閉的",
+        "verbAll": "shut(s) - shut - shut - shutting",
+        "verbAllCN": "關閉[三態++]／關閉的",
+        "verbForm": [
+            "shut",
+            "shuts",
+            "shut",
+            "shut",
+            "shutting"
+        ]
+    },
+    {
+        "verbID": "15",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "split",
+        "verbBaseCN": "分裂，劈開／裂縫／分裂的",
+        "verbAll": "split(s) - split - split - splitting",
+        "verbAllCN": "分裂，劈開[三態++]／裂縫／分裂的",
+        "verbForm": [
+            "split",
+            "splits",
+            "split",
+            "split",
+            "splitting"
+        ]
+    },
+    {
+        "verbID": "16",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "spread",
+        "verbBaseCN": "傳播，展開／抹醬，跨頁",
+        "verbAll": "spread(s) - spread - spread - spreading",
+        "verbAllCN": "傳播，展開[三態++]／抹醬，跨頁",
+        "verbForm": [
+            "spread",
+            "spreads",
+            "spread",
+            "spread",
+            "spreading"
+        ]
+    },
+    {
+        "verbID": "17",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "sweat",
+        "verbBaseCN": "流汗／汗水",
+        "verbAll": "sweat(s) - sweat/sweated - sweat/sweated - sweating",
+        "verbAllCN": "流汗[三態++]／汗水",
+        "verbForm": [
+            "sweat",
+            "sweats",
+            "sweat/sweated",
+            "sweat/sweated",
+            "sweating"
+        ]
+    },
+    {
+        "verbID": "18",
+        "part": "v./n./adj.",
+        "pre": "to/-/",
+        "verbBase": "wet",
+        "verbBaseCN": "弄濕／水分／濕的",
+        "verbAll": "wet(s) - wet/wetted - wet/wetted - wetting",
+        "verbAllCN": "弄濕[三態++]／水分／濕的",
+        "verbForm": [
+            "wet",
+            "wets",
+            "wet/wetted",
+            "wet/wetted",
+            "wetting"
+        ]
+    },
+    {
+        "verbID": "19",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "beat",
+        "verbBaseCN": "擊打，打敗／節拍／疲憊的",
+        "verbAll": "beat(s) - beat - beaten - beating",
+        "verbAllCN": "擊打，打敗[三態++]／節拍／疲憊的",
+        "verbForm": [
+            "beat",
+            "beats",
+            "beat",
+            "beaten",
+            "beating"
+        ]
+    },
+    {
+        "verbID": "20",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "become",
+        "verbBaseCN": "變成，成為",
+        "verbAll": "become(s) - became - become - becoming",
+        "verbAllCN": "變成，成為[三態++]",
+        "verbForm": [
+            "become",
+            "becomes",
+            "became",
+            "become",
+            "becoming"
+        ]
+    },
+    {
+        "verbID": "21",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "come",
+        "verbBaseCN": "來",
+        "verbAll": "come(s) - came - come - coming",
+        "verbAllCN": "來[三態++]",
+        "verbForm": [
+            "come",
+            "comes",
+            "came",
+            "come",
+            "coming"
+        ]
+    },
+    {
+        "verbID": "22",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "overcome",
+        "verbBaseCN": "克服",
+        "verbAll": "overcome(s) - overcame - overcome - overcoming",
+        "verbAllCN": "克服[三態++]",
+        "verbForm": [
+            "overcome",
+            "overcomes",
+            "overcame",
+            "overcome",
+            "overcoming"
+        ]
+    },
+    {
+        "verbID": "23",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "run",
+        "verbBaseCN": "跑步，經營／跑步，連續",
+        "verbAll": "run(s) - ran - run - running",
+        "verbAllCN": "跑步，經營[三態++]／跑步，連續",
+        "verbForm": [
+            "run",
+            "runs",
+            "ran",
+            "run",
+            "running"
+        ]
+    },
+    {
+        "verbID": "24",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "bend",
+        "verbBaseCN": "彎曲／彎道",
+        "verbAll": "bend(s) - bent - bent - bending",
+        "verbAllCN": "彎曲[三態++]／彎道",
+        "verbForm": [
+            "bend",
+            "bends",
+            "bent",
+            "bent",
+            "bending"
+        ]
+    },
+    {
+        "verbID": "25",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "bind",
+        "verbBaseCN": "綁，束縛／困境",
+        "verbAll": "bind(s) - bound - bound - binding",
+        "verbAllCN": "綁，束縛[三態++]／困境",
+        "verbForm": [
+            "bind",
+            "binds",
+            "bound",
+            "bound",
+            "binding"
+        ]
+    },
+    {
+        "verbID": "26",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "bleed",
+        "verbBaseCN": "流血／出血(印刷)",
+        "verbAll": "bleed(s) - bled - bled - bleeding",
+        "verbAllCN": "流血[三態++]／出血(印刷)",
+        "verbForm": [
+            "bleed",
+            "bleeds",
+            "bled",
+            "bled",
+            "bleeding"
+        ]
+    },
+    {
+        "verbID": "27",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "bring",
+        "verbBaseCN": "帶來",
+        "verbAll": "bring(s) - brought - brought - bringing",
+        "verbAllCN": "帶來[三態++]",
+        "verbForm": [
+            "bring",
+            "brings",
+            "brought",
+            "brought",
+            "bringing"
+        ]
+    },
+    {
+        "verbID": "28",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "build",
+        "verbBaseCN": "建造／體格，版本",
+        "verbAll": "build(s) - built - built - building",
+        "verbAllCN": "建造[三態++]／體格，版本",
+        "verbForm": [
+            "build",
+            "builds",
+            "built",
+            "built",
+            "building"
+        ]
+    },
+    {
+        "verbID": "29",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "buy",
+        "verbBaseCN": "購買／購買物",
+        "verbAll": "buy(s) - bought - bought - buying",
+        "verbAllCN": "購買[三態++]／購買物",
+        "verbForm": [
+            "buy",
+            "buys",
+            "bought",
+            "bought",
+            "buying"
+        ]
+    },
+    {
+        "verbID": "30",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "catch",
+        "verbBaseCN": "捕捉，趕上／捕獲物，隱情",
+        "verbAll": "catch(es) - caught - caught - catching",
+        "verbAllCN": "捕捉，趕上[三態++]／捕獲物，隱情",
+        "verbForm": [
+            "catch",
+            "catches",
+            "caught",
+            "caught",
+            "catching"
+        ]
+    },
+    {
+        "verbID": "31",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "deal",
+        "verbBaseCN": "處理，交易／交易，協議",
+        "verbAll": "deal(s) - dealt - dealt - dealing",
+        "verbAllCN": "處理，交易[三態++]／交易，協議",
+        "verbForm": [
+            "deal",
+            "deals",
+            "dealt",
+            "dealt",
+            "dealing"
+        ]
+    },
+    {
+        "verbID": "32",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "dig",
+        "verbBaseCN": "挖掘／刺，諷刺",
+        "verbAll": "dig(s) - dug - dug - digging",
+        "verbAllCN": "挖掘[三態++]／刺，諷刺",
+        "verbForm": [
+            "dig",
+            "digs",
+            "dug",
+            "dug",
+            "digging"
+        ]
+    },
+    {
+        "verbID": "33",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "feed",
+        "verbBaseCN": "餵食／飼料，動態消息",
+        "verbAll": "feed(s) - fed - fed - feeding",
+        "verbAllCN": "餵食[三態++]／飼料，動態消息",
+        "verbForm": [
+            "feed",
+            "feeds",
+            "fed",
+            "fed",
+            "feeding"
+        ]
+    },
+    {
+        "verbID": "34",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "feel",
+        "verbBaseCN": "感覺／觸感",
+        "verbAll": "feel(s) - felt - felt - feeling",
+        "verbAllCN": "感覺[三態++]／觸感",
+        "verbForm": [
+            "feel",
+            "feels",
+            "felt",
+            "felt",
+            "feeling"
+        ]
+    },
+    {
+        "verbID": "35",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "fight",
+        "verbBaseCN": "打架，戰鬥／戰鬥",
+        "verbAll": "fight(s) - fought - fought - fighting",
+        "verbAllCN": "打架，戰鬥[三態++]／戰鬥",
+        "verbForm": [
+            "fight",
+            "fights",
+            "fought",
+            "fought",
+            "fighting"
+        ]
+    },
+    {
+        "verbID": "36",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "find",
+        "verbBaseCN": "尋找，發現／發現物",
+        "verbAll": "find(s) - found - found - finding",
+        "verbAllCN": "尋找，發現[三態++]／發現物",
+        "verbForm": [
+            "find",
+            "finds",
+            "found",
+            "found",
+            "finding"
+        ]
+    },
+    {
+        "verbID": "37",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "flee",
+        "verbBaseCN": "逃跑",
+        "verbAll": "flee(s) - fled - fled - fleeing",
+        "verbAllCN": "逃跑[三態++]",
+        "verbForm": [
+            "flee",
+            "flees",
+            "fled",
+            "fled",
+            "fleeing"
+        ]
+    },
+    {
+        "verbID": "38",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "hang",
+        "verbBaseCN": "懸掛／訣竅",
+        "verbAll": "hang(s) - hung - hung - hanging",
+        "verbAllCN": "懸掛[三態++]／訣竅",
+        "verbForm": [
+            "hang",
+            "hangs",
+            "hung",
+            "hung",
+            "hanging"
+        ]
+    },
+    {
+        "verbID": "39",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "hang",
+        "verbBaseCN": "絞死 / 訣竅，懸掛方式",
+        "verbAll": "hang(s) - hunged - hunged - hanging",
+        "verbAllCN": "絞死[三態++] / 訣竅，懸掛方式",
+        "verbForm": [
+            "hang",
+            "hangs",
+            "hunged",
+            "hunged",
+            "hanging"
+        ]
+    },
+    {
+        "verbID": "40",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "have/has",
+        "verbBaseCN": "擁有，吃／富人(the haves)",
+        "verbAll": "have/has - had - had - having",
+        "verbAllCN": "擁有，吃[三態++]／富人(the haves)",
+        "verbForm": [
+            "have/has",
+            "have/has",
+            "had",
+            "had",
+            "having"
+        ]
+    },
+    {
+        "verbID": "41",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "hear",
+        "verbBaseCN": "聽見",
+        "verbAll": "hear(s) - heard - heard - hearing",
+        "verbAllCN": "聽見[三態++]",
+        "verbForm": [
+            "hear",
+            "hears",
+            "heard",
+            "heard",
+            "hearing"
+        ]
+    },
+    {
+        "verbID": "42",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "hold",
+        "verbBaseCN": "握住，舉辦／握把，控制力",
+        "verbAll": "hold(s) - held - held - holding",
+        "verbAllCN": "握住，舉辦[三態++]／握把，控制力",
+        "verbForm": [
+            "hold",
+            "holds",
+            "held",
+            "held",
+            "holding"
+        ]
+    },
+    {
+        "verbID": "43",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "keep",
+        "verbBaseCN": "保持，保留／生活費",
+        "verbAll": "keep(s) - kept - kept - keeping",
+        "verbAllCN": "保持，保留[三態++]／生活費",
+        "verbForm": [
+            "keep",
+            "keeps",
+            "kept",
+            "kept",
+            "keeping"
+        ]
+    },
+    {
+        "verbID": "44",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "lay",
+        "verbBaseCN": "放置，產卵／位置，外貌",
+        "verbAll": "lay(s) - laid - laid - laying",
+        "verbAllCN": "放置，產卵[三態++]／位置，外貌",
+        "verbForm": [
+            "lay",
+            "lays",
+            "laid",
+            "laid",
+            "laying"
+        ]
+    },
+    {
+        "verbID": "45",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "lead",
+        "verbBaseCN": "領導，導致／領先，線索",
+        "verbAll": "lead(s) - led - led - leading",
+        "verbAllCN": "領導，導致[三態++]／領先，線索",
+        "verbForm": [
+            "lead",
+            "leads",
+            "led",
+            "led",
+            "leading"
+        ]
+    },
+    {
+        "verbID": "46",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "leave",
+        "verbBaseCN": "離開，留下／休假",
+        "verbAll": "leave(s) - left - left - leaving",
+        "verbAllCN": "離開，留下[三態++]／休假",
+        "verbForm": [
+            "leave",
+            "leaves",
+            "left",
+            "left",
+            "leaving"
+        ]
+    },
+    {
+        "verbID": "47",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "lend",
+        "verbBaseCN": "借出",
+        "verbAll": "lend(s) - lent - lent - lending",
+        "verbAllCN": "借出[三態++]",
+        "verbForm": [
+            "lend",
+            "lends",
+            "lent",
+            "lent",
+            "lending"
+        ]
+    },
+    {
+        "verbID": "48",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "light",
+        "verbBaseCN": "點燃，照亮／光，燈／明亮的",
+        "verbAll": "light(s) - lit/lighted - lit/lighted - lighting",
+        "verbAllCN": "點燃，照亮[三態++]／光，燈／明亮的",
+        "verbForm": [
+            "light",
+            "lights",
+            "lit/lighted",
+            "lit/lighted",
+            "lighting"
+        ]
+    },
+    {
+        "verbID": "49",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "lose",
+        "verbBaseCN": "失去",
+        "verbAll": "lose(s) - lost - lost - losing",
+        "verbAllCN": "失去[三態++]",
+        "verbForm": [
+            "lose",
+            "loses",
+            "lost",
+            "lost",
+            "losing"
+        ]
+    },
+    {
+        "verbID": "50",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "make",
+        "verbBaseCN": "製造，使得／廠牌，型號",
+        "verbAll": "make(s) - made - made - making",
+        "verbAllCN": "製造，使得[三態++]／廠牌，型號",
+        "verbForm": [
+            "make",
+            "makes",
+            "made",
+            "made",
+            "making"
+        ]
+    },
+    {
+        "verbID": "51",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "mean",
+        "verbBaseCN": "意思是，意指／平均值／刻薄的",
+        "verbAll": "mean(s) - meant - meant - meaning",
+        "verbAllCN": "意思是，意指[三態++]／平均值／刻薄的",
+        "verbForm": [
+            "mean",
+            "means",
+            "meant",
+            "meant",
+            "meaning"
+        ]
+    },
+    {
+        "verbID": "52",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "meet",
+        "verbBaseCN": "遇見，滿足／運動會",
+        "verbAll": "meet(s) - met - met - meeting",
+        "verbAllCN": "遇見，滿足[三態++]／運動會",
+        "verbForm": [
+            "meet",
+            "meets",
+            "met",
+            "met",
+            "meeting"
+        ]
+    },
+    {
+        "verbID": "53",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "pay",
+        "verbBaseCN": "支付／薪水",
+        "verbAll": "pay(s) - paid - paid - paying",
+        "verbAllCN": "支付[三態++]／薪水",
+        "verbForm": [
+            "pay",
+            "pays",
+            "paid",
+            "paid",
+            "paying"
+        ]
+    },
+    {
+        "verbID": "54",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "say",
+        "verbBaseCN": "說／發言權",
+        "verbAll": "say(s) - said - said - saying",
+        "verbAllCN": "說[三態++]／發言權",
+        "verbForm": [
+            "say",
+            "says",
+            "said",
+            "said",
+            "saying"
+        ]
+    },
+    {
+        "verbID": "55",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "seek",
+        "verbBaseCN": "尋求",
+        "verbAll": "seek(s) - sought - sought - seeking",
+        "verbAllCN": "尋求[三態++]",
+        "verbForm": [
+            "seek",
+            "seeks",
+            "sought",
+            "sought",
+            "seeking"
+        ]
+    },
+    {
+        "verbID": "56",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "sell",
+        "verbBaseCN": "賣／銷售手段",
+        "verbAll": "sell(s) - sold - sold - selling",
+        "verbAllCN": "賣[三態++]／銷售手段",
+        "verbForm": [
+            "sell",
+            "sells",
+            "sold",
+            "sold",
+            "selling"
+        ]
+    },
+    {
+        "verbID": "57",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "send",
+        "verbBaseCN": "寄送",
+        "verbAll": "send(s) - sent - sent - sending",
+        "verbAllCN": "寄送[三態++]",
+        "verbForm": [
+            "send",
+            "sends",
+            "sent",
+            "sent",
+            "sending"
+        ]
+    },
+    {
+        "verbID": "58",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "shine",
+        "verbBaseCN": "照耀，發光／光澤",
+        "verbAll": "shine(s) - shone/shined - shone/shined - shining",
+        "verbAllCN": "照耀，發光[三態++]／光澤",
+        "verbForm": [
+            "shine",
+            "shines",
+            "shone/shined",
+            "shone/shined",
+            "shining"
+        ]
+    },
+    {
+        "verbID": "59",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "shoot",
+        "verbBaseCN": "射擊，拍攝／拍攝，新芽",
+        "verbAll": "shoot(s) - shot - shot - shooting",
+        "verbAllCN": "射擊，拍攝[三態++]／拍攝，新芽",
+        "verbForm": [
+            "shoot",
+            "shoots",
+            "shot",
+            "shot",
+            "shooting"
+        ]
+    },
+    {
+        "verbID": "60",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "sit",
+        "verbBaseCN": "坐",
+        "verbAll": "sit(s) - sat - sat - sitting",
+        "verbAllCN": "坐[三態++]",
+        "verbForm": [
+            "sit",
+            "sits",
+            "sat",
+            "sat",
+            "sitting"
+        ]
+    },
+    {
+        "verbID": "61",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "sleep",
+        "verbBaseCN": "睡覺／睡眠",
+        "verbAll": "sleep(s) - slept - slept - sleeping",
+        "verbAllCN": "睡覺[三態++]／睡眠",
+        "verbForm": [
+            "sleep",
+            "sleeps",
+            "slept",
+            "slept",
+            "sleeping"
+        ]
+    },
+    {
+        "verbID": "62",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "slide",
+        "verbBaseCN": "滑動／溜滑梯，幻燈片",
+        "verbAll": "slide(s) - slid - slid - sliding",
+        "verbAllCN": "滑動[三態++]／溜滑梯，幻燈片",
+        "verbForm": [
+            "slide",
+            "slides",
+            "slid",
+            "slid",
+            "sliding"
+        ]
+    },
+    {
+        "verbID": "63",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "spend",
+        "verbBaseCN": "花費",
+        "verbAll": "spend(s) - spent - spent - spending",
+        "verbAllCN": "花費[三態++]",
+        "verbForm": [
+            "spend",
+            "spends",
+            "spent",
+            "spent",
+            "spending"
+        ]
+    },
+    {
+        "verbID": "64",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "spin",
+        "verbBaseCN": "旋轉，紡紗／旋轉，公關說辭",
+        "verbAll": "spin(s) - spun - spun - spinning",
+        "verbAllCN": "旋轉，紡紗[三態++]／旋轉，公關說辭",
+        "verbForm": [
+            "spin",
+            "spins",
+            "spun",
+            "spun",
+            "spinning"
+        ]
+    },
+    {
+        "verbID": "65",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "spit",
+        "verbBaseCN": "吐痰／唾液",
+        "verbAll": "spit(s) - spit/spat - spit/spat - spitting",
+        "verbAllCN": "吐痰[三態++]／唾液",
+        "verbForm": [
+            "spit",
+            "spits",
+            "spit/spat",
+            "spit/spat",
+            "spitting"
+        ]
+    },
+    {
+        "verbID": "66",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "stand",
+        "verbBaseCN": "站立，忍受／攤位，立場",
+        "verbAll": "stand(s) - stood - stood - standing",
+        "verbAllCN": "站立，忍受[三態++]／攤位，立場",
+        "verbForm": [
+            "stand",
+            "stands",
+            "stood",
+            "stood",
+            "standing"
+        ]
+    },
+    {
+        "verbID": "67",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "stick",
+        "verbBaseCN": "黏貼，刺入／樹枝，棍子",
+        "verbAll": "stick(s) - stuck - stuck - sticking",
+        "verbAllCN": "黏貼，刺入[三態++]／樹枝，棍子",
+        "verbForm": [
+            "stick",
+            "sticks",
+            "stuck",
+            "stuck",
+            "sticking"
+        ]
+    },
+    {
+        "verbID": "68",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "sting",
+        "verbBaseCN": "叮，螫／刺痛",
+        "verbAll": "sting(s) - stung - stung - stinging",
+        "verbAllCN": "叮，螫[三態++]／刺痛",
+        "verbForm": [
+            "sting",
+            "stings",
+            "stung",
+            "stung",
+            "stinging"
+        ]
+    },
+    {
+        "verbID": "69",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "strike",
+        "verbBaseCN": "打擊，罷工／罷工",
+        "verbAll": "strike(s) - struck - struck/stricken - striking",
+        "verbAllCN": "打擊，罷工[三態++]／罷工",
+        "verbForm": [
+            "strike",
+            "strikes",
+            "struck",
+            "struck/stricken",
+            "striking"
+        ]
+    },
+    {
+        "verbID": "70",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "sweep",
+        "verbBaseCN": "掃／打掃",
+        "verbAll": "sweep(s) - swept - swept - sweeping",
+        "verbAllCN": "掃[三態++]／打掃",
+        "verbForm": [
+            "sweep",
+            "sweeps",
+            "swept",
+            "swept",
+            "sweeping"
+        ]
+    },
+    {
+        "verbID": "71",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "swing",
+        "verbBaseCN": "搖擺／秋千",
+        "verbAll": "swing(s) - swung - swung - swinging",
+        "verbAllCN": "搖擺[三態++]／秋千",
+        "verbForm": [
+            "swing",
+            "swings",
+            "swung",
+            "swung",
+            "swinging"
+        ]
+    },
+    {
+        "verbID": "72",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "teach",
+        "verbBaseCN": "教導",
+        "verbAll": "teach(es) - taught - taught - teaching",
+        "verbAllCN": "教導[三態++]",
+        "verbForm": [
+            "teach",
+            "teaches",
+            "taught",
+            "taught",
+            "teaching"
+        ]
+    },
+    {
+        "verbID": "73",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "tell",
+        "verbBaseCN": "告訴／洩露底細的跡象",
+        "verbAll": "tell(s) - told - told - telling",
+        "verbAllCN": "告訴[三態++]／洩露底細的跡象",
+        "verbForm": [
+            "tell",
+            "tells",
+            "told",
+            "told",
+            "telling"
+        ]
+    },
+    {
+        "verbID": "74",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "think",
+        "verbBaseCN": "思考，認為／思考",
+        "verbAll": "think(s) - thought - thought - thinking",
+        "verbAllCN": "思考，認為[三態++]／思考",
+        "verbForm": [
+            "think",
+            "thinks",
+            "thought",
+            "thought",
+            "thinking"
+        ]
+    },
+    {
+        "verbID": "75",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "understand",
+        "verbBaseCN": "理解",
+        "verbAll": "understand(s) - understood - understood - understanding",
+        "verbAllCN": "理解[三態++]",
+        "verbForm": [
+            "understand",
+            "understands",
+            "understood",
+            "understood",
+            "understanding"
+        ]
+    },
+    {
+        "verbID": "76",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "win",
+        "verbBaseCN": "贏得／勝利",
+        "verbAll": "win(s) - won - won - winning",
+        "verbAllCN": "贏得[三態++]／勝利",
+        "verbForm": [
+            "win",
+            "wins",
+            "won",
+            "won",
+            "winning"
+        ]
+    },
+    {
+        "verbID": "77",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "wind",
+        "verbBaseCN": "纏繞，蜿蜒／風",
+        "verbAll": "wind(s) - wound - wound - winding",
+        "verbAllCN": "纏繞，蜿蜒[三態++]／風",
+        "verbForm": [
+            "wind",
+            "winds",
+            "wound",
+            "wound",
+            "winding"
+        ]
+    },
+    {
+        "verbID": "78",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "arise",
+        "verbBaseCN": "產生，出現",
+        "verbAll": "arise(s) - arose - arisen - arising",
+        "verbAllCN": "產生，出現[三態++]",
+        "verbForm": [
+            "arise",
+            "arises",
+            "arose",
+            "arisen",
+            "arising"
+        ]
+    },
+    {
+        "verbID": "79",
+        "part": "v./adj.",
+        "pre": "to/",
+        "verbBase": "awake",
+        "verbBaseCN": "醒來，喚醒／醒著的",
+        "verbAll": "awake(s) - awoke - awoken - awaking",
+        "verbAllCN": "醒來，喚醒[三態++]／醒著的",
+        "verbForm": [
+            "awake",
+            "awakes",
+            "awoke",
+            "awoken",
+            "awaking"
+        ]
+    },
+    {
+        "verbID": "80",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "be ",
+        "verbBaseCN": "是，在",
+        "verbAll": "be (is/am/are) - was/were - been - being",
+        "verbAllCN": "是，在[三態++]",
+        "verbForm": [
+            "be",
+            "be is/am/are",
+            "was/were",
+            "been",
+            "being"
+        ]
+    },
+    {
+        "verbID": "81",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "bear",
+        "verbBaseCN": "忍受，生育／熊",
+        "verbAll": "bear(s) - bore - borne/born - bearing",
+        "verbAllCN": "忍受，生育[三態++]／熊",
+        "verbForm": [
+            "bear",
+            "bears",
+            "bore",
+            "borne/born",
+            "bearing"
+        ]
+    },
+    {
+        "verbID": "82",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "begin",
+        "verbBaseCN": "開始",
+        "verbAll": "begin(s) - began - begun - beginning",
+        "verbAllCN": "開始[三態++]",
+        "verbForm": [
+            "begin",
+            "begins",
+            "began",
+            "begun",
+            "beginning"
+        ]
+    },
+    {
+        "verbID": "83",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "bite",
+        "verbBaseCN": "咬／咬，一口",
+        "verbAll": "bite(s) - bit - bitten - biting",
+        "verbAllCN": "咬[三態++]／咬，一口",
+        "verbForm": [
+            "bite",
+            "bites",
+            "bit",
+            "bitten",
+            "biting"
+        ]
+    },
+    {
+        "verbID": "84",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "blow",
+        "verbBaseCN": "吹／打擊，強風",
+        "verbAll": "blow(s) - blew - blown - blowing",
+        "verbAllCN": "吹[三態++]／打擊，強風",
+        "verbForm": [
+            "blow",
+            "blows",
+            "blew",
+            "blown",
+            "blowing"
+        ]
+    },
+    {
+        "verbID": "85",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "break",
+        "verbBaseCN": "打破／休息時間",
+        "verbAll": "break(s) - broke - broken - breaking",
+        "verbAllCN": "打破[三態++]／休息時間",
+        "verbForm": [
+            "break",
+            "breaks",
+            "broke",
+            "broken",
+            "breaking"
+        ]
+    },
+    {
+        "verbID": "86",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "choose",
+        "verbBaseCN": "選擇",
+        "verbAll": "choose(s) - chose - chosen - choosing",
+        "verbAllCN": "選擇[三態++]",
+        "verbForm": [
+            "choose",
+            "chooses",
+            "chose",
+            "chosen",
+            "choosing"
+        ]
+    },
+    {
+        "verbID": "87",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "do/does",
+        "verbBaseCN": "做／派對，注意事項",
+        "verbAll": "do/does - did - done - doing",
+        "verbAllCN": "做[三態++]／派對，注意事項",
+        "verbForm": [
+            "do/does",
+            "do/does",
+            "did",
+            "done",
+            "doing"
+        ]
+    },
+    {
+        "verbID": "88",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "draw",
+        "verbBaseCN": "畫，拉／平局，抽籤",
+        "verbAll": "draw(s) - drew - drawn - drawing",
+        "verbAllCN": "畫，拉[三態++]／平局，抽籤",
+        "verbForm": [
+            "draw",
+            "draws",
+            "drew",
+            "drawn",
+            "drawing"
+        ]
+    },
+    {
+        "verbID": "89",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "drink",
+        "verbBaseCN": "喝／飲料，酒",
+        "verbAll": "drink(s) - drank - drunk - drinking",
+        "verbAllCN": "喝[三態++]／飲料，酒",
+        "verbForm": [
+            "drink",
+            "drinks",
+            "drank",
+            "drunk",
+            "drinking"
+        ]
+    },
+    {
+        "verbID": "90",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "drive",
+        "verbBaseCN": "駕駛／兜風，磁碟機",
+        "verbAll": "drive(s) - drove - driven - driving",
+        "verbAllCN": "駕駛[三態++]／兜風，磁碟機",
+        "verbForm": [
+            "drive",
+            "drives",
+            "drove",
+            "driven",
+            "driving"
+        ]
+    },
+    {
+        "verbID": "91",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "eat",
+        "verbBaseCN": "吃",
+        "verbAll": "eat(s) - ate - eaten - eating",
+        "verbAllCN": "吃[三態++]",
+        "verbForm": [
+            "eat",
+            "eats",
+            "ate",
+            "eaten",
+            "eating"
+        ]
+    },
+    {
+        "verbID": "92",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "fall",
+        "verbBaseCN": "掉落，跌倒／秋天，瀑布",
+        "verbAll": "fall(s) - fell - fallen - falling",
+        "verbAllCN": "掉落，跌倒[三態++]／秋天，瀑布",
+        "verbForm": [
+            "fall",
+            "falls",
+            "fell",
+            "fallen",
+            "falling"
+        ]
+    },
+    {
+        "verbID": "93",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "fly/flies",
+        "verbBaseCN": "飛／蒼蠅，拉鍊",
+        "verbAll": "fly/flies - flew - flown - flying",
+        "verbAllCN": "飛[三態++]／蒼蠅，拉鍊",
+        "verbForm": [
+            "fly/flies",
+            "fly/flies",
+            "flew",
+            "flown",
+            "flying"
+        ]
+    },
+    {
+        "verbID": "94",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "forbid",
+        "verbBaseCN": "禁止",
+        "verbAll": "forbid(s) - forbade - forbidden - forbidding",
+        "verbAllCN": "禁止[三態++]",
+        "verbForm": [
+            "forbid",
+            "forbids",
+            "forbade",
+            "forbidden",
+            "forbidding"
+        ]
+    },
+    {
+        "verbID": "95",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "forget",
+        "verbBaseCN": "忘記",
+        "verbAll": "forget(s) - forgot - forgotten - forgetting",
+        "verbAllCN": "忘記[三態++]",
+        "verbForm": [
+            "forget",
+            "forgets",
+            "forgot",
+            "forgotten",
+            "forgetting"
+        ]
+    },
+    {
+        "verbID": "96",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "forgive",
+        "verbBaseCN": "原諒",
+        "verbAll": "forgive(s) - forgave - forgiven - forgiving",
+        "verbAllCN": "原諒[三態++]",
+        "verbForm": [
+            "forgive",
+            "forgives",
+            "forgave",
+            "forgiven",
+            "forgiving"
+        ]
+    },
+    {
+        "verbID": "97",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "freeze",
+        "verbBaseCN": "結冰，凍結／嚴寒期",
+        "verbAll": "freeze(s) - froze - frozen - freezing",
+        "verbAllCN": "結冰，凍結[三態++]／嚴寒期",
+        "verbForm": [
+            "freeze",
+            "freezes",
+            "froze",
+            "frozen",
+            "freezing"
+        ]
+    },
+    {
+        "verbID": "98",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "give",
+        "verbBaseCN": "給／彈性",
+        "verbAll": "give(s) - gave - given - giving",
+        "verbAllCN": "給[三態++]／彈性",
+        "verbForm": [
+            "give",
+            "gives",
+            "gave",
+            "given",
+            "giving"
+        ]
+    },
+    {
+        "verbID": "99",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "go/goes",
+        "verbBaseCN": "去／嘗試",
+        "verbAll": "go/goes - went - gone - going",
+        "verbAllCN": "去[三態++]／嘗試",
+        "verbForm": [
+            "go/goes",
+            "go/goes",
+            "went",
+            "gone",
+            "going"
+        ]
+    },
+    {
+        "verbID": "100",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "grow",
+        "verbBaseCN": "成長，種植",
+        "verbAll": "grow(s) - grew - grown - growing",
+        "verbAllCN": "成長，種植[三態++]",
+        "verbForm": [
+            "grow",
+            "grows",
+            "grew",
+            "grown",
+            "growing"
+        ]
+    },
+    {
+        "verbID": "101",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "hide",
+        "verbBaseCN": "隱藏／獸皮",
+        "verbAll": "hide(s) - hid - hidden - hiding",
+        "verbAllCN": "隱藏[三態++]／獸皮",
+        "verbForm": [
+            "hide",
+            "hides",
+            "hid",
+            "hidden",
+            "hiding"
+        ]
+    },
+    {
+        "verbID": "102",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "know",
+        "verbBaseCN": "知道，認識",
+        "verbAll": "know(s) - knew - known - knowing",
+        "verbAllCN": "知道，認識[三態++]",
+        "verbForm": [
+            "know",
+            "knows",
+            "knew",
+            "known",
+            "knowing"
+        ]
+    },
+    {
+        "verbID": "103",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "lie",
+        "verbBaseCN": "躺臥・位於 / 位置・形勢",
+        "verbAll": "lie(s) - lay - lain - lying",
+        "verbAllCN": "躺臥・位於[三態++] / 位置・形勢",
+        "verbForm": [
+            "lie",
+            "lies",
+            "lay",
+            "lain",
+            "lying"
+        ]
+    },
+    {
+        "verbID": "104",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "lie",
+        "verbBaseCN": "說謊／謊言",
+        "verbAll": "lie(s) - lied - lied - lying",
+        "verbAllCN": "說謊[三態++]／謊言",
+        "verbForm": [
+            "lie",
+            "lies",
+            "lied",
+            "lied",
+            "lying"
+        ]
+    },
+    {
+        "verbID": "105",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "mistake",
+        "verbBaseCN": "犯錯，誤認／錯誤",
+        "verbAll": "mistake(s) - mistook - mistaken - mistaking",
+        "verbAllCN": "犯錯，誤認[三態++]／錯誤",
+        "verbForm": [
+            "mistake",
+            "mistakes",
+            "mistook",
+            "mistaken",
+            "mistaking"
+        ]
+    },
+    {
+        "verbID": "106",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "ride",
+        "verbBaseCN": "騎乘／遊樂設施",
+        "verbAll": "ride(s) - rode - ridden - riding",
+        "verbAllCN": "騎乘[三態++]／遊樂設施",
+        "verbForm": [
+            "ride",
+            "rides",
+            "rode",
+            "ridden",
+            "riding"
+        ]
+    },
+    {
+        "verbID": "107",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "ring",
+        "verbBaseCN": "響起，打電話／戒指，鈴聲",
+        "verbAll": "ring(s) - rang - rung - ringing",
+        "verbAllCN": "響起，打電話[三態++]／戒指，鈴聲",
+        "verbForm": [
+            "ring",
+            "rings",
+            "rang",
+            "rung",
+            "ringing"
+        ]
+    },
+    {
+        "verbID": "108",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "rise",
+        "verbBaseCN": "上升，升起／增加，加薪",
+        "verbAll": "rise(s) - rose - risen - rising",
+        "verbAllCN": "上升，升起[三態++]／增加，加薪",
+        "verbForm": [
+            "rise",
+            "rises",
+            "rose",
+            "risen",
+            "rising"
+        ]
+    },
+    {
+        "verbID": "109",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "see",
+        "verbBaseCN": "看見",
+        "verbAll": "see(s) - saw - seen - seeing",
+        "verbAllCN": "看見[三態++]",
+        "verbForm": [
+            "see",
+            "sees",
+            "saw",
+            "seen",
+            "seeing"
+        ]
+    },
+    {
+        "verbID": "110",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "sew",
+        "verbBaseCN": "縫紉",
+        "verbAll": "sew(s) - sewed - sewn/sewed - sewing",
+        "verbAllCN": "縫紉[三態++]",
+        "verbForm": [
+            "sew",
+            "sews",
+            "sewed",
+            "sewn/sewed",
+            "sewing"
+        ]
+    },
+    {
+        "verbID": "111",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "shake",
+        "verbBaseCN": "搖動，握手／奶昔",
+        "verbAll": "shake(s) - shook - shaken - shaking",
+        "verbAllCN": "搖動，握手[三態++]／奶昔",
+        "verbForm": [
+            "shake",
+            "shakes",
+            "shook",
+            "shaken",
+            "shaking"
+        ]
+    },
+    {
+        "verbID": "112",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "show",
+        "verbBaseCN": "展示／節目，展覽",
+        "verbAll": "show(s) - showed - shown/showed - showing",
+        "verbAllCN": "展示[三態++]／節目，展覽",
+        "verbForm": [
+            "show",
+            "shows",
+            "showed",
+            "shown/showed",
+            "showing"
+        ]
+    },
+    {
+        "verbID": "113",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "shrink",
+        "verbBaseCN": "縮水，退縮／精神科醫生",
+        "verbAll": "shrink(s) - shrank/shrunk - shrunk - shrinking",
+        "verbAllCN": "縮水，退縮[三態++]／精神科醫生",
+        "verbForm": [
+            "shrink",
+            "shrinks",
+            "shrank/shrunk",
+            "shrunk",
+            "shrinking"
+        ]
+    },
+    {
+        "verbID": "114",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "sing",
+        "verbBaseCN": "唱歌",
+        "verbAll": "sing(s) - sang - sung - singing",
+        "verbAllCN": "唱歌[三態++]",
+        "verbForm": [
+            "sing",
+            "sings",
+            "sang",
+            "sung",
+            "singing"
+        ]
+    },
+    {
+        "verbID": "115",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "sink",
+        "verbBaseCN": "沉沒／水槽",
+        "verbAll": "sink(s) - sank/sunk - sunk - sinking",
+        "verbAllCN": "沉沒[三態++]／水槽",
+        "verbForm": [
+            "sink",
+            "sinks",
+            "sank/sunk",
+            "sunk",
+            "sinking"
+        ]
+    },
+    {
+        "verbID": "116",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "speak",
+        "verbBaseCN": "說話",
+        "verbAll": "speak(s) - spoke - spoken - speaking",
+        "verbAllCN": "說話[三態++]",
+        "verbForm": [
+            "speak",
+            "speaks",
+            "spoke",
+            "spoken",
+            "speaking"
+        ]
+    },
+    {
+        "verbID": "117",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "spring",
+        "verbBaseCN": "跳躍，湧現／春天，彈簧",
+        "verbAll": "spring(s) - sprang/sprung - sprung - springing",
+        "verbAllCN": "跳躍，湧現[三態++]／春天，彈簧",
+        "verbForm": [
+            "spring",
+            "springs",
+            "sprang/sprung",
+            "sprung",
+            "springing"
+        ]
+    },
+    {
+        "verbID": "118",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "steal",
+        "verbBaseCN": "偷竊／極便宜的東西",
+        "verbAll": "steal(s) - stole - stolen - stealing",
+        "verbAllCN": "偷竊[三態++]／極便宜的東西",
+        "verbForm": [
+            "steal",
+            "steals",
+            "stole",
+            "stolen",
+            "stealing"
+        ]
+    },
+    {
+        "verbID": "119",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "stink",
+        "verbBaseCN": "發臭／臭味",
+        "verbAll": "stink(s) - stank/stunk - stunk - stinking",
+        "verbAllCN": "發臭[三態++]／臭味",
+        "verbForm": [
+            "stink",
+            "stinks",
+            "stank/stunk",
+            "stunk",
+            "stinking"
+        ]
+    },
+    {
+        "verbID": "120",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "swear",
+        "verbBaseCN": "發誓，咒罵",
+        "verbAll": "swear(s) - swore - sworn - swearing",
+        "verbAllCN": "發誓，咒罵[三態++]",
+        "verbForm": [
+            "swear",
+            "swears",
+            "swore",
+            "sworn",
+            "swearing"
+        ]
+    },
+    {
+        "verbID": "121",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "swell",
+        "verbBaseCN": "腫脹／湧浪／極好的",
+        "verbAll": "swell(s) - swelled - swollen/swelled - swelling",
+        "verbAllCN": "腫脹[三態++]／湧浪／極好的",
+        "verbForm": [
+            "swell",
+            "swells",
+            "swelled",
+            "swollen/swelled",
+            "swelling"
+        ]
+    },
+    {
+        "verbID": "122",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "swim",
+        "verbBaseCN": "游泳／游泳(名詞)",
+        "verbAll": "swim(s) - swam - swum - swimming",
+        "verbAllCN": "游泳[三態++]／游泳(名詞)",
+        "verbForm": [
+            "swim",
+            "swims",
+            "swam",
+            "swum",
+            "swimming"
+        ]
+    },
+    {
+        "verbID": "123",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "take",
+        "verbBaseCN": "拿，帶走／鏡頭，看法",
+        "verbAll": "take(s) - took - taken - taking",
+        "verbAllCN": "拿，帶走[三態++]／鏡頭，看法",
+        "verbForm": [
+            "take",
+            "takes",
+            "took",
+            "taken",
+            "taking"
+        ]
+    },
+    {
+        "verbID": "124",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "tear",
+        "verbBaseCN": "撕裂，流淚／眼淚",
+        "verbAll": "tear(s) - tore - torn - tearing",
+        "verbAllCN": "撕裂，流淚[三態++]／眼淚",
+        "verbForm": [
+            "tear",
+            "tears",
+            "tore",
+            "torn",
+            "tearing"
+        ]
+    },
+    {
+        "verbID": "125",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "throw",
+        "verbBaseCN": "丟，擲／投擲，毯子",
+        "verbAll": "throw(s) - threw - thrown - throwing",
+        "verbAllCN": "丟，擲[三態++]／投擲，毯子",
+        "verbForm": [
+            "throw",
+            "throws",
+            "threw",
+            "thrown",
+            "throwing"
+        ]
+    },
+    {
+        "verbID": "126",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "wake",
+        "verbBaseCN": "醒來／守靈",
+        "verbAll": "wake(s) - woke - woken - waking",
+        "verbAllCN": "醒來[三態++]／守靈",
+        "verbForm": [
+            "wake",
+            "wakes",
+            "woke",
+            "woken",
+            "waking"
+        ]
+    },
+    {
+        "verbID": "127",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "wear",
+        "verbBaseCN": "穿戴／穿著，磨損",
+        "verbAll": "wear(s) - wore - worn - wearing",
+        "verbAllCN": "穿戴[三態++]／穿著，磨損",
+        "verbForm": [
+            "wear",
+            "wears",
+            "wore",
+            "worn",
+            "wearing"
+        ]
+    },
+    {
+        "verbID": "128",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "weave",
+        "verbBaseCN": "編織／編織法",
+        "verbAll": "weave(s) - wove - woven - weaving",
+        "verbAllCN": "編織[三態++]／編織法",
+        "verbForm": [
+            "weave",
+            "weaves",
+            "wove",
+            "woven",
+            "weaving"
+        ]
+    },
+    {
+        "verbID": "129",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "write",
+        "verbBaseCN": "寫字",
+        "verbAll": "write(s) - wrote - written - writing",
+        "verbAllCN": "寫字[三態++]",
+        "verbForm": [
+            "write",
+            "writes",
+            "wrote",
+            "written",
+            "writing"
+        ]
+    },
+    {
+        "verbID": "130",
+        "part": "v./n./adj.",
+        "pre": "to/a/",
+        "verbBase": "fit",
+        "verbBaseCN": "適合，合身[2英]／適合度／健康的",
+        "verbAll": "fit(s) - fit/fitted - fit/fitted - fitting",
+        "verbAllCN": "適合，合身[三態++][2英]／適合度／健康的",
+        "verbForm": [
+            "fit",
+            "fits",
+            "fit/fitted",
+            "fit/fitted",
+            "fitting"
+        ]
+    },
+    {
+        "verbID": "131",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "burn",
+        "verbBaseCN": "燃燒[2英常]／燒傷",
+        "verbAll": "burn(s) - burned/burnt - burned/burnt - burning",
+        "verbAllCN": "燃燒[三態++][2英常]／燒傷",
+        "verbForm": [
+            "burn",
+            "burns",
+            "burned/burnt",
+            "burned/burnt",
+            "burning"
+        ]
+    },
+    {
+        "verbID": "132",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "dream",
+        "verbBaseCN": "做夢[2英常]／夢想，夢",
+        "verbAll": "dream(s) - dreamed/dreamt - dreamed/dreamt - dreaming",
+        "verbAllCN": "做夢[三態++][2英常]／夢想，夢",
+        "verbForm": [
+            "dream",
+            "dreams",
+            "dreamed/dreamt",
+            "dreamed/dreamt",
+            "dreaming"
+        ]
+    },
+    {
+        "verbID": "133",
+        "part": "v./adj.",
+        "pre": "to/",
+        "verbBase": "lean",
+        "verbBaseCN": "傾斜，依靠[2英常]／瘦的，精簡的",
+        "verbAll": "lean(s) - leaned/leant - leaned/leant - leaning",
+        "verbAllCN": "傾斜，依靠[三態++][2英常]／瘦的，精簡的",
+        "verbForm": [
+            "lean",
+            "leans",
+            "leaned/leant",
+            "leaned/leant",
+            "leaning"
+        ]
+    },
+    {
+        "verbID": "134",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "leap",
+        "verbBaseCN": "跳躍[2英常]／激增",
+        "verbAll": "leap(s) - leaped/leapt - leaped/leapt - leaping",
+        "verbAllCN": "跳躍[三態++][2英常]／激增",
+        "verbForm": [
+            "leap",
+            "leaps",
+            "leaped/leapt",
+            "leaped/leapt",
+            "leaping"
+        ]
+    },
+    {
+        "verbID": "135",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "learn",
+        "verbBaseCN": "學習[2英常]",
+        "verbAll": "learn(s) - learned/learnt - learned/learnt - learning",
+        "verbAllCN": "學習[三態++][2英常]",
+        "verbForm": [
+            "learn",
+            "learns",
+            "learned/learnt",
+            "learned/learnt",
+            "learning"
+        ]
+    },
+    {
+        "verbID": "136",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "smell",
+        "verbBaseCN": "聞起來[2英常]／氣味",
+        "verbAll": "smell(s) - smelled/smelt - smelled/smelt - smelling",
+        "verbAllCN": "聞起來[三態++][2英常]／氣味",
+        "verbForm": [
+            "smell",
+            "smells",
+            "smelled/smelt",
+            "smelled/smelt",
+            "smelling"
+        ]
+    },
+    {
+        "verbID": "137",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "spell",
+        "verbBaseCN": "拼寫[2英常]／咒語，一段時間",
+        "verbAll": "spell(s) - spelled/spelt - spelled/spelt - spelling",
+        "verbAllCN": "拼寫[三態++][2英常]／咒語，一段時間",
+        "verbForm": [
+            "spell",
+            "spells",
+            "spelled/spelt",
+            "spelled/spelt",
+            "spelling"
+        ]
+    },
+    {
+        "verbID": "138",
+        "part": "v./n.",
+        "pre": "to/a",
+        "verbBase": "spill",
+        "verbBaseCN": "溢出，灑出[2英常]／溢出物，跌落",
+        "verbAll": "spill(s) - spilled/spilt - spilled/spilt - spilling",
+        "verbAllCN": "溢出，灑出[三態++][2英常]／溢出物，跌落",
+        "verbForm": [
+            "spill",
+            "spills",
+            "spilled/spilt",
+            "spilled/spilt",
+            "spilling"
+        ]
+    },
+    {
+        "verbID": "139",
+        "part": "v./n.",
+        "pre": "to/-",
+        "verbBase": "spoil",
+        "verbBaseCN": "破壞，寵壞[2英常]／戰利品",
+        "verbAll": "spoil(s) - spoiled/spoilt - spoiled/spoilt - spoiling",
+        "verbAllCN": "破壞，寵壞[三態++][2英常]／戰利品",
+        "verbForm": [
+            "spoil",
+            "spoils",
+            "spoiled/spoilt",
+            "spoiled/spoilt",
+            "spoiling"
+        ]
+    },
+    {
+        "verbID": "140",
+        "part": "v.",
+        "pre": "to",
+        "verbBase": "get",
+        "verbBaseCN": "得到，變得[2英]",
+        "verbAll": "get(s) - got - gotten/got - getting",
+        "verbAllCN": "得到，變得[三態++][2英]",
+        "verbForm": [
+            "get",
+            "gets",
+            "got",
+            "gotten/got",
+            "getting"
+        ]
+    }
+]

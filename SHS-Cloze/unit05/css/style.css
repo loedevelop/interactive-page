@@ -1,0 +1,193 @@
+:root {
+    --primary-color: #4a90e2;
+    --correct-color: #2ecc71;
+    --wrong-color: #e74c3c;
+    --container-bg: #fdf6e3; 
+    --text-color: #333;
+    --highlight-color: #ffd700;
+    --navy: #34495e;
+}
+
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; color: var(--text-color); line-height: 1.8; margin: 0; padding: 0; }
+
+.floating-mode-panel { position: fixed; bottom: 20px; left: 20px; z-index: 900; background: rgba(234, 237, 237, 0.95); padding: 8px 12px; border-radius: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); border: 1px solid #ddd; display: flex; flex-direction: row; align-items: center; gap: 10px; cursor: move; }
+.topic-selector { padding: 6px 12px; border-radius: 20px; border: 1px solid #ccc; outline: none; font-weight: bold; color: var(--navy); background: #fff; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); cursor: pointer; max-width: 200px; }
+.mode-switch-container { display: flex; align-items: center; gap: 5px; background: #d5dbdb; padding: 4px; border-radius: 30px;}
+.mode-btn { cursor: pointer; padding: 6px 16px; border-radius: 20px; font-size: 14px; font-weight: bold;}
+.mode-active { background-color: var(--primary-color); color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}
+.mode-inactive { color: #555; }
+.mode-inactive:hover { background-color: #caced0; }
+.btn-check-all { background-color: #d35400; border: none; color: white; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 14px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);}
+.btn-check-all:hover { background-color: #e67e22; }
+
+.teacher-fab-container { position: fixed; bottom: 20px; right: 20px; z-index: 910; display: flex; flex-direction: column-reverse; align-items: flex-end;}
+.fab-btn { background: #34495e; color: white; border: none; padding: 10px 18px; border-radius: 30px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.2); font-size: 14px; }
+.fab-menu { background: white; margin-bottom: 10px; padding: 10px; border-radius: 8px; box-shadow: 0 5px 20px rgba(0,0,0,0.2); display: flex; flex-direction: column; gap: 8px; border: 1px solid #eee; }
+.fab-menu button { padding: 8px 12px; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 13px; font-weight: bold; text-align: center;}
+.fab-menu .btn-add { background-color: #2980b9; }
+.fab-menu .btn-csv { background-color: #8e44ad; }
+.fab-menu .btn-save { background-color: #2ecc71; }
+
+.main-wrapper { max-width: 900px; margin: 40px auto 0; padding: 0 20px 100vh 20px; }
+.article-container { background: var(--container-bg); padding: 40px; border-radius: 12px; border: 1px solid #e5dec1; box-shadow: 0 4px 20px rgba(0,0,0,0.05); font-size: 19px; }
+
+/* =========================================
+   字典高亮狀態機與視覺繼承
+   ========================================= */
+.dict-highlight { position: relative; z-index: 10; cursor: pointer !important; transition: all 0.2s ease-in-out; }
+.content-explain-mode .dict-highlight { background-color: var(--highlight-color) !important; color: var(--text-color) !important; font-weight: normal !important; pointer-events: auto !important; }
+
+/* 🚀 確保新增的「教學模式」也能正確隱藏高亮 */
+.content-teaching-mode .dict-highlight,
+.content-practice-mode .dict-highlight { background-color: transparent !important; color: inherit !important; font-weight: inherit !important; pointer-events: none !important; }
+.cloze-blank .dict-highlight { background-color: transparent !important; color: inherit !important; }
+
+.content-reading-mode .dict-highlight { pointer-events: auto !important; }
+.content-reading-mode .dict-highlight.is-word { background-color: transparent !important; color: #000000 !important; font-weight: 900 !important; }
+
+/* 🚀 UX 升級：閱讀模式下的片語維持橘底，文字改為純黑色粗體 */
+.content-reading-mode .dict-highlight.is-phrase { background-color: #f39c12 !important; color: #000000 !important; font-weight: bold !important; padding: 2px 6px !important; border-radius: 4px !important; }
+
+.dict-highlight.is-nested-word { background-color: transparent !important; color: inherit !important; text-decoration: underline dotted currentColor !important; text-underline-offset: 3px; padding: 0 !important; font-weight: inherit !important; }
+.cloze-blank.reading-mode .answer-text .dict-highlight.is-word { color: inherit !important; font-weight: bold !important; text-decoration: underline dotted #2980b9 !important; text-underline-offset: 4px; }
+.cloze-blank.reading-mode .answer-text .dict-highlight.is-phrase { display: inline-block; line-height: 1.2; margin: 0 2px; }
+
+/* =========================================
+   終極防位移排版 (Absolute Overlay)
+   ========================================= */
+
+.cloze-blank { 
+    display: inline-block; 
+    position: relative; 
+    border-bottom: 2px solid #333 !important; 
+    color: #333; 
+    cursor: pointer; 
+    margin: 0 4px; 
+    padding: 0; 
+    box-sizing: border-box; 
+    vertical-align: bottom; 
+    transition: color 0.2s; 
+    user-select: none; 
+    -webkit-user-select: none; 
+    text-align: left;
+    white-space: nowrap; 
+    line-height: 1.5em;
+    height: 1.5em;
+}
+.cloze-blank:hover { color: var(--primary-color); border-bottom-color: var(--primary-color) !important; }
+
+.cloze-blank > .ghost-layer {
+    display: inline-block;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    font-weight: bold;
+    padding: 0 4px; 
+}
+
+.cloze-blank > .real-layer {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: flex-end; 
+    padding: 0 4px;
+    padding-bottom: 2px;
+    pointer-events: none; 
+}
+
+.cloze-blank.is-long-text {
+    display: inline;
+    position: static;
+    white-space: normal;
+    line-height: inherit;
+    height: auto;
+    padding: 0 2px;
+}
+.cloze-blank.is-long-text > .ghost-layer { display: none !important; }
+.cloze-blank.is-long-text > .real-layer { position: static; display: inline; width: auto; height: auto; padding: 0; }
+
+.blank-number { font-weight: bold; color: inherit; margin-right: 4px; font-size: 1.05em; background-color: transparent !important; }
+.answer-letter { margin-right: 4px; font-weight: bold; font-size: 1.05em; }
+.answer-text { font-weight: bold; font-size: 1.05em; }
+
+.cloze-blank.unanswered.is-long-text .answer-text { color: transparent !important; }
+.cloze-blank.previewing .answer-text { color: var(--primary-color); }
+.cloze-blank.wrong .answer-text { color: var(--wrong-color); text-decoration: line-through; }
+.cloze-blank.answered-black, .cloze-blank.answered-red { pointer-events: none; }
+.cloze-blank.answered-black .answer-text { color: black; }
+.cloze-blank.answered-red .answer-text { color: var(--wrong-color); }
+
+.cloze-blank.reading-mode { display: inline !important; border-bottom: none !important; pointer-events: none !important; position: static !important; white-space: normal !important; height: auto !important; margin: 0 4px !important; padding: 0 !important; vertical-align: baseline !important; line-height: inherit !important; }
+.cloze-blank.reading-mode > .ghost-layer { display: none !important; }
+.cloze-blank.reading-mode > .real-layer { position: static !important; display: inline !important; padding: 0 !important; vertical-align: baseline !important; line-height: inherit !important; }
+.cloze-blank.reading-mode .answer-text { color: #2980b9 !important; pointer-events: auto !important; vertical-align: baseline !important; line-height: inherit !important; }
+.cloze-blank.reading-mode .blank-number, .cloze-blank.reading-mode .answer-letter { display: none !important; }
+
+/* =========================================
+   彈出視窗與組件
+   ========================================= */
+.modal-overlay { display: none; position: fixed; z-index: 999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.15);}
+.modal-content { background-color: #fcfcfc; border-radius: 8px; box-shadow: 0 15px 50px rgba(0,0,0,0.4); position: absolute; display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 320px; }
+.modal-header { background: #e8e8e8; padding: 6px 12px; cursor: move; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #ccc; }
+.header-title { font-weight: bold; color: #444; font-size: 15px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.btn-solution { background: #9b59b6; color: white; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+.btn-solution:hover { background: #8e44ad; }
+.modal-close { font-size: 22px; font-weight: bold; color: #999; cursor: pointer; line-height: 1; margin-top: -2px;}
+.modal-body { padding: 15px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
+.modal-body.no-padding { padding: 0 !important; }
+#optionsPanel { flex: 1; display: flex; flex-direction: column; }
+.option-wrapper { display: flex; align-items: center; padding: 12px 15px; margin: 0; background: #fff; border-bottom: 1px solid #eee; cursor: pointer; }
+.option-wrapper:hover { background: #f0f7ff; }
+.option-letter { font-weight: bold; color: var(--primary-color); width: 35px; flex-shrink: 0;}
+.option-text { flex-grow: 1; text-align: left; font-weight: bold; padding-right:10px; line-height: 1.4;}
+.strike-btn { padding: 4px 10px; font-size: 12px; cursor: pointer; background: #fff; border: 1px solid #e74c3c; color: #e74c3c; border-radius: 4px; margin-left: auto; font-weight: bold; flex-shrink: 0;}
+
+.is-selected { background: #eef5ff; box-shadow: inset 4px 0 0 var(--primary-color);}
+.is-struck { background: #fdfdfd !important; cursor: not-allowed !important; }
+.is-struck .option-text, .is-struck .option-letter { text-decoration: line-through; color: #e74c3c; opacity: 0.5; }
+.is-struck .strike-btn { background: #e74c3c; color: #fff; border-color: #e74c3c;}
+.is-confirmed-wrong { background: #fafafa !important; cursor: not-allowed !important; }
+.is-confirmed-wrong .option-text, .is-confirmed-wrong .option-letter { text-decoration: line-through; color: #e74c3c; opacity: 0.5; }
+.is-confirmed-wrong .strike-btn { display: none; }
+.is-correct-answer { background: #f0fdf4 !important; box-shadow: inset 4px 0 0 var(--correct-color); }
+
+/* 已被其他題目佔用的共用選項外觀 */
+.is-used-elsewhere { background: #f9f9f9 !important; cursor: not-allowed !important; }
+.is-used-elsewhere .option-text, .is-used-elsewhere .option-letter { text-decoration: line-through; color: #aaa; }
+.is-used-elsewhere .strike-btn { display: none; }
+
+.btn-submit-single { width: 100%; background-color: #f39c12; color: white; border: none; padding: 14px; cursor: pointer; font-weight: bold; font-size: 16px; margin-top: auto;}
+.btn-submit-single:hover { background-color: #e67e22; }
+.dict-title-row { display: flex; align-items: center; gap: 10px; margin-bottom: 2px;}
+.dict-title { font-size: 22px; color: var(--primary-color); font-weight: bold; }
+.btn-speak { background: none; border: none; font-size: 20px; cursor: pointer; padding: 0; filter: grayscale(100%); transition: filter 0.2s;}
+.btn-speak:hover { filter: grayscale(0%); transform: scale(1.1); }
+.dict-forms { color: #e67e22; font-weight: bold; font-family: monospace; margin-bottom: 8px; font-size: 14px;}
+.cf-tag { background: #e1f0fa; color: #2980b9; padding: 2px 6px; border-radius: 4px; margin-right: 6px; font-weight: bold; font-size: 13px;}
+.dict-notes { background: #fff3cd; padding: 12px; border-radius: 5px; border-left: 5px solid #ffc107; font-size: 15px;}
+.edit-form-group { margin-bottom: 8px; }
+.edit-form-group label { display: block; font-weight: bold; font-size: 13px; color: #666; margin-bottom: 2px; }
+.edit-form-group input, .edit-form-group textarea, .edit-form-group select { padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: inherit;}
+.cf-row { display: flex; gap: 5px; margin-bottom: 5px; align-items: center; }
+.cf-k-select { width: 90px; }
+.cf-v { flex: 1; width: 100%;}
+.cf-row button { background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 16px; margin-left: auto;}
+.readonly-input { background-color: #f0f0f0; border: 1px dashed #999 !important; color: #666; cursor: not-allowed; }
+.hidden { display: none !important; }
+
+.floating-mode-panel.fit-content { width: max-content !important; }
+.mode-switch-container.flex-fit { display: inline-flex !important; width: max-content !important; min-width: unset !important; max-width: unset !important; padding: 4px !important; box-sizing: border-box !important; align-items: center !important; gap: 0 !important; }
+.mode-btn.fit-auto { width: max-content !important; min-width: unset !important; flex: none !important; margin: 0 !important; }
+.mode-btn.practice-wrapper { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: max-content !important; min-width: unset !important; flex: none !important; padding: 4px 16px 4px 20px !important; margin: 0 0 0 5px !important; box-sizing: border-box !important; }
+.practice-sub-btns { display: inline-flex !important; align-items: center !important; gap: 6px !important; margin-left: 10px !important; margin-right: 0 !important; }
+.practice-sub-btns .btn-check-all { background-color: #d35400 !important; color: #ffffff !important; border: none !important; padding: 4px 12px !important; font-size: 13px !important; border-radius: 20px !important; cursor: pointer !important; font-weight: bold !important; line-height: normal !important; white-space: nowrap !important; height: auto !important; min-width: auto !important; margin: 0 !important; }
+.practice-sub-btns .btn-check-all:hover { background-color: #e67e22 !important; transform: scale(1.05); }
+
+.dict-mode-modal .modal-header { background: transparent !important; border: none !important; height: 0 !important; min-height: 0 !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; }
+.dict-mode-modal #modalDragHandle { position: absolute; top: 0; left: 0; width: calc(100% - 30px); height: 40px; cursor: move; z-index: 10; }
+.dict-mode-modal #modalTitleText { display: none !important; }
+.dict-mode-modal .header-right { position: absolute !important; top: 8px !important; right: 8px !important; z-index: 50 !important; height: auto !important; line-height: 1 !important; }
+.dict-mode-modal .modal-body { padding-top: 12px !important; padding-right: 28px !important; }

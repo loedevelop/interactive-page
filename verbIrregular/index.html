@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Irregular Verbs</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Master Irregular Verbs</h1>
+        </header>
+
+        <div data-screen="setup" class="is-active">
+            <fieldset>
+                <legend>基本資訊</legend>
+                <input type="text" id="studentName" placeholder="your name here" autocomplete="off">
+                <select id="examMode">
+                    <option value="fill">填空</option>
+                    <option value="choice">選擇</option>
+                </select>
+                <select id="questionCount">
+                    <option value="10">10 題</option>
+                    <option value="20" selected>20 題</option>
+                    <option value="40">40 題</option>
+                    <option value="50">50 題</option>
+                    <option value="60">60 題</option>
+                    <option value="80">80 題</option>
+                    <option value="100">100 題</option>
+                </select>
+            </fieldset>
+
+            <fieldset>
+                <legend>題庫＊分類與難易度</legend>
+                <div class="combined-filters">
+                    <div id="categories-container" class="filter-group">
+                        <label><input type="checkbox" name="category[]" value="verbTense" checked> 動詞時態</label>
+                        <label><input type="checkbox" name="category[]" value="phrase" checked> 句子片語</label>
+                    </div>
+                    <div class="filter-divider"></div>
+                    <div id="levels-container" class="filter-group">
+                        <label><input type="checkbox" name="level[]" value="original" checked> 基礎 (Original)</label>
+                        <label><input type="checkbox" name="level[]" value="tagged"> 進階 (Tagged)</label>
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend>題庫＊範圍</legend>
+                <div id="ranges-container">
+                    <label><input type="checkbox" name="range[]" value="1-20" checked> Page 1 (1-20)</label>
+                    <label><input type="checkbox" name="range[]" value="21-40"> Page 2 (21-40)</label>
+                    <label><input type="checkbox" name="range[]" value="41-60"> Page 3 (41-60)</label>
+                    <label><input type="checkbox" name="range[]" value="61-80"> Page 4 (61-80)</label>
+                    <label><input type="checkbox" name="range[]" value="81-100"> Page 5 (81-100)</label>
+                    <label><input type="checkbox" name="range[]" value="101-120"> Page 6 (101-120)</label>
+                    <label><input type="checkbox" name="range[]" value="121-140"> Page 7 (121-140)</label>
+                </div>
+            </fieldset>
+            
+            <button type="button" id="start-btn">開始測驗</button>
+        </div>
+
+        <div data-screen="exam">
+            <h2 id="exam-info"></h2>
+            <div id="question-container"></div>
+            <button id="btn-submit-exam">交卷並批改</button>
+        </div>
+
+        <div data-screen="review">
+            <div id="score-display"></div>
+            <div id="review-container"></div>
+            <div class="action-panel">
+                <button id="btn-restart">重新開始</button>
+                <button id="btn-export-csv">匯出 CSV</button>
+                <button id="btn-export-pdf">匯出 PDF</button>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

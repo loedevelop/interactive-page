@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Used To</title>
+    <style>
+        :root {
+            --primary: #4F46E5; --primary-hover: #4338CA;
+            --success: #10B981; --success-bg: #ECFDF5;
+            --danger: #EF4444; --danger-bg: #FEF2F2;
+            --text-main: #1F2937; --text-muted: #6B7280;
+            --highlight-verb: #E11D48; --highlight-ing: #9333EA;  
+            --radius: 12px; --transition: all 0.3s ease;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #e0e7ff 0%, #f3f4f6 100%);
+            color: var(--text-main); min-height: 100vh;
+            display: flex; align-items: flex-start; justify-content: center;
+            padding: 40px 20px;
+        }
+
+        .app-container {
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: var(--radius);
+            box-shadow: 0 15px 25px -5px rgba(0,0,0,0.1);
+            width: 100%; max-width: 750px; overflow: hidden; position: relative;
+        }
+
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 20px 30px; border-bottom: 2px solid #E5E7EB;
+            position: sticky; top: 0; background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px); z-index: 100;
+        }
+
+        h1 { font-size: 1.5rem; color: var(--primary); font-weight: 800; letter-spacing: -0.5px;}
+        .progress { font-weight: 600; color: var(--text-muted); font-size: 1.1rem; }
+
+        .main-content { padding: 30px; }
+        .question-text { font-size: 1.3rem; line-height: 1.6; margin-bottom: 25px; font-weight: 500; }
+
+        .input-group input, .input-group textarea {
+            width: 100%; padding: 16px; font-size: 1.15rem;
+            border: 2px solid #D1D5DB; border-radius: 8px; outline: none; font-family: inherit;
+        }
+        .input-group input:focus, .input-group textarea:focus {
+            border-color: var(--primary); box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.15);
+        }
+
+        .feedback { margin-top: 25px; display: none; animation: slideDown 0.4s ease-out forwards; }
+        .feedback-header { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; font-weight: bold; margin-bottom: 15px; }
+        .feedback.correct .feedback-header { color: var(--success); }
+        .feedback.wrong .feedback-header { color: var(--danger); }
+        .feedback.info .feedback-header { color: #2563EB; }
+
+        .answer-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+        .answer-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-left: 5px solid var(--primary); padding: 15px 20px; border-radius: 8px; }
+        .answer-card.wrong-input { border-left-color: var(--danger); background: var(--danger-bg); }
+        .answer-label { font-size: 0.85rem; font-weight: 700; color: var(--primary); text-transform: uppercase; margin-bottom: 8px; display: block; }
+        .answer-content { font-size: 1.2rem; color: var(--text-main); font-weight: 700; }
+
+        .verb-focus { color: var(--highlight-verb); }
+        .verb-replaceable { color: var(--highlight-verb); text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 4px; }
+        .replaceable { color: inherit; text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 4px; }
+        .ing-suffix { color: var(--highlight-ing); }
+
+        .eagle-eye { background: #FEF3C7; border: 1px solid #FDE68A; padding: 18px; border-radius: 8px; color: #92400E; font-size: 1.05rem; }
+        .eagle-eye h4 { margin: 0 0 8px 0; color: #B45309; font-size: 1.15rem; display: flex; align-items: center; gap: 6px; }
+        .eagle-eye p { margin: 0 0 8px 0; line-height: 1.6; }
+        .eagle-eye p:last-child { margin-bottom: 0; }
+        .eagle-eye strong { color: #78350F; background: #FDE68A; padding: 0 4px; border-radius: 4px; }
+
+        .btn { background: var(--primary); color: white; border: none; padding: 16px; font-size: 1.1rem; font-weight: 600; border-radius: 8px; cursor: pointer; margin-top: 25px; width: 100%; }
+        .btn:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2); }
+
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-out { opacity: 0; transition: opacity 0.3s; }
+        .fade-in { opacity: 1; transition: opacity 0.3s; }
+
+        .result-screen { text-align: center; display: none; padding: 40px 20px; }
+        .score-circle {
+            width: 140px; height: 140px; border-radius: 50%; background: var(--primary); color: white;
+            display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: bold;
+            margin: 0 auto 25px; box-shadow: 0 10px 25px rgba(79, 70, 229, 0.4);
+        }
+
+        /* 🖨️ PDF 列印專屬樣式 */
+        #print-area { display: none; }
+        @media print {
+            body { background: white !important; padding: 0 !important; margin: 0 !important; }
+            .app-container { display: none !important; }
+            #print-area { display: block !important; width: 100%; color: black; font-family: 'Segoe UI', sans-serif; }
+            @page { margin: 1.5cm; }
+            .print-header { text-align: center; border-bottom: 2px solid #333; margin-bottom: 25px; padding-bottom: 15px; }
+            .print-header h1 { color: #1F2937; font-size: 24pt; margin-bottom: 5px; }
+            .print-header h2 { color: #4F46E5; font-size: 18pt; margin-bottom: 5px; }
+            .print-q-card { page-break-inside: avoid; border: 1px solid #E5E7EB; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+            .print-q-card h3 { color: #4F46E5; font-size: 14pt; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .print-q-text { font-size: 12pt; font-weight: bold; margin-bottom: 10px; }
+            .print-ans { font-size: 11pt; margin-bottom: 5px; }
+            .print-explanation { background: #F9FAFB !important; border-left: 4px solid #F59E0B !important; padding: 10px; margin-top: 15px; font-size: 11pt; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container" id="app">
+    <header>
+        <h1>Master Used To</h1>
+        <div class="progress"><span id="currentIdx">-</span> / <span id="totalQuestions">-</span></div>
+    </header>
+    <main class="main-content" id="quiz-area"></main>
+    <div class="result-screen" id="result-area">
+        <div class="score-circle" id="final-score">100</div>
+        <h2 style="font-size: 1.8rem; margin-bottom: 10px;">測驗完成！</h2>
+        <p id="score-msg" style="margin: 15px 0 20px; font-size: 1.1rem; color: var(--text-muted); line-height: 1.5;"></p>
+        <button class="btn" style="background: #2563EB;" id="exportPdfBtn">📄 下載測驗報告 (Export PDF)</button>
+        <button class="btn" onclick="location.reload()" style="background: #6B7280; margin-top: 15px;">🔄 重新挑戰</button>
+    </div>
+</div>
+
+<div id="print-area"></div>
+
+<script>
+const v = (t) => `<span class="verb-focus">${t}</span>`;
+const rv = (t) => `<span class="verb-replaceable">${t}</span>`;
+const u = (t) => `<span class="replaceable">${t}</span>`;
+const ing = (t) => `<span class="ing-suffix">${t}</span>`;
+const sp = `&nbsp;&nbsp;`; 
+
+const quizData = [
+    // === 第 1 到 15 題 ===
+    { 
+        type: "fill", text: "When I was a child, I ________ (cry) a lot, but now I am a very brave person.", 
+        answers: ["used to cry"], display: [{ label: "唯一正解", text: `${v("used")}${sp}to${sp}cry` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字是 <strong>but now</strong>，表示過去經常發生、但現在沒有的動作。</p><p>這裡的 <strong>used</strong> 是真正的「過去式動詞」，後面的 to 是不定詞，所以只能加原形動詞 cry。</p>" 
+    },
+    { 
+        type: "fill", text: "After she moved to Taipei, it took her several months to ________ (take) the MRT during rush hour.", 
+        answers: ["get used to taking", "become used to taking", "be used to taking", "get accustomed to taking", "be accustomed to taking"], 
+        display: [{ label: "可能性 A (適應過程)", text: `${rv("get/become")}${sp}${u("used/accustomed")}${sp}to${sp}tak${ing("ing")}` }, { label: "可能性 B (習慣狀態)", text: `${v("be")}${sp}${u("used/accustomed")}${sp}to${sp}tak${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>took her several months</strong>，強調花費數個月經歷「漸漸適應」或最終達到「習慣」皆合理。</p><p>注意！這裡的 <strong>get / become / be</strong> 才是真正的動詞；而 <strong>used / accustomed</strong> 其實是形容詞，後方的 to 是介系詞，必須接動名詞 (V-ing)！</p>" 
+    },
+    { 
+        type: "fill", text: "If you live in a cold country, you usually ________ (wear) heavy coats in winter; it feels completely normal to you.", 
+        answers: ["are used to wearing", "are accustomed to wearing"], 
+        display: [{ label: "習慣的狀態", text: `${v("are")}${sp}${u("used/accustomed")}${sp}to${sp}wear${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>feels completely normal</strong>。這表示已經對這件事「習以為常」，處於靜態事實的習慣狀態。</p>" 
+    },
+    { 
+        type: "fill", text: "He was very lazy in the past. Before he joined the army, he ________ (wake) up at noon every day.", 
+        answers: ["used to wake", "was used to waking", "was accustomed to waking"], 
+        display: [{ label: "可能性 A (過去動作)", text: `${v("used")}${sp}to${sp}wake` }, { label: "可能性 B (生理時鐘狀態)", text: `${v("was")}${sp}${u("used/accustomed")}${sp}to${sp}wak${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>語境強調過去每天的「常態動作」(used to wake) 或是過去生理時鐘處於「習慣睡到中午的狀態」(was used to waking)，兩者皆通。</p><p>紅色的字才是決定句子時態的靈魂！</p>" 
+    },
+    { 
+        type: "fill", text: "I didn't like bitter drinks at first, but while I worked at the cafe, I slowly ________ (drink) black coffee.", 
+        answers: ["got used to drinking", "became used to drinking", "got accustomed to drinking", "became accustomed to drinking"], 
+        display: [{ label: "適應的過程 (過去式)", text: `${rv("got/became")}${sp}${u("used/accustomed")}${sp}to${sp}drink${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>slowly</strong>，強調從不喜歡到喜歡的「適應過程」。</p><p>配合上下文 worked，真正的動詞必須跟著變化為過去式 <strong>got 或 became</strong>。</p>" 
+    },
+    { 
+        type: "fill", text: "As soon as the new policy started, the employees had to ________ (work) from home immediately.", 
+        answers: ["get used to working", "become used to working", "get accustomed to working", "become accustomed to working"], 
+        display: [{ label: "必須經歷的過程", text: `${rv("get/become")}${sp}${u("used/accustomed")}${sp}to${sp}work${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>had to</strong>。助動詞後接原形動詞，語境強調面臨新政策時必須去「適應」的過程。</p>" 
+    },
+    { 
+        type: "fill", text: "She was born into a wealthy family, so she ________ (stay) in luxury hotels.", 
+        answers: ["is accustomed to staying", "was accustomed to staying", "is used to staying", "was used to staying", "used to stay"], 
+        display: [{ label: "可能性 A (長期的習慣)", text: `${rv("is/was")}${sp}${u("used/accustomed")}${sp}to${sp}stay${ing("ing")}` }, { label: "可能性 B (過去經常住)", text: `${v("used")}${sp}to${sp}stay` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>這是鑑別度極高的一題！</p><p>填「長期處於習慣狀態 (is/was used to V-ing)」或「過去經常發生的常態 (used to V)」在語意上都完全正確！語言是靈活的，端看你想表達什麼情境。</p>" 
+    },
+    { 
+        type: "fill", text: "When my grandfather was young, he ________ (write) letters to my grandmother, but now they just use LINE.", 
+        answers: ["used to write"], display: [{ label: "過去常態", text: `${v("used")}${sp}to${sp}write` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>but now</strong>。標準的「過去習慣、現在不再」，接原形動詞。</p>" 
+    },
+    { 
+        type: "fill", text: "It is very noisy outside, but the baby is sleeping peacefully. He ________ (hear) the traffic noise.", 
+        answers: ["is used to hearing", "is accustomed to hearing"], 
+        display: [{ label: "免疫/習慣的狀態", text: `${v("is")}${sp}${u("used/accustomed")}${sp}to${sp}hear${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>sleeping peacefully</strong>。面對噪音還能安睡，代表處於「對噪音免疫」的習慣狀態。</p>" 
+    },
+    { 
+        type: "fill", text: "Before smartphones were popular, people ________ (memorize) their friends' phone numbers.", 
+        answers: ["used to memorize", "were used to memorizing", "were accustomed to memorizing"], 
+        display: [{ label: "可能性 A (過去動作)", text: `${v("used")}${sp}to${sp}memorize` }, { label: "可能性 B (過去習慣狀態)", text: `${v("were")}${sp}${u("used/accustomed")}${sp}to${sp}memoriz${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>在描述過去的事情時，「過去常常做某事」和「過去對某事已經習以為常」，在語意上往往都能完美符合上下文。不要死背單一解答！</p>" 
+    },
+    { 
+        type: "fill", text: "After a few weeks of practice, the foreign student finally ________ (use) chopsticks.", 
+        answers: ["got used to using", "became used to using", "got accustomed to using", "became accustomed to using", "was used to using", "was accustomed to using"], 
+        display: [{ label: "可能性 A (終於適應的過程)", text: `${rv("got/became")}${sp}${u("used/accustomed")}${sp}to${sp}us${ing("ing")}` }, { label: "可能性 B (終於達到的狀態)", text: `${v("was")}${sp}${u("used/accustomed")}${sp}to${sp}us${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>finally</strong>。經歷幾週後，終於「適應了（過程）」或達到了「習慣的狀態」，皆符合語意。</p>" 
+    },
+    { 
+        type: "fill", text: "I felt terrible yesterday because I ________ (not / walk) such a long distance. My legs are usually quite weak.", 
+        answers: ["was not used to walking", "was not accustomed to walking"], 
+        display: [{ label: "不習慣的狀態", text: `${v("was")}${sp}not${sp}${u("used/accustomed")}${sp}to${sp}walk${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>昨天覺得很痛苦，是因為當時身體處於「不習慣走那麼遠的狀態」。</p>" 
+    },
+    { 
+        type: "fill", text: "If you want to be a doctor, you must ________ (see) blood. It is part of the job training.", 
+        answers: ["get used to seeing", "become used to seeing", "get accustomed to seeing", "become accustomed to seeing", "be used to seeing", "be accustomed to seeing"], 
+        display: [{ label: "可能性 A (適應過程)", text: `${rv("get/become")}${sp}${u("used/accustomed")}${sp}to${sp}see${ing("ing")}` }, { label: "可能性 B (心裡狀態)", text: `${v("be")}${sp}${u("used/accustomed")}${sp}to${sp}see${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>必須經歷「適應見血的過程」或具備「習慣見血的狀態」皆可。</p>" 
+    },
+    { 
+        type: "fill", text: "While we lived in the countryside, we ________ (grow) our own vegetables in the backyard, but we stopped doing that when we moved to the city.", 
+        answers: ["used to grow"], display: [{ label: "過去常態", text: `${v("used")}${sp}to${sp}grow` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>we stopped doing that</strong>。明確表示過去有、現在沒有的動作。</p>" 
+    },
+    { 
+        type: "fill", text: "She hated spicy food. She ________ (not / eat) it until she visited Thailand. Now, she eats it every day.", 
+        answers: ["was not used to eating", "was not accustomed to eating", "didn't use to eat", "didn't used to eat"], 
+        display: [{ label: "可能性 A (不習慣的狀態)", text: `${v("was")}${sp}not${sp}${u("used/accustomed")}${sp}to${sp}eat${ing("ing")}` }, { label: "可能性 B (沒有這習慣)", text: `didn't${sp}${v("use")}${sp}to${sp}eat` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>否定用法的精華題！</p><p>去泰國前，身體處於「不習慣狀態」(was not used to V-ing)，或是根本「沒有吃辣的習慣」(didn't use to V)，兩者皆符合邏輯。留意 didn't 後面的 use 通常不加 d。</p>" 
+    },
+    // === 第 16 到 30 題 ===
+    { 
+        type: "fill", text: "The CEO ________ (give) speeches in front of thousands of people; he never feels nervous.", 
+        answers: ["is accustomed to giving", "is used to giving"], 
+        display: [{ label: "駕輕就熟的狀態", text: `${v("is")}${sp}${u("used/accustomed")}${sp}to${sp}giv${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>never feels nervous</strong>。代表對這件事情駕輕就熟的習慣狀態。</p>" 
+    },
+    { 
+        type: "fill", text: "As soon as the summer vacation started, I found that my body ________ (stay) up late.", 
+        answers: ["was used to staying", "was accustomed to staying", "got used to staying", "became used to staying"], 
+        display: [{ label: "可能性 A (處於習慣狀態)", text: `${v("was")}${sp}${u("used/accustomed")}${sp}to${sp}stay${ing("ing")}` }, { label: "可能性 B (已養成習慣)", text: `${rv("got/became")}${sp}${u("used/accustomed")}${sp}to${sp}stay${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>發現身體當時「已經處於習慣熬夜的狀態」或「不知不覺養成了這習慣」。</p><p>兩者的差別只在於你想強調的是「靜態事實 (be)」還是「動態變化 (get/become)」。</p>" 
+    },
+    { 
+        type: "fill", text: "When I started my diet, I was always hungry because I ________ (eat) large meals.", 
+        answers: ["was used to eating", "was accustomed to eating", "used to eat"], 
+        display: [{ label: "可能性 A (習慣大餐的狀態)", text: `${v("was")}${sp}${u("used/accustomed")}${sp}to${sp}eat${ing("ing")}` }, { label: "可能性 B (常吃大餐的動作)", text: `${v("used")}${sp}to${sp}eat` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>剛開始節食會餓，是因為過去「習慣吃大餐的狀態」或過去「經常吃大餐的動作」。</p>" 
+    },
+    { 
+        type: "fill", text: "Before they bought a car, they ________ (ride) bicycles to work every morning.", 
+        answers: ["used to ride", "were used to riding", "were accustomed to riding"], 
+        display: [{ label: "可能性 A (過去常態)", text: `${v("used")}${sp}to${sp}ride` }, { label: "可能性 B (習慣狀態)", text: `${v("were")}${sp}${u("used/accustomed")}${sp}to${sp}rid${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>描述過去的常態動作或習慣狀態皆可。</p>" 
+    },
+    { 
+        type: "fill", text: "If he transfers to an American school, he ________ (speak) English all day very quickly.", 
+        answers: ["gets used to speaking", "becomes used to speaking", "gets accustomed to speaking", "becomes accustomed to speaking"], 
+        display: [{ label: "適應的過程", text: `${rv("gets/becomes")}${sp}${u("used/accustomed")}${sp}to${sp}speak${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>關鍵字 <strong>very quickly</strong>，強調適應的「過程」。配合 If 條件句表達推論。</p>" 
+    },
+    // --- 陷阱區 ---
+    { 
+        type: "fill", text: "Water is widely used to ________ (generate) electricity, but modern people are not used to ________ (live) without power for even a day. (用空格分開)", 
+        answers: ["generate living", "generate, living", "generate,living"], 
+        display: [{ label: "第1格 (被用來：接原形)", text: `generate` }, { label: "第2格 (習慣：接動名詞)", text: `liv${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼防呆陷阱：黃金雙格對比</h4><p>前半句的水是無生命物體，是<strong>「被用來」發電的</strong>，這是一般被動語態，to 為不定詞接原形。</p><p>後半句的現代人是<strong>「不習慣」沒電的生活</strong>，處於習慣狀態，to 為介系詞接動名詞！</p>" 
+    },
+    { 
+        type: "fill", text: "Nowadays, artificial intelligence is frequently used to ________ (analyze) large amounts of data in a few seconds.", 
+        answers: ["analyze"], display: [{ label: "被動語態陷阱 (接原形)", text: `analyze` }], 
+        explanation: "<h4>🦅 鷹眼防呆陷阱</h4><p>看到 is used to 不要馬上膝跳反射加 V-ing！</p><p>AI 是人類發明的工具，它是<strong>「被頻繁用來」</strong>分析數據的，因此是被動語態，必須接原形動詞 analyze。</p>" 
+    },
+    { 
+        type: "fill", text: "Unlike regular dogs, sled dogs in the Arctic are used to ________ (pull) heavy sleds in the freezing snow.", 
+        answers: ["pulling"], display: [{ label: "習慣的狀態 (接 V-ing)", text: `pull${ing("ing")}` }], 
+        explanation: "<h4>🦅 鷹眼防呆陷阱：動物主詞</h4><p>主詞雖然是動物（雪橇犬），但這裡強調牠們為了生存，身體機能有別於一般狗，已經<strong>「習慣於」</strong>在冰天雪地拉雪橇的狀態，而非單純被利用，因此接 V-ing。</p>" 
+    },
+    { 
+        type: "fill", text: "In the chemistry lab, this special equipment is carefully used to ________ (measure) the exact temperature of the liquid.", 
+        answers: ["measure"], display: [{ label: "被動語態陷阱 (接原形)", text: `measure` }], 
+        explanation: "<h4>🦅 鷹眼防呆陷阱：副詞干擾</h4><p>設備 (equipment) 是「被用來」測量的。出題老師故意在中間卡了一個副詞 <strong>carefully</strong> 來干擾視覺，但 to 依然是不定詞，堅定地接原形動詞 measure 吧！</p>" 
+    },
+    { 
+        type: "fill", text: "In the movie, the innocent boy was used to ________ (steal) valuable information for the bad guys.", 
+        answers: ["steal"], display: [{ label: "被動語態大魔王 (接原形)", text: `steal` }], 
+        explanation: "<h4>🦅 鷹眼終極大魔王</h4><p>這題殺傷力 100%！主詞明明是人 (innocent boy)，但請仔細看語意：「這個男孩被壞人利用來偷取情報」。</p><p>男孩<strong>「被當作犯罪工具」</strong>，屬於被動語態，所以必須接原形動詞！千萬別看到人就無腦加 V-ing！</p>" 
+    },
+    // --- 翻譯區 ---
+    { 
+        type: "translation", text: "當我小時候，我過去經常在下雨天時去公園玩水。(包含 when / used to)", 
+        answers: ["When I was a child, I used to play in the water at the park on rainy days."], 
+        display: [{ label: "參考解答", text: `When I was a child, I ${v("used")}${sp}to${sp}play in the water...` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>確保 used to 後面接的是原形動詞 play。</p>" 
+    },
+    { 
+        type: "translation", text: "在搬到鄉下之後，他花了一些時間才漸漸習慣早起。(包含 after / get used to)", 
+        answers: ["After moving to the country, it took him some time to get used to waking up early."], 
+        display: [{ label: "參考解答", text: `After moving to the country, it took him some time to${sp}${rv("get/become")}${sp}${u("used")}${sp}to${sp}wak${ing("ing")} up early.` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>after 若直接接 V-ing (moving)，需注意主要子句的主詞必須一致；且片語中的 to 後面必須接動名詞 waking。</p>" 
+    },
+    { 
+        type: "translation", text: "直到她上大學之前，她都不習慣自己洗衣服。(包含 until / be used to)", 
+        answers: ["She was not used to washing her own clothes until she went to college."], 
+        display: [{ label: "參考解答", text: `She ${v("was")}${sp}not${sp}${u("used")}${sp}to${sp}wash${ing("ing")} her own clothes until she went to college.` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>測試 not... until 的句型邏輯，且時態必須是過去式 was。</p>" 
+    },
+    { 
+        type: "translation", text: "當他在國外工作時，他漸漸習慣了吃冷的三明治當午餐。(包含 while / get used to)", 
+        answers: ["While he worked abroad, he got used to eating cold sandwiches for lunch."], 
+        display: [{ label: "參考解答", text: `While he worked abroad, he ${rv("got/became")}${sp}${u("used")}${sp}to${sp}eat${ing("ing")} cold sandwiches...` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>既然是「漸漸習慣」，get 必須改為過去式 got；且 to 之後接 eating。</p>" 
+    },
+    { 
+        type: "translation", text: "如果你是一位專業的編輯，你通常已經習慣於挑出文章中的錯誤。(包含 if)", 
+        answers: ["If you are a professional editor, you are usually accustomed to picking out errors in articles."], 
+        display: [{ label: "參考解答", text: `If you are a professional editor, you ${v("are")}${sp}usually${sp}${u("used/accustomed")}${sp}to${sp}pick${ing("ing")} out errors...` }], 
+        explanation: "<h4>🦅 鷹眼文法解密</h4><p>測試 accustomed to 或 used to 後接 V-ing (picking / finding / spotting)。注意 are 才是真正的動詞。</p>" 
+    }
+];
+
+class QuizApp {
+    constructor(data) {
+        this.data = data;
+        this.currentIndex = 0;
+        this.score = 0;
+        this.answered = false;
+        this.history = []; 
+        this.quizArea = document.getElementById('quiz-area');
+        
+        if(this.data && this.data.length > 0) {
+            document.getElementById('totalQuestions').textContent = this.data.length;
+        } else {
+            this.quizArea.innerHTML = "<h2>⚠️ 系統發生錯誤：題庫無法載入。</h2>";
+        }
+    }
+
+    init() { this.renderQuestion(); }
+
+    normalizeText(t) { return t.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.,!?]/g, ''); }
+
+    renderQuestion() {
+        this.answered = false;
+        const q = this.data[this.currentIndex];
+        document.getElementById('currentIdx').textContent = this.currentIndex + 1;
+
+        const isFill = q.type === 'fill';
+        const replaceStr = '<span style="color:var(--primary); font-weight:bold;">________</span>';
+        const htmlStr = `
+            <div class="question-text">${q.text.replace('________', replaceStr)}</div>
+            <div class="input-group">
+                ${isFill ? '<input type="text" id="userInput" placeholder="請輸入正確答案..." autocomplete="off">' : '<textarea id="userInput" rows="3" placeholder="請寫下你的翻譯..."></textarea>'}
+            </div>
+            <div id="feedbackBox" class="feedback"></div>
+            <button class="btn" id="submitBtn">${isFill ? '送出答案 📤' : '核對解答 🔍'}</button>
+        `;
+        this.quizArea.innerHTML = htmlStr;
+        
+        if (isFill) {
+            document.getElementById('userInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.handleAction();
+            });
+        }
+        document.getElementById('userInput').focus();
+        document.getElementById('submitBtn').addEventListener('click', () => this.handleAction());
+    }
+
+    generateAnswerCardsHTML(displayData) {
+        return displayData.map(item => `
+            <div class="answer-card">
+                <span class="answer-label">${item.label}</span>
+                <div class="answer-content">${item.text}</div>
+            </div>
+        `).join('');
+    }
+
+    handleAction() {
+        if (this.answered) {
+            this.nextQuestion();
+            return;
+        }
+
+        const q = this.data[this.currentIndex];
+        const inputStr = document.getElementById('userInput').value;
+        const feedbackBox = document.getElementById('feedbackBox');
+        const submitBtn = document.getElementById('submitBtn');
+
+        this.answered = true;
+        feedbackBox.style.display = 'block';
+        const cardsHTML = this.generateAnswerCardsHTML(q.display);
+        
+        let isCorrect = null;
+
+        if (q.type === 'fill') {
+            isCorrect = q.answers.some(ans => this.normalizeText(ans) === this.normalizeText(inputStr));
+            if (isCorrect) {
+                this.score++;
+                feedbackBox.className = 'feedback correct';
+                feedbackBox.innerHTML = `<div class="feedback-header">✅ 完全正確！</div><div class="answer-list">${cardsHTML}</div><div class="eagle-eye">${q.explanation}</div>`;
+            } else {
+                feedbackBox.className = 'feedback wrong';
+                feedbackBox.innerHTML = `<div class="feedback-header">❌ 發現盲點！</div>
+                    <div class="answer-list"><div class="answer-card wrong-input"><span class="answer-label" style="color:var(--danger)">你的答案</span><div class="answer-content" style="text-decoration: line-through;">${inputStr || "(未作答)"}</div></div>${cardsHTML}</div>
+                    <div class="eagle-eye">${q.explanation}</div>`;
+            }
+        } else {
+            feedbackBox.className = 'feedback info';
+            feedbackBox.innerHTML = `<div class="feedback-header">💡 參考解答</div><div class="answer-list">${cardsHTML}</div><div class="eagle-eye">${q.explanation}</div>`;
+        }
+
+        this.history.push({
+            q: q,
+            inputStr: inputStr,
+            isCorrect: isCorrect,
+            cardsHTML: cardsHTML
+        });
+
+        submitBtn.innerHTML = (this.currentIndex === this.data.length - 1) ? "查看最終成績 🏆" : "下一題 ➡️";
+        submitBtn.style.background = "#10B981"; 
+        submitBtn.style.boxShadow = "0 4px 12px rgba(16, 185, 129, 0.3)";
+    }
+
+    nextQuestion() {
+        this.currentIndex++;
+        if (this.currentIndex < this.data.length) {
+            this.quizArea.classList.add('fade-out');
+            setTimeout(() => {
+                this.renderQuestion();
+                this.quizArea.classList.remove('fade-out');
+                this.quizArea.classList.add('fade-in');
+            }, 250);
+        } else {
+            this.showResults();
+        }
+    }
+
+    showResults() {
+        this.quizArea.style.display = 'none';
+        const resultArea = document.getElementById('result-area');
+        resultArea.style.display = 'block';
+        
+        const fillQuestionsCount = this.data.filter(q => q.type === 'fill').length;
+        this.finalScoreValue = Math.round((this.score / fillQuestionsCount) * 100);
+        
+        document.getElementById('final-score').textContent = this.finalScoreValue;
+        const msgEl = document.getElementById('score-msg');
+        if (this.finalScoreValue === 100) msgEl.textContent = "太神啦！完美的 Clean Code 大師！";
+        else if (this.finalScoreValue >= 80) msgEl.textContent = "非常優秀！持續重構你的語感盲點！";
+        else msgEl.textContent = "多看幾次鷹眼解析，重新 Deploy 你的大腦吧！";
+        
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        document.getElementById('exportPdfBtn').onclick = () => this.generatePDF();
+    }
+
+    generatePDF() {
+        const printArea = document.getElementById('print-area');
+        let html = `
+            <div class="print-header">
+                <h1>Master Used To - 鷹眼特訓報告</h1>
+                <h2>最終成績：${this.finalScoreValue} 分</h2>
+                <p style="color: #6B7280; margin-top: 10px;">測驗時間：${new Date().toLocaleString('zh-TW')}</p>
+            </div>
+        `;
+
+        this.history.forEach((record, idx) => {
+            const isFill = record.q.type === 'fill';
+            const icon = isFill ? (record.isCorrect ? '✅' : '❌') : '📝';
+            const ansColor = isFill ? (record.isCorrect ? '#10B981' : '#EF4444') : '#2563EB';
+            
+            html += `
+                <div class="print-q-card">
+                    <h3>第 ${idx + 1} 題 ${icon}</h3>
+                    <div class="print-q-text">${record.q.text}</div>
+                    <div class="print-ans">
+                        <span style="color: #6B7280;">你的答案：</span> 
+                        <strong style="color: ${ansColor};">${record.inputStr || '(未作答)'}</strong>
+                    </div>
+                    <div class="print-explanation">
+                        <div style="margin: 10px 0; font-family: monospace; font-size: 13pt;">${record.cardsHTML.replace(/<div class="answer-card">/g, '<div style="margin-bottom:8px;">')}</div>
+                        <div style="color: #4B5563;">${record.q.explanation}</div>
+                    </div>
+                </div>
+            `;
+        });
+
+        printArea.innerHTML = html;
+        window.print();
+    }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    const app = new QuizApp(quizData);
+    app.init();
+});
+</script>
+</body>
+</html>

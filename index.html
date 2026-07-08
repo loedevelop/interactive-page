@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登入 - LogOnEnglish (SaaS 雲端升級版)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #FF8C00;
+            --secondary-color: #FFA500;
+            --bg-color: #FFF8E1;
+            --text-color: #4A4A4A;
+            --error-color: #E53935;
+        }
+
+        body {
+            font-family: 'Nunito', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-image: radial-gradient(var(--secondary-color) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+
+        .login-container {
+            background-color: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(255, 140, 0, 0.15);
+            width: 100%;
+            max-width: 350px;
+            text-align: center;
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            z-index: 10;
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .logo { font-size: 2.5rem; font-weight: 900; color: var(--primary-color); margin-bottom: 5px; letter-spacing: -1px; }
+        .subtitle { font-size: 0.9rem; color: #888; margin-bottom: 30px; }
+        
+        .input-group { margin-bottom: 20px; text-align: left; }
+        .input-group label { display: block; margin-bottom: 8px; font-weight: 700; }
+        .input-group input { width: 100%; padding: 12px; border: 2px solid #EEE; border-radius: 10px; font-size: 1rem; box-sizing: border-box; transition: 0.3s; }
+        .input-group input:focus { outline: none; border-color: var(--primary-color); }
+        
+        .password-wrapper { position: relative; }
+        .password-wrapper input { padding-right: 45px; }
+        .toggle-password-btn {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            color: #888;
+            padding: 0;
+            outline: none;
+            transition: 0.2s;
+        }
+        .toggle-password-btn:hover { color: var(--primary-color); transform: translateY(-50%) scale(1.1); }
+
+        .checkbox-group { display: flex; align-items: center; margin-bottom: 20px; text-align: left; }
+        .checkbox-group input { width: 18px; height: 18px; margin-right: 8px; cursor: pointer; accent-color: var(--primary-color); }
+        .checkbox-group label { font-size: 0.95rem; font-weight: 700; cursor: pointer; color: #555; }
+
+        .login-btn { background-color: var(--primary-color); color: white; border: none; padding: 14px; width: 100%; border-radius: 10px; font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: 0.3s; }
+        .login-btn:hover { background-color: #E67E22; }
+        .login-btn:active { transform: translateY(2px); }
+        .login-btn:disabled { background-color: #ccc; cursor: not-allowed; transform: none; }
+        
+        .clear-btn { background-color: #F1F5F9; color: #EF4444; border: 2px solid #FECACA; padding: 10px; width: 100%; border-radius: 10px; margin-top: 15px; font-size: 0.9rem; font-weight: 800; cursor: pointer; transition: 0.2s; }
+        .clear-btn:hover { background-color: #FEE2E2; }
+
+        #error-message { color: var(--error-color); font-size: 0.9rem; margin-top: 15px; min-height: 20px; font-weight: bold; }
+
+        /* 🌟 白皮書規範：多重身分選擇器 Modal 樣式 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(0, 0, 0, 0.6);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(4px);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal-content {
+            background-color: white;
+            padding: 30px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 380px;
+            text-align: center;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+            transform: translateY(20px);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .modal-overlay.active .modal-content { transform: translateY(0); }
+        .modal-title { font-size: 1.3rem; font-weight: 900; color: var(--text-color); margin-bottom: 5px; }
+        .modal-subtitle { font-size: 0.9rem; color: #777; margin-bottom: 25px; }
+        
+        .role-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            width: 100%;
+            padding: 15px;
+            margin-bottom: 12px;
+            border: 2px solid #EEE;
+            border-radius: 12px;
+            background-color: #FAFAFA;
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: var(--text-color);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .role-btn:hover { border-color: var(--primary-color); background-color: #FFF8E1; color: var(--primary-color); transform: translateY(-2px); }
+        .cancel-btn { margin-top: 10px; background: none; border: none; color: #888; font-weight: bold; cursor: pointer; font-size: 1rem; }
+        .cancel-btn:hover { color: var(--text-color); text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+    <div class="login-container">
+        <div class="logo">LogOnEnglish</div>
+        <div class="subtitle">快樂學習，從這裡開始！</div>
+
+        <div>
+            <div class="input-group">
+                <label for="email">使用者 Email (帳號)</label>
+                <!-- 移除了寫死的 value，避免資安與幽靈快取問題 -->
+                <input type="email" id="email" placeholder="例如: name@test.com">
+            </div>
+            <div class="input-group">
+                <label for="password">密碼</label>
+                <div class="password-wrapper">
+                    <input type="password" id="password" placeholder="請輸入密碼">
+                    <button type="button" id="togglePasswordBtn" class="toggle-password-btn" title="顯示密碼">👁️</button>
+                </div>
+            </div>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="rememberMe">
+                <label for="rememberMe">記住 Email (安全登入)</label>
+            </div>
+
+            <button type="button" id="loginBtn" class="login-btn">準備上課！</button>
+            <button type="button" class="clear-btn" onclick="clearAllCache()">🧹 登入異常？點我清除快取</button>
+            <div id="error-message"></div>
+        </div>
+    </div>
+
+    <!-- 🌟 白皮書規範：多重身分選擇 Modal -->
+    <div class="modal-overlay" id="roleSelectionModal">
+        <div class="modal-content">
+            <div class="modal-title">🎭 偵測到多重身分</div>
+            <div class="modal-subtitle">請選擇您現在要進入的視角：</div>
+            <div id="roleButtonsContainer">
+                <!-- 按鈕由 JS 動態生成 -->
+            </div>
+            <button type="button" class="cancel-btn" onclick="cancelLogin()">取消登入</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script type="module" src="./020_js_core/supabase-client.js"></script>
+
+    <script>
+        // ==========================================
+        // 1. 初始化與快取清理機制
+        // ==========================================
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('clear') === 'true') {
+            localStorage.clear();
+            sessionStorage.clear();
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        function clearAllCache() {
+            localStorage.clear();
+            sessionStorage.clear();
+            alert('✅ 系統快取已完全清除！請再次點擊「準備上課」登入。');
+            window.location.replace('?clear=true');
+        }
+
+        function cancelLogin() {
+            document.getElementById('roleSelectionModal').classList.remove('active');
+            const submitBtn = document.getElementById('loginBtn');
+            submitBtn.textContent = '準備上課！'; 
+            submitBtn.disabled = false;
+            localStorage.removeItem('LogOnEnglish_Session');
+            sessionStorage.removeItem('LogOn_Current_User_Id');
+            if (window.supabaseClient) window.supabaseClient.auth.signOut();
+        }
+
+        document.getElementById('togglePasswordBtn').addEventListener('click', function() {
+            const pwdInput = document.getElementById('password');
+            if (pwdInput.getAttribute('type') === 'password') {
+                pwdInput.setAttribute('type', 'text');
+                this.textContent = '🙈';
+                this.title = '隱藏密碼';
+            } else {
+                pwdInput.setAttribute('type', 'password');
+                this.textContent = '👁️';
+                this.title = '顯示密碼';
+            }
+        });
+
+        // ==========================================
+        // 2. 核心分流閘道器 (Auth & Routing Engine)
+        // ==========================================
+        
+        // 🛡️ 增強型角色比對函數 (相容舊版 profiles 資料)
+        const checkRole = (roleData, targetRole) => {
+            if (!roleData) return false;
+            const target = targetRole.toLowerCase();
+            if (Array.isArray(roleData)) {
+                return roleData.some(r => String(r).toLowerCase().trim() === target);
+            }
+            const roleStr = String(roleData).toLowerCase().trim();
+            return roleStr === target || roleStr.split(/[\s,]+/).includes(target);
+        };
+
+        // 安全查詢封裝，防止新表不存在時引發崩潰
+        const safeQuery = async (queryPromise) => {
+            try {
+                const res = await queryPromise;
+                if (res.error) {
+                    console.warn('[API Warning] Query failed, using fallback:', res.error.message);
+                    return [];
+                }
+                return res.data || [];
+            } catch (e) {
+                console.warn('[API Warning] Query exception, using fallback:', e.message);
+                return [];
+            }
+        };
+
+        const RoutingEngine = {
+            login: async (email, password) => {
+                try {
+                    // 1. 執行 Supabase Auth
+                    const { data: authData, error: authError } = await window.supabaseClient.auth.signInWithPassword({
+                        email: email,
+                        password: password
+                    });
+
+                    if (authError) {
+                        if (authError.message.includes('Invalid login credentials')) {
+                            return { success: false, message: '帳號或密碼錯誤！(請確認已在 Supabase 後台建立帳號)' };
+                        }
+                        return { success: false, message: '登入失敗: ' + authError.message };
+                    }
+                    if (!authData.user) return { success: false, message: '找不到此帳號' };
+                    
+                    const authUserId = authData.user.id;
+
+                    // 2. 獲取 Profile 基本資訊 (包含舊版過繼尋回邏輯)
+                    let { data: profile } = await window.supabaseClient
+                        .from('profiles').select('*').eq('id', authUserId).is('deleted_at', null).single();
+
+                    if (!profile) {
+                        const { data: existingProfiles } = await window.supabaseClient
+                            .from('profiles').select('*').eq('email', email).is('deleted_at', null);
+
+                        if (existingProfiles && existingProfiles.length > 0) {
+                            let oldProfile = existingProfiles.find(p => checkRole(p.role, 'teacher') || checkRole(p.default_role, 'teacher')) || existingProfiles[0];
+                            const { data: newProfile, error: insertErr } = await window.supabaseClient
+                                .from('profiles')
+                                .insert([{ 
+                                    id: authUserId, email: email, name: oldProfile.name, 
+                                    role: oldProfile.role, default_role: oldProfile.default_role 
+                                }]).select().single();
+                            profile = insertErr ? { ...oldProfile, id: authUserId } : newProfile; 
+                        } else {
+                            const { data: newProfile, error: insertErr } = await window.supabaseClient
+                                .from('profiles')
+                                .insert([{ id: authUserId, email: email, name: email.split('@')[0], role: 'student' }])
+                                .select().single();
+                            if (insertErr) return { success: false, message: '初始化檔案失敗。' };
+                            profile = newProfile;
+                        }
+                    }
+
+                    // ==========================================
+                    // 🌟 3. 白皮書核心：Promise.all 動態情境身分極速併發掃描
+                    // ==========================================
+                    const [staffData, studentData, parentData] = await Promise.all([
+                        safeQuery(window.supabaseClient.from('class_staff').select('class_id, staff_role, classes(id, name)').eq('user_id', authUserId).is('deleted_at', null)),
+                        safeQuery(window.supabaseClient.from('student_enrollments').select('class_id, classes(id, name)').eq('user_id', authUserId).is('deleted_at', null)),
+                        safeQuery(window.supabaseClient.from('parent_child_mappings').select('child_user_id').eq('parent_user_id', authUserId))
+                    ]);
+
+                    let personas = [];
+                    const isAdmin = checkRole(profile.role, 'admin') || checkRole(profile.default_role, 'admin');
+
+                    // Admin (全域特權)
+                    if (isAdmin) {
+                        personas.push({ type: 'admin', label: '👑 全域管理中心', folder: 'admin', data: [] });
+                    }
+
+                    // 內部教職員 (Teacher / TA)
+                    if (staffData.length > 0) {
+                        personas.push({ type: 'teacher', label: '👨‍🏫 教職員控制台', folder: 'teacher', data: staffData });
+                    } else if (!isAdmin && (checkRole(profile.role, 'teacher') || checkRole(profile.default_role, 'teacher'))) {
+                        // 降級防禦：如果關聯表查不到，看 profile 判定
+                        personas.push({ type: 'teacher', label: '👨‍🏫 教職員控制台', folder: 'teacher', data: [] });
+                    }
+
+                    // 學生端
+                    if (studentData.length > 0) {
+                        personas.push({ type: 'student', label: '🎒 學生課程平台', folder: 'student', data: studentData });
+                    } else if (!isAdmin && (checkRole(profile.role, 'student') || checkRole(profile.default_role, 'student') || personas.length === 0)) {
+                        // 防呆：完全查不到任何身分時，保底提供學生視角
+                        personas.push({ type: 'student', label: '🎒 學生課程平台', folder: 'student', data: [] });
+                    }
+
+                    // 家長端
+                    if (parentData.length > 0) {
+                        personas.push({ type: 'parent', label: '👨‍👩‍👧 家長觀測端', folder: 'parent', data: parentData });
+                    }
+
+                    return { success: true, uid: authUserId, profile: profile, personas: personas };
+
+                } catch (error) {
+                    console.error("[Login Error]", error);
+                    return { success: false, message: '系統發生例外錯誤，請檢查網路。' };
+                }
+            },
+
+            executeJump: (userId, profile, selectedPersona) => {
+                let activeClassId = null;
+                let enrollmentsList = [];
+
+                // 針對教職與學生端，將掃描到的名單組合出來
+                if (selectedPersona.data && selectedPersona.data.length > 0) {
+                    enrollmentsList = selectedPersona.data.map(e => {
+                        let cName = '未命名班級';
+                        if (e.classes) {
+                            // 防呆處理：Supabase 有時 array，有時 object
+                            cName = Array.isArray(e.classes) ? (e.classes[0]?.name || cName) : (e.classes.name || cName);
+                        }
+                        return {
+                            id: e.class_id,
+                            name: cName,
+                            staff_role: e.staff_role || null // 如果是教職員會有這個欄位
+                        };
+                    });
+                    
+                    // 處理預設活動班級 (Active Class) 記憶功能
+                    const savedLastClassId = localStorage.getItem(`LogOnEnglish_LastClass_${userId}_${selectedPersona.type}`);
+                    const matchedClass = enrollmentsList.find(c => c.id === savedLastClassId);
+                    
+                    if (matchedClass) {
+                        activeClassId = matchedClass.id;
+                    } else if (enrollmentsList.length > 0) {
+                        activeClassId = enrollmentsList[0].id;
+                        localStorage.setItem(`LogOnEnglish_LastClass_${userId}_${selectedPersona.type}`, activeClassId);
+                    }
+                }
+
+                // 🌟 提取當前活動班級對應的具體職級
+                const activeEnrollment = enrollmentsList.find(c => c.id === activeClassId);
+                const activeStaffRole = activeEnrollment ? activeEnrollment.staff_role : null;
+
+                // 🌟 將白皮書定義的 Active Context 寫入 Session，準備供系統內部介接！
+                const sessionData = {
+                    id: userId,
+                    username: profile.name || profile.email,
+                    email: profile.email,
+                    role: selectedPersona.type,          // 舊版大身分相容
+                    folder: selectedPersona.folder,
+                    class_id: activeClassId,             // 舊版相容
+                    enrollments: enrollmentsList,
+                    activeContext: {
+                        role: selectedPersona.type,      // 目前活動的大身分
+                        classId: activeClassId,
+                        staffRole: activeStaffRole       // 👑 (關鍵) 寫入教職員的具體職級 (primary_teacher 等)
+                    },
+                    loginTime: new Date().toISOString()
+                };
+                
+                localStorage.setItem('LogOnEnglish_Session', JSON.stringify(sessionData));
+                sessionStorage.setItem('LogOn_Current_User_Id', userId);
+
+                // 執行無縫跳轉
+                window.location.replace(`./${selectedPersona.folder}/index.html`);
+            }
+        };
+
+        // ==========================================
+        // 4. 事件綁定
+        // ==========================================
+        document.getElementById('loginBtn').addEventListener('click', async () => {
+            // 登入前強制清除舊的 Session 快取，杜絕幽靈快取
+            localStorage.removeItem('LogOnEnglish_Session'); 
+            sessionStorage.removeItem('LogOn_Current_User_Id');
+
+            const emailInput = document.getElementById('email').value.trim();
+            const passwordInput = document.getElementById('password').value.trim();
+            const rememberMe = document.getElementById('rememberMe').checked;
+            const errorMsg = document.getElementById('error-message');
+            const submitBtn = document.getElementById('loginBtn');
+
+            if(!emailInput || !passwordInput) {
+                errorMsg.textContent = '⚠️ 請輸入帳號與密碼！';
+                return;
+            }
+
+            errorMsg.textContent = '';
+            submitBtn.textContent = '📡 連線身分掃描中...';
+            submitBtn.disabled = true;
+
+            // 等待 Supabase 載入完成
+            let retries = 0;
+            while (!window.supabaseClient && retries < 15) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                retries++;
+            }
+
+            if(!window.supabaseClient) {
+                errorMsg.textContent = '❌ 無法載入資料庫連線，請檢查網路。';
+                submitBtn.textContent = '準備上課！'; 
+                submitBtn.disabled = false;
+                return;
+            }
+
+            const result = await RoutingEngine.login(emailInput, passwordInput);
+
+            if (result.success) {
+                // 🔒 資安升級：只記住 Email，絕不明文儲存密碼
+                if (rememberMe) {
+                    localStorage.setItem('LogOnEnglish_SavedEmail', emailInput);
+                } else {
+                    localStorage.removeItem('LogOnEnglish_SavedEmail');
+                }
+                
+                // 徹底刪除舊版系統殘留的危險明碼快取
+                localStorage.removeItem('LogOnEnglish_Creds'); 
+
+                // 🚦 情境分流決策
+                if (result.personas.length === 1) {
+                    // 情境 A：單一身分，無縫跳轉
+                    submitBtn.textContent = '✅ 登入成功！跳轉中...';
+                    RoutingEngine.executeJump(result.uid, result.profile, result.personas[0]);
+                } else {
+                    // 情境 B：多重身分，彈出選擇 Modal
+                    submitBtn.textContent = '🎭 請選擇身分...';
+                    const container = document.getElementById('roleButtonsContainer');
+                    container.innerHTML = '';
+                    
+                    result.personas.forEach(p => {
+                        const btn = document.createElement('button');
+                        btn.className = 'role-btn';
+                        btn.innerHTML = `<span>${p.label}</span>`;
+                        btn.onclick = () => {
+                            btn.innerHTML = '🔄 載入中...';
+                            btn.style.pointerEvents = 'none';
+                            RoutingEngine.executeJump(result.uid, result.profile, p);
+                        };
+                        container.appendChild(btn);
+                    });
+                    
+                    document.getElementById('roleSelectionModal').classList.add('active');
+                }
+
+            } else {
+                errorMsg.textContent = `❌ ${result.message}`;
+                submitBtn.textContent = '準備上課！'; 
+                submitBtn.disabled = false;
+            }
+        });
+
+        // 綁定 Enter 鍵登入
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !document.getElementById('roleSelectionModal').classList.contains('active')) {
+                document.getElementById('loginBtn').click();
+            }
+        });
+
+        // 頁面載入時的自動回填與 Session 檢查
+        window.addEventListener('DOMContentLoaded', () => {
+            // 安全回填 Email
+            const savedEmail = localStorage.getItem('LogOnEnglish_SavedEmail');
+            if (savedEmail) {
+                document.getElementById('email').value = savedEmail;
+                document.getElementById('rememberMe').checked = true;
+                // 自動 Focus 到密碼欄，提升 UX
+                document.getElementById('password').focus();
+            }
+            
+            // 清理舊版危險快取 (防禦舊使用者裝置上的殘留)
+            localStorage.removeItem('LogOnEnglish_Creds');
+
+            const sessionString = localStorage.getItem('LogOnEnglish_Session');
+            const urlParams = new URLSearchParams(window.location.search);
+            if (sessionString && urlParams.get('clear') !== 'true') {
+                try {
+                    const session = JSON.parse(sessionString);
+                    if(session.folder) {
+                        window.location.replace(`./${session.folder}/index.html`);
+                    }
+                } catch (e) {
+                    localStorage.removeItem('LogOnEnglish_Session');
+                }
+            }
+        });
+    </script>
+</body>
+</html>

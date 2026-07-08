@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>學生學習區 | LogOnEnglish</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="../010_css/style.css">
+    
+    <style>
+        body {
+            display: block !important;
+            height: auto !important;
+            overflow: auto !important;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+
+        .header-actions { display: flex; gap: 10px; align-items: center; }
+        .btn-profile { border: 2px solid #E2E8F0; color: #475569; background: white; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
+        .btn-profile:hover { border-color: #CBD5E1; background: #F8FAFC; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        .modal-box { background: white; width: 90%; max-width: 450px; border-radius: 16px; padding: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-weight: 800; margin-bottom: 5px; color: #475569; font-size: 0.9rem; }
+        .form-group input { width: 100%; padding: 10px; border: 1px solid #CBD5E1; border-radius: 8px; outline: none; font-size: 1rem; box-sizing: border-box; }
+        .form-group input:disabled { background: #F1F5F9; color: #94A3B8; cursor: not-allowed; }
+        .btn-primary { background: #F59E0B; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 1rem; }
+        .btn-primary:hover { background: #D97706; }
+    </style>
+
+    <script src="../020_js_core/auth-guard.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <div class="header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div>
+            <h1 id="dynamic-student-title" style="margin: 0;">LogOnEnglish | 載入中... 🚀</h1>
+            <div id="class-switcher-container" style="margin-top: 8px; display: none;">
+                <select id="class-switcher" onchange="switchClass(this.value)" style="padding: 6px 12px; border-radius: 6px; border: 2px solid #E2E8F0; font-weight: 800; color: #475569; background: #F8FAFC; cursor: pointer; outline: none;">
+                    </select>
+            </div>
+        </div>
+        
+        <div class="header-actions">
+            <button class="btn-profile" onclick="openProfileModal()">👤 個人資料</button>
+            <button class="logout-btn" onclick="if(window.logoutUser) { window.logoutUser(); } else { localStorage.clear(); sessionStorage.clear(); window.location.replace('../index.html'); }">登出系統</button>
+        </div>
+    </div>
+
+    <nav class="tabs-nav">
+        <button class="tab-link active" onclick="window.FeatureStudentTimeline.switchView('progress', this)">課程進度</button>
+        <button class="tab-link" onclick="window.FeatureStudentTimeline.switchView('resources', this)">課程資源</button>
+        <button class="tab-link" onclick="window.FeatureStudentTimeline.switchView('personal', this)">個人作品</button>
+        <button class="tab-link" onclick="window.FeatureStudentTimeline.switchView('class', this)">班級作品</button>
+    </nav>
+
+    <div id="view-progress" class="view-content active">
+        <div id="course-container"></div>
+    </div>
+
+    <div id="view-resources" class="view-content">
+        <div class="card">
+            <div class="resource-grid" id="resource-container"></div>
+        </div>
+    </div>
+
+    <div id="view-personal" class="view-content">
+        <div class="card">
+            <h3>🎨 我的作品空間</h3>
+            <p style="color:#888; font-weight:600;">這裡存放你繳交過的優秀作業與錄音作品。</p>
+            <div class="portfolio-grid">
+                <div class="work-card">
+                    <div class="work-thumb">🎙️</div>
+                    <div class="work-info">
+                        <span class="work-title">Self-Intro Recording</span>
+                        <span class="work-date">2026/05/10</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-class" class="view-content">
+        <div class="card">
+            <h3>👥 班級榮譽榜</h3>
+            <p style="color:#888; font-weight:600;">看看同學們分享的精彩內容！</p>
+            <div class="portfolio-grid" id="class-works">
+                <div class="work-card">
+                    <div class="work-thumb" style="background:#FFF9C4;">✍️</div>
+                    <div class="work-info">
+                        <span class="work-title">Group A: Story Telling</span>
+                        <span class="work-date">2026/05/20</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="profile-modal" class="modal-overlay">
+        <div class="modal-box">
+            <h2 style="margin-top:0; color:#334155; font-weight:900;">👤 個人資料管理</h2>
+            
+            <div class="form-group">
+                <label>登入帳號 (唯讀)</label>
+                <input type="text" id="profile-account" disabled>
+            </div>
+            <div class="form-group">
+                <label>顯示名稱</label>
+                <input type="text" id="profile-username" placeholder="請輸入姓名">
+            </div>
+            <div class="form-group">
+                <label>修改密碼 (若不修改請留白)</label>
+                <input type="password" id="profile-password" placeholder="輸入新密碼">
+            </div>
+            <div class="form-group" style="margin-bottom: 25px;">
+                <label>專屬 Google Drive 連結 (唯讀)</label>
+                <input type="text" id="profile-drive" disabled>
+            </div>
+            
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button class="btn-profile" onclick="document.getElementById('profile-modal').style.display='none'">取消</button>
+                <button class="btn-primary" onclick="saveProfile()">💾 儲存設定</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="../020_js_core/supabase-client.js"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=20260612"></script>
+    <script defer>
+        function switchClass(newClassId) {
+            try {
+                sessionStorage.setItem('currentClassId', newClassId);
+                // 同步更新至本地儲存，以便下次自動記憶
+                const sessionData = JSON.parse(localStorage.getItem('LogOnEnglish_Session') || '{}');
+                if (sessionData.id) {
+                    localStorage.setItem(`LogOnEnglish_LastClass_${sessionData.id}`, newClassId);
+                }
+                window.location.reload();
+            } catch (e) {
+                console.error('切換班級失敗', e);
+            }
+        }
+
+        // 🚀 v4.0 全新雲端初始化流程：捨棄 LocalStorage，直接驗證 Supabase Auth
+        document.addEventListener("DOMContentLoaded", () => {
+            const headerTitle = document.getElementById('dynamic-student-title');
+            const switcherContainer = document.getElementById('class-switcher-container');
+            
+            switcherContainer.style.display = 'block';
+            switcherContainer.innerHTML = '<span style="color:#94A3B8; font-size:0.9rem; font-weight:800;">⏳ 正在連線資料庫驗證班級...</span>';
+
+            const initInterval = setInterval(async () => {
+                if (window.supabaseClient) {
+                    clearInterval(initInterval);
+                    
+                    try {
+                        // 1. 取得真實授權 User (拒絕幽靈快取)
+                        const { data: { user }, error: authErr } = await window.supabaseClient.auth.getUser();
+                        if (authErr || !user) throw new Error("授權無效或已登出");
+
+                        console.log("🚨 [Debug 1] 已驗證學生 ID:", user.id);
+
+                        // 同步抓取最新 profiles 以顯示姓名
+                        const { data: profile } = await window.supabaseClient
+                            .from('profiles')
+                            .select('name')
+                            .eq('id', user.id)
+                            .single();
+                            
+                        const displayName = (profile && profile.name) ? profile.name : 'Student';
+                        headerTitle.innerText = `LogOnEnglish | ${displayName} 🚀`;
+                        document.title = `${displayName} 的專屬教室 | LogOnEnglish`;
+
+                        // 2. 🌟 關鍵修復：改用 user_id 查詢，且強制掛載軟刪除過濾
+                        const { data: enrollData, error: enrollErr } = await window.supabaseClient
+                            .from('student_enrollments')
+                            .select('class_id')
+                            .eq('user_id', user.id)
+                            .is('deleted_at', null);
+
+                        if (enrollErr) throw enrollErr;
+
+                        let classIds = [];
+                        if (enrollData && enrollData.length > 0) {
+                            classIds = enrollData.map(row => row.class_id);
+                        }
+
+                        if (classIds.length > 0) {
+                            // 3. 查詢班級主檔，同樣過濾被刪除的班級
+                            const { data: classes, error: classErr } = await window.supabaseClient
+                                .from('classes')
+                                .select('id, name')
+                                .in('id', classIds)
+                                .is('deleted_at', null);
+
+                            if (classErr) throw classErr;
+
+                            if (classes && classes.length > 0) {
+                                let lastClassId = sessionStorage.getItem('currentClassId') || localStorage.getItem(`LogOnEnglish_LastClass_${user.id}`);
+                                if (!lastClassId || !classes.some(c => c.id === lastClassId)) {
+                                    lastClassId = classes[0].id; 
+                                }
+
+                                sessionStorage.setItem('currentClassId', lastClassId);
+                                localStorage.setItem(`LogOnEnglish_LastClass_${user.id}`, lastClassId);
+
+                                let optsHtml = `<select id="class-switcher" onchange="switchClass(this.value)" style="padding: 6px 12px; border-radius: 6px; border: 2px solid #E2E8F0; font-weight: 800; color: #475569; background: #F8FAFC; cursor: pointer; outline: none;">`;
+                                classes.forEach(cls => {
+                                    const isSelected = cls.id === lastClassId ? 'selected' : '';
+                                    optsHtml += `<option value="${cls.id}" ${isSelected}>📚 課程：${cls.name}</option>`;
+                                });
+                                optsHtml += `</select>`;
+                                switcherContainer.innerHTML = optsHtml;
+
+                                if (window.FeatureStudentTimeline && typeof window.FeatureStudentTimeline.init === 'function') {
+                                    window.FeatureStudentTimeline.init();
+                                }
+                            } else {
+                                switcherContainer.innerHTML = '<span style="color:#94A3B8; font-size:0.9rem; font-weight:800;">(目前所屬班級皆已封存或刪除)</span>';
+                            }
+                        } else {
+                            switcherContainer.innerHTML = '<span style="color:#94A3B8; font-size:0.9rem; font-weight:800;">(目前尚未加入任何班級)</span>';
+                        }
+                    } catch (err) {
+                        console.error("載入班級失敗", err);
+                        switcherContainer.innerHTML = '<span style="color:#EF4444; font-size:0.9rem; font-weight:800;">載入失敗</span>';
+                    }
+                }
+            }, 100);
+            
+            setTimeout(() => {
+                 clearInterval(initInterval);
+                 if(!window.supabaseClient) {
+                     switcherContainer.innerHTML = '<span style="color:#EF4444; font-size:0.9rem; font-weight:800;">網路連線逾時</span>';
+                 }
+            }, 5000);
+        });
+
+        // 🌟 v4.0 規格修復：正確從 profiles 與 JSONB raw_data 中拉取個資
+        async function openProfileModal() {
+            try {
+                const { data: { user } } = await window.supabaseClient.auth.getUser();
+                if (!user) return alert("連線逾時，請重新登入！");
+
+                const { data: profile, error } = await window.supabaseClient
+                    .from('profiles')
+                    .select('email, name, raw_data')
+                    .eq('id', user.id)
+                    .single();
+                
+                if (error) throw error;
+
+                document.getElementById('profile-account').value = profile.email || '未設定';
+                document.getElementById('profile-username').value = profile.name || '';
+                document.getElementById('profile-password').value = '';
+                
+                // 正確解析 JSONB 內的 drive_url
+                const rawData = profile.raw_data || {};
+                document.getElementById('profile-drive').value = rawData.drive_url || rawData.driveLink || '尚未綁定雲端硬碟';
+                
+                document.getElementById('profile-modal').style.display = 'flex';
+            } catch (e) {
+                console.error("讀取個資失敗", e);
+                alert("資料讀取失敗，請稍後再試。");
+            }
+        }
+
+        // 🌟 v4.0 規格修復：嚴格分流 profiles 更新與 Authentication 密碼更新
+        async function saveProfile() {
+            const newName = document.getElementById('profile-username').value.trim();
+            const newPwd = document.getElementById('profile-password').value.trim();
+            const btn = document.querySelector('#profile-modal .btn-primary');
+
+            if (!newName) {
+                alert('❌ 顯示名稱不可以空白！');
+                return;
+            }
+
+            const originalBtnText = btn.innerHTML;
+            btn.innerHTML = '⏳ 儲存中...';
+            btn.disabled = true;
+
+            try {
+                const { data: { user } } = await window.supabaseClient.auth.getUser();
+                
+                // 1. 更新名稱至 profiles 表格
+                const { error: profileErr } = await window.supabaseClient
+                    .from('profiles')
+                    .update({ name: newName })
+                    .eq('id', user.id);
+                
+                if (profileErr) throw profileErr;
+
+                // 2. 🔒 如果有填密碼，必須呼叫 auth.updateUser 交由雲端驗證核心處理
+                if (newPwd) {
+                    const { error: authErr } = await window.supabaseClient.auth.updateUser({
+                        password: newPwd
+                    });
+                    if (authErr) throw authErr;
+                }
+
+                alert('✅ 個人資料已成功更新！');
+                document.getElementById('dynamic-student-title').innerText = `LogOnEnglish | ${newName} 🚀`;
+                document.title = `${newName} 的專屬教室 | LogOnEnglish`;
+                document.getElementById('profile-modal').style.display = 'none';
+
+            } catch (err) {
+                console.error(err);
+                alert('❌ 儲存失敗：' + err.message);
+            } finally {
+                btn.innerHTML = originalBtnText;
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
