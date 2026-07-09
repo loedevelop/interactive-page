@@ -68,9 +68,9 @@ window.FeatureClass = (() => {
             weekRadios[i].checked = (weekRadios[i].value === weekStart);
         }
 
-        if (window.FeatureTimeline) window.FeatureTimeline.renderTimeline(classId);
-        if (window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') window.FeatureResource.renderClassResources(classId);
-        if (window.FeatureClassStudents && typeof window.FeatureClassStudents.renderStudentManager === 'function') window.FeatureClassStudents.renderStudentManager(classId);
+        // 🚨 首席工程師修復：刪除這裡的 window.FeatureTimeline 等連鎖渲染呼叫！
+        // 這些任務已經由 ui-core.js 的 activateClassView 安全地統一代勞。
+        // 刪除後徹底解決「非同步競速覆寫 (Race Condition)」引發的教職員表格消失問題！
     }
 
     // --- 🌟 渲染班級清單 ---
