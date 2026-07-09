@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class-students.js
- * 🌟 v6.1 SaaS 規格淨化版：全面對接 ApiService、加入 maybeSingle() 防呆三層級名字邏輯
+ * 🌟 v6.2 SaaS 規格淨化版：新增「教職員團隊」專屬區塊、補齊軟刪除，並封印前端 Email 修改權限防止脫鉤。
  */
 
 window.FeatureClassStudents = (() => {
@@ -36,7 +36,37 @@ window.FeatureClassStudents = (() => {
         }
     }
 
-    // 🚀 已淨化：全面交由 ApiService 的 fetchStudents() 來處理資料庫請求
+    // 🧑‍🏫 抓取「教職員」名單
+    async function fetchStaffForClass(classId, effectiveMode) {
+        try {
+            if (!window.ApiService || typeof window.ApiService.fetchClassStaff !== 'function') return [];
+            
+            const rawStaff = await window.ApiService.fetchClassStaff(classId);
+            
+            return rawStaff.map(s => {
+                const p = s.profiles || {};
+                let roleDisplay = s.staff_role;
+                if (s.staff_role === 'co_teacher') roleDisplay = '🧑‍🏫 協同老師';
+                if (s.staff_role === 'ta_senior') roleDisplay = '⭐ 資深助教';
+                if (s.staff_role === 'ta_junior') roleDisplay = '🎓 一般助教';
+                if (s.staff_role === 'primary_teacher') roleDisplay = '👑 主老師';
+
+                return {
+                    id: s.user_id,
+                    class_id: classId,
+                    role: roleDisplay,
+                    rawRole: s.staff_role,
+                    displayName: calculateDisplayName(p, effectiveMode),
+                    email: p.email || '未設定'
+                };
+            });
+        } catch (error) {
+            console.error("抓取教職員名單失敗:", error);
+            return [];
+        }
+    }
+
+    // 🎓 抓取「學生」名單
     async function fetchStudentsForClass(classId, effectiveMode) {
         try {
             if (!window.ApiService || typeof window.ApiService.fetchStudents !== 'function') {
@@ -71,7 +101,6 @@ window.FeatureClassStudents = (() => {
         try {
             let effectiveMode = 'en_first'; 
             
-            // 🛡️ 修正防呆：使用 maybeSingle() 替代 single()，防止空值時導致 HTTP 406 錯誤崩潰
             const { data: classData } = await window.supabaseClient.from('classes').select('raw_data').eq('id', classId).maybeSingle();
             const classMode = classData?.raw_data?.name_display_mode || 'default';
             if (classMode !== 'default') effectiveMode = classMode;
@@ -83,36 +112,84 @@ window.FeatureClassStudents = (() => {
                 if (profMode !== 'default') effectiveMode = profMode;
             }
 
-            const classStudents = await fetchStudentsForClass(classId, effectiveMode);
+            // 🌟 同時抓取教職員與學生
+            const [classStaff, classStudents] = await Promise.all([
+                fetchStaffForClass(classId, effectiveMode),
+                fetchStudentsForClass(classId, effectiveMode)
+            ]);
+
             db.students = db.students.filter(s => s.class_id !== classId).concat(classStudents);
 
-            let tbody = classStudents.map((s, idx) => {
+            // 1️⃣ 產生教職員表格 HTML (新增移除按鈕)
+            let staffTbody = classStaff.map((s, idx) => {
+                const safeName = s.displayName.replace(/"/g, '&quot;');
+                // 主老師不可被一般方式移除
+                const actionBtn = s.rawRole === 'primary_teacher' 
+                    ? '<span style="color:#94A3B8; font-size:0.85em;">無法移除</span>'
+                    : `<button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.removeStaff('${s.id}', '${classId}')" title="移除此教職員">🗑️</button>`;
+
+                return `
+                <tr style="border-bottom: 1px solid #E2E8F0; background: #F8FAFC;">
+                    <td style="padding: 10px; color: #64748B;">${idx + 1}</td>
+                    <td style="padding: 10px; font-weight: bold; color: #475569;">${s.role}</td>
+                    <td style="padding: 10px; font-weight: bold; color: #0F172A;">${safeName}</td>
+                    <td style="padding: 10px; color: #64748B;">${s.email}</td>
+                    <td style="padding: 10px; text-align: center;">${actionBtn}</td>
+                </tr>
+                `;
+            }).join('');
+
+            // 2️⃣ 產生學生表格 HTML (修復：信箱改為 Readonly 防止資料庫脫鉤)
+            let studentTbody = classStudents.map((s, idx) => {
                 const safeName = s.displayName.replace(/"/g, '&quot;');
                 return `
                 <tr style="border-bottom: 1px solid #E2E8F0;">
                     <td style="padding: 10px;">${idx + 1}</td>
                     <td style="padding: 10px;">
-                        <input type="text" value="${safeName}" class="form-control" readonly title="若需修改姓名細節，請點擊右側 ✏️ 編輯按鈕" style="width: 100%; background: #F8FAFC; color: #334155; font-weight: bold;">
+                        <input type="text" value="${safeName}" class="form-control" readonly title="若需修改姓名細節，請點擊右側 ✏️ 編輯按鈕" style="width: 100%; background: #F8FAFC; color: #334155; font-weight: bold; cursor: not-allowed;">
                     </td>
                     <td style="padding: 10px;">
-                        <input type="email" id="std-email-${s.id}" value="${s.email}" class="form-control" style="width: 100%;">
+                        <input type="email" id="std-email-${s.id}" value="${s.email}" class="form-control" readonly title="⚠️ 登入信箱為系統核心驗證依據，無法從前端修改。如需異動請洽系統管理員。" style="width: 100%; background: #F1F5F9; color: #94A3B8; cursor: not-allowed;">
                     </td>
                     <td style="padding: 10px;">
-                        <input type="text" value="${s.password}" class="form-control" readonly title="系統預設密碼" style="width: 100%; background: #F1F5F9; color: #94A3B8;">
+                        <input type="text" value="${s.password}" class="form-control" readonly title="系統預設密碼" style="width: 100%; background: #F1F5F9; color: #94A3B8; cursor: not-allowed;">
                     </td>
                     <td style="padding: 10px;">
                         <input type="url" id="std-drive-${s.id}" value="${s.drive_url}" class="form-control" placeholder="https://drive.google.com/..." style="width: 100%;">
                     </td>
                     <td style="padding: 10px; min-width: 130px; white-space: nowrap;">
                         <button class="btn" style="padding: 6px 10px; font-size: 0.8rem; background: #64748B; color: white; border: none; border-radius: 4px; cursor: pointer;" onclick="window.FeatureClassStudents.openEditModal('${s.id}', '${classId}')" title="編輯詳細姓名資料">✏️</button>
-                        <button class="btn btn-primary" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.saveStudent('${s.id}', '${classId}')" title="儲存 Email 與 Drive">💾</button>
+                        <button class="btn btn-primary" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.saveStudent('${s.id}', '${classId}')" title="儲存 Drive 連結">💾</button>
                         <button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.deleteStudent('${s.id}', '${classId}')" title="移除學生">🗑️</button>
                     </td>
                 </tr>
                 `;
             }).join('');
 
+            // 🌟 組合最終畫面：上方顯示教職員，下方顯示學生
             container.innerHTML = `
+                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E2E8F0; margin-top: 0; margin-bottom: 20px;">
+                    <h3 style="margin-top: 0; margin-bottom: 15px; color: var(--primary-dark); display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 8px;">🧑‍🏫 班級教職員團隊</div>
+                    </h3>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
+                            <thead>
+                                <tr style="background: #F1F5F9; text-align: left; color: #334155;">
+                                    <th style="padding: 10px; border-radius: 8px 0 0 8px; width: 50px;">#</th>
+                                    <th style="padding: 10px; width: 150px;">團隊身分</th>
+                                    <th style="padding: 10px;">顯示姓名</th>
+                                    <th style="padding: 10px;">聯絡信箱 (帳號)</th>
+                                    <th style="padding: 10px; border-radius: 0 8px 8px 0; text-align: center; width: 80px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${staffTbody || '<tr><td colspan="5" style="text-align:center; padding: 20px; color:#94A3B8;">目前無其他教職員，請透過下方的「新增班級成員」加入。</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E2E8F0; margin-top: 0;">
                     <h3 style="margin-top: 0; margin-bottom: 15px; color: var(--primary-dark); display: flex; align-items: center; justify-content: space-between;">
                         <div style="display: flex; align-items: center; gap: 8px;">👥 課程學生與帳號管理</div>
@@ -120,21 +197,20 @@ window.FeatureClassStudents = (() => {
                             當前顯示：${effectiveMode === 'cn_first' ? '🇹🇼 模式 2 (中文全名)' : '🇺🇸 模式 1 (英文名+護照姓)'}
                         </span>
                     </h3>
-
                     <div style="overflow-x: auto;">
                         <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
                             <thead>
                                 <tr style="background: #F1F5F9; text-align: left; color: #334155;">
                                     <th style="padding: 10px; border-radius: 8px 0 0 8px;">#</th>
                                     <th style="padding: 10px;">智慧顯示姓名</th>
-                                    <th style="padding: 10px;">Email (帳號)</th>
+                                    <th style="padding: 10px;">Email (唯讀)</th>
                                     <th style="padding: 10px;">密碼 (預設)</th>
                                     <th style="padding: 10px;">個人專屬 Drive 連結</th>
                                     <th style="padding: 10px; border-radius: 0 8px 8px 0;">操作</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${tbody || '<tr><td colspan="6" style="text-align:center; padding: 30px; color:#94A3B8; font-weight: 800;">目前名單為空，請透過下方的「新增班級成員」按鈕加入學生。</td></tr>'}
+                                ${studentTbody || '<tr><td colspan="6" style="text-align:center; padding: 30px; color:#94A3B8; font-weight: 800;">目前名單為空，請透過下方的「新增班級成員」按鈕加入學生。</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -149,43 +225,27 @@ window.FeatureClassStudents = (() => {
     return {
         renderStudentManager,
         
+        // 🔒 修復：移除前端自作主張修改 Email 的邏輯，僅保留 Drive 連結的更新
         saveStudent: async (studentId, classId) => {
-            const email = document.getElementById(`std-email-${studentId}`).value.trim();
             const drive = document.getElementById(`std-drive-${studentId}`).value.trim();
-            
-            if (!email) return alert('⚠️ Email 不能留空！');
-
             const btn = window.event.target;
             const originalText = btn.innerHTML;
             btn.innerHTML = '⏳';
             btn.disabled = true;
 
             try {
-                const { data: checkData } = await window.supabaseClient
-                    .from('profiles')
-                    .select('id')
-                    .eq('email', email)
-                    .neq('id', studentId)
-                    .is('deleted_at', null);
-                    
-                if (checkData && checkData.length > 0) {
-                    throw new Error('此 Email 已被系統中其他人註冊，請更換！');
-                }
-
-                // 🛡️ 使用 maybeSingle() 防止空值崩潰
+                // 1. 更新 Profiles 裡的 raw_data (加入 Drive URL)
                 const { data: oldProf } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', studentId).maybeSingle();
                 const mergedRawData = { ...(oldProf?.raw_data || {}), drive_url: drive };
 
                 const { error: profileError } = await window.supabaseClient
                     .from('profiles')
-                    .update({ email: email, raw_data: mergedRawData })
+                    .update({ raw_data: mergedRawData })
                     .eq('id', studentId);
 
-                if (profileError) {
-                    if (profileError.code === '23505') throw new Error('此 Email 已被註冊！');
-                    throw profileError;
-                }
+                if (profileError) throw profileError;
 
+                // 2. 更新 Enrollment 表格
                 const { error: enrollError } = await window.supabaseClient
                     .from('student_enrollments')
                     .update({ drive_link: drive })
@@ -216,6 +276,20 @@ window.FeatureClassStudents = (() => {
             await renderStudentManager(classId);
         },
 
+        // 🧑‍🏫 新增：移除教職員 (Soft Delete from class_staff)
+        removeStaff: async (userId, classId) => {
+            if (!confirm('⚠️ 確定要把該名教職員從本班級團隊移除嗎？\n(注意：對方的帳號仍會保留在系統中)')) return;
+            
+            const { error } = await window.supabaseClient
+                .from('class_staff')
+                .update({ deleted_at: new Date().toISOString() })
+                .eq('class_id', classId)
+                .eq('user_id', userId);
+
+            if (error) return alert('❌ 移除教職員失敗: ' + error.message);
+            await renderStudentManager(classId);
+        },
+
         openEditModal: async (studentId, classId) => {
             const overlay = document.createElement('div');
             overlay.id = 'edit-student-modal';
@@ -225,7 +299,6 @@ window.FeatureClassStudents = (() => {
             document.body.appendChild(overlay);
 
             try {
-                // 🛡️ 使用 maybeSingle() 防止空值崩潰
                 const { data: profile, error } = await window.supabaseClient.from('profiles').select('*').eq('id', studentId).maybeSingle();
                 if (error) throw error;
                 if (!profile) throw new Error("找不到該學生資料。");

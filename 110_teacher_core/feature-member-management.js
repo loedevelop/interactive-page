@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-member-management.js
- * 🌟 v6.2 SaaS 雲端對接版：強化 Edge Function 錯誤攔截與孤兒帳號防護網
+ * 🌟 v6.2 SaaS 雲端對接版：導入「點擊懸浮泡泡 (Tooltip)」顯示學生帳號生成規則
  */
 
 export class MemberManager {
@@ -43,29 +43,29 @@ export class MemberManager {
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                             <div class="form-group" style="margin-top: 0;">
                                 <label>英文名字 (First Name)</label>
-                                <input type="text" id="nameEN" class="form-control" placeholder="例如：Amy">
+                                <input type="text" id="nameEN" class="form-control" placeholder="例如：Jason">
                             </div>
                             <div class="form-group" style="margin-top: 0;">
                                 <label>護照姓氏 (Last Name)</label>
-                                <input type="text" id="passportLast" class="form-control" placeholder="例如：Lin">
+                                <input type="text" id="passportLast" class="form-control" placeholder="例如：Liu">
                             </div>
                         </div>
 
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                             <div class="form-group" style="margin-top: 0;">
                                 <label>護照名字 (First Name)</label>
-                                <input type="text" id="passportFirst" class="form-control" placeholder="例如：Mei-Ling">
+                                <input type="text" id="passportFirst" class="form-control" placeholder="例如：Jie-Xuan">
                             </div>
                             <div class="form-group" style="margin-top: 0;">
                                 <label>中文姓氏</label>
-                                <input type="text" id="lastNameCN" class="form-control" placeholder="例如：林">
+                                <input type="text" id="lastNameCN" class="form-control" placeholder="例如：劉">
                             </div>
                         </div>
 
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <div class="form-group" style="margin-top: 0;">
                                 <label>中文名字</label>
-                                <input type="text" id="firstNameCN" class="form-control" placeholder="例如：美玲">
+                                <input type="text" id="firstNameCN" class="form-control" placeholder="例如：傑軒">
                             </div>
                         </div>
                     </div>
@@ -77,20 +77,39 @@ export class MemberManager {
                         </div>
 
                         <div class="form-group" style="margin-top: 0;">
-                            <label>📱 手機號碼 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(選填)</span></label>
+                            <label>📱 手機號碼 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(強烈建議填寫，避免撞名)</span></label>
                             <input type="tel" id="memberPhone" class="form-control" placeholder="例如：0912345678">
                         </div>
                     </div>
 
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
                         <div class="form-group" style="margin-top: 0;">
-                            <label>🏷️ 指派身分 <span style="color:red;">*</span></label>
-                            <select id="memberRole" class="form-control" required>
-                                <option value="" disabled selected>請選擇成員身分...</option>
-                                <option value="student">🎓 學生 (Student)</option>
-                                ${this.renderStaffOptions()}
-                                <option value="parent">👨‍👩‍👧 家長 (Parent)</option>
-                            </select>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                🏷️ 指派身分 <span style="color:red;">*</span>
+                                <span id="studentEmailRuleIcon" style="display: none; cursor: pointer; font-size: 0.85rem; color: #3B82F6; background: #EFF6FF; padding: 2px 8px; border-radius: 12px; border: 1px solid #BFDBFE; user-select: none;">💡 帳號防衝突規則</span>
+                            </label>
+                            
+                            <div style="position: relative;">
+                                <select id="memberRole" class="form-control" required>
+                                    <option value="" disabled selected>請選擇成員身分...</option>
+                                    <option value="student">🎓 學生 (Student)</option>
+                                    ${this.renderStaffOptions()}
+                                    <option value="parent">👨‍👩‍👧 家長 (Parent)</option>
+                                </select>
+                                
+                                <!-- 🌟 點擊後懸浮顯示的小泡泡說明 (Tooltip Popup) -->
+                                <div id="studentEmailRulePopup" style="display: none; position: absolute; top: calc(100% + 8px); left: 0; background: #ffffff; border: 1px solid #BFDBFE; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); padding: 15px; width: 320px; z-index: 1000;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h5 style="margin: 0; color: #1E3A8A; font-size: 0.95rem;">💡 帳號防衝突規則</h5>
+                                        <span id="closeRulePopup" style="cursor: pointer; font-size: 1rem; color: #94A3B8; padding: 0 5px;">✖</span>
+                                    </div>
+                                    <p style="margin: 0 0 5px 0; font-size: 0.85rem; color: #475569; line-height: 1.5;">若輸入的 <b>家長信箱</b> 已註冊，系統將自動生成學生的專屬登入帳號：</p>
+                                    <ul style="margin: 0; padding-left: 20px; font-size: 0.85rem; color: #475569; line-height: 1.6;">
+                                        <li><b>Gmail：</b> 插入 <code>+學生姓名</code> <br><span style="color:#64748B;">(例: parent<b>+JasonLiu</b>@gmail.com)</span></li>
+                                        <li><b>非 Gmail：</b> 轉為內部網域 <code>姓名.手機末四碼@LogOnEnglish.com</code> <br><span style="color:#64748B;">(例: <b>JasonLiu.5678</b>@LogOnEnglish.com)</span></li>
+                                    </ul>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -170,6 +189,10 @@ export class MemberManager {
         });
 
         const roleSelect = document.getElementById('memberRole');
+        const ruleIcon = document.getElementById('studentEmailRuleIcon');
+        const rulePopup = document.getElementById('studentEmailRulePopup');
+        const closePopupBtn = document.getElementById('closeRulePopup');
+
         roleSelect.addEventListener('change', async (e) => {
             const selectedRole = e.target.value;
             const childGroup = document.getElementById('childSelectionGroup');
@@ -179,6 +202,8 @@ export class MemberManager {
             childGroup.style.display = 'none';
             childSelect.removeAttribute('required');
             driveGroup.style.display = 'none';
+            ruleIcon.style.display = 'none';
+            rulePopup.style.display = 'none'; 
 
             if (selectedRole === 'parent') {
                 childGroup.style.display = 'block';
@@ -186,6 +211,24 @@ export class MemberManager {
                 await this.fetchClassStudents(); 
             } else if (selectedRole === 'student') {
                 driveGroup.style.display = 'block';
+                ruleIcon.style.display = 'inline-flex'; 
+            }
+        });
+
+        // 綁定小泡泡的開啟與關閉事件
+        ruleIcon.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            rulePopup.style.display = rulePopup.style.display === 'none' ? 'block' : 'none';
+        });
+
+        closePopupBtn.addEventListener('click', () => {
+            rulePopup.style.display = 'none';
+        });
+
+        // 點擊表單空白處時，自動關閉小泡泡
+        document.addEventListener('click', (e) => {
+            if (rulePopup.style.display === 'block' && !rulePopup.contains(e.target) && e.target !== ruleIcon) {
+                rulePopup.style.display = 'none';
             }
         });
 
@@ -282,12 +325,19 @@ export class MemberManager {
         msgBox.style.color = 'black';
 
         let targetUserId = null;
+        let isExistingUser = false;
+        let loginPassword = '';
+        let loginEmail = '';
+        let isMutated = false;
 
         try {
-            // 階段 1：呼叫大腦建立帳號
-            targetUserId = await this.invokeSilentCreation(fallbackName, email, phone, role, rawDataPayload);
+            const result = await this.invokeSilentCreation(fallbackName, email, phone, role, rawDataPayload);
+            targetUserId = result.user_id;
+            isExistingUser = result.is_existing;
+            loginPassword = result.login_password;
+            loginEmail = result.login_email;
+            isMutated = result.is_mutated;
 
-            // 階段 2：寫入班級/權限關聯表 (包含錯誤攔截與退回機制)
             try {
                 if (role === 'student') {
                     await this.assignStudent(targetUserId, driveLink);
@@ -297,21 +347,29 @@ export class MemberManager {
                     await this.assignParent(targetUserId, childUserId);
                 }
             } catch (assignError) {
-                // 🚨 觸發防護網：寫入班級失敗時，標記剛建立的孤兒帳號為刪除狀態
-                if (targetUserId) {
+                if (targetUserId && !isExistingUser) {
                     await this.rollbackOrphanedUser(targetUserId);
                 }
-                throw new Error(`${assignError.message} (系統已自動攔截並復原無效帳號)`);
+                throw new Error(`${assignError.message} (系統已自動攔截並復原無效狀態)`);
             }
 
-            // 成功處理流程
             msgBox.style.color = '#10B981'; 
-            msgBox.textContent = `✅ 成功加入名單！`;
+            if (isExistingUser) {
+                msgBox.innerHTML = `✅ 此帳號已存在，已成功指派至本班！`;
+            } else {
+                if (isMutated) {
+                    msgBox.innerHTML = `✅ 已啟動防衝突機制建立學生！<br><span style="font-size:0.85em; color:#475569;">學生登入帳號: <b>${loginEmail}</b><br>預設密碼: <b>${loginPassword}</b></span>`;
+                } else {
+                    msgBox.innerHTML = `✅ 成功加入！<br><span style="font-size:0.85em; color:#475569;">預設密碼為: <b>${loginPassword}</b></span>`;
+                }
+            }
             
             document.getElementById('addMemberForm').reset();
             document.getElementById('sysDisplayName').value = ''; 
             document.getElementById('childSelectionGroup').style.display = 'none';
             document.getElementById('studentDriveGroup').style.display = 'none';
+            document.getElementById('studentEmailRuleIcon').style.display = 'none';
+            document.getElementById('studentEmailRulePopup').style.display = 'none';
 
             if (window.FeatureClassStudents && typeof window.FeatureClassStudents.renderStudentManager === 'function') {
                 window.FeatureClassStudents.renderStudentManager(this.classId);
@@ -322,10 +380,7 @@ export class MemberManager {
             msgBox.style.color = '#EF4444'; 
             
             if (err.message.includes('找不到雲端函數') || err.message.includes('fetch')) {
-                msgBox.innerHTML = `❌ <b>寫入失敗: 雲端邊緣函數尚未部署。</b><br>
-                <span style="font-size: 0.85rem; color: #64748B; font-weight: normal;">
-                💡 請先打開 Terminal 執行 <b>npx supabase functions deploy</b> 指令。
-                </span>`;
+                msgBox.innerHTML = `❌ <b>寫入失敗: 雲端邊緣函數尚未部署。</b>`;
             } else {
                 msgBox.innerHTML = `❌ 寫入失敗: <br><span style="font-size: 0.9em; font-weight: normal;">${err.message || '請稍後再試'}</span>`;
             }
@@ -358,7 +413,7 @@ export class MemberManager {
             throw new Error(data?.error || '建檔過程發生未知錯誤');
         }
 
-        return data.user_id; 
+        return data; 
     }
 
     async assignStudent(userId, driveLink) {
@@ -382,7 +437,6 @@ export class MemberManager {
         if (error) throw new Error('綁定家長與學生失敗');
     }
 
-    // 🛡️ 新增：孤兒帳號防護網 (軟刪除)
     async rollbackOrphanedUser(userId) {
         try {
             console.warn(`[防護網啟動] 正在標記並封存無法綁定班級的孤兒帳號: ${userId}`);

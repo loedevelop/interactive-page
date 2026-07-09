@@ -1,6 +1,6 @@
 /**
  * Supabase Edge Function: admin_create_user
- * 負責處理跨越權限的「靜默建檔」與「帳號衝突智慧變形」
+ * 🌟 實作「學生帳號防衝突雙軌制」：Gmail 體系採用 + 號；非 Gmail 體系採用 LogOnEnglish 專屬網域。
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -8,12 +8,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS", // 🛡️ 必須加上 POST，防止瀏覽器阻擋
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 serve(async (req) => {
-  // 1. 攔截 OPTIONS 預檢請求
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -38,31 +37,65 @@ serve(async (req) => {
     }
 
     let targetEmail = email.trim().toLowerCase();
-    const defaultPassword = "LogOn" + new Date().getFullYear();
-    const uniqueSuffix = Date.now().toString().slice(-4); 
+    let isMutated = false;
+    let originalEmail = null;
 
-    // 🚨 修正：改用 maybeSingle()，防堵查無舊帳號時直接崩潰
-    const { data: existingProfile } = await supabaseAdmin
+    // 1. 查詢 Email 是否已存在
+    const { data: existingProfile, error: searchError } = await supabaseAdmin
       .from("profiles")
-      .select("id")
+      .select("id, email")
       .eq("email", targetEmail)
       .maybeSingle();
 
-    if (existingProfile) {
-      const [username, domain] = targetEmail.split("@");
-      const supportedAliasDomains = ["gmail.com", "googlemail.com", "icloud.com"];
+    if (searchError) {
+      throw new Error(`查詢帳號時發生錯誤: ${searchError.message}`);
+    }
 
-      if (supportedAliasDomains.includes(domain)) {
-        targetEmail = `${username}+${uniqueSuffix}@${domain}`;
-      } else {
-        if (!phone) {
-          throw new Error("信箱已被使用且不支援別名。請在前端補填「手機號碼」以合成新帳號。");
+    // 2. 🚦 針對已存在帳號的「分流防護邏輯」
+    if (existingProfile) {
+      originalEmail = targetEmail;
+
+      // 情況 A：如果身分是「學生」，啟動您決定的帳號自動變形雙軌制
+      if (roleType === "student") {
+        const [username, domain] = targetEmail.split("@");
+        const supportedAliasDomains = ["gmail.com", "googlemail.com", "icloud.com"];
+        
+        // 擷取姓名並去除空白 (優先使用英文名，若無則使用中文名)
+        const rawEn = (rawData.nameEN || "").trim();
+        const rawLastCN = (rawData.lastNameCN || "").trim();
+        const rawFirstCN = (rawData.firstNameCN || "").trim();
+        const studentName = (rawEn || rawLastCN + rawFirstCN).replace(/\s+/g, '') || "Student";
+
+        if (supportedAliasDomains.includes(domain)) {
+          // 策略 1: Gmail 體系 -> 加 + 號與學生姓名
+          targetEmail = `${username}+${studentName}@${domain}`.toLowerCase();
+        } else {
+          // 策略 2: 非 Gmail 體系 -> 轉內部網域並加手機末四碼
+          if (!phone || phone.replace(/[^0-9]/g, "").length < 4) {
+            throw new Error("此信箱不支援別名，系統需轉換為 LogOn 內部網域帳號。請務必填寫家長「手機號碼」(至少4碼)，以生成該學生專屬帳號。");
+          }
+          const phoneLast4 = phone.replace(/[^0-9]/g, "").slice(-4);
+          targetEmail = `${studentName}.${phoneLast4}@logonenglish.com`.toLowerCase();
         }
-        const cleanPhone = phone.replace(/[^0-9]/g, "");
-        targetEmail = `${cleanPhone}-${uniqueSuffix}@logon.tw`;
+        isMutated = true;
+      } 
+      // 情況 B：如果是「教職員」或「家長」，絕對不變形，直接綁定原帳號
+      else {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            user_id: existingProfile.id,
+            login_email: existingProfile.email,
+            is_existing: true,
+            message: "此帳號已存在，系統將直接賦予該帳號本班權限。"
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+        );
       }
     }
 
+    // 3. 建立全新的 Auth 帳號 (全新信箱，或是經過變形後的學生信箱)
+    const defaultPassword = "LogOn" + new Date().getFullYear();
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: targetEmail,
       password: defaultPassword,
@@ -82,21 +115,23 @@ serve(async (req) => {
       ta_junior: "staff",
     };
 
+    // 4. 同步寫入 Profiles，並將預設密碼寫入
     const { error: profileError } = await supabaseAdmin.from("profiles").insert([{
       id: newUserId,
       email: targetEmail,
+      password: defaultPassword,
       name: name,
       phone: phone || null,
       default_role: defaultRoleMap[roleType] || "student",
       raw_data: { 
         ...rawData, 
         source: "admin_silent_creation",
-        original_conflict_email: existingProfile ? email : null 
+        original_conflict_email: isMutated ? originalEmail : null 
       },
     }]);
 
     if (profileError) {
-      // Rollback 機制：如果 profiles 寫入失敗，同步刪除剛建立的 auth.users 帳號
+      // Rollback
       await supabaseAdmin.auth.admin.deleteUser(newUserId);
       throw profileError;
     }
@@ -107,16 +142,15 @@ serve(async (req) => {
         user_id: newUserId,
         login_email: targetEmail,
         login_password: defaultPassword,
-        is_mutated: !!existingProfile
+        is_existing: false,
+        is_mutated: isMutated
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
 
   } catch (error: any) {
-    // 1. 🔍 強制在雲端控制台日誌印出最詳細的錯誤物件與追蹤軌跡
     console.error("🔥 [Edge Function Error Log]:", error);
     
-    // 2. 🔍 解除物件轉 JSON 變成空的 "{}" 的限制，抽取真實字串訊息
     let errorMessage = "未知錯誤";
     if (error instanceof Error) {
       errorMessage = error.message;
@@ -126,7 +160,6 @@ serve(async (req) => {
       errorMessage = String(error);
     }
 
-    // 🚨 發生錯誤時也必須加上 corsHeaders，並將真實的錯誤字串傳回前端
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
