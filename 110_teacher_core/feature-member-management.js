@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-member-management.js
- * 🌟 v6.2 SaaS 雲端對接版：導入「點擊懸浮泡泡 (Tooltip)」顯示學生帳號生成規則
+ * 🌟 v6.3 SaaS 雲端對接版：導入 Sub-Tabs 智慧連動、表單動態防呆機制
  */
 
 export class MemberManager {
@@ -18,13 +18,54 @@ export class MemberManager {
         this.initUI();
     }
 
+    // 🌟 新增：由外部 Sub-Tabs 呼叫，只修改預選身分，但不強迫打開表單
+    syncWithTab(tabName) {
+        const roleSelect = document.getElementById('memberRole');
+        if (!roleSelect) return;
+        
+        if (tabName === 'student') roleSelect.value = 'student';
+        else if (tabName === 'staff') roleSelect.value = 'co_teacher';
+        else if (tabName === 'parent') roleSelect.value = 'parent';
+        
+        // 觸發 change 事件，讓動態欄位 (如選擇學生) 正確顯示
+        roleSelect.dispatchEvent(new Event('change'));
+    }
+
+    // 🌟 新增：由表格內的快捷按鈕呼叫，展開表單、預選身分、並捲動到視角內
+    openAndSync(tabName, studentId = null) {
+        const toggleBtn = document.getElementById('toggleMemberFormBtn');
+        const form = document.getElementById('addMemberForm');
+        
+        if (form && form.style.display === 'none' && toggleBtn) {
+            toggleBtn.click();
+        }
+        
+        this.syncWithTab(tabName);
+        
+        // 稍微延遲以確保表單動畫與 API (如讀取學生名單) 執行完畢
+        setTimeout(() => {
+            if (studentId) {
+                const childSelect = document.getElementById('childUserId');
+                if (childSelect) childSelect.value = studentId;
+            }
+            
+            const formContainer = document.getElementById('toggleMemberFormBtn');
+            if (formContainer) {
+                formContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            
+            const emailInput = document.getElementById('memberEmail');
+            if (emailInput) emailInput.focus();
+        }, 500); 
+    }
+
     initUI() {
         this.container.innerHTML = `
             <div class="settings-card" style="border: 2px dashed #cbd5e1; background: #f8fafc; margin-bottom: 20px;">
                 
                 <div id="toggleMemberFormBtn" style="cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
                     <h3 style="margin: 0; color: #334155; display: flex; align-items: center; gap: 8px;">
-                        ➕ 新增班級成員 
+                        ➕ 新增班級成員 / 綁定家長
                         <span style="font-size: 0.9rem; color: #94A3B8; font-weight: normal;">(點擊展開)</span>
                     </h3>
                     <span id="toggleIcon" style="font-size: 1.2rem; color: #64748B;">🔽</span>
@@ -97,7 +138,6 @@ export class MemberManager {
                                     <option value="parent">👨‍👩‍👧 家長 (Parent)</option>
                                 </select>
                                 
-                                <!-- 🌟 點擊後懸浮顯示的小泡泡說明 (Tooltip Popup) -->
                                 <div id="studentEmailRulePopup" style="display: none; position: absolute; top: calc(100% + 8px); left: 0; background: #ffffff; border: 1px solid #BFDBFE; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); padding: 15px; width: 320px; z-index: 1000;">
                                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                         <h5 style="margin: 0; color: #1E3A8A; font-size: 0.95rem;">💡 帳號防衝突規則</h5>
@@ -118,15 +158,15 @@ export class MemberManager {
                         <input type="url" id="memberDriveLink" class="form-control" placeholder="請貼上 Google Drive 連結...">
                     </div>
 
-                    <div class="form-group" id="childSelectionGroup" style="display: none; margin-top: 15px;">
-                        <label>🔗 綁定學生 <span style="color:red;">*</span> <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(請選擇該家長的孩子)</span></label>
-                        <select id="childUserId" class="form-control">
+                    <div class="form-group" id="childSelectionGroup" style="display: none; margin-top: 15px; background: #FFFBEB; padding: 15px; border-radius: 8px; border: 1px dashed #FCD34D;">
+                        <label style="color:#92400E;">🔗 綁定本班學生 <span style="color:red;">*</span> <span style="color:#B45309; font-size: 0.85em; font-weight: normal;">(家長帳號將獲得此學生的觀測權限)</span></label>
+                        <select id="childUserId" class="form-control" style="border-color: #FCD34D;">
                             <option value="" disabled selected>載入學生名單中...</option>
                         </select>
                     </div>
 
                     <div style="margin-top: 25px; display: flex; align-items: center; gap: 15px;">
-                        <button type="submit" id="submitMemberBtn" class="btn btn-primary" style="padding: 10px 20px;">➕ 確認新增成員</button>
+                        <button type="submit" id="submitMemberBtn" class="btn btn-primary" style="padding: 10px 20px;">➕ 確認送出</button>
                         <div id="formMessage" style="font-weight: bold; font-size: 0.95rem; line-height: 1.4;"></div>
                     </div>
                 </form>
@@ -215,7 +255,6 @@ export class MemberManager {
             }
         });
 
-        // 綁定小泡泡的開啟與關閉事件
         ruleIcon.addEventListener('click', (e) => {
             e.stopPropagation(); 
             rulePopup.style.display = rulePopup.style.display === 'none' ? 'block' : 'none';
@@ -225,7 +264,6 @@ export class MemberManager {
             rulePopup.style.display = 'none';
         });
 
-        // 點擊表單空白處時，自動關閉小泡泡
         document.addEventListener('click', (e) => {
             if (rulePopup.style.display === 'block' && !rulePopup.contains(e.target) && e.target !== ruleIcon) {
                 rulePopup.style.display = 'none';
@@ -371,8 +409,9 @@ export class MemberManager {
             document.getElementById('studentEmailRuleIcon').style.display = 'none';
             document.getElementById('studentEmailRulePopup').style.display = 'none';
 
+            // 🌟 成功後自動重刷名單，讓老師立刻看到新增的人員
             if (window.FeatureClassStudents && typeof window.FeatureClassStudents.renderStudentManager === 'function') {
-                window.FeatureClassStudents.renderStudentManager(this.classId);
+                await window.FeatureClassStudents.renderStudentManager(this.classId);
             }
 
         } catch (err) {
@@ -386,7 +425,7 @@ export class MemberManager {
             }
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '➕ 確認新增成員';
+            btn.innerHTML = '➕ 確認送出';
         }
     }
 
@@ -450,7 +489,7 @@ export class MemberManager {
     }
 }
 
-// 掛載至全域
+// 🌟 將實例儲存至 window，方便 feature-class-students 呼叫 openAndSync 進行 UI 連動
 window.RenderMemberManagerForm = function(containerId, classId, currentUserRole) {
-    new MemberManager(containerId, classId, currentUserRole);
+    window.currentMemberManager = new MemberManager(containerId, classId, currentUserRole);
 };

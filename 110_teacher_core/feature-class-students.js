@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class-students.js
- * 🌟 v6.2 SaaS 規格淨化版：新增「教職員團隊」專屬區塊、補齊軟刪除，並封印前端 Email 修改權限防止脫鉤。
+ * 🌟 v6.3 SaaS 次級頁籤架構版：實作學生/教職/家長三層實體隔離，徹底消滅競速渲染 Bug
  */
 
 window.FeatureClassStudents = (() => {
@@ -9,6 +9,9 @@ window.FeatureClassStudents = (() => {
     if (db && !db.students) { 
         db.students = []; 
     }
+
+    // 紀錄當下所在的 Tab，防止重整畫面時跑回預設值
+    let currentActiveTab = 'student';
 
     // 🧠 核心大腦：名字動態組合邏輯
     function calculateDisplayName(profile, effectiveMode) {
@@ -92,6 +95,76 @@ window.FeatureClassStudents = (() => {
         }
     }
 
+    // 👨‍👩‍👧 抓取「家長對照」名單 (透過關聯追蹤)
+    async function fetchParentsForClass(classStudents, effectiveMode) {
+        if (!classStudents || classStudents.length === 0) return [];
+        try {
+            const studentIds = classStudents.map(s => s.id);
+            
+            const { data: mappings, error: mapErr } = await window.supabaseClient
+                .from('parent_child_mappings')
+                .select('*')
+                .in('child_user_id', studentIds);
+                
+            if (mapErr || !mappings || mappings.length === 0) return [];
+            
+            const parentIds = [...new Set(mappings.map(m => m.parent_user_id))];
+            
+            const { data: parentProfiles } = await window.supabaseClient
+                .from('profiles')
+                .select('*')
+                .in('id', parentIds);
+                
+            const parentMap = {};
+            if (parentProfiles) {
+                parentProfiles.forEach(p => parentMap[p.id] = p);
+            }
+            
+            return mappings.map(m => {
+                const p = parentMap[m.parent_user_id] || {};
+                return {
+                    parent_id: m.parent_user_id,
+                    child_id: m.child_user_id,
+                    parentName: calculateDisplayName(p, effectiveMode),
+                    parentEmail: p.email || '未知信箱'
+                };
+            });
+        } catch (error) {
+            console.error("抓取家長名單失敗:", error);
+            return [];
+        }
+    }
+
+    // --- 🌟 次級頁籤切換邏輯 ---
+    function switchTab(tabName) {
+        currentActiveTab = tabName;
+        
+        document.querySelectorAll('.member-sub-tab').forEach(el => {
+            el.style.borderBottomColor = 'transparent';
+            el.style.color = '#64748B';
+            el.style.backgroundColor = 'transparent';
+        });
+        document.querySelectorAll('.member-tab-content').forEach(el => el.style.display = 'none');
+        
+        const btn = document.getElementById(`sub-tab-btn-${tabName}`);
+        const content = document.getElementById(`sub-tab-content-${tabName}`);
+        
+        if (btn) {
+            btn.style.borderBottomColor = '#3B82F6';
+            btn.style.color = '#1E40AF';
+            btn.style.backgroundColor = '#EFF6FF';
+        }
+        if (content) content.style.display = 'block';
+        
+        // 💡 UX 智慧連動：切換上方頁籤時，同步改變下方表單的預設身分
+        if (window.currentMemberManager && typeof window.currentMemberManager.syncWithTab === 'function') {
+            window.currentMemberManager.syncWithTab(tabName);
+        }
+    }
+
+    // 暴露給全域按鈕呼叫
+    window.FeatureClassStudents_SwitchTab = switchTab;
+
     async function renderStudentManager(classId) {
         const container = document.getElementById('student-manager-container');
         if (!container) return;
@@ -100,6 +173,7 @@ window.FeatureClassStudents = (() => {
 
         try {
             let effectiveMode = 'en_first'; 
+            let currentUserRole = 'ta_junior';
             
             const { data: classData } = await window.supabaseClient.from('classes').select('raw_data').eq('id', classId).maybeSingle();
             const classMode = classData?.raw_data?.name_display_mode || 'default';
@@ -107,39 +181,32 @@ window.FeatureClassStudents = (() => {
 
             const { data: { user } } = await window.supabaseClient.auth.getUser();
             if (user) {
-                const { data: profData } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', user.id).maybeSingle();
+                const { data: profData } = await window.supabaseClient.from('profiles').select('raw_data, default_role').eq('id', user.id).maybeSingle();
                 const profMode = profData?.raw_data?.preferred_name_mode || 'default';
                 if (profMode !== 'default') effectiveMode = profMode;
+
+                if (profData?.default_role === 'admin') {
+                    currentUserRole = 'admin';
+                } else {
+                    const { data: staffData } = await window.supabaseClient.from('class_staff').select('staff_role').eq('class_id', classId).eq('user_id', user.id).is('deleted_at', null).maybeSingle();
+                    if (staffData) currentUserRole = staffData.staff_role;
+                }
             }
 
-            // 🌟 同時抓取教職員與學生
+            // 🌟 平行抓取三方資料
             const [classStaff, classStudents] = await Promise.all([
                 fetchStaffForClass(classId, effectiveMode),
                 fetchStudentsForClass(classId, effectiveMode)
             ]);
 
+            const classParents = await fetchParentsForClass(classStudents, effectiveMode);
             db.students = db.students.filter(s => s.class_id !== classId).concat(classStudents);
 
-            // 1️⃣ 產生教職員表格 HTML (新增移除按鈕)
-            let staffTbody = classStaff.map((s, idx) => {
-                const safeName = s.displayName.replace(/"/g, '&quot;');
-                // 主老師不可被一般方式移除
-                const actionBtn = s.rawRole === 'primary_teacher' 
-                    ? '<span style="color:#94A3B8; font-size:0.85em;">無法移除</span>'
-                    : `<button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.removeStaff('${s.id}', '${classId}')" title="移除此教職員">🗑️</button>`;
+            const canManageStaff = currentUserRole === 'admin' || currentUserRole === 'primary_teacher';
 
-                return `
-                <tr style="border-bottom: 1px solid #E2E8F0; background: #F8FAFC;">
-                    <td style="padding: 10px; color: #64748B;">${idx + 1}</td>
-                    <td style="padding: 10px; font-weight: bold; color: #475569;">${s.role}</td>
-                    <td style="padding: 10px; font-weight: bold; color: #0F172A;">${safeName}</td>
-                    <td style="padding: 10px; color: #64748B;">${s.email}</td>
-                    <td style="padding: 10px; text-align: center;">${actionBtn}</td>
-                </tr>
-                `;
-            }).join('');
-
-            // 2️⃣ 產生學生表格 HTML (修復：信箱改為 Readonly 防止資料庫脫鉤)
+            // ==========================================
+            // 1️⃣ 產生「學生」表格 HTML (預設區塊)
+            // ==========================================
             let studentTbody = classStudents.map((s, idx) => {
                 const safeName = s.displayName.replace(/"/g, '&quot;');
                 return `
@@ -166,56 +233,164 @@ window.FeatureClassStudents = (() => {
                 `;
             }).join('');
 
-            // 🌟 組合最終畫面：上方顯示教職員，下方顯示學生
-            container.innerHTML = `
-                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E2E8F0; margin-top: 0; margin-bottom: 20px;">
-                    <h3 style="margin-top: 0; margin-bottom: 15px; color: var(--primary-dark); display: flex; align-items: center; justify-content: space-between;">
-                        <div style="display: flex; align-items: center; gap: 8px;">🧑‍🏫 班級教職員團隊</div>
-                    </h3>
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
-                            <thead>
-                                <tr style="background: #F1F5F9; text-align: left; color: #334155;">
-                                    <th style="padding: 10px; border-radius: 8px 0 0 8px; width: 50px;">#</th>
-                                    <th style="padding: 10px; width: 150px;">團隊身分</th>
-                                    <th style="padding: 10px;">顯示姓名</th>
-                                    <th style="padding: 10px;">聯絡信箱 (帳號)</th>
-                                    <th style="padding: 10px; border-radius: 0 8px 8px 0; text-align: center; width: 80px;">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${staffTbody || '<tr><td colspan="5" style="text-align:center; padding: 20px; color:#94A3B8;">目前無其他教職員，請透過下方的「新增班級成員」加入。</td></tr>'}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+            // ==========================================
+            // 2️⃣ 產生「教職員」表格 HTML (防護區塊)
+            // ==========================================
+            let staffTbody = classStaff.map((s, idx) => {
+                const safeName = s.displayName.replace(/"/g, '&quot;');
+                let actionBtn = `<span style="color:#94A3B8; font-size:0.85em;">權限不足</span>`;
+                
+                if (canManageStaff) {
+                    actionBtn = s.rawRole === 'primary_teacher' 
+                        ? '<span style="color:#94A3B8; font-size:0.85em; font-weight:bold;">🔒 主老師不可移除</span>'
+                        : `<button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.removeStaff('${s.id}', '${classId}')" title="移除此教職員">🗑️</button>`;
+                }
 
-                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E2E8F0; margin-top: 0;">
-                    <h3 style="margin-top: 0; margin-bottom: 15px; color: var(--primary-dark); display: flex; align-items: center; justify-content: space-between;">
-                        <div style="display: flex; align-items: center; gap: 8px;">👥 課程學生與帳號管理</div>
-                        <span style="font-size: 0.85rem; color: #64748B; background: #F1F5F9; padding: 4px 10px; border-radius: 20px;">
-                            當前顯示：${effectiveMode === 'cn_first' ? '🇹🇼 模式 2 (中文全名)' : '🇺🇸 模式 1 (英文名+護照姓)'}
-                        </span>
-                    </h3>
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
-                            <thead>
-                                <tr style="background: #F1F5F9; text-align: left; color: #334155;">
-                                    <th style="padding: 10px; border-radius: 8px 0 0 8px;">#</th>
-                                    <th style="padding: 10px;">智慧顯示姓名</th>
-                                    <th style="padding: 10px;">Email (唯讀)</th>
-                                    <th style="padding: 10px;">密碼 (預設)</th>
-                                    <th style="padding: 10px;">個人專屬 Drive 連結</th>
-                                    <th style="padding: 10px; border-radius: 0 8px 8px 0;">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${studentTbody || '<tr><td colspan="6" style="text-align:center; padding: 30px; color:#94A3B8; font-weight: 800;">目前名單為空，請透過下方的「新增班級成員」按鈕加入學生。</td></tr>'}
-                            </tbody>
-                        </table>
+                return `
+                <tr style="border-bottom: 1px solid #E2E8F0; background: #F8FAFC;">
+                    <td style="padding: 10px; color: #64748B;">${idx + 1}</td>
+                    <td style="padding: 10px; font-weight: bold; color: #475569;">${s.role}</td>
+                    <td style="padding: 10px; font-weight: bold; color: #0F172A;">${safeName}</td>
+                    <td style="padding: 10px; color: #64748B;">${s.email}</td>
+                    <td style="padding: 10px; text-align: center;">${actionBtn}</td>
+                </tr>
+                `;
+            }).join('');
+
+            // ==========================================
+            // 3️⃣ 產生「家長綁定矩陣」表格 HTML (對照區塊)
+            // ==========================================
+            let parentTbody = classStudents.map((student, idx) => {
+                const safeStudentName = student.displayName.replace(/"/g, '&quot;');
+                const boundParents = classParents.filter(p => p.child_id === student.id);
+                
+                let parentDisplay = `<span style="color:#94A3B8; font-style:italic;">尚未綁定任何家長</span>`;
+                if (boundParents.length > 0) {
+                    parentDisplay = boundParents.map(p => {
+                        return `<div style="background:#F1F5F9; border:1px solid #CBD5E1; padding:4px 8px; border-radius:6px; display:inline-flex; align-items:center; gap:8px; margin-right:5px; margin-bottom:5px;">
+                                    <span style="font-weight:bold; color:#0F172A;">${p.parentName.replace(/"/g, '&quot;')}</span>
+                                    <span style="font-size:0.85em; color:#64748B;">(${p.parentEmail})</span>
+                                    <button class="btn btn-danger" style="padding: 2px 6px; font-size: 0.7rem; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center;" onclick="window.FeatureClassStudents.removeParentMapping('${p.parent_id}', '${student.id}', '${classId}')" title="解除綁定">✖</button>
+                                </div>`;
+                    }).join('');
+                }
+
+                return `
+                <tr style="border-bottom: 1px dashed #E2E8F0;">
+                    <td style="padding: 12px 10px; color: #64748B;">${idx + 1}</td>
+                    <td style="padding: 12px 10px; font-weight: bold; color: #1E293B; border-right: 2px solid #F1F5F9;">🎓 ${safeStudentName}</td>
+                    <td style="padding: 12px 10px;">${parentDisplay}</td>
+                    <td style="padding: 12px 10px; text-align: center;">
+                        <button class="btn" style="background:#EFF6FF; color:#1E40AF; border:1px solid #BFDBFE; padding:6px 12px; border-radius:6px; font-size: 0.85rem; font-weight: bold; cursor:pointer;" onclick="if(window.currentMemberManager) window.currentMemberManager.openAndSync('parent', '${student.id}')">+ 新增綁定</button>
+                    </td>
+                </tr>
+                `;
+            }).join('');
+
+
+            // 🌟 組合最終畫面：導入 Sub-Tabs 次級頁籤切換架構
+            container.innerHTML = `
+                <div style="background: white; border-radius: 12px; border: 2px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                    
+                    <!-- 次級頁籤導覽列 (Sub-Tabs) -->
+                    <div style="display: flex; background: #F8FAFC; border-bottom: 1px solid #CBD5E1; padding: 0 10px; overflow-x: auto; white-space: nowrap;">
+                        <button id="sub-tab-btn-student" class="member-sub-tab active" style="padding: 12px 20px; background: #EFF6FF; border: none; border-bottom: 3px solid #3B82F6; color: #1E40AF; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassStudents_SwitchTab('student')">
+                            🎓 學生名單 (${classStudents.length})
+                        </button>
+                        <button id="sub-tab-btn-staff" class="member-sub-tab" style="padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #64748B; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassStudents_SwitchTab('staff')">
+                            🧑‍🏫 教職團隊 (${classStaff.length})
+                        </button>
+                        <button id="sub-tab-btn-parent" class="member-sub-tab" style="padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #64748B; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassStudents_SwitchTab('parent')">
+                            👨‍👩‍👧 家長觀測綁定 (${classParents.length})
+                        </button>
+                    </div>
+
+                    <div style="padding: 20px;">
+                        
+                        <!-- 🎓 容器一：學生名單 -->
+                        <div id="sub-tab-content-student" class="member-tab-content" style="display: block; animation: fadeIn 0.3s;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                <h3 style="margin: 0; color: #1E293B;">👥 課程學生與帳號管理</h3>
+                                <span style="font-size: 0.85rem; color: #64748B; background: #F1F5F9; padding: 4px 10px; border-radius: 20px;">
+                                    當前顯示：${effectiveMode === 'cn_first' ? '🇹🇼 模式 2 (中文全名)' : '🇺🇸 模式 1 (英文名+護照姓)'}
+                                </span>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
+                                    <thead>
+                                        <tr style="background: #F1F5F9; text-align: left; color: #334155;">
+                                            <th style="padding: 10px; border-radius: 8px 0 0 8px;">#</th>
+                                            <th style="padding: 10px;">智慧顯示姓名</th>
+                                            <th style="padding: 10px;">Email (唯讀防脫鉤)</th>
+                                            <th style="padding: 10px;">密碼 (預設)</th>
+                                            <th style="padding: 10px;">個人專屬 Drive 連結</th>
+                                            <th style="padding: 10px; border-radius: 0 8px 8px 0;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${studentTbody || '<tr><td colspan="6" style="text-align:center; padding: 40px; color:#94A3B8; font-weight: 800; font-size: 1.1rem;">目前名單為空，請透過下方的「新增班級成員」加入學生。</td></tr>'}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 🧑‍🏫 容器二：教職員團隊 -->
+                        <div id="sub-tab-content-staff" class="member-tab-content" style="display: none; animation: fadeIn 0.3s;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                <h3 style="margin-top: 0; margin-bottom: 0; color: #1E293B;">🧑‍🏫 班級內部教職員團隊</h3>
+                                <button class="btn" style="background:#F1F5F9; color:#475569; border:1px dashed #CBD5E1; padding:6px 15px; border-radius:6px; cursor:pointer;" onclick="if(window.currentMemberManager) window.currentMemberManager.openAndSync('staff');">+ 指派新教職員</button>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
+                                    <thead>
+                                        <tr style="background: #F8FAFC; text-align: left; color: #334155; border-bottom: 2px solid #E2E8F0;">
+                                            <th style="padding: 12px; width: 40px;">#</th>
+                                            <th style="padding: 12px; width: 150px;">團隊身分</th>
+                                            <th style="padding: 12px;">顯示姓名</th>
+                                            <th style="padding: 12px;">聯絡信箱 (帳號)</th>
+                                            <th style="padding: 12px; text-align: center; width: 80px;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${staffTbody || '<tr><td colspan="5" style="text-align:center; padding: 20px; color:#94A3B8;">目前無其他教職員，請透過下方的「新增班級成員」加入。</td></tr>'}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 👨‍👩‍👧 容器三：家長綁定對照矩陣 -->
+                        <div id="sub-tab-content-parent" class="member-tab-content" style="display: none; animation: fadeIn 0.3s;">
+                            <div style="background: #FFFBEB; border: 1px dashed #FDE68A; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #92400E; font-size: 0.9rem;">
+                                💡 <b>家長觀測端說明：</b> 您必須先建立學生，然後在此處將家長的信箱「綁定」給對應的學生。一個家長可以綁定多位學生。
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                <h3 style="margin-top: 0; margin-bottom: 0; color: #1E293B;">👨‍👩‍👧 學生家長對照矩陣</h3>
+                                <button class="btn" style="background:#FFFBEB; color:#92400E; border:1px dashed #FDE68A; padding:6px 15px; border-radius:6px; cursor:pointer;" onclick="if(window.currentMemberManager) window.currentMemberManager.openAndSync('parent');">+ 建立家長觀測綁定</button>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
+                                    <thead>
+                                        <tr style="background: #F8FAFC; text-align: left; color: #334155; border-bottom: 2px solid #E2E8F0;">
+                                            <th style="padding: 12px; width: 40px;">#</th>
+                                            <th style="padding: 12px; width: 25%;">🎓 本班學生</th>
+                                            <th style="padding: 12px;">🔗 已授權的觀測家長名單</th>
+                                            <th style="padding: 12px; text-align: center; width: 120px;">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${classStudents.length > 0 ? parentTbody : '<tr><td colspan="4" style="text-align:center; padding: 40px; color:#94A3B8; font-weight: 800; font-size: 1.1rem;">班級內尚無學生，請先加入學生。</td></tr>'}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             `;
+            
+            // 恢復上次切換的 Tab
+            switchTab(currentActiveTab);
+
         } catch (err) {
             console.error("渲染名單失敗:", err);
             container.innerHTML = `<div style="color:red; padding:20px;">❌ 載入失敗：${err.message}</div>`;
@@ -224,8 +399,9 @@ window.FeatureClassStudents = (() => {
 
     return {
         renderStudentManager,
+        switchTab,
         
-        // 🔒 修復：移除前端自作主張修改 Email 的邏輯，僅保留 Drive 連結的更新
+        // 💾 僅允許儲存 Drive，封印前端 Email 修改
         saveStudent: async (studentId, classId) => {
             const drive = document.getElementById(`std-drive-${studentId}`).value.trim();
             const btn = window.event.target;
@@ -234,7 +410,6 @@ window.FeatureClassStudents = (() => {
             btn.disabled = true;
 
             try {
-                // 1. 更新 Profiles 裡的 raw_data (加入 Drive URL)
                 const { data: oldProf } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', studentId).maybeSingle();
                 const mergedRawData = { ...(oldProf?.raw_data || {}), drive_url: drive };
 
@@ -245,7 +420,6 @@ window.FeatureClassStudents = (() => {
 
                 if (profileError) throw profileError;
 
-                // 2. 更新 Enrollment 表格
                 const { error: enrollError } = await window.supabaseClient
                     .from('student_enrollments')
                     .update({ drive_link: drive })
@@ -263,8 +437,9 @@ window.FeatureClassStudents = (() => {
             }
         },
         
+        // 🗑️ 退選學生 (Soft Delete)
         deleteStudent: async (id, classId) => {
-            if (!confirm('⚠️ 確定要把該名學生從本班級移除嗎？\n(注意：這只是將學生退出本班，系統主檔仍會保留)')) return;
+            if (!confirm('⚠️ 確定要把該名學生從本班級移除嗎？\n\n(注意：這只是將學生退出本班，系統主檔仍會保留。如果該學生有綁定家長，家長將自動無法觀測本班進度)')) return;
             
             const { error } = await window.supabaseClient
                 .from('student_enrollments')
@@ -276,7 +451,7 @@ window.FeatureClassStudents = (() => {
             await renderStudentManager(classId);
         },
 
-        // 🧑‍🏫 新增：移除教職員 (Soft Delete from class_staff)
+        // 🧑‍🏫 移除教職員 (Soft Delete)
         removeStaff: async (userId, classId) => {
             if (!confirm('⚠️ 確定要把該名教職員從本班級團隊移除嗎？\n(注意：對方的帳號仍會保留在系統中)')) return;
             
@@ -290,10 +465,24 @@ window.FeatureClassStudents = (() => {
             await renderStudentManager(classId);
         },
 
+        // ✂️ 解除家長綁定 (物理刪除 Mapping 牽線)
+        removeParentMapping: async (parentId, childId, classId) => {
+            if (!confirm('⚠️ 確定要解除該名家長對此學生的觀測權限嗎？\n(家長端將立即失去觀測此學生的資格)')) return;
+            
+            const { error } = await window.supabaseClient
+                .from('parent_child_mappings')
+                .delete()
+                .eq('parent_user_id', parentId)
+                .eq('child_user_id', childId);
+
+            if (error) return alert('❌ 解除綁定失敗: ' + error.message);
+            await renderStudentManager(classId);
+        },
+
         openEditModal: async (studentId, classId) => {
             const overlay = document.createElement('div');
             overlay.id = 'edit-student-modal';
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999;';
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
             
             overlay.innerHTML = '<div style="background: white; padding: 20px; border-radius: 8px; font-weight: bold;">⏳ 載入資料中...</div>';
             document.body.appendChild(overlay);
@@ -304,6 +493,10 @@ window.FeatureClassStudents = (() => {
                 if (!profile) throw new Error("找不到該學生資料。");
 
                 const raw = profile.raw_data || {};
+                let parsedRaw = raw;
+                if (typeof raw === 'string') {
+                    try { parsedRaw = JSON.parse(raw); } catch(e){}
+                }
 
                 overlay.innerHTML = `
                     <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
@@ -312,29 +505,29 @@ window.FeatureClassStudents = (() => {
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                             <div class="form-group" style="margin-top: 0;">
                                 <label style="display:block; font-weight:bold; margin-bottom:5px; font-size: 0.9rem;">英文名字 (First Name)</label>
-                                <input type="text" id="modal-nameEN" class="form-control" value="${raw.nameEN || ''}" style="width:100%;">
+                                <input type="text" id="modal-nameEN" class="form-control" value="${parsedRaw.nameEN || ''}" style="width:100%;">
                             </div>
                             <div class="form-group" style="margin-top: 0;">
                                 <label style="display:block; font-weight:bold; margin-bottom:5px; font-size: 0.9rem;">護照姓氏 (Last Name)</label>
-                                <input type="text" id="modal-passLast" class="form-control" value="${raw.passportLast || ''}" style="width:100%;">
+                                <input type="text" id="modal-passLast" class="form-control" value="${parsedRaw.passportLast || ''}" style="width:100%;">
                             </div>
                         </div>
 
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                             <div class="form-group" style="margin-top: 0;">
                                 <label style="display:block; font-weight:bold; margin-bottom:5px; font-size: 0.9rem;">護照名字 (First Name)</label>
-                                <input type="text" id="modal-passFirst" class="form-control" value="${raw.passportFirst || ''}" style="width:100%;">
+                                <input type="text" id="modal-passFirst" class="form-control" value="${parsedRaw.passportFirst || ''}" style="width:100%;">
                             </div>
                             <div class="form-group" style="margin-top: 0;">
                                 <label style="display:block; font-weight:bold; margin-bottom:5px; font-size: 0.9rem;">中文姓氏</label>
-                                <input type="text" id="modal-lastCN" class="form-control" value="${raw.lastNameCN || ''}" style="width:100%;">
+                                <input type="text" id="modal-lastCN" class="form-control" value="${parsedRaw.lastNameCN || ''}" style="width:100%;">
                             </div>
                         </div>
 
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 25px;">
                             <div class="form-group" style="margin-top: 0;">
                                 <label style="display:block; font-weight:bold; margin-bottom:5px; font-size: 0.9rem;">中文名字</label>
-                                <input type="text" id="modal-firstCN" class="form-control" value="${raw.firstNameCN || ''}" style="width:100%;">
+                                <input type="text" id="modal-firstCN" class="form-control" value="${parsedRaw.firstNameCN || ''}" style="width:100%;">
                             </div>
                         </div>
 
@@ -346,7 +539,7 @@ window.FeatureClassStudents = (() => {
                 `;
             } catch (err) {
                 alert("❌ 無法載入資料: " + err.message);
-                overlay.remove();
+                if (document.getElementById('edit-student-modal')) document.getElementById('edit-student-modal').remove();
             }
         },
 
@@ -361,11 +554,20 @@ window.FeatureClassStudents = (() => {
             const lastCN = document.getElementById('modal-lastCN').value.trim();
             const firstCN = document.getElementById('modal-firstCN').value.trim();
 
-            const fallbackName = nameEN || lastCN || passFirst || '未命名';
+            const fullCN = `${lastCN}${firstCN}`;
+            let fallbackName = "未命名";
+            
+            if (nameEN && passLast) fallbackName = `${nameEN} ${passLast}`;
+            else if (nameEN) fallbackName = nameEN;
+            else if (fullCN) fallbackName = fullCN;
 
             try {
                 const { data: profile } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', studentId).maybeSingle();
-                const raw = profile?.raw_data || {};
+                
+                let raw = profile?.raw_data || {};
+                if (typeof raw === 'string') {
+                    try { raw = JSON.parse(raw); } catch(e){}
+                }
 
                 const mergedRawData = {
                     ...raw,
