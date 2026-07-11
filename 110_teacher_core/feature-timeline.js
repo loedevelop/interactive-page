@@ -1,9 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.4 UI 終極淨化與排版升級版：
- * 1. 【字體統一】將標題、內文、描述的字體大小統一標準化為 1rem。
- * 2. 【文案精簡】全面移除贅字（專屬資料夾、未發佈、反白選取編輯）。
- * 3. 【佈局重構】操作按鈕與期限強制右對齊至卡片最邊緣。
+ * 🌟 v5.5 編輯器面板整合與極簡化版：
+ * 1. 【面板整合】將標題、說明、設定列合併為單一乾淨區塊。
+ * 2. 【文案極簡】移除所有「大區塊」等贅字，改為「標題」、「說明...」、「期限：」、「📢 發佈」。
  */
 
 window.FeatureTimeline = (() => {
@@ -321,7 +320,6 @@ window.FeatureTimeline = (() => {
                         ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
-                    // 修改與刪除按鈕
                     const actionButtonsHtml = canEditTimeline 
                         ? `<div style="display:flex; gap:8px; align-items:center;">
                                <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
@@ -333,7 +331,6 @@ window.FeatureTimeline = (() => {
                         ? `ondragstart="window.FeatureTimeline.dragAssignStart(event, '${a.id}')" ondragover="event.preventDefault(); this.classList.add('drag-over');" ondragleave="this.classList.remove('drag-over');" ondrop="this.classList.remove('drag-over'); window.FeatureTimeline.dropAssign(event, '${a.id}', '${classId}')" ondragend="this.setAttribute('draggable', 'false');"`
                         : '';
 
-                    // 佈局重構：強制右對齊與水平切分
                     assignmentsHtml += `
                         <div id="assign-block-${a.id}" draggable="false" 
                              ${dragEventsHtml}
@@ -500,10 +497,10 @@ window.FeatureTimeline = (() => {
                               onmouseup="document.getElementById('task-block-${idx}').setAttribute('draggable', 'false')"
                               onmouseleave="document.getElementById('task-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
                         <div style="padding-top:4px;">${iconHtml}</div>
-                        <div id="task-title-${idx}" contenteditable="true" data-placeholder="✏️ 小項標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
+                        <div id="task-title-${idx}" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
                         <div style="display:flex; align-items:center; gap:5px; padding-top:4px;">
                             <label style="font-size:0.9rem; color:#64748B;">期限:</label>
-                            <input type="date" id="task-due-${idx}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承大區塊期限">
+                            <input type="date" id="task-due-${idx}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承主區塊期限">
                         </div>
                         <div style="padding-top:4px;">
                             <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})">❌</button>
@@ -511,7 +508,7 @@ window.FeatureTimeline = (() => {
                     </div>
                     ${urlInputHtml}
                     <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
-                        <div id="task-desc-${idx}" contenteditable="true" data-placeholder="📝 小項說明..." style="width:100%; min-height: 40px; font-size:1rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
+                        <div id="task-desc-${idx}" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:1rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
                     </div>
                 </div>
             `;
@@ -525,7 +522,7 @@ window.FeatureTimeline = (() => {
 
         const rteToolbarHtml = `
             <div class="rte-toolbar">
-                <span style="font-size:0.9rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
+                <span style="font-size:1rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
                 <button class="rte-btn" onmousedown="event.preventDefault(); document.execCommand('bold', false, null);">B</button>
                 <button class="rte-btn" style="font-style:italic;" onmousedown="event.preventDefault(); document.execCommand('italic', false, null);">I</button>
                 <button class="rte-btn" style="text-decoration:underline;" onmousedown="event.preventDefault(); document.execCommand('underline', false, null);">U</button>
@@ -585,29 +582,33 @@ window.FeatureTimeline = (() => {
              `;
         }
 
+        // 🌟 將標題、說明與設定列合併為單一乾淨的卡片區塊
         container.innerHTML = `
             <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">
                 ${historyHtml}
                 ${rteToolbarHtml}
                 
-                <div id="builder-title-${bState.containerId}" contenteditable="true" data-placeholder="✏️ 大區塊標題" style="font-weight:900; font-size:1rem; margin-bottom:10px; border:2px solid #10B981; background:white; border-radius:8px; padding:8px 12px; outline:none; min-height:40px;">${bState.title || ''}</div>
-                <div id="builder-desc-${bState.containerId}" contenteditable="true" data-placeholder="📝 大區塊說明..." style="font-size:1rem; background:white; border:2px solid #E2E8F0; border-radius:8px; padding:8px 12px; outline:none; min-height:60px; margin-bottom:15px;">${bState.description || ''}</div>
-                
-                <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F1F5F9; padding:12px; border-radius:8px; margin-bottom:15px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <label style="font-weight:800; font-size:1rem; color:#334155;">大區塊繳交期限：</label>
-                        <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:6px; font-size:1rem;" value="${bState.due_date || ''}">
-                    </div>
+                <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <div id="builder-title-${bState.containerId}" contenteditable="true" data-placeholder="✏️ 標題" style="font-weight:900; font-size:1rem; border-bottom:1px solid #E2E8F0; padding-bottom:8px; margin-bottom:10px; outline:none; min-height:30px; color: var(--primary-dark);">${bState.title || ''}</div>
                     
-                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#475569;">
-                        <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.allow_late ? 'checked' : ''}>
-                        接受遲交
-                    </label>
+                    <div id="builder-desc-${bState.containerId}" contenteditable="true" data-placeholder="📝 說明..." style="font-size:1rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
+                    
+                    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label style="font-weight:800; font-size:1rem; color:#334155;">期限：</label>
+                            <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:4px 8px; font-size:1rem;" value="${bState.due_date || ''}">
+                        </div>
+                        
+                        <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#475569;">
+                            <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.allow_late ? 'checked' : ''}>
+                            接受遲交
+                        </label>
 
-                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem;">
-                        <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
-                        📢 開啟功能 (發布給學生)
-                    </label>
+                        <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#334155;">
+                            <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
+                            📢 發佈
+                        </label>
+                    </div>
                 </div>
 
                 ${tasksContainerHtml}
