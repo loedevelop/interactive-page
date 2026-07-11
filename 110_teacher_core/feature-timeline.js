@@ -1,9 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.6 UI 視覺層次最佳化版：
- * 1. 【標籤降噪】專屬資料夾標籤改為純文字 (專屬資料夾)，與 (自行打勾) 樣式統一。
- * 2. 【層次拉開】所有的「說明」字體統一縮小至 0.85rem。
- * 3. 【用詞統一】「已發布」精簡為「發佈」。
+ * 🌟 v5.7 富文本字體粉碎與工具列極簡版：
+ * 1. 【防禦機制】新增 .rt-normalize 類別搭配 !important，強制壓平歷史資料中的 <font size> 標籤。
+ * 2. 【拔除亂源】永久移除編輯器工具列的「字型」與「大小」下拉選單，貫徹「預設大小皆一致」原則。
  */
 
 window.FeatureTimeline = (() => {
@@ -193,6 +192,9 @@ window.FeatureTimeline = (() => {
             .drag-over { border: 2px dashed #10B981 !important; opacity: 0.7; }
             [contenteditable]:empty:before { content: attr(data-placeholder); color: #94A3B8; pointer-events: none; display: block; }
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
+            
+            /* 🌟 終極降噪武器：強制粉碎富文本的字體大小與字型，全部繼承外層規範 */
+            .rt-normalize, .rt-normalize * { font-size: inherit !important; font-family: inherit !important; }
         `;
 
         let html = '';
@@ -262,22 +264,22 @@ window.FeatureTimeline = (() => {
                                 let actualTitle = (t.title || '').trim();
 
                                 if (actualUrlText !== '') {
-                                    taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1rem;">${actualTitle || '未命名任務'}</span>`;
-                                    linkContent = t.url ? `<a href="${t.url}" target="_blank" style="margin-left:10px; font-size:1rem; color:var(--primary); text-decoration:underline; font-weight:800;">${actualUrlText}</a>` : `<span style="margin-left:10px; font-size:1rem; color:#94A3B8;">(未設定網址)</span>`;
+                                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${actualTitle || '未命名任務'}</span>`;
+                                    linkContent = t.url ? `<a href="${t.url}" target="_blank" class="rt-normalize" style="margin-left:10px; font-size:1rem; color:var(--primary); text-decoration:underline; font-weight:800;">${actualUrlText}</a>` : `<span class="rt-normalize" style="margin-left:10px; font-size:1rem; color:#94A3B8;">(未設定網址)</span>`;
                                 } else {
                                     let fallbackText = actualTitle || '未命名連結';
                                     if (t.url) {
-                                        taskTitleDisplay = `<a href="${t.url}" target="_blank" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;">${fallbackText}</a>`;
+                                        taskTitleDisplay = `<a href="${t.url}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;">${fallbackText}</a>`;
                                     } else {
-                                        taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (未設定網址)</span>`;
+                                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (未設定網址)</span>`;
                                     }
                                 }
                             } else {
-                                taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1rem;">${t.title || '未命名任務'}</span>`;
+                                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${t.title || '未命名任務'}</span>`;
                             }
 
                             let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                            let taskDescHtml = cleanTaskDesc !== '' ? `<div style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
+                            let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
                             
                             let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
                             let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
@@ -296,7 +298,7 @@ window.FeatureTimeline = (() => {
                     }
 
                     let cleanBlockDesc = a.description ? a.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                    let blockDescHtml = cleanBlockDesc !== '' ? `<div style="font-size:0.85rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
+                    let blockDescHtml = cleanBlockDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
                     
                     let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 發佈</span>` 
                                                   : `<span style="background:#94A3B8; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發佈</span>`;
@@ -333,7 +335,7 @@ window.FeatureTimeline = (() => {
                              style="background: white; border: 2px solid #F1F5F9; padding: 15px; border-radius: 10px; margin-top:15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: border 0.2s;">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:2px solid #F1F5F9; padding-bottom:10px; margin-bottom:10px;">
                                 <div style="font-weight: 900; color: var(--primary-dark); font-size: 1rem; display:flex; align-items:center;">
-                                    ${dragHandleHtml} 📝 ${a.title} ${pubBadge}
+                                    ${dragHandleHtml} <span style="margin-right:6px;">📝</span> <span class="rt-normalize">${a.title}</span> <span style="margin-left:8px;">${pubBadge}</span>
                                 </div>
                                 <div style="display:flex; align-items:center; gap:15px; margin-left:auto;">
                                     ${blockDueBadge}
@@ -493,7 +495,7 @@ window.FeatureTimeline = (() => {
                               onmouseup="document.getElementById('task-block-${idx}').setAttribute('draggable', 'false')"
                               onmouseleave="document.getElementById('task-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
                         <div style="padding-top:4px;">${iconHtml}</div>
-                        <div id="task-title-${idx}" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
+                        <div id="task-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
                         <div style="display:flex; align-items:center; gap:5px; padding-top:4px;">
                             <label style="font-size:0.9rem; color:#64748B;">期限:</label>
                             <input type="date" id="task-due-${idx}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承主區塊期限">
@@ -504,7 +506,7 @@ window.FeatureTimeline = (() => {
                     </div>
                     ${urlInputHtml}
                     <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
-                        <div id="task-desc-${idx}" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
+                        <div id="task-desc-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
                     </div>
                 </div>
             `;
@@ -516,6 +518,7 @@ window.FeatureTimeline = (() => {
             </div>
         ` : '';
 
+        // 🌟 徹底拔除「字型」與「大小」下拉選單，防止老師製造亂源
         const rteToolbarHtml = `
             <div class="rte-toolbar">
                 <span style="font-size:1rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
@@ -531,25 +534,6 @@ window.FeatureTimeline = (() => {
                     <option value="#3B82F6" style="color:#3B82F6; font-weight:bold;">🔵 藍色</option>
                     <option value="#8B5CF6" style="color:#8B5CF6; font-weight:bold;">🟣 紫色</option>
                     <option value="#1E293B" style="color:#1E293B; font-weight:bold;">⚫ 黑色</option>
-                </select>
-
-                <select class="rte-btn" onchange="document.execCommand('fontName', false, this.value); this.selectedIndex=0;" style="padding: 2px 4px; border-radius: 4px; cursor: pointer;">
-                    <option value="">字型</option>
-                    <option value="Arial">Arial</option>
-                    <option value="'Times New Roman'">Times New Roman</option>
-                    <option value="'Courier New'">Courier New</option>
-                    <option value="'Microsoft JhengHei', sans-serif">微軟正黑體</option>
-                </select>
-
-                <select class="rte-btn" onchange="document.execCommand('fontSize', false, this.value); this.selectedIndex=0;" style="padding: 2px 4px; border-radius: 4px; cursor: pointer;">
-                    <option value="">大小</option>
-                    <option value="1">極小 (1)</option>
-                    <option value="2">小 (2)</option>
-                    <option value="3">標準 (3)</option>
-                    <option value="4">中大 (4)</option>
-                    <option value="5">大 (5)</option>
-                    <option value="6">特大 (6)</option>
-                    <option value="7">極大 (7)</option>
                 </select>
             </div>
         `;
@@ -584,9 +568,9 @@ window.FeatureTimeline = (() => {
                 ${rteToolbarHtml}
                 
                 <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                    <div id="builder-title-${bState.containerId}" contenteditable="true" data-placeholder="✏️ 標題" style="font-weight:900; font-size:1rem; border-bottom:1px solid #E2E8F0; padding-bottom:8px; margin-bottom:10px; outline:none; min-height:30px; color: var(--primary-dark);">${bState.title || ''}</div>
+                    <div id="builder-title-${bState.containerId}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="font-weight:900; font-size:1rem; border-bottom:1px solid #E2E8F0; padding-bottom:8px; margin-bottom:10px; outline:none; min-height:30px; color: var(--primary-dark);">${bState.title || ''}</div>
                     
-                    <div id="builder-desc-${bState.containerId}" contenteditable="true" data-placeholder="📝 說明..." style="font-size:0.85rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
+                    <div id="builder-desc-${bState.containerId}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="font-size:0.85rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
                     
                     <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
                         <div style="display:flex; align-items:center; gap:8px;">
