@@ -111,7 +111,7 @@ window.TeacherUI = (() => {
             window.FeatureClass.updateClassContent(currentClassId);
         }
         if (window.FeatureTimeline) window.FeatureTimeline.renderTimeline(currentClassId);
-        if (window.FeatureClassStudents) window.FeatureClassStudents.renderStudentManager(currentClassId);
+        if (window.FeatureClassMembers) window.FeatureClassMembers.renderStudentManager(currentClassId);
         if (window.RenderMemberManagerForm) window.RenderMemberManagerForm(currentClassId, staffRole);
         if (window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
         if (window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') window.FeatureResource.renderClassResources(currentClassId);
@@ -146,7 +146,7 @@ window.TeacherUI = (() => {
             if (targetId === 'view-timeline' && window.FeatureTimeline) window.FeatureTimeline.renderTimeline(currentClassId);
             if (targetId === 'view-settings' && window.FeatureClass && typeof window.FeatureClass.renderSettings === 'function') window.FeatureClass.renderSettings(currentClassId);
             if (targetId === 'view-settings' && window.FeatureClass && typeof window.FeatureClass.updateClassContent === 'function') window.FeatureClass.updateClassContent(currentClassId);
-            if (targetId === 'view-students' && window.FeatureClassStudents) window.FeatureClassStudents.renderStudentManager(currentClassId);
+            if (targetId === 'view-students' && window.FeatureClassMembers) window.FeatureClassMembers.renderStudentManager(currentClassId);
             
             const currentClass = window.TeacherDB.classes.find(c => c.id === currentClassId);
             const staffRole = currentClass ? (currentClass.staff_role || currentClass.currentUserRole) : 'ta_junior';

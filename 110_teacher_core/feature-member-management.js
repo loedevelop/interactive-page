@@ -410,8 +410,8 @@ export class MemberManager {
             document.getElementById('studentEmailRulePopup').style.display = 'none';
 
             // 🌟 成功後自動重刷名單，讓老師立刻看到新增的人員
-            if (window.FeatureClassStudents && typeof window.FeatureClassStudents.renderStudentManager === 'function') {
-                await window.FeatureClassStudents.renderStudentManager(this.classId);
+            if (window.FeatureClassMembers && typeof window.FeatureClassMembers.renderStudentManager === 'function') {
+                await window.FeatureClassMembers.renderStudentManager(this.classId);
             }
 
         } catch (err) {

@@ -316,10 +316,10 @@ window.FeatureProfile = (() => {
                         msgSpan.textContent = '設定已成功同步至 Supabase 雲端！';
 
                         // 聯動：如果當前班級的學生管理器處於開啟狀態，立刻觸發重繪套用新規則
-                        if (window.TeacherUI && window.FeatureClassStudents && typeof window.FeatureClassStudents.renderStudentManager === 'function') {
+                        if (window.TeacherUI && window.FeatureClassMembers && typeof window.FeatureClassMembers.renderStudentManager === 'function') {
                             const currentClassId = window.TeacherUI.getCurrentClassId();
                             if (currentClassId) {
-                                window.FeatureClassStudents.renderStudentManager(currentClassId);
+                                window.FeatureClassMembers.renderStudentManager(currentClassId);
                             }
                         }
 

@@ -281,8 +281,8 @@ window.FeatureClass = (() => {
             if (window.TeacherUI && window.TeacherUI.getCurrentClassId() === classId) {
                 updateClassContent(classId); // 更新上方標題
                 
-                if (window.FeatureClassStudents && typeof window.FeatureClassStudents.renderStudentManager === 'function') {
-                    window.FeatureClassStudents.renderStudentManager(classId);
+                if (window.FeatureClassMembers && typeof window.FeatureClassMembers.renderStudentManager === 'function') {
+                    window.FeatureClassMembers.renderStudentManager(classId);
                 }
             }
 

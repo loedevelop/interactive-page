@@ -1,9 +1,9 @@
 /**
- * 📂 檔案路徑：110_teacher_core/feature-class-students.js
+ * 📂 檔案路徑：110_teacher_core/feature-class-members.js
  * 🌟 v6.3 SaaS 次級頁籤架構版：實作學生/教職/家長三層實體隔離，徹底消滅競速渲染 Bug
  */
 
-window.FeatureClassStudents = (() => {
+window.FeatureClassMembers = (() => {
     const db = window.TeacherDB;
     
     if (db && !db.students) { 
@@ -163,7 +163,7 @@ window.FeatureClassStudents = (() => {
     }
 
     // 暴露給全域按鈕呼叫
-    window.FeatureClassStudents_SwitchTab = switchTab;
+    window.FeatureClassMembers_SwitchTab = switchTab;
 
     async function renderStudentManager(classId) {
         const container = document.getElementById('student-manager-container');
@@ -225,9 +225,9 @@ window.FeatureClassStudents = (() => {
                         <input type="url" id="std-drive-${s.id}" value="${s.drive_url}" class="form-control" placeholder="https://drive.google.com/..." style="width: 100%;">
                     </td>
                     <td style="padding: 10px; min-width: 130px; white-space: nowrap;">
-                        <button class="btn" style="padding: 6px 10px; font-size: 0.8rem; background: #64748B; color: white; border: none; border-radius: 4px; cursor: pointer;" onclick="window.FeatureClassStudents.openEditModal('${s.id}', '${classId}')" title="編輯詳細姓名資料">✏️</button>
-                        <button class="btn btn-primary" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.saveStudent('${s.id}', '${classId}')" title="儲存 Drive 連結">💾</button>
-                        <button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.deleteStudent('${s.id}', '${classId}')" title="移除學生">🗑️</button>
+                        <button class="btn" style="padding: 6px 10px; font-size: 0.8rem; background: #64748B; color: white; border: none; border-radius: 4px; cursor: pointer;" onclick="window.FeatureClassMembers.openEditModal('${s.id}', '${classId}')" title="編輯詳細姓名資料">✏️</button>
+                        <button class="btn btn-primary" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassMembers.saveStudent('${s.id}', '${classId}')" title="儲存 Drive 連結">💾</button>
+                        <button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassMembers.deleteStudent('${s.id}', '${classId}')" title="移除學生">🗑️</button>
                     </td>
                 </tr>
                 `;
@@ -243,7 +243,7 @@ window.FeatureClassStudents = (() => {
                 if (canManageStaff) {
                     actionBtn = s.rawRole === 'primary_teacher' 
                         ? '<span style="color:#94A3B8; font-size:0.85em; font-weight:bold;">🔒 主老師不可移除</span>'
-                        : `<button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassStudents.removeStaff('${s.id}', '${classId}')" title="移除此教職員">🗑️</button>`;
+                        : `<button class="btn btn-danger" style="padding: 6px 10px; font-size: 0.8rem;" onclick="window.FeatureClassMembers.removeStaff('${s.id}', '${classId}')" title="移除此教職員">🗑️</button>`;
                 }
 
                 return `
@@ -270,7 +270,7 @@ window.FeatureClassStudents = (() => {
                         return `<div style="background:#F1F5F9; border:1px solid #CBD5E1; padding:4px 8px; border-radius:6px; display:inline-flex; align-items:center; gap:8px; margin-right:5px; margin-bottom:5px;">
                                     <span style="font-weight:bold; color:#0F172A;">${p.parentName.replace(/"/g, '&quot;')}</span>
                                     <span style="font-size:0.85em; color:#64748B;">(${p.parentEmail})</span>
-                                    <button class="btn btn-danger" style="padding: 2px 6px; font-size: 0.7rem; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center;" onclick="window.FeatureClassStudents.removeParentMapping('${p.parent_id}', '${student.id}', '${classId}')" title="解除綁定">✖</button>
+                                    <button class="btn btn-danger" style="padding: 2px 6px; font-size: 0.7rem; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center;" onclick="window.FeatureClassMembers.removeParentMapping('${p.parent_id}', '${student.id}', '${classId}')" title="解除綁定">✖</button>
                                 </div>`;
                     }).join('');
                 }
@@ -294,13 +294,13 @@ window.FeatureClassStudents = (() => {
                     
                     <!-- 次級頁籤導覽列 (Sub-Tabs) -->
                     <div style="display: flex; background: #F8FAFC; border-bottom: 1px solid #CBD5E1; padding: 0 10px; overflow-x: auto; white-space: nowrap;">
-                        <button id="sub-tab-btn-student" class="member-sub-tab active" style="padding: 12px 20px; background: #EFF6FF; border: none; border-bottom: 3px solid #3B82F6; color: #1E40AF; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassStudents_SwitchTab('student')">
+                        <button id="sub-tab-btn-student" class="member-sub-tab active" style="padding: 12px 20px; background: #EFF6FF; border: none; border-bottom: 3px solid #3B82F6; color: #1E40AF; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassMembers_SwitchTab('student')">
                             🎓 學生名單 (${classStudents.length})
                         </button>
-                        <button id="sub-tab-btn-staff" class="member-sub-tab" style="padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #64748B; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassStudents_SwitchTab('staff')">
+                        <button id="sub-tab-btn-staff" class="member-sub-tab" style="padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #64748B; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassMembers_SwitchTab('staff')">
                             🧑‍🏫 教職團隊 (${classStaff.length})
                         </button>
-                        <button id="sub-tab-btn-parent" class="member-sub-tab" style="padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #64748B; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassStudents_SwitchTab('parent')">
+                        <button id="sub-tab-btn-parent" class="member-sub-tab" style="padding: 12px 20px; background: transparent; border: none; border-bottom: 3px solid transparent; color: #64748B; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassMembers_SwitchTab('parent')">
                             👨‍👩‍👧 家長觀測綁定 (${classParents.length})
                         </button>
                     </div>
@@ -533,7 +533,7 @@ window.FeatureClassStudents = (() => {
 
                         <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
                             <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;" onclick="document.getElementById('edit-student-modal').remove()">取消</button>
-                            <button id="modal-save-btn" class="btn btn-primary" style="padding: 8px 20px;" onclick="window.FeatureClassStudents.submitEditModal('${studentId}', '${classId}')">💾 儲存變更</button>
+                            <button id="modal-save-btn" class="btn btn-primary" style="padding: 8px 20px;" onclick="window.FeatureClassMembers.submitEditModal('${studentId}', '${classId}')">💾 儲存變更</button>
                         </div>
                     </div>
                 `;

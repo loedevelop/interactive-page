@@ -1,8 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.1 結點強制顯示版：
+ * 🌟 v5.2 遲交管控升級版：
  * 1. 【破除裁切】強制宣告 overflow: visible !important，解決結點因 left: -65px 被當作超出範圍而隱形的低級錯誤。
  * 2. 【徹底斷開】移除 container 身上的舊 timeline class，避免全域 CSS 繼續干擾。
+ * 3. 【遲交機制】新增 allow_late 寫入 raw_data 邏輯，並在介面提供防呆與標記。
  */
 
 window.FeatureTimeline = (() => {
@@ -76,6 +77,7 @@ window.FeatureTimeline = (() => {
         const descEl = document.getElementById(`builder-desc-${nid}`);
         const dueEl = document.getElementById(`builder-due-${nid}`);
         const pubEl = document.getElementById(`builder-pub-${nid}`);
+        const allowLateEl = document.getElementById(`builder-allow-late-${nid}`);
         
         if (titleEl) {
             let text = titleEl.textContent.trim();
@@ -84,6 +86,7 @@ window.FeatureTimeline = (() => {
         
         if (dueEl) bState.due_date = dueEl.value;
         if (pubEl) bState.is_published = pubEl.checked;
+        if (allowLateEl) bState.allow_late = allowLateEl.checked;
         
         if (descEl) {
             let text = descEl.textContent.trim();
@@ -304,7 +307,14 @@ window.FeatureTimeline = (() => {
                     let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.7rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 已發布</span>` 
                                                   : `<span style="background:#94A3B8; color:white; font-size:0.7rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發布(草稿)</span>`;
 
-                    let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 繳交期限: ${effectiveBlockDueDate}</span>` : '';
+                    // 解析 raw_data 以獲取遲交設定標記
+                    let aRaw = a.raw_data || {};
+                    if (typeof aRaw === 'string') {
+                        try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
+                    }
+                    let allowLateFlag = aRaw.allow_late || false;
+                    let lateBadgeText = allowLateFlag ? ' (接受遲交)' : ' (逾期拒收)';
+                    let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 繳交期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
@@ -588,6 +598,13 @@ window.FeatureTimeline = (() => {
                         <label style="font-weight:800; font-size:0.9rem; color:#334155;">大區塊繳交期限：</label>
                         <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:6px;" value="${bState.due_date || ''}">
                     </div>
+                    
+                    <!-- 🌟 遲交設定區塊：寫入 raw_data.allow_late -->
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem; color:#D97706;" title="若勾選，學生在期限後仍可上傳，系統會在檔名後方標記 _late">
+                        <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.allow_late ? 'checked' : ''}>
+                        ⏳ 允許遲交 (檔名自動標記 _late)
+                    </label>
+
                     <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem;">
                         <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
                         📢 開啟功能 (發布給學生)
@@ -616,7 +633,7 @@ window.FeatureTimeline = (() => {
         scrollToCurrentWeek,
         openBuilder: (classId, date, containerId) => {
             if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法新增或修改作業。');
-            bState = { editId: null, classId, target_date: date, containerId, title: '', description: '', due_date: '', is_published: false, tasks: [] };
+            bState = { editId: null, classId, target_date: date, containerId, title: '', description: '', due_date: '', is_published: false, allow_late: false, tasks: [] };
             renderBuilderUI();
             setTimeout(() => { 
                 const titleEl = document.getElementById(`builder-title-${containerId}`);
@@ -668,6 +685,13 @@ window.FeatureTimeline = (() => {
             bState.classId = a.class_id;
             bState.containerId = cId;
             
+            // 讀取 raw_data 裡面的遲交設定
+            let aRaw = a.raw_data || {};
+            if (typeof aRaw === 'string') {
+                try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
+            }
+            bState.allow_late = aRaw.allow_late || false;
+            
             renderTimeline(a.class_id, 'none');
             renderBuilderUI();
             
@@ -690,6 +714,13 @@ window.FeatureTimeline = (() => {
             bState.description = a.description;
             bState.due_date = a.due_date;
             bState.is_published = a.is_published;
+            
+            let aRaw = a.raw_data || {};
+            if (typeof aRaw === 'string') {
+                try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
+            }
+            bState.allow_late = aRaw.allow_late || false;
+
             bState.tasks = JSON.parse(JSON.stringify(a.tasks)).map(t => { 
                 t.id = `task_${Date.now()}_${Math.random()}`; 
                 delete t.resource_id; 
@@ -854,6 +885,13 @@ window.FeatureTimeline = (() => {
             
             if (!db.assignments) db.assignments = [];
             
+            // 🌟 將遲交設定完美混入 JSONB 動態擴充中
+            let mergedRawData = bState.raw_data || {};
+            if (typeof mergedRawData === 'string') {
+                try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; }
+            }
+            mergedRawData.allow_late = !!bState.allow_late;
+            
             const payload = {
                 class_id: bState.classId,
                 target_date: bState.target_date, 
@@ -861,7 +899,8 @@ window.FeatureTimeline = (() => {
                 description: bState.description,
                 due_date: bState.due_date || null, 
                 is_published: bState.is_published,
-                tasks: [...bState.tasks] 
+                tasks: [...bState.tasks],
+                raw_data: mergedRawData
             };
 
             const originalText = btnEl.innerHTML;
