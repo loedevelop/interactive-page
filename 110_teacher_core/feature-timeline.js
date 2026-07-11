@@ -1,8 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.3 UI 降噪與遲交設定精簡版：
- * 1. 【文案精簡】全面移除贅字，僅保留「接受遲交」，並預設為勾選。
- * 2. 【視覺降噪】移除期限的紅色警告框線與多餘文字。
+ * 🌟 v5.4 UI 終極淨化與排版升級版：
+ * 1. 【字體統一】將標題、內文、描述的字體大小統一標準化為 1rem。
+ * 2. 【文案精簡】全面移除贅字（專屬資料夾、未發佈、反白選取編輯）。
+ * 3. 【佈局重構】操作按鈕與期限強制右對齊至卡片最邊緣。
  */
 
 window.FeatureTimeline = (() => {
@@ -214,7 +215,7 @@ window.FeatureTimeline = (() => {
             const nodeId = `timeline-node-${index}`;
 
             if (nodeWeekStart === currentWeekStart) {
-                badge = '<span style="background: #10B981; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; margin-left: 10px; font-weight:900; animation: pulse-green 2s infinite;">📍 當週</span>';
+                badge = '<span style="background: #10B981; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.9rem; margin-left: 10px; font-weight:900; animation: pulse-green 2s infinite;">📍 當週</span>';
                 borderColor = '#10B981';
                 dotColor = '#10B981';
                 bgColor = '#ECFDF5'; 
@@ -252,11 +253,11 @@ window.FeatureTimeline = (() => {
                     if (a.tasks && a.tasks.length > 0) {
                         a.tasks.forEach(t => {
                             let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
-                            let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
+                            let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                             
                             let extraTag = '';
-                            if (t.type === 'drive') extraTag = '<span style="font-size:0.8rem; color:#4A90E2; background:#E0F0FF; padding:2px 6px; border-radius:4px; margin-left:8px;">學生專屬資料夾 (上傳自動打勾)</span>';
-                            else extraTag = '<span style="font-size:0.8rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
+                            if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#4A90E2; background:#E0F0FF; padding:2px 6px; border-radius:4px; margin-left:8px;">專屬資料夾</span>';
+                            else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
                             let taskTitleDisplay = '';
                             let linkContent = '';
@@ -266,25 +267,25 @@ window.FeatureTimeline = (() => {
                                 let actualTitle = (t.title || '').trim();
 
                                 if (actualUrlText !== '') {
-                                    taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1.05rem;">${actualTitle || '未命名任務'}</span>`;
-                                    linkContent = t.url ? `<a href="${t.url}" target="_blank" style="margin-left:10px; font-size:0.9rem; color:var(--primary); text-decoration:underline; font-weight:800;">${actualUrlText}</a>` : `<span style="margin-left:10px; font-size:0.9rem; color:#94A3B8;">(未設定網址)</span>`;
+                                    taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1rem;">${actualTitle || '未命名任務'}</span>`;
+                                    linkContent = t.url ? `<a href="${t.url}" target="_blank" style="margin-left:10px; font-size:1rem; color:var(--primary); text-decoration:underline; font-weight:800;">${actualUrlText}</a>` : `<span style="margin-left:10px; font-size:1rem; color:#94A3B8;">(未設定網址)</span>`;
                                 } else {
                                     let fallbackText = actualTitle || '未命名連結';
                                     if (t.url) {
-                                        taskTitleDisplay = `<a href="${t.url}" target="_blank" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1.05rem;">${fallbackText}</a>`;
+                                        taskTitleDisplay = `<a href="${t.url}" target="_blank" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;">${fallbackText}</a>`;
                                     } else {
-                                        taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1.05rem;">${fallbackText} (未設定網址)</span>`;
+                                        taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (未設定網址)</span>`;
                                     }
                                 }
                             } else {
-                                taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1.05rem;">${t.title || '未命名任務'}</span>`;
+                                taskTitleDisplay = `<span style="font-weight:900; color:#334155; font-size:1rem;">${t.title || '未命名任務'}</span>`;
                             }
 
                             let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                            let taskDescHtml = cleanTaskDesc !== '' ? `<div style="font-size:0.95rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
+                            let taskDescHtml = cleanTaskDesc !== '' ? `<div style="font-size:1rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
                             
                             let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
-                            let dueBadge = showTaskDue ? `<span style="font-size:0.8rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
+                            let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
 
                             tasksHtml += `
                                 <div style="margin-top:14px;">
@@ -300,10 +301,10 @@ window.FeatureTimeline = (() => {
                     }
 
                     let cleanBlockDesc = a.description ? a.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                    let blockDescHtml = cleanBlockDesc !== '' ? `<div style="font-size:0.95rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
+                    let blockDescHtml = cleanBlockDesc !== '' ? `<div style="font-size:1rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
                     
-                    let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.7rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 已發布</span>` 
-                                                  : `<span style="background:#94A3B8; color:white; font-size:0.7rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發布(草稿)</span>`;
+                    let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 已發布</span>` 
+                                                  : `<span style="background:#94A3B8; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發佈</span>`;
 
                     let aRaw = a.raw_data || {};
                     if (typeof aRaw === 'string') {
@@ -312,7 +313,7 @@ window.FeatureTimeline = (() => {
                     
                     let allowLateFlag = aRaw.allow_late !== false; 
                     let lateBadgeText = allowLateFlag ? ' (接受遲交)' : '';
-                    let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:0.85rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
+                    let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:1rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
@@ -320,10 +321,11 @@ window.FeatureTimeline = (() => {
                         ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
+                    // 修改與刪除按鈕
                     const actionButtonsHtml = canEditTimeline 
-                        ? `<div style="display:flex; gap:5px;">
-                               <button class="btn-icon" style="font-size:0.8rem; background:#F1F5F9;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
-                               <button class="btn-icon btn-danger" style="font-size:0.8rem; border:none;" onclick="window.FeatureTimeline.deleteAssignment('${a.id}', '${classId}')">🗑️ 封存</button>
+                        ? `<div style="display:flex; gap:8px; align-items:center;">
+                               <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
+                               <button class="btn-icon btn-danger" style="font-size:1rem; border:none; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.deleteAssignment('${a.id}', '${classId}')" title="刪除">🗑️</button>
                            </div>` 
                         : '';
 
@@ -331,18 +333,19 @@ window.FeatureTimeline = (() => {
                         ? `ondragstart="window.FeatureTimeline.dragAssignStart(event, '${a.id}')" ondragover="event.preventDefault(); this.classList.add('drag-over');" ondragleave="this.classList.remove('drag-over');" ondrop="this.classList.remove('drag-over'); window.FeatureTimeline.dropAssign(event, '${a.id}', '${classId}')" ondragend="this.setAttribute('draggable', 'false');"`
                         : '';
 
+                    // 佈局重構：強制右對齊與水平切分
                     assignmentsHtml += `
                         <div id="assign-block-${a.id}" draggable="false" 
                              ${dragEventsHtml}
                              style="background: white; border: 2px solid #F1F5F9; padding: 15px; border-radius: 10px; margin-top:15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: border 0.2s;">
-                            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; border-bottom:2px solid #F1F5F9; padding-bottom:10px; margin-bottom:10px;">
-                                <div style="flex: 1; min-width:200px; display:flex; justify-content:space-between; align-items:center;">
-                                    <div style="font-weight: 900; color: var(--primary-dark); font-size: 1.15rem; display:flex; align-items:center; flex-wrap:wrap;">
-                                        ${dragHandleHtml} 📝 ${a.title} ${pubBadge}
-                                    </div>
-                                    <div>${blockDueBadge}</div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:2px solid #F1F5F9; padding-bottom:10px; margin-bottom:10px;">
+                                <div style="font-weight: 900; color: var(--primary-dark); font-size: 1rem; display:flex; align-items:center;">
+                                    ${dragHandleHtml} 📝 ${a.title} ${pubBadge}
                                 </div>
-                                ${actionButtonsHtml}
+                                <div style="display:flex; align-items:center; gap:15px; margin-left:auto;">
+                                    ${blockDueBadge}
+                                    ${actionButtonsHtml}
+                                </div>
                             </div>
                             ${blockDescHtml}
                             ${tasksSectionHtml}
@@ -369,7 +372,7 @@ window.FeatureTimeline = (() => {
                     <div class="node-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap; gap:10px;">
                         <div class="node-date" style="display:flex; align-items:center; position:relative;">
                             <div style="position: absolute; left: -65px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; border: 4px solid ${dotColor}; z-index: 1;"></div>
-                            <span style="font-weight: 800; color: ${headerTextColor};">📅 第 ${index + 1} ${mode === 'weekly' ? '週' : '堂'} - ${node.title}</span> ${badge}
+                            <span style="font-weight: 800; color: ${headerTextColor}; font-size: 1rem;">📅 第 ${index + 1} ${mode === 'weekly' ? '週' : '堂'} - ${node.title}</span> ${badge}
                         </div>
                         ${addBlockBtn}
                     </div>
@@ -430,7 +433,7 @@ window.FeatureTimeline = (() => {
         if (res.length === 0) return '';
         
         let opts = res.map(r => `<option value="${r.url}" ${currentUrl === r.url ? 'selected' : ''}>${r.icon} ${r.name}</option>`).join('');
-        return `<select class="form-control" style="width:auto; padding:6px; font-size:0.8rem; flex-shrink:0;" onchange="window.FeatureTimeline.updateTaskUrl(${idx}, this.value)">
+        return `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="window.FeatureTimeline.updateTaskUrl(${idx}, this.value)">
                     <option value="">📚 手動套用資源庫</option>${opts}
                 </select>`;
     }
@@ -443,7 +446,7 @@ window.FeatureTimeline = (() => {
         let opts = allAssigns.map(a => `<option value="${a.id}">${a.target_date} - ${a.title.replace(/<[^>]*>?/gm, '')}</option>`).join('');
         return `
             <div style="margin-bottom:15px; padding-bottom:15px; border-bottom:1px solid #E2E8F0;">
-                <label style="font-size:0.85rem; font-weight:800; color:#64748B;">🔄 快速載入過去的作業樣板：</label>
+                <label style="font-size:0.9rem; font-weight:800; color:#64748B;">🔄 快速載入過去的作業樣板：</label>
                 <div style="display:flex; gap:10px; margin-top:5px; align-items:center;">
                     <select id="history-select-${bState.containerId}" class="form-control" style="flex:1;" onchange="window.FeatureTimeline.copyHistory(this.value)">
                         <option value="">-- 選擇歷史作業 --</option>
@@ -467,7 +470,7 @@ window.FeatureTimeline = (() => {
             if (t.type === 'link') {
                 let sameBtn = '';
                 if (idx > 0 && bState.tasks[idx-1].type === 'link') {
-                    sameBtn = `<button class="btn-icon" style="font-size:0.8rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevUrl(${idx})">👇 同上 URL</button>`;
+                    sameBtn = `<button class="btn-icon" style="font-size:0.9rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevUrl(${idx})">👇 同上 URL</button>`;
                 }
                 urlInputHtml = `
                     <div style="display:flex; gap:5px; margin-top:8px; width:100%; flex-wrap:wrap;">
@@ -478,7 +481,7 @@ window.FeatureTimeline = (() => {
                     </div>`;
             } else if (t.type === 'drive') {
                 urlInputHtml = `
-                    <div style="margin-top:8px; font-size:0.85rem; color:#4A90E2; background:#E0F0FF; padding:8px 12px; border-radius:6px;">
+                    <div style="margin-top:8px; font-size:0.9rem; color:#4A90E2; background:#E0F0FF; padding:8px 12px; border-radius:6px;">
                         💡 <b>智慧派發模式</b>：學生端將自動讀取「學生名單」中的個人專屬 Drive 資料夾，老師無須在此填寫網址。
                     </div>`;
             }
@@ -499,8 +502,8 @@ window.FeatureTimeline = (() => {
                         <div style="padding-top:4px;">${iconHtml}</div>
                         <div id="task-title-${idx}" contenteditable="true" data-placeholder="✏️ 小項標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
                         <div style="display:flex; align-items:center; gap:5px; padding-top:4px;">
-                            <label style="font-size:0.8rem; color:#64748B;">期限:</label>
-                            <input type="date" id="task-due-${idx}" class="form-control" style="padding:6px; font-size:0.8rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承大區塊期限">
+                            <label style="font-size:0.9rem; color:#64748B;">期限:</label>
+                            <input type="date" id="task-due-${idx}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承大區塊期限">
                         </div>
                         <div style="padding-top:4px;">
                             <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})">❌</button>
@@ -522,7 +525,7 @@ window.FeatureTimeline = (() => {
 
         const rteToolbarHtml = `
             <div class="rte-toolbar">
-                <span style="font-size:0.85rem; font-weight:800; color:#64748B; margin-right:5px;">✨ 文字編輯工具 (請先反白文字)：</span>
+                <span style="font-size:0.9rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
                 <button class="rte-btn" onmousedown="event.preventDefault(); document.execCommand('bold', false, null);">B</button>
                 <button class="rte-btn" style="font-style:italic;" onmousedown="event.preventDefault(); document.execCommand('italic', false, null);">I</button>
                 <button class="rte-btn" style="text-decoration:underline;" onmousedown="event.preventDefault(); document.execCommand('underline', false, null);">U</button>
@@ -558,7 +561,7 @@ window.FeatureTimeline = (() => {
             </div>
         `;
 
-        let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px;">✏️ 目前為「修改模式」</div>` : getHistoryDropdownHtml();
+        let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : getHistoryDropdownHtml();
 
         let classResOpts = '';
         const resIds = (db.resourceMappings || []).filter(m => m.class_id === bState.classId).map(m => m.resource_id);
@@ -571,14 +574,14 @@ window.FeatureTimeline = (() => {
         let addResourceHtml = '';
         if (classResList.length > 0) {
             addResourceHtml = `
-                <select class="form-control" style="width:auto; padding:6px 12px; font-size:0.9rem; font-weight:800; border:2px solid #8B5CF6; color:#8B5CF6; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(this.value); this.value=''; }">
+                <select class="form-control" style="width:auto; padding:6px 12px; font-size:1rem; font-weight:800; border:2px solid #8B5CF6; color:#8B5CF6; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(this.value); this.value=''; }">
                     <option value="" disabled selected>+ 📚 班級資源</option>
                     ${classResOpts}
                 </select>
             `;
         } else {
              addResourceHtml = `
-                <button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed;" title="請先至全域資源庫派發資源給本班級">+ 📚 本班尚無班級資源</button>
+                <button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫派發資源給本班級">+ 📚 本班尚無班級資源</button>
              `;
         }
 
@@ -592,17 +595,16 @@ window.FeatureTimeline = (() => {
                 
                 <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F1F5F9; padding:12px; border-radius:8px; margin-bottom:15px;">
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <label style="font-weight:800; font-size:0.9rem; color:#334155;">大區塊繳交期限：</label>
-                        <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:6px;" value="${bState.due_date || ''}">
+                        <label style="font-weight:800; font-size:1rem; color:#334155;">大區塊繳交期限：</label>
+                        <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:6px; font-size:1rem;" value="${bState.due_date || ''}">
                     </div>
                     
-                    <!-- 🌟 精簡後的遲交勾選方塊 -->
-                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem; color:#475569;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#475569;">
                         <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.allow_late ? 'checked' : ''}>
                         接受遲交
                     </label>
 
-                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem;">
                         <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
                         📢 開啟功能 (發布給學生)
                     </label>
@@ -611,15 +613,15 @@ window.FeatureTimeline = (() => {
                 ${tasksContainerHtml}
 
                 <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
-                    <button class="btn btn-action" onclick="window.FeatureTimeline.addTask('check')">+ 📌 一般任務</button>
-                    <button class="btn btn-action" onclick="window.FeatureTimeline.addTask('link')">+ 🔗 連結任務</button>
-                    <button class="btn btn-action" style="background: #2ECC71;" onclick="window.FeatureTimeline.addTask('drive')">+ 📁 Drive 自動繳交區</button>
+                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTask('check')">+ 📌 一般任務</button>
+                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTask('link')">+ 🔗 連結任務</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #2ECC71;" onclick="window.FeatureTimeline.addTask('drive')">+ 📁 Drive 自動繳交區</button>
                     ${addResourceHtml}
                 </div>
 
                 <div style="display:flex; gap:10px; margin-top:20px; border-top:1px solid #E2E8F0; padding-top:15px;">
-                    <button id="btn-save-block-${bState.containerId}" class="btn btn-primary" onclick="window.FeatureTimeline.saveBlock(this)">💾 ${bState.editId ? '儲存修改' : '完成並儲存區塊'}</button>
-                    <button class="btn" style="background:#E2E8F0; color:#334155;" onclick="window.FeatureTimeline.cancelBuilder()">取消</button>
+                    <button id="btn-save-block-${bState.containerId}" class="btn btn-primary" style="font-size:1rem;" onclick="window.FeatureTimeline.saveBlock(this)">💾 ${bState.editId ? '儲存修改' : '完成並儲存區塊'}</button>
+                    <button class="btn" style="background:#E2E8F0; color:#334155; font-size:1rem;" onclick="window.FeatureTimeline.cancelBuilder()">取消</button>
                 </div>
             </div>
         `;
@@ -630,7 +632,6 @@ window.FeatureTimeline = (() => {
         scrollToCurrentWeek,
         openBuilder: (classId, date, containerId) => {
             if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法新增或修改作業。');
-            // 預設 allow_late 為 true
             bState = { editId: null, classId, target_date: date, containerId, title: '', description: '', due_date: '', is_published: false, allow_late: true, tasks: [] };
             renderBuilderUI();
             setTimeout(() => { 
@@ -687,7 +688,6 @@ window.FeatureTimeline = (() => {
             if (typeof aRaw === 'string') {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
-            // 若之前未設定則預設為 true
             bState.allow_late = aRaw.allow_late !== false;
             
             renderTimeline(a.class_id, 'none');
