@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class-members.js
- * 🌟 v6.3 SaaS 次級頁籤架構版：實作學生/教職/家長三層實體隔離，徹底消滅競速渲染 Bug
+ * 🌟 v6.4 SaaS 次級頁籤架構版：實作學生/教職/家長三層實體隔離，並改用 Supabase 原生查詢修復名單 0 人 Bug
  */
 
 window.FeatureClassMembers = (() => {
@@ -39,15 +39,19 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // 🧑‍🏫 抓取「教職員」名單
+    // 🧑‍🏫 抓取「教職員」名單 (改用 Supabase 原生查詢)
     async function fetchStaffForClass(classId, effectiveMode) {
         try {
-            if (!window.ApiService || typeof window.ApiService.fetchClassStaff !== 'function') return [];
+            const { data: rawStaff, error } = await window.supabaseClient
+                .from('class_staff')
+                .select('user_id, staff_role, profiles(*)')
+                .eq('class_id', classId)
+                .is('deleted_at', null);
+
+            if (error) throw error;
             
-            const rawStaff = await window.ApiService.fetchClassStaff(classId);
-            
-            return rawStaff.map(s => {
-                const p = s.profiles || {};
+            return (rawStaff || []).map(s => {
+                const p = Array.isArray(s.profiles) ? s.profiles[0] : (s.profiles || {});
                 let roleDisplay = s.staff_role;
                 if (s.staff_role === 'co_teacher') roleDisplay = '🧑‍🏫 協同老師';
                 if (s.staff_role === 'ta_senior') roleDisplay = '⭐ 資深助教';
@@ -69,17 +73,19 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // 🎓 抓取「學生」名單
+    // 🎓 抓取「學生」名單 (改用 Supabase 原生查詢，修復名單消失 Bug)
     async function fetchStudentsForClass(classId, effectiveMode) {
         try {
-            if (!window.ApiService || typeof window.ApiService.fetchStudents !== 'function') {
-                throw new Error("ApiService 尚未就緒！");
-            }
+            const { data: rawStudents, error } = await window.supabaseClient
+                .from('student_enrollments')
+                .select('user_id, drive_link, profiles(*)')
+                .eq('class_id', classId)
+                .is('deleted_at', null);
+
+            if (error) throw error;
             
-            const rawStudents = await window.ApiService.fetchStudents(classId);
-            
-            return rawStudents.map(s => {
-                const p = s.profiles || {};
+            return (rawStudents || []).map(s => {
+                const p = Array.isArray(s.profiles) ? s.profiles[0] : (s.profiles || {});
                 return {
                     id: s.user_id,
                     class_id: classId,
