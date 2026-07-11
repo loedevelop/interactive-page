@@ -1,8 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.5 編輯器面板整合與極簡化版：
- * 1. 【面板整合】將標題、說明、設定列合併為單一乾淨區塊。
- * 2. 【文案極簡】移除所有「大區塊」等贅字，改為「標題」、「說明...」、「期限：」、「📢 發佈」。
+ * 🌟 v5.6 UI 視覺層次最佳化版：
+ * 1. 【標籤降噪】專屬資料夾標籤改為純文字 (專屬資料夾)，與 (自行打勾) 樣式統一。
+ * 2. 【層次拉開】所有的「說明」字體統一縮小至 0.85rem。
+ * 3. 【用詞統一】「已發布」精簡為「發佈」。
  */
 
 window.FeatureTimeline = (() => {
@@ -150,11 +151,6 @@ window.FeatureTimeline = (() => {
         }
 
         if (sessions.length === 0) {
-            const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
-            sessions = [...new Set(assignmentDates)].filter(Boolean).sort();
-        }
-
-        if (sessions.length === 0) {
             container.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px;">無排程資料。請至「⚙️ 課程基本資料」設定學期起訖日與上課日。</p>';
             return;
         }
@@ -255,7 +251,7 @@ window.FeatureTimeline = (() => {
                             let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                             
                             let extraTag = '';
-                            if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#4A90E2; background:#E0F0FF; padding:2px 6px; border-radius:4px; margin-left:8px;">專屬資料夾</span>';
+                            if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
                             else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
                             let taskTitleDisplay = '';
@@ -281,7 +277,7 @@ window.FeatureTimeline = (() => {
                             }
 
                             let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                            let taskDescHtml = cleanTaskDesc !== '' ? `<div style="font-size:1rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
+                            let taskDescHtml = cleanTaskDesc !== '' ? `<div style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
                             
                             let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
                             let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
@@ -300,9 +296,9 @@ window.FeatureTimeline = (() => {
                     }
 
                     let cleanBlockDesc = a.description ? a.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                    let blockDescHtml = cleanBlockDesc !== '' ? `<div style="font-size:1rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
+                    let blockDescHtml = cleanBlockDesc !== '' ? `<div style="font-size:0.85rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
                     
-                    let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 已發布</span>` 
+                    let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 發佈</span>` 
                                                   : `<span style="background:#94A3B8; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發佈</span>`;
 
                     let aRaw = a.raw_data || {};
@@ -508,7 +504,7 @@ window.FeatureTimeline = (() => {
                     </div>
                     ${urlInputHtml}
                     <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
-                        <div id="task-desc-${idx}" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:1rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
+                        <div id="task-desc-${idx}" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
                     </div>
                 </div>
             `;
@@ -582,7 +578,6 @@ window.FeatureTimeline = (() => {
              `;
         }
 
-        // 🌟 將標題、說明與設定列合併為單一乾淨的卡片區塊
         container.innerHTML = `
             <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">
                 ${historyHtml}
@@ -591,7 +586,7 @@ window.FeatureTimeline = (() => {
                 <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                     <div id="builder-title-${bState.containerId}" contenteditable="true" data-placeholder="✏️ 標題" style="font-weight:900; font-size:1rem; border-bottom:1px solid #E2E8F0; padding-bottom:8px; margin-bottom:10px; outline:none; min-height:30px; color: var(--primary-dark);">${bState.title || ''}</div>
                     
-                    <div id="builder-desc-${bState.containerId}" contenteditable="true" data-placeholder="📝 說明..." style="font-size:1rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
+                    <div id="builder-desc-${bState.containerId}" contenteditable="true" data-placeholder="📝 說明..." style="font-size:0.85rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
                     
                     <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
                         <div style="display:flex; align-items:center; gap:8px;">
