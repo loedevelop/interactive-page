@@ -1,8 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.7 富文本字體粉碎與工具列極簡版：
- * 1. 【防禦機制】新增 .rt-normalize 類別搭配 !important，強制壓平歷史資料中的 <font size> 標籤。
- * 2. 【拔除亂源】永久移除編輯器工具列的「字型」與「大小」下拉選單，貫徹「預設大小皆一致」原則。
+ * 🌟 v5.8 作業跨日搬移與改期功能版：
+ * 1. 【改期按鈕】新增獨立的「📅 改期」按鈕，解決長距離拖曳困難的痛點。
+ * 2. 【改期模組】實作 moveAssignment 與 submitMove 邏輯，無縫將整個作業區塊轉移至任意日期。
  */
 
 window.FeatureTimeline = (() => {
@@ -150,6 +150,11 @@ window.FeatureTimeline = (() => {
         }
 
         if (sessions.length === 0) {
+            const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
+            sessions = [...new Set(assignmentDates)].filter(Boolean).sort();
+        }
+
+        if (sessions.length === 0) {
             container.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px;">無排程資料。請至「⚙️ 課程基本資料」設定學期起訖日與上課日。</p>';
             return;
         }
@@ -193,7 +198,6 @@ window.FeatureTimeline = (() => {
             [contenteditable]:empty:before { content: attr(data-placeholder); color: #94A3B8; pointer-events: none; display: block; }
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
             
-            /* 🌟 終極降噪武器：強制粉碎富文本的字體大小與字型，全部繼承外層規範 */
             .rt-normalize, .rt-normalize * { font-size: inherit !important; font-family: inherit !important; }
         `;
 
@@ -318,8 +322,10 @@ window.FeatureTimeline = (() => {
                         ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
+                    // 🌟 加入了全新的「📅 改期」按鈕
                     const actionButtonsHtml = canEditTimeline 
                         ? `<div style="display:flex; gap:8px; align-items:center;">
+                               <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.moveAssignment('${a.id}', '${classId}')" title="更換日期">📅 改期</button>
                                <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
                                <button class="btn-icon btn-danger" style="font-size:1rem; border:none; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.deleteAssignment('${a.id}', '${classId}')" title="刪除">🗑️</button>
                            </div>` 
@@ -518,7 +524,6 @@ window.FeatureTimeline = (() => {
             </div>
         ` : '';
 
-        // 🌟 徹底拔除「字型」與「大小」下拉選單，防止老師製造亂源
         const rteToolbarHtml = `
             <div class="rte-toolbar">
                 <span style="font-size:1rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
@@ -682,6 +687,83 @@ window.FeatureTimeline = (() => {
                     viewContainer.scrollBy({ top: nRect.top - cRect.top - 15, behavior: 'smooth' });
                 }
             }, 300);
+        },
+        // 🌟 全新開發：彈出改期視窗
+        moveAssignment: (assignId, classId) => {
+            const a = (db.assignments || []).find(x => x.id === assignId);
+            if (!a) return;
+            if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法搬移此作業。');
+
+            const overlay = document.createElement('div');
+            overlay.id = 'move-assign-modal';
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+            
+            // 將富文本中可能隱藏的 HTML 標籤拔除以顯示純文字標題
+            const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
+
+            overlay.innerHTML = `
+                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                    <h3 style="margin-top: 0; color: #1E293B; margin-bottom: 10px; border-bottom: 1px solid #E2E8F0; padding-bottom: 10px;">📅 作業改期 / 搬移</h3>
+                    <div style="margin-bottom:20px; font-size:1rem; color:#475569; line-height:1.5;">
+                        準備將 <strong>「${cleanTitle}」</strong> 搬移至新日期：
+                    </div>
+                    
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom: 25px; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+                        <label style="font-weight:800; color:#334155; white-space:nowrap;">選擇新日期：</label>
+                        <input type="date" id="move-target-date" class="form-control" style="flex:1; padding: 8px; font-size: 1rem;" value="${a.target_date}">
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="document.getElementById('move-assign-modal').remove()">取消</button>
+                        <button class="btn btn-primary" id="btn-confirm-move" style="padding: 8px 20px; font-size:1rem;" onclick="window.FeatureTimeline.submitMove('${a.id}', '${classId}', '${a.target_date}')">確認改期</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        },
+        // 🌟 執行實際的改期寫入邏輯
+        submitMove: async (assignId, classId, oldDate) => {
+            const newDate = document.getElementById('move-target-date').value;
+            if (!newDate) return alert('⚠️ 請選擇目標日期');
+            
+            // 如果老師選的日期跟原本一樣，就直接關閉視窗當作沒事發生
+            if (newDate === oldDate) {
+                document.getElementById('move-assign-modal').remove();
+                return; 
+            }
+            
+            const btn = document.getElementById('btn-confirm-move');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ 處理中...';
+            btn.disabled = true;
+            
+            try {
+                // 1. 寫入 Supabase 資料庫
+                const { data: updatedRows, error } = await window.supabaseClient
+                    .from('assignments')
+                    .update({ target_date: newDate })
+                    .eq('id', assignId)
+                    .is('deleted_at', null)
+                    .select();
+                    
+                if (error) throw error;
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的修改 (可能是 RLS 權限阻擋)");
+                
+                // 2. 更新本地端快取資料
+                const idx = db.assignments.findIndex(a => a.id === assignId);
+                if(idx > -1) db.assignments[idx].target_date = newDate;
+                
+                // 3. 關閉彈窗並重新渲染畫面
+                document.getElementById('move-assign-modal').remove();
+                
+                // 巧妙利用 scrollMode 'target' 讓畫面自動捲動到它搬移後的新位置
+                window.FeatureTimeline.renderTimeline(classId, 'target', `assign-block-${assignId}`);
+                
+            } catch (err) {
+                alert('❌ 改期失敗: ' + err.message);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
         },
         copyHistory: (historyId) => {
             if(!historyId) return;
