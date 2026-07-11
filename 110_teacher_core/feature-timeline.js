@@ -1,9 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.2 遲交管控升級版：
- * 1. 【破除裁切】強制宣告 overflow: visible !important，解決結點因 left: -65px 被當作超出範圍而隱形的低級錯誤。
- * 2. 【徹底斷開】移除 container 身上的舊 timeline class，避免全域 CSS 繼續干擾。
- * 3. 【遲交機制】新增 allow_late 寫入 raw_data 邏輯，並在介面提供防呆與標記。
+ * 🌟 v5.3 UI 降噪與遲交設定精簡版：
+ * 1. 【文案精簡】全面移除贅字，僅保留「接受遲交」，並預設為勾選。
+ * 2. 【視覺降噪】移除期限的紅色警告框線與多餘文字。
  */
 
 window.FeatureTimeline = (() => {
@@ -120,7 +119,6 @@ window.FeatureTimeline = (() => {
         const container = document.getElementById('timeline-container');
         if (!container) return;
         
-        // 🌟 徹底清除舊版全域 CSS 的干擾
         container.className = '';
 
         const cls = db.classes.find(c => c.id === classId);
@@ -191,7 +189,7 @@ window.FeatureTimeline = (() => {
         const styleBlock = document.createElement('style');
         styleBlock.innerHTML = `
             .timeline-node, .timeline-node * { box-sizing: border-box !important; max-width: 100%; word-break: break-word; }
-            .timeline-node { overflow: visible !important; } /* 🌟 終極修復：防止點點被裁切消失 */
+            .timeline-node { overflow: visible !important; }
             div.timeline-node::before, div.timeline-node::after { display: none !important; content: none !important; }
             .rte-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; padding: 6px 12px; background: #F1F5F9; border-radius: 8px; border: 1px solid #E2E8F0; }
             .rte-btn { background: white; font-weight: 900; border: 1px solid #CBD5E1; padding: 2px 8px; border-radius: 4px; cursor: pointer; color: #334155; }
@@ -286,7 +284,7 @@ window.FeatureTimeline = (() => {
                             let taskDescHtml = cleanTaskDesc !== '' ? `<div style="font-size:0.95rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
                             
                             let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
-                            let dueBadge = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${t.due_date}</span>` : '';
+                            let dueBadge = showTaskDue ? `<span style="font-size:0.8rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
 
                             tasksHtml += `
                                 <div style="margin-top:14px;">
@@ -307,14 +305,14 @@ window.FeatureTimeline = (() => {
                     let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.7rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 已發布</span>` 
                                                   : `<span style="background:#94A3B8; color:white; font-size:0.7rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發布(草稿)</span>`;
 
-                    // 解析 raw_data 以獲取遲交設定標記
                     let aRaw = a.raw_data || {};
                     if (typeof aRaw === 'string') {
                         try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
                     }
-                    let allowLateFlag = aRaw.allow_late || false;
-                    let lateBadgeText = allowLateFlag ? ' (接受遲交)' : ' (逾期拒收)';
-                    let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 繳交期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
+                    
+                    let allowLateFlag = aRaw.allow_late !== false; 
+                    let lateBadgeText = allowLateFlag ? ' (接受遲交)' : '';
+                    let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:0.85rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
@@ -404,7 +402,6 @@ window.FeatureTimeline = (() => {
                 }
             }, 300);
         } else if (scrollMode === 'none') {
-            // 原地不動
         }
 
         const viewProgress = document.getElementById('timeline-container').closest('.view-content') || document.getElementById('view-progress');
@@ -599,10 +596,10 @@ window.FeatureTimeline = (() => {
                         <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:6px;" value="${bState.due_date || ''}">
                     </div>
                     
-                    <!-- 🌟 遲交設定區塊：寫入 raw_data.allow_late -->
-                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem; color:#D97706;" title="若勾選，學生在期限後仍可上傳，系統會在檔名後方標記 _late">
+                    <!-- 🌟 精簡後的遲交勾選方塊 -->
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem; color:#475569;">
                         <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.allow_late ? 'checked' : ''}>
-                        ⏳ 允許遲交 (檔名自動標記 _late)
+                        接受遲交
                     </label>
 
                     <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.9rem;">
@@ -633,7 +630,8 @@ window.FeatureTimeline = (() => {
         scrollToCurrentWeek,
         openBuilder: (classId, date, containerId) => {
             if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法新增或修改作業。');
-            bState = { editId: null, classId, target_date: date, containerId, title: '', description: '', due_date: '', is_published: false, allow_late: false, tasks: [] };
+            // 預設 allow_late 為 true
+            bState = { editId: null, classId, target_date: date, containerId, title: '', description: '', due_date: '', is_published: false, allow_late: true, tasks: [] };
             renderBuilderUI();
             setTimeout(() => { 
                 const titleEl = document.getElementById(`builder-title-${containerId}`);
@@ -685,12 +683,12 @@ window.FeatureTimeline = (() => {
             bState.classId = a.class_id;
             bState.containerId = cId;
             
-            // 讀取 raw_data 裡面的遲交設定
             let aRaw = a.raw_data || {};
             if (typeof aRaw === 'string') {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
-            bState.allow_late = aRaw.allow_late || false;
+            // 若之前未設定則預設為 true
+            bState.allow_late = aRaw.allow_late !== false;
             
             renderTimeline(a.class_id, 'none');
             renderBuilderUI();
@@ -719,7 +717,7 @@ window.FeatureTimeline = (() => {
             if (typeof aRaw === 'string') {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
-            bState.allow_late = aRaw.allow_late || false;
+            bState.allow_late = aRaw.allow_late !== false;
 
             bState.tasks = JSON.parse(JSON.stringify(a.tasks)).map(t => { 
                 t.id = `task_${Date.now()}_${Math.random()}`; 
@@ -885,7 +883,6 @@ window.FeatureTimeline = (() => {
             
             if (!db.assignments) db.assignments = [];
             
-            // 🌟 將遲交設定完美混入 JSONB 動態擴充中
             let mergedRawData = bState.raw_data || {};
             if (typeof mergedRawData === 'string') {
                 try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; }
