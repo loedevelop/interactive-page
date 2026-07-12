@@ -1,8 +1,6 @@
 /**
- * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v5.8 作業跨日搬移與改期功能版：
- * 1. 【改期按鈕】新增獨立的「📅 改期」按鈕，解決長距離拖曳困難的痛點。
- * 2. 【改期模組】實作 moveAssignment 與 submitMove 邏輯，無縫將整個作業區塊轉移至任意日期。
+ * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 1)
+ * 🌟 v5.9 歷史軌跡完美支援版：優先接軌 custom_sessions，防堵改版孤兒資料
  */
 
 window.FeatureTimeline = (() => {
@@ -114,7 +112,9 @@ window.FeatureTimeline = (() => {
             }
         });
     }
-
+    /**
+ * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 2)
+ */
     function renderTimeline(classId, scrollMode = 'current', targetId = null) {
         const container = document.getElementById('timeline-container');
         if (!container) return;
@@ -132,19 +132,26 @@ window.FeatureTimeline = (() => {
         }
 
         const classAssignments = db.assignments || [];
-        let sessions = db.sessions[classId] || [];
         
-        if (sessions.length === 0) {
-            let meetDays = (cls.meetDays || cls.meet_days || raw.meet_days || []).map(Number);
-            let startDateStr = cls.startDate || cls.start_date || raw.start_date;
-            let endDateStr = cls.endDate || cls.end_date || raw.end_date;
+        // 🌟 核心防護：優先使用 API/UI 寫入的 custom_sessions (包含過去與未來的絕對日期)
+        let sessions = [];
+        if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
+            sessions = [...raw.custom_sessions];
+        } else {
+            // 退回舊有邏輯
+            sessions = db.sessions[classId] || [];
+            if (sessions.length === 0) {
+                let meetDays = (cls.meetDays || cls.meet_days || raw.meet_days || []).map(Number);
+                let startDateStr = cls.startDate || cls.start_date || raw.start_date;
+                let endDateStr = cls.endDate || cls.end_date || raw.end_date;
 
-            if (startDateStr && endDateStr && meetDays.length > 0) {
-                let s = parseLocalDate(startDateStr);
-                let e = parseLocalDate(endDateStr);
-                while (s <= e) {
-                    if (meetDays.includes(s.getDay())) sessions.push(toLocalISODate(s));
-                    s.setDate(s.getDate() + 1);
+                if (startDateStr && endDateStr && meetDays.length > 0) {
+                    let s = parseLocalDate(startDateStr);
+                    let e = parseLocalDate(endDateStr);
+                    while (s <= e) {
+                        if (meetDays.includes(s.getDay())) sessions.push(toLocalISODate(s));
+                        s.setDate(s.getDate() + 1);
+                    }
                 }
             }
         }
@@ -197,7 +204,6 @@ window.FeatureTimeline = (() => {
             .drag-over { border: 2px dashed #10B981 !important; opacity: 0.7; }
             [contenteditable]:empty:before { content: attr(data-placeholder); color: #94A3B8; pointer-events: none; display: block; }
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
-            
             .rt-normalize, .rt-normalize * { font-size: inherit !important; font-family: inherit !important; }
         `;
 
@@ -322,7 +328,6 @@ window.FeatureTimeline = (() => {
                         ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
-                    // 🌟 加入了全新的「📅 改期」按鈕
                     const actionButtonsHtml = canEditTimeline 
                         ? `<div style="display:flex; gap:8px; align-items:center;">
                                <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.moveAssignment('${a.id}', '${classId}')" title="更換日期">📅 改期</button>
@@ -405,7 +410,6 @@ window.FeatureTimeline = (() => {
                     viewContainer.scrollBy({ top: nRect.top - cRect.top - 15, behavior: 'smooth' });
                 }
             }, 300);
-        } else if (scrollMode === 'none') {
         }
 
         const viewProgress = document.getElementById('timeline-container').closest('.view-content') || document.getElementById('view-progress');
@@ -426,7 +430,9 @@ window.FeatureTimeline = (() => {
             window._timelineObserverAttached = true;
         }
     }
-
+    /**
+ * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 3)
+ */
     function getResourceDropdownHtml(idx, currentUrl) {
         if (!bState) return '';
         const resIds = (db.resourceMappings || []).filter(m => m.class_id === bState.classId).map(m => m.resource_id);
@@ -524,6 +530,7 @@ window.FeatureTimeline = (() => {
             </div>
         ` : '';
 
+        // 🚨 補回遺失的顏色選單
         const rteToolbarHtml = `
             <div class="rte-toolbar">
                 <span style="font-size:1rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
@@ -553,6 +560,7 @@ window.FeatureTimeline = (() => {
             classResOpts = classResList.map(r => `<option value="${r.id}">${r.icon} ${r.name}</option>`).join('');
         }
 
+        // 🚨 補回遺失的資源庫防呆原文提示
         let addResourceHtml = '';
         if (classResList.length > 0) {
             addResourceHtml = `
@@ -611,7 +619,9 @@ window.FeatureTimeline = (() => {
             </div>
         `;
     }
-
+    /**
+ * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 4)
+ */
     return {
         renderTimeline,
         scrollToCurrentWeek,
@@ -635,13 +645,19 @@ window.FeatureTimeline = (() => {
             if (!checkCanEditTimeline(a.class_id)) return alert('權限不足：您的身分無法修改此作業。');
             
             const cls = db.classes.find(c => c.id === a.class_id) || {};
-            const sessions = db.sessions[a.class_id] || [];
-            const mode = cls.calcMode || 'single';
-            
             let raw = cls.raw_data || {};
             if (typeof raw === 'string') {
                 try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
             }
+
+            let sessions = [];
+            if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
+                sessions = [...raw.custom_sessions];
+            } else {
+                sessions = db.sessions[a.class_id] || [];
+            }
+            
+            const mode = cls.calcMode || 'single';
             const weekStartSetting = raw.week_start_day || 'sunday';
 
             let timelineNodes = [];
@@ -651,14 +667,10 @@ window.FeatureTimeline = (() => {
                 const weeksMap = new Map();
                 sessions.forEach(d => {
                     const weekStr = getWeekStartStr(d, weekStartSetting);
-                    if (!weeksMap.has(weekStr)) {
-                        weeksMap.set(weekStr, []);
-                    }
+                    if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
                     weeksMap.get(weekStr).push(d);
                 });
-                weeksMap.forEach((chunk) => {
-                    timelineNodes.push({ dates: chunk });
-                });
+                weeksMap.forEach((chunk) => timelineNodes.push({ dates: chunk }));
             }
 
             const nodeIndex = timelineNodes.findIndex(node => node.dates.includes(a.target_date));
@@ -688,7 +700,6 @@ window.FeatureTimeline = (() => {
                 }
             }, 300);
         },
-        // 🌟 全新開發：彈出改期視窗
         moveAssignment: (assignId, classId) => {
             const a = (db.assignments || []).find(x => x.id === assignId);
             if (!a) return;
@@ -698,7 +709,6 @@ window.FeatureTimeline = (() => {
             overlay.id = 'move-assign-modal';
             overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
             
-            // 將富文本中可能隱藏的 HTML 標籤拔除以顯示純文字標題
             const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
 
             overlay.innerHTML = `
@@ -707,12 +717,10 @@ window.FeatureTimeline = (() => {
                     <div style="margin-bottom:20px; font-size:1rem; color:#475569; line-height:1.5;">
                         準備將 <strong>「${cleanTitle}」</strong> 搬移至新日期：
                     </div>
-                    
                     <div style="display:flex; align-items:center; gap:10px; margin-bottom: 25px; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
                         <label style="font-weight:800; color:#334155; white-space:nowrap;">選擇新日期：</label>
                         <input type="date" id="move-target-date" class="form-control" style="flex:1; padding: 8px; font-size: 1rem;" value="${a.target_date}">
                     </div>
-
                     <div style="display: flex; justify-content: flex-end; gap: 10px;">
                         <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="document.getElementById('move-assign-modal').remove()">取消</button>
                         <button class="btn btn-primary" id="btn-confirm-move" style="padding: 8px 20px; font-size:1rem;" onclick="window.FeatureTimeline.submitMove('${a.id}', '${classId}', '${a.target_date}')">確認改期</button>
@@ -721,16 +729,10 @@ window.FeatureTimeline = (() => {
             `;
             document.body.appendChild(overlay);
         },
-        // 🌟 執行實際的改期寫入邏輯
         submitMove: async (assignId, classId, oldDate) => {
             const newDate = document.getElementById('move-target-date').value;
             if (!newDate) return alert('⚠️ 請選擇目標日期');
-            
-            // 如果老師選的日期跟原本一樣，就直接關閉視窗當作沒事發生
-            if (newDate === oldDate) {
-                document.getElementById('move-assign-modal').remove();
-                return; 
-            }
+            if (newDate === oldDate) return document.getElementById('move-assign-modal').remove(); 
             
             const btn = document.getElementById('btn-confirm-move');
             const originalText = btn.innerHTML;
@@ -738,7 +740,6 @@ window.FeatureTimeline = (() => {
             btn.disabled = true;
             
             try {
-                // 1. 寫入 Supabase 資料庫
                 const { data: updatedRows, error } = await window.supabaseClient
                     .from('assignments')
                     .update({ target_date: newDate })
@@ -749,16 +750,11 @@ window.FeatureTimeline = (() => {
                 if (error) throw error;
                 if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的修改 (可能是 RLS 權限阻擋)");
                 
-                // 2. 更新本地端快取資料
                 const idx = db.assignments.findIndex(a => a.id === assignId);
                 if(idx > -1) db.assignments[idx].target_date = newDate;
                 
-                // 3. 關閉彈窗並重新渲染畫面
                 document.getElementById('move-assign-modal').remove();
-                
-                // 巧妙利用 scrollMode 'target' 讓畫面自動捲動到它搬移後的新位置
                 window.FeatureTimeline.renderTimeline(classId, 'target', `assign-block-${assignId}`);
-                
             } catch (err) {
                 alert('❌ 改期失敗: ' + err.message);
                 btn.innerHTML = originalText;
@@ -795,6 +791,7 @@ window.FeatureTimeline = (() => {
             const historyId = selectEl.value;
             
             if (!historyId) return alert('⚠️ 請先從下拉選單選擇要刪除的歷史作業！');
+            // 🚨 補回遺失的警告對話框原文
             if (!confirm('確定要封存這個歷史作業模板嗎？\n(注意：這會讓它從歷史清單中消失，但不會影響學生的成績軌跡)')) return;
             
             try {
