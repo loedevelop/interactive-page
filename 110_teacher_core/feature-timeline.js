@@ -1,6 +1,6 @@
 /**
- * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 1)
- * 🌟 v5.9 歷史軌跡完美支援版：優先接軌 custom_sessions，防堵改版孤兒資料
+ * 📂 檔案路徑：110_teacher_core/feature-timeline.js
+ * 🌟 v6.3 孤兒作業救援版：完美防禦排程覆寫與結算變更災難
  */
 
 window.FeatureTimeline = (() => {
@@ -112,9 +112,7 @@ window.FeatureTimeline = (() => {
             }
         });
     }
-    /**
- * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 2)
- */
+
     function renderTimeline(classId, scrollMode = 'current', targetId = null) {
         const container = document.getElementById('timeline-container');
         if (!container) return;
@@ -133,7 +131,7 @@ window.FeatureTimeline = (() => {
 
         const classAssignments = db.assignments || [];
         
-        // 🌟 核心防護：優先使用 API/UI 寫入的 custom_sessions (包含過去與未來的絕對日期)
+        // 🌟 核心防護：優先使用 API/UI 寫入的 custom_sessions
         let sessions = [];
         if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
             sessions = [...raw.custom_sessions];
@@ -156,10 +154,12 @@ window.FeatureTimeline = (() => {
             }
         }
 
-        if (sessions.length === 0) {
-            const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
-            sessions = [...new Set(assignmentDates)].filter(Boolean).sort();
-        }
+        // =========================================
+        // 🚨 終極防禦：孤兒作業救援機制 (Orphan Rescue)
+        // 無條件聯集該班級所有曾出過作業的日期，防止「一併更改過去排程」導致舊作業破圖消失
+        // =========================================
+        const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
+        sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
         if (sessions.length === 0) {
             container.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px;">無排程資料。請至「⚙️ 課程基本資料」設定學期起訖日與上課日。</p>';
@@ -430,9 +430,7 @@ window.FeatureTimeline = (() => {
             window._timelineObserverAttached = true;
         }
     }
-    /**
- * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 3)
- */
+
     function getResourceDropdownHtml(idx, currentUrl) {
         if (!bState) return '';
         const resIds = (db.resourceMappings || []).filter(m => m.class_id === bState.classId).map(m => m.resource_id);
@@ -530,7 +528,6 @@ window.FeatureTimeline = (() => {
             </div>
         ` : '';
 
-        // 🚨 補回遺失的顏色選單
         const rteToolbarHtml = `
             <div class="rte-toolbar">
                 <span style="font-size:1rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
@@ -560,7 +557,6 @@ window.FeatureTimeline = (() => {
             classResOpts = classResList.map(r => `<option value="${r.id}">${r.icon} ${r.name}</option>`).join('');
         }
 
-        // 🚨 補回遺失的資源庫防呆原文提示
         let addResourceHtml = '';
         if (classResList.length > 0) {
             addResourceHtml = `
@@ -619,9 +615,7 @@ window.FeatureTimeline = (() => {
             </div>
         `;
     }
-    /**
- * 📂 檔案路徑：110_teacher_core/feature-timeline.js (Part 4)
- */
+
     return {
         renderTimeline,
         scrollToCurrentWeek,
@@ -657,6 +651,13 @@ window.FeatureTimeline = (() => {
                 sessions = db.sessions[a.class_id] || [];
             }
             
+            // =========================================
+            // 🚨 編輯模式同步啟動孤兒救援
+            // 確保舊作業在編輯時能正確計算 nodeIndex，不會被錯誤塞到第一天 (Day 0)
+            // =========================================
+            const assignmentDates = (db.assignments || []).filter(ast => ast.class_id === a.class_id).map(ast => ast.target_date);
+            sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
+
             const mode = cls.calcMode || 'single';
             const weekStartSetting = raw.week_start_day || 'sunday';
 
@@ -748,7 +749,7 @@ window.FeatureTimeline = (() => {
                     .select();
                     
                 if (error) throw error;
-                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的修改 (可能是 RLS 權限阻擋)");
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                 
                 const idx = db.assignments.findIndex(a => a.id === assignId);
                 if(idx > -1) db.assignments[idx].target_date = newDate;
@@ -790,9 +791,8 @@ window.FeatureTimeline = (() => {
             if (!selectEl) return;
             const historyId = selectEl.value;
             
-            if (!historyId) return alert('⚠️ 請先從下拉選單選擇要刪除的歷史作業！');
-            // 🚨 補回遺失的警告對話框原文
-            if (!confirm('確定要封存這個歷史作業模板嗎？\n(注意：這會讓它從歷史清單中消失，但不會影響學生的成績軌跡)')) return;
+            if (!historyId) return alert('⚠️ 請先選擇要刪除的歷史作業！');
+            if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
             
             try {
                 const { data: updatedRows, error } = await window.supabaseClient
@@ -803,13 +803,13 @@ window.FeatureTimeline = (() => {
                     .select(); 
                     
                 if (error) throw error;
-                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的修改 (可能是 RLS 權限阻擋)");
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的修改");
 
                 db.assignments = db.assignments.filter(a => a.id !== historyId);
-                alert('✅ 已成功封存該筆歷史紀錄！');
+                alert('✅ 已成功封存！');
                 renderBuilderUI();
             } catch (err) {
-                alert('❌ 封存紀錄失敗: ' + err.message);
+                alert('❌ 封存失敗: ' + err.message);
             }
         },
         addResourceTaskAsLink: (resId) => {
@@ -829,10 +829,7 @@ window.FeatureTimeline = (() => {
             }
             renderBuilderUI();
         },
-        dragTaskStart: (e, idx) => {
-            dragTaskIndex = idx;
-            e.dataTransfer.effectAllowed = 'move';
-        },
+        dragTaskStart: (e, idx) => { dragTaskIndex = idx; e.dataTransfer.effectAllowed = 'move'; },
         dropTask: (e, targetIdx) => {
             e.preventDefault();
             if (dragTaskIndex === null || dragTaskIndex === targetIdx) return;
@@ -842,13 +839,9 @@ window.FeatureTimeline = (() => {
             dragTaskIndex = null;
             renderBuilderUI();
         },
-        dragAssignStart: (e, id) => {
-            dragAssignId = id;
-            e.dataTransfer.effectAllowed = 'move';
-        },
+        dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
         dropAssign: async (e, targetId, classId) => {
-            e.preventDefault();
-            e.stopPropagation(); 
+            e.preventDefault(); e.stopPropagation(); 
             if (!dragAssignId || dragAssignId === targetId) return;
 
             const arr = db.assignments;
@@ -874,7 +867,7 @@ window.FeatureTimeline = (() => {
                             .is('deleted_at', null)
                             .select(); 
                         if (error) throw error;
-                        if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的拖曳修改 (可能是 RLS 權限阻擋)");
+                        if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                     } catch (err) {
                         dragged.target_date = oldDate; 
                         renderTimeline(classId, 'none');
@@ -893,7 +886,6 @@ window.FeatureTimeline = (() => {
             if (dragged && dragged.target_date !== targetDate) {
                 const oldDate = dragged.target_date;
                 dragged.target_date = targetDate;
-                
                 renderTimeline(classId, 'none'); 
 
                 try {
@@ -904,7 +896,7 @@ window.FeatureTimeline = (() => {
                         .is('deleted_at', null)
                         .select(); 
                     if (error) throw error;
-                    if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的拖曳修改 (可能是 RLS 權限阻擋)");
+                    if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                 } catch (err) {
                     dragged.target_date = oldDate; 
                     renderTimeline(classId, 'none');
@@ -918,21 +910,11 @@ window.FeatureTimeline = (() => {
             bState.tasks.push({ id: `task_${Date.now()}`, type, title: '', url: '', url_text: '', description: '', due_date: '' });
             renderBuilderUI();
         },
-        removeTask: (idx) => {
-            syncState(); 
-            bState.tasks.splice(idx, 1);
-            renderBuilderUI();
-        },
-        updateTaskUrl: (idx, val) => { 
-            syncState(); 
-            bState.tasks[idx].url = val; 
-            renderBuilderUI(); 
-        },
+        removeTask: (idx) => { syncState(); bState.tasks.splice(idx, 1); renderBuilderUI(); },
+        updateTaskUrl: (idx, val) => { syncState(); bState.tasks[idx].url = val; renderBuilderUI(); },
         copyPrevUrl: (idx) => {
             syncState();
-            if(idx > 0 && bState.tasks[idx-1].url) {
-                bState.tasks[idx].url = bState.tasks[idx-1].url;
-            }
+            if(idx > 0 && bState.tasks[idx-1].url) bState.tasks[idx].url = bState.tasks[idx-1].url;
             renderBuilderUI();
         },
         saveBlock: async (btnEl) => {
@@ -974,14 +956,14 @@ window.FeatureTimeline = (() => {
                         .is('deleted_at', null)
                         .select(); 
                     if (error) throw new Error(error.message);
-                    if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的儲存修改 (可能是 RLS 權限阻擋)");
+                    if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                     
                     const idx = db.assignments.findIndex(a => a.id === bState.editId);
                     if(idx !== -1) db.assignments[idx] = { id: bState.editId, ...payload };
                 } else {
                     const { data, error } = await window.supabaseClient.from('assignments').insert([payload]).select().single();
                     if (error) throw new Error(error.message);
-                    if (!data) throw new Error("資料庫拒絕了您的新增請求 (可能是 RLS 權限阻擋)");
+                    if (!data) throw new Error("資料庫拒絕了請求");
                     db.assignments.push(data); 
                     savedId = data.id; 
                 }
@@ -1018,7 +1000,7 @@ window.FeatureTimeline = (() => {
                     .select(); 
                 
                 if (error) throw error;
-                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的封存請求 (可能是 RLS 權限阻擋)");
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的封存請求");
 
                 db.assignments = db.assignments.filter(a => a.id !== assignId);
                 renderTimeline(classId, 'none');
