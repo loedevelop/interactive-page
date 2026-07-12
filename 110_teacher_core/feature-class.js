@@ -1,8 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class.js
- * 🌟 v6.2.1 SaaS 鋼鐵防禦版：100% 零遺漏 + 時空斷點差量更新 + 孤兒絕對保護
+ * 🌟 v7.0 SaaS 智慧大腦版：零壓縮還原 + Local Dry-Run 沙盤推演 + 批次對齊引擎
  */
-console.log("💡💡💡 FeatureClass v6.2.1 SaaS 鋼鐵防禦版載入！(已完成全域邏輯檢核，功能零遺漏)");
+console.log("💡💡💡 FeatureClass v7.0 SaaS 智慧大腦版載入！(已完成全域邏輯檢核，功能零遺漏)");
 
 window.FeatureClass = (() => {
     const db = window.TeacherDB;
@@ -47,6 +47,24 @@ window.FeatureClass = (() => {
         }
         return dates;
     }
+
+    // 🌟 新增：計算某日期所屬的週起始日 (供週轉日對齊使用)
+    function getWeekStartStr(dateStr, weekStartDay = 'sunday') {
+        if (!dateStr) return '';
+        const [y, m, d] = dateStr.split('-');
+        const dt = new Date(y, m - 1, d);
+        let day = dt.getDay(); 
+
+        if (weekStartDay === 'monday') {
+            let diff = day === 0 ? 6 : day - 1;
+            dt.setDate(dt.getDate() - diff);
+        } else {
+            dt.setDate(dt.getDate() - day);
+        }
+        return toLocalISODate(dt);
+    }
+
+    const DAY_NAMES = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
 
     // --- 核心班級邏輯 ---
     async function updateClassContent(classId) {
@@ -307,6 +325,137 @@ window.FeatureClass = (() => {
         }
     }
 
+    // ==========================================
+    // 🧠 非同步對話框控制器 (Promisified Modals)
+    // ==========================================
+    function askOrphanResolution(orphanCount, affectedDatesCount, todayStr) {
+        return new Promise((resolve) => {
+            const overlayId = 'schedule-orphan-modal';
+            const existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
+            
+            const overlay = document.createElement('div');
+            overlay.id = overlayId;
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+            
+            overlay.innerHTML = `
+                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                    <h3 style="margin-top: 0; color: #DC2626; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">⚠️ 發現排程衝突！</h3>
+                    
+                    <div style="background: #FEF2F2; border: 1px solid #FECACA; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; color: #991B1B;">
+                        系統偵測到您刪減了上課日。<br>這將導致過去的 <strong>[ ${affectedDatesCount} 天 ] (共 ${orphanCount} 份歷史作業)</strong> 失去原本的排程歸屬！請選擇處置方式：
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 25px;">
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 12px; border-radius: 8px; border: 2px solid #10B981; background: #F0FDF4;">
+                            <input type="radio" name="orphan_resolve_mode" value="future" checked style="transform: scale(1.2); margin-top: 4px;">
+                            <div>
+                                <div style="font-weight: bold; color: #065F46;">🟢 (強烈建議) 僅套用至未來</div>
+                                <div style="font-size: 0.85rem; color: #047857; margin-top: 4px;">歷史課表凍結，舊作業 100% 原封不動。<br>生效起始日：<input type="date" id="orphan-anchor-date" class="form-control" value="${todayStr}" style="padding:2px 4px; margin-left:5px; border:1px solid #34D399; border-radius:4px; font-size:0.85rem;"></div>
+                            </div>
+                        </label>
+                        
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1; background: #F8FAFC;">
+                            <input type="radio" name="orphan_resolve_mode" value="prev" style="transform: scale(1.2); margin-top: 4px;">
+                            <div>
+                                <div style="font-weight: bold; color: #475569;">🟡 往前歸附</div>
+                                <div style="font-size: 0.85rem; color: #64748B;">套用全學期。孤兒作業自動往前擠到最近的合法上課日。</div>
+                            </div>
+                        </label>
+                        
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1; background: #F8FAFC;">
+                            <input type="radio" name="orphan_resolve_mode" value="next" style="transform: scale(1.2); margin-top: 4px;">
+                            <div>
+                                <div style="font-weight: bold; color: #475569;">🟡 往後遞延</div>
+                                <div style="font-size: 0.85rem; color: #64748B;">套用全學期。孤兒作業自動往後延到最近的合法上課日。</div>
+                            </div>
+                        </label>
+                        
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #FECACA; background: #FEF2F2;">
+                            <input type="radio" name="orphan_resolve_mode" value="drop" style="transform: scale(1.2); margin-top: 4px;">
+                            <div>
+                                <div style="font-weight: bold; color: #DC2626;">🔴 直接捨棄</div>
+                                <div style="font-size: 0.85rem; color: #991B1B;">確認不要了，直接將這 ${orphanCount} 份作業永久封存。</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="btn" id="btn-cancel-orphan" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
+                        <button id="btn-confirm-orphan" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 執行修復並儲存</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            document.getElementById('btn-cancel-orphan').onclick = () => {
+                overlay.remove(); 
+                resolve(null);
+            };
+            
+            document.getElementById('btn-confirm-orphan').onclick = () => {
+                const action = document.querySelector('input[name="orphan_resolve_mode"]:checked').value;
+                const anchorDate = document.getElementById('orphan-anchor-date').value;
+                overlay.remove(); 
+                resolve({ action, anchorDate });
+            };
+        });
+    }
+
+    function askWeeklyToDailyResolution(assignCount, meetDaysArr) {
+        return new Promise((resolve) => {
+            const overlayId = 'schedule-unpack-modal';
+            const existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
+
+            let dayOptionsHtml = meetDaysArr.map((dayNum, index) => {
+                let label = index === 0 ? "第一堂" : (index === meetDaysArr.length - 1 ? "最後一堂 (建議)" : `第 ${index + 1} 堂`);
+                let isChecked = index === meetDaysArr.length - 1 ? "checked" : "";
+                return `
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 12px; background: white; border: 1px solid #CBD5E1; border-radius: 8px; margin-bottom: 8px;">
+                        <input type="radio" name="unpack_target_day" value="${index}" ${isChecked} style="transform: scale(1.3);">
+                        <span style="font-weight: bold; color: #334155; font-size: 1rem;">該週的 ${label} (${DAY_NAMES[dayNum]})</span>
+                    </label>
+                `;
+            }).join('');
+            
+            const overlay = document.createElement('div');
+            overlay.id = overlayId;
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+            
+            overlay.innerHTML = `
+                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                    <h3 style="margin-top: 0; color: #3B82F6; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">🔄 排程轉換：批次展開週作業</h3>
+                    
+                    <div style="background: #EFF6FF; border: 1px solid #BFDBFE; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; color: #1E40AF;">
+                        系統偵測到您從「週結算」切換為「日結算」。<br>經盤點，有 <strong>[ ${assignCount} 份 ]</strong> 過去打包為整週的作業。請指定這些作業要統一降落到每週的哪一堂課？
+                    </div>
+
+                    <div style="margin-bottom: 25px;">
+                        ${dayOptionsHtml}
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="btn" id="btn-cancel-unpack" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
+                        <button id="btn-confirm-unpack" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 執行批次對齊並儲存</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            document.getElementById('btn-cancel-unpack').onclick = () => {
+                overlay.remove(); 
+                resolve(null);
+            };
+            
+            document.getElementById('btn-confirm-unpack').onclick = () => {
+                const targetIndex = parseInt(document.querySelector('input[name="unpack_target_day"]:checked').value);
+                overlay.remove(); 
+                resolve(targetIndex);
+            };
+        });
+    }
+
     // --- 事件綁定 ---
     window.addEventListener('DOMContentLoaded', () => {
         ensureNewClassFormHasModeSelector();
@@ -425,7 +574,9 @@ window.FeatureClass = (() => {
                     const endDt = new Date(sDate);
                     endDt.setMonth(endDt.getMonth() + 4);
                     eDate = toLocalISODate(endDt);
+                    document.getElementById('class-end-date').value = eDate;
                 }
+                
                 document.getElementById('class-start-date').value = sDate;
                 document.getElementById('class-end-date').value = eDate;
 
@@ -446,228 +597,249 @@ window.FeatureClass = (() => {
                 const btn = this;
                 if (btn.disabled) return; 
 
-                // 🧠 智慧防擾機制 (Smart Diff)
-                // 檢查是否真的更改了可能破壞排程的欄位 (起訖日或星期)
-                let safeRawDataForCheck = c.raw_data || c.rawData || {};
-                if (typeof safeRawDataForCheck === 'string') {
-                    try { safeRawDataForCheck = JSON.parse(safeRawDataForCheck); } catch (ex) { safeRawDataForCheck = {}; }
-                }
-
-                const oldSDate = c.startDate || c.start_date || '';
-                const oldEDate = c.endDate || c.end_date || '';
-                const oldMeetDaysStr = (c.meetDays || c.meet_days || []).map(Number).sort().join(',');
-                const newMeetDaysStr = meetDaysArr.sort().join(',');
+                const originalText = btn.innerHTML;
                 
-                const isDatesChanged = (oldSDate !== sDate) || (oldEDate !== eDate) || (oldMeetDaysStr !== newMeetDaysStr);
-                const todayStr = getTaiwanTodayString();
+                // 🚨 提前鎖定按鈕，防止老師在對話框還沒回答時狂點
+                btn.innerHTML = '⏳ 推演排程中...';
+                btn.disabled = true;
 
-                // 🌟 執行核心同步與儲存的閉包函數
-                const executeSave = async (updateMode = 'future', anchorDate = todayStr) => {
-                    const originalText = btn.innerHTML; 
-                    btn.innerHTML = '⏳ 雲端同步中...';
-                    btn.disabled = true; 
+                try {
+                    // 🧠 [步驟 1] 抓取目前記憶體狀態 (Inventory)
+                    let safeRawDataForCheck = c.raw_data || c.rawData || {};
+                    if (typeof safeRawDataForCheck === 'string') {
+                        try { safeRawDataForCheck = JSON.parse(safeRawDataForCheck); } catch (ex) { safeRawDataForCheck = {}; }
+                    }
 
-                    try {
-                        let safeRawData = c.raw_data || c.rawData || {};
-                        if (typeof safeRawData === 'string') {
-                            try { safeRawData = JSON.parse(safeRawData); } catch (ex) { safeRawData = {}; }
+                    const oldCalcMode = c.calcMode || c.calc_mode || 'single';
+                    const oldSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) 
+                                        ? safeRawDataForCheck.custom_sessions 
+                                        : (db.sessions[cid] || []);
+                                        
+                    const classAssigns = (db.assignments || []).filter(a => a.class_id === cid && !a.deleted_at);
+
+                    // 🧠 [步驟 2] 沙盤推演新排程 (Simulation)
+                    const newFullSessions = meetDaysArr.length > 0 ? generateDates(sDate, eDate, meetDaysArr) : [];
+                    
+                    // 🧠 [步驟 3] 碰撞測試：找出孤兒作業 (Collision Test)
+                    const orphanAssigns = classAssigns.filter(a => !newFullSessions.includes(a.target_date));
+                    const isWeekToDay = (oldCalcMode === 'weekly' && calcModeVal === 'single' && classAssigns.length > 0);
+                    const todayStr = getTaiwanTodayString();
+
+                    let finalSessions = [...newFullSessions];
+                    let assignUpdatesMap = new Map();
+
+                    // 🛑 決策樹 1：攔截孤兒作業
+                    if (orphanAssigns.length > 0) {
+                        const uniqueOrphanDates = [...new Set(orphanAssigns.map(a => a.target_date))].length;
+                        const orphanRes = await askOrphanResolution(orphanAssigns.length, uniqueOrphanDates, todayStr);
+                        
+                        if (!orphanRes) {
+                            btn.innerHTML = originalText;
+                            btn.disabled = false;
+                            return; // 老師按下取消，解除鎖定並中斷
                         }
+                        
+                        if (orphanRes.action === 'future') {
+                            const pastSessions = oldSessions.filter(date => date < orphanRes.anchorDate);
+                            const calcStart = (orphanRes.anchorDate > sDate) ? orphanRes.anchorDate : sDate;
+                            const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
+                            finalSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
 
-                        let newCustomSessions = [];
+                            // 防呆：確保未來被砍掉的日子，作業往後推
+                            orphanAssigns.forEach(a => {
+                                if (a.target_date >= orphanRes.anchorDate) {
+                                    const candidates = finalSessions.filter(d => d >= a.target_date);
+                                    let newTarget = candidates.length > 0 ? candidates[0] : finalSessions[finalSessions.length - 1];
+                                    if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
+                                }
+                            });
+                        } else if (orphanRes.action === 'prev' || orphanRes.action === 'next') {
+                            orphanAssigns.forEach(a => {
+                                let newTarget = null;
+                                if (orphanRes.action === 'prev') {
+                                    const candidates = newFullSessions.filter(d => d < a.target_date);
+                                    newTarget = candidates.length > 0 ? candidates[candidates.length - 1] : newFullSessions[0];
+                                } else {
+                                    const candidates = newFullSessions.filter(d => d > a.target_date);
+                                    newTarget = candidates.length > 0 ? candidates[0] : newFullSessions[newFullSessions.length - 1];
+                                }
+                                if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
+                            });
+                        } else if (orphanRes.action === 'drop') {
+                            const delTime = new Date().toISOString();
+                            orphanAssigns.forEach(a => assignUpdatesMap.set(a.id, { id: a.id, payload: { deleted_at: delTime } }));
+                        }
+                    } else {
+                        // 🟢 若無孤兒作業，檢查是否只是純改結算模式
+                        const oldSDate = c.startDate || c.start_date || '';
+                        const oldEDate = c.endDate || c.end_date || '';
+                        const oldMeetDaysStr = (c.meetDays || c.meet_days || []).map(Number).sort().join(',');
+                        const newMeetDaysStr = meetDaysArr.sort().join(',');
+                        const isDatesChanged = (oldSDate !== sDate) || (oldEDate !== eDate) || (oldMeetDaysStr !== newMeetDaysStr);
 
-                        // 🛡️ 核心修復：如果日期/星期變更，執行差量合併；否則 100% 凍結並繼承原有的 custom_sessions
-                        if (isDatesChanged) {
-                            if (updateMode === 'future') {
-                                const oldSessions = (safeRawData.custom_sessions && Array.isArray(safeRawData.custom_sessions)) 
-                                                    ? safeRawData.custom_sessions 
-                                                    : (db.sessions[cid] || []);
-                                                    
-                                // <= 確保錨點當天的舊紀錄不被誤刪除
-                                const pastSessions = oldSessions.filter(date => date <= anchorDate);
-                                
-                                // 未來生成的起點必須大於錨點
-                                const nextDayObj = new Date(anchorDate);
-                                nextDayObj.setDate(nextDayObj.getDate() + 1);
-                                const nextDayStr = toLocalISODate(nextDayObj);
-                                
-                                const calcStart = (nextDayStr > sDate) ? nextDayStr : sDate;
-                                const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
-                                
-                                newCustomSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
-                            } else {
-                                // 毀滅性重建：全學期強制套用新規則
-                                newCustomSessions = meetDaysArr.length > 0 ? generateDates(sDate, eDate, meetDaysArr) : [];
-                            }
-                        } else {
+                        if (!isDatesChanged) {
                             // 沒改排程，只改了結算模式 (每週變每天)，絕對保護舊陣列不被覆寫
-                            newCustomSessions = (safeRawData.custom_sessions && Array.isArray(safeRawData.custom_sessions)) 
-                                                    ? safeRawData.custom_sessions 
-                                                    : (meetDaysArr.length > 0 ? generateDates(sDate, eDate, meetDaysArr) : []);
+                            finalSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) 
+                                            ? safeRawDataForCheck.custom_sessions 
+                                            : (meetDaysArr.length > 0 ? generateDates(sDate, eDate, meetDaysArr) : []);
                         }
+                        // 若有 isDatesChanged 且 0 orphans，直接靜默儲存 newFullSessions
+                    }
 
-                        const mergedRawData = Object.assign({}, safeRawData, { 
-                            week_start_day: weekStartVal, 
-                            custom_sessions: newCustomSessions 
+                    // 🛑 決策樹 2：週轉日的批次對齊精靈
+                    const survivingAssigns = classAssigns.filter(a => {
+                        const upd = assignUpdatesMap.get(a.id);
+                        return !(upd && upd.payload && upd.payload.deleted_at);
+                    });
+
+                    if (isWeekToDay && survivingAssigns.length > 0) {
+                        const targetIndex = await askWeeklyToDailyResolution(survivingAssigns.length, meetDaysArr);
+                        if (targetIndex === null) {
+                            btn.innerHTML = originalText;
+                            btn.disabled = false;
+                            return; // 老師按下取消，解除鎖定並中斷
+                        }
+                        
+                        const weeksMap = new Map();
+                        finalSessions.forEach(d => {
+                            const ws = getWeekStartStr(d, weekStartVal);
+                            if (!weeksMap.has(ws)) weeksMap.set(ws, []);
+                            weeksMap.get(ws).push(d);
                         });
 
-                        const payload = { 
-                            start_date: sDate, 
-                            end_date: eDate, 
-                            meet_days: meetDaysArr, 
-                            calc_mode: calcModeVal,
-                            raw_data: mergedRawData
-                        };
-                        
-                        const { data: updatedRows, error: updateErr } = await window.supabaseClient
-                            .from('classes')
-                            .update(payload)
-                            .eq('id', cid)
-                            .select();
-
-                        if (updateErr) throw new Error("Supabase 寫入失敗: " + updateErr.message);
-                        if (!updatedRows || updatedRows.length === 0) {
-                            throw new Error("資料庫拒絕寫入 (可能是 RLS 權限阻擋)。");
-                        }
-
-                        // 🚀 儲存後強制雲端重刷
-                        if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') {
-                            db.classes = await window.ApiService.fetchClasses();
-                        } else {
-                            // Fallback
-                            c.startDate = sDate;
-                            c.endDate = eDate;
-                            c.meetDays = meetDaysArr;
-                            c.calcMode = calcModeVal;
-                            c.raw_data = mergedRawData;
-                            c.rawData = mergedRawData;
-                        }
-
-                        // 🚨【補回遺漏 3：根據新設定重新計算 db.sessions，否則 Timeline 模組會空掉】
-                        if (!db.sessions) db.sessions = {};
-                        db.sessions[cid] = newCustomSessions;
-                        if (typeof db.save === 'function') db.save();
-
-                        updateClassContent(cid);
-
-                        btn.innerHTML = '✅ 儲存成功！';
-                        btn.style.backgroundColor = '#10B981';
-                        btn.style.color = '#fff';
-                        btn.style.borderColor = '#10B981';
-                        
-                        setTimeout(() => {
-                            btn.innerHTML = originalText;
-                            btn.removeAttribute('style'); 
-                            btn.disabled = false;
+                        survivingAssigns.forEach(a => {
+                            const upd = assignUpdatesMap.get(a.id);
+                            const currentTarget = (upd && upd.payload.target_date) ? upd.payload.target_date : a.target_date;
                             
-                            try {
-                                // 🚨【補回遺漏 2：舊版的超級防呆頁籤跳轉機制】
-                                if (window.TeacherUI && typeof window.TeacherUI.switchTab === 'function') {
-                                    window.TeacherUI.switchTab('timeline');
-                                    return;
+                            const ws = getWeekStartStr(currentTarget, weekStartVal);
+                            const weekDays = weeksMap.get(ws) || [];
+                            let newTargetD = currentTarget;
+                            
+                            if (weekDays.length > 0) {
+                                newTargetD = weekDays[targetIndex] || weekDays[weekDays.length - 1]; // 遇到假日時安全 Fallback
+                            }
+                            
+                            if (newTargetD !== a.target_date) {
+                                if (upd) upd.payload.target_date = newTargetD;
+                                else assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } });
+                            }
+                        });
+                    }
+
+                    // ==========================================
+                    // 🚀 執行階段：批次寫入 Supabase (Batch Execute)
+                    // ==========================================
+                    const finalAssignUpdates = Array.from(assignUpdatesMap.values());
+                    
+                    btn.innerHTML = finalAssignUpdates.length > 0 ? '⏳ 同步與批次對齊中...' : '⏳ 雲端同步中...';
+
+                    // A. 非同步批次更新所有被影響的作業
+                    if (finalAssignUpdates.length > 0) {
+                        const promises = finalAssignUpdates.map(upd => 
+                            window.supabaseClient.from('assignments').update(upd.payload).eq('id', upd.id)
+                        );
+                        await Promise.all(promises);
+                        
+                        // 同步更新本地端
+                        finalAssignUpdates.forEach(upd => {
+                            const target = db.assignments.find(a => a.id === upd.id);
+                            if (target) Object.assign(target, upd.payload);
+                        });
+                        
+                        // 清理本地已被刪除的快取
+                        db.assignments = db.assignments.filter(a => !a.deleted_at);
+                    }
+
+                    // B. 儲存班級主檔與新排程
+                    const mergedRawData = Object.assign({}, safeRawDataForCheck, { 
+                        week_start_day: weekStartVal, 
+                        custom_sessions: finalSessions 
+                    });
+
+                    const payload = { 
+                        start_date: sDate, 
+                        end_date: eDate, 
+                        meet_days: meetDaysArr, 
+                        calc_mode: calcModeVal,
+                        raw_data: mergedRawData
+                    };
+                    
+                    const { data: updatedRows, error: updateErr } = await window.supabaseClient
+                        .from('classes')
+                        .update(payload)
+                        .eq('id', cid)
+                        .select();
+
+                    if (updateErr) throw new Error("Supabase 寫入失敗: " + updateErr.message);
+                    if (!updatedRows || updatedRows.length === 0) {
+                        throw new Error("資料庫拒絕寫入 (可能是 RLS 權限阻擋)。");
+                    }
+
+                    // 🚀 儲存後強制雲端重刷
+                    if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') {
+                        db.classes = await window.ApiService.fetchClasses();
+                    } else {
+                        // Fallback
+                        c.startDate = sDate;
+                        c.endDate = eDate;
+                        c.meetDays = meetDaysArr;
+                        c.calcMode = calcModeVal;
+                        c.raw_data = mergedRawData;
+                        c.rawData = mergedRawData;
+                    }
+
+                    // 🚨【補回遺漏 3：根據新設定重新計算 db.sessions，否則 Timeline 模組會空掉】
+                    if (!db.sessions) db.sessions = {};
+                    db.sessions[cid] = finalSessions;
+                    if (typeof db.save === 'function') db.save();
+
+                    updateClassContent(cid);
+
+                    btn.innerHTML = finalAssignUpdates.length > 0 ? '✅ 同步與對齊成功！' : '✅ 儲存成功！';
+                    btn.style.backgroundColor = '#10B981';
+                    btn.style.color = '#fff';
+                    btn.style.borderColor = '#10B981';
+                    
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                        btn.removeAttribute('style'); 
+                        btn.disabled = false;
+                        
+                        try {
+                            // 🚨【補回遺漏 2：舊版的超級防呆頁籤跳轉機制】
+                            if (window.TeacherUI && typeof window.TeacherUI.switchTab === 'function') {
+                                window.TeacherUI.switchTab('timeline');
+                                return;
+                            }
+                            const selectors = ['[data-target="timeline"]', '[data-tab="timeline"]', '.tab-timeline', '#tab-timeline'];
+                            let isClicked = false;
+                            for (let sel of selectors) {
+                                const targetTab = document.querySelector(sel);
+                                if (targetTab && targetTab.offsetParent !== null) {
+                                    targetTab.click();
+                                    isClicked = true;
+                                    break;
                                 }
-                                const selectors = ['[data-target="timeline"]', '[data-tab="timeline"]', '.tab-timeline', '#tab-timeline'];
-                                let isClicked = false;
-                                for (let sel of selectors) {
-                                    const targetTab = document.querySelector(sel);
-                                    if (targetTab && targetTab.offsetParent !== null) {
-                                        targetTab.click();
-                                        isClicked = true;
+                            }
+                            if (!isClicked) {
+                                const allElements = document.querySelectorAll('.tab, .nav-item, li, button, a');
+                                for (let el of allElements) {
+                                    if (el.textContent.includes('課程進度')) {
+                                        el.click();
                                         break;
                                     }
                                 }
-                                if (!isClicked) {
-                                    const allElements = document.querySelectorAll('.tab, .nav-item, li, button, a');
-                                    for (let el of allElements) {
-                                        if (el.textContent.includes('課程進度')) {
-                                            el.click();
-                                            break;
-                                        }
-                                    }
-                                }
-                            } catch (tabErr) {
-                                console.error("頁籤跳轉發生錯誤：", tabErr);
                             }
-                        }, 1000);
+                        } catch (tabErr) {
+                            console.error("頁籤跳轉發生錯誤：", tabErr);
+                        }
+                    }, 1000);
 
-                    } catch (err) {
-                        btn.innerHTML = originalText;
-                        btn.disabled = false;
-                        console.error(err);
-                        alert("儲存失敗：" + err.message);
-                    }
-                };
-
-                // 🛡️ 只有在真正修改了排程起訖日或上課星期時，才彈出防呆對話框
-                if (isDatesChanged) {
-                    const overlayId = 'schedule-update-modal';
-                    const existing = document.getElementById(overlayId);
-                    if (existing) existing.remove();
-                    
-                    const overlay = document.createElement('div');
-                    overlay.id = overlayId;
-                    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-                    
-                    overlay.innerHTML = `
-                        <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-                            <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">📅 套用排程變更</h3>
-                            
-                            <div style="background: #FFFBEB; border: 1px solid #FDE68A; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; color: #92400E;">
-                                <strong>系統偵測到您修改了排程日期或星期規則！</strong><br>
-                                為了保護過去已經派發的作業與學生成績不被破壞，建議您選擇「僅套用至未來」。
-                            </div>
-
-                            <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 25px;">
-                                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 2px solid #10B981; background: #F0FDF4;">
-                                    <input type="radio" name="schedule_update_mode" value="future" checked style="transform: scale(1.2); margin-top: 4px;">
-                                    <div>
-                                        <div style="font-weight: bold; color: #065F46;">🟢 僅套用至未來 (推薦)</div>
-                                        <div style="font-size: 0.85rem; color: #047857; margin-top: 4px;">舊作業排版 100% 原封不動。<br>請設定新規則的生效日期：</div>
-                                        <input type="date" id="schedule-anchor-date" class="form-control" value="${todayStr}" style="margin-top: 8px; padding: 6px; width: 150px; border: 1px solid #34D399;">
-                                    </div>
-                                </label>
-
-                                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #FECACA; background: #FEF2F2;">
-                                    <input type="radio" name="schedule_update_mode" value="all" style="transform: scale(1.2); margin-top: 4px;">
-                                    <div>
-                                        <div style="font-weight: bold; color: #DC2626;">🔴 套用至全學期 (具破壞性)</div>
-                                        <div style="font-size: 0.85rem; color: #991B1B; margin-top: 4px;">系統將重新計算全學期排程，過去的歷史作業可能會被迫移動。</div>
-                                    </div>
-                                </label>
-                            </div>
-
-                            <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
-                                <button class="btn" id="btn-cancel-schedule-save" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                                <button id="btn-confirm-schedule-save" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 確認儲存</button>
-                            </div>
-                        </div>
-                    `;
-                    document.body.appendChild(overlay);
-
-                    document.getElementById('btn-cancel-schedule-save').onclick = () => document.getElementById(overlayId).remove();
-
-                    const radios = overlay.querySelectorAll('input[name="schedule_update_mode"]');
-                    const anchorInput = document.getElementById('schedule-anchor-date');
-                    radios.forEach(r => r.addEventListener('change', (ev) => {
-                        anchorInput.disabled = ev.target.value === 'all';
-                        anchorInput.style.opacity = ev.target.value === 'all' ? '0.5' : '1';
-                    }));
-
-                    document.getElementById('btn-confirm-schedule-save').onclick = function() {
-                        const confirmBtn = this;
-                        confirmBtn.innerHTML = '⏳ 處理中...';
-                        confirmBtn.disabled = true;
-                        
-                        const mode = document.querySelector('input[name="schedule_update_mode"]:checked').value;
-                        executeSave(mode, anchorInput.value).then(() => {
-                            if (document.getElementById(overlayId)) document.getElementById(overlayId).remove();
-                        }).catch(() => {
-                            confirmBtn.innerHTML = '💾 確認儲存';
-                            confirmBtn.disabled = false;
-                        });
-                    };
-                } else {
-                    // 若僅更改結算模式或名字顯示模式，不破壞排程日，背景直接安靜儲存
-                    executeSave('all', null);
+                } catch (err) {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    console.error(err);
+                    alert("儲存失敗：" + err.message);
                 }
             };
         }
