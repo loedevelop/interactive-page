@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v9.2 靜默繼承版：徹底消滅脫褲子放屁的綠字，實作真正的「不打破沉默即隱藏」渲染邏輯
+ * 🌟 v9.3 文字對齊與全類型補齊版：修正作業類型標籤，並補齊巢狀作業內層的兩種缺失類型
  */
 
 window.FeatureTimeline = (() => {
@@ -95,7 +95,6 @@ window.FeatureTimeline = (() => {
         if (graceEl) bState.late_grace = parseInt(graceEl.value) || 0;
         if (penaltyEl) bState.late_penalty = parseInt(penaltyEl.value) || 0;
 
-        // 強制資料乾淨
         if (bState.late_mode === 'no_late') { bState.late_grace = 0; bState.late_penalty = 0; }
         if (bState.late_mode === 'infinite') { bState.late_grace = 0; }
 
@@ -174,14 +173,13 @@ window.FeatureTimeline = (() => {
         });
     }
 
-    // --- 內部共用：產出單一子任務的唯讀 HTML (Viewer) ---
-    // 🌟 核心防護升級：傳入 effectiveBlockLatePolicy 進行靜默比對
     function generateReadOnlyTaskHtml(t, effectiveBlockDueDate, effectiveBlockLatePolicy, isSubTask = false) {
-        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
+        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : (t.type === 'group' ? '🗂️' : '📁'));
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
         let extraTag = '';
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
+        else if (t.type === 'group') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(內部巢狀資料夾)</span>';
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
         let taskTitleDisplay = '';
@@ -209,17 +207,14 @@ window.FeatureTimeline = (() => {
         let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
         let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
         
-        // 1. 日期靜默比對
         let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
         let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
         
-        // 2. 遲交規則靜默比對 (Silence Rule)
         let taskLateMode = t.late_mode || 'infinite';
         let taskPenalty = t.penalty_percentage || 0;
         let showLateBadge = true;
 
         if (effectiveBlockLatePolicy) {
-            // 如果子任務的規則跟老大哥(外層區塊)一模一樣，那就閉嘴隱藏
             if (taskLateMode === effectiveBlockLatePolicy.mode && taskPenalty === effectiveBlockLatePolicy.penalty) {
                 showLateBadge = false;
             }
@@ -397,7 +392,6 @@ window.FeatureTimeline = (() => {
                         }
                     }
 
-                    // 🌟 提取外層大區塊的遲交規則 (給自己渲染用，也準備往下傳遞)
                     let aRaw = a.raw_data || {};
                     if (typeof aRaw === 'string') {
                         try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
@@ -413,7 +407,6 @@ window.FeatureTimeline = (() => {
                         blockPenalty = aRaw.late_policy.penalty_percentage || 0;
                     }
                     
-                    // 打包成 Policy 物件
                     const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty };
 
                     let tasksHtml = '';
@@ -423,22 +416,20 @@ window.FeatureTimeline = (() => {
                                 tasksHtml += `
                                     <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
                                         <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
-                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組'}</span>
+                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名巢狀作業'}</span>
                                         </div>
                                 `;
                                 if (t.subTasks && t.subTasks.length > 0) {
                                     tasksHtml += `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">`;
                                     t.subTasks.forEach(sub => {
-                                        // 🌟 將外層規則往下傳遞，執行靜默比對
                                         tasksHtml += generateReadOnlyTaskHtml(sub, effectiveBlockDueDate, effectiveBlockLatePolicy, true);
                                     });
                                     tasksHtml += `</div>`;
                                 } else {
-                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此群組尚無內容)</div>`;
+                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此巢狀作業尚無內容)</div>`;
                                 }
                                 tasksHtml += `</div>`;
                             } else {
-                                // 🌟 將外層規則往下傳遞，執行靜默比對
                                 tasksHtml += generateReadOnlyTaskHtml(t, effectiveBlockDueDate, effectiveBlockLatePolicy, false);
                             }
                         });
@@ -568,7 +559,6 @@ window.FeatureTimeline = (() => {
         }
     }
 
-    // --- 內部共用：產出單一子任務的 UI HTML (Builder) ---
     function generateBuilderTaskHtml(t, parentIdx, subIdx = null) {
         let isSub = subIdx !== null;
         let idPrefix = isSub ? `sub` : `task`;
@@ -577,7 +567,7 @@ window.FeatureTimeline = (() => {
         let dropMethod = isSub ? `window.FeatureTimeline.dropSubTask(event, ${parentIdx}, ${subIdx})` : `window.FeatureTimeline.dropTopTask(event, ${parentIdx})`;
         let removeMethod = isSub ? `window.FeatureTimeline.removeSubTask(${parentIdx}, ${subIdx})` : `window.FeatureTimeline.removeTask(${parentIdx})`;
         
-        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
+        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : (t.type === 'group' ? '🗂️' : '📁'));
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.2rem; margin-right:4px;">${iconStr}</span>`;
         
         let urlInputHtml = '';
@@ -717,11 +707,38 @@ window.FeatureTimeline = (() => {
         const container = document.getElementById(bState.containerId);
         if (!container) return;
 
+        let classResOpts = '';
+        const classResList = (db.resourceLibrary || []).filter(r => 
+            r.scope === 'global' || 
+            (r.scope === 'class' && r.target_class_id === bState.classId)
+        );
+        
+        if (classResList.length > 0) {
+            classResOpts = classResList.map(r => {
+                const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
+                return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
+            }).join('');
+        }
+
         let tasksHtml = bState.tasks.map((t, idx) => {
             if (t.type === 'group') {
                 let subTasksHtml = (t.subTasks || []).map((sub, sIdx) => {
                     return generateBuilderTaskHtml(sub, idx, sIdx);
                 }).join('');
+
+                let addSubResourceHtml = '';
+                if (classResList.length > 0) {
+                    addSubResourceHtml = `
+                        <select class="form-control" style="width:auto; padding:4px 10px; font-size:0.9rem; font-weight:800; border:2px solid #8B5CF6; color:#8B5CF6; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addSubResourceTaskAsLink(${idx}, this.value); this.value=''; }">
+                            <option value="" disabled selected>+ 📚 班級與全域資源</option>
+                            ${classResOpts}
+                        </select>
+                    `;
+                } else {
+                     addSubResourceHtml = `
+                        <button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:0.9rem; padding:4px 10px;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>
+                     `;
+                }
 
                 return `
                     <div id="group-block-${idx}" draggable="false"
@@ -732,25 +749,25 @@ window.FeatureTimeline = (() => {
                          ondragend="this.setAttribute('draggable', 'false');"
                          style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 2px solid #CBD5E1; margin-bottom: 20px; transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 15px; border-bottom: 2px solid #E2E8F0; padding-bottom: 10px;">
-                            <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個群組"
+                            <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個巢狀作業"
                                   onmousedown="document.getElementById('group-block-${idx}').setAttribute('draggable', 'true')"
                                   onmouseup="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')"
                                   onmouseleave="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
                             <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#3B82F6; padding:8px 12px; background:white; border:1px solid #93C5FD; border-radius:6px; outline:none;">${t.title || ''}</div>
-                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個群組">🗑️</button>
+                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 巢狀作業大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#3B82F6; padding:8px 12px; background:white; border:1px solid #93C5FD; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個巢狀作業">🗑️</button>
                         </div>
                         
-                        <!-- 子任務存放區 -->
                         <div style="padding-left: 20px; border-left: 3px solid #E2E8F0; margin-left: 10px;">
                             ${subTasksHtml}
                             
-                            <!-- 群組內的專屬新增按鈕列 -->
                             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top: 10px;">
-                                <span style="font-size:0.85rem; color:#94A3B8; font-weight:bold; margin-right:5px;">新增子任務：</span>
+                                <span style="font-size:0.85rem; color:#94A3B8; font-weight:bold; margin-right:5px;">巢狀作業類型：</span>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'link')">+ 🔗 連結</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2ECC71;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'drive')">+ 📁 Drive</button>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'group')">+ 🗂️ 巢狀作業</button>
+                                ${addSubResourceHtml}
                             </div>
                         </div>
                     </div>
@@ -786,19 +803,6 @@ window.FeatureTimeline = (() => {
         `;
 
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : getHistoryDropdownHtml();
-
-        let classResOpts = '';
-        const classResList = (db.resourceLibrary || []).filter(r => 
-            r.scope === 'global' || 
-            (r.scope === 'class' && r.target_class_id === bState.classId)
-        );
-        
-        if (classResList.length > 0) {
-            classResOpts = classResList.map(r => {
-                const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
-                return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
-            }).join('');
-        }
 
         let addResourceHtml = '';
         if (classResList.length > 0) {
@@ -866,11 +870,11 @@ window.FeatureTimeline = (() => {
                 ${tasksContainerHtml}
 
                 <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; background: #F1F5F9; padding: 12px; border-radius: 8px; border: 1px solid #CBD5E1;">
-                    <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">新增最外層：</span>
+                    <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">作業類型：</span>
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('check')">+ 📌 一般任務</button>
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('link')">+ 🔗 連結任務</button>
                     <button class="btn btn-action" style="font-size:1rem; background: #2ECC71;" onclick="window.FeatureTimeline.addTopTask('drive')">+ 📁 Drive</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 任務群組 (百寶箱)</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 巢狀作業</button>
                     ${addResourceHtml}
                 </div>
 
@@ -1146,6 +1150,27 @@ window.FeatureTimeline = (() => {
             }
             renderBuilderUI();
         },
+        addSubResourceTaskAsLink: (parentIdx, resId) => {
+            syncState(); 
+            const res = (db.resourceLibrary || []).find(r => r.id === resId);
+            if (res) {
+                if (!bState.tasks[parentIdx].subTasks) bState.tasks[parentIdx].subTasks = [];
+                bState.tasks[parentIdx].subTasks.push({
+                    id: `task_${Date.now()}_${Math.random()}`,
+                    type: 'link', 
+                    title: res.name,
+                    url: res.url,
+                    url_text: '', 
+                    description: '',
+                    due_date: '',
+                    late_mode: 'infinite',
+                    grace_period_hours: 0,
+                    penalty_percentage: 0,
+                    resource_id: res.id
+                });
+            }
+            renderBuilderUI();
+        },
         dragTopTaskStart: (e, idx) => { dragTopTaskIndex = idx; dragSubTaskData = null; e.dataTransfer.effectAllowed = 'move'; },
         dropTopTask: (e, targetIdx) => {
             e.preventDefault(); e.stopPropagation();
@@ -1245,7 +1270,19 @@ window.FeatureTimeline = (() => {
         addSubTask: (parentIdx, type) => {
             syncState();
             if (!bState.tasks[parentIdx].subTasks) bState.tasks[parentIdx].subTasks = [];
-            bState.tasks[parentIdx].subTasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0 });
+            bState.tasks[parentIdx].subTasks.push({ 
+                id: `task_${Date.now()}_${Math.random()}`, 
+                type, 
+                title: '', 
+                url: '', 
+                url_text: '', 
+                description: '', 
+                due_date: '', 
+                late_mode: 'infinite', 
+                grace_period_hours: 0, 
+                penalty_percentage: 0,
+                ...(type === 'group' ? { subTasks: [] } : {})
+            });
             renderBuilderUI();
         },
         removeTask: (idx) => { syncState(); bState.tasks.splice(idx, 1); renderBuilderUI(); },
