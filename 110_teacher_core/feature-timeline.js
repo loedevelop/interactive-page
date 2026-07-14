@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v9.1 霸王色除錯版：拔除腦殘繼承 UI、精簡為三大遲交模式、支援無限期扣分
+ * 🌟 v9.2 靜默繼承版：徹底消滅脫褲子放屁的綠字，實作真正的「不打破沉默即隱藏」渲染邏輯
  */
 
 window.FeatureTimeline = (() => {
@@ -76,7 +76,6 @@ window.FeatureTimeline = (() => {
         const dueEl = document.getElementById(`builder-due-${nid}`);
         const pubEl = document.getElementById(`builder-pub-${nid}`);
         
-        // 最外層：遲交規則提取
         const lateModeEl = document.getElementById(`builder-late-mode-${nid}`);
         const graceEl = document.getElementById(`builder-grace-${nid}`);
         const penaltyEl = document.getElementById(`builder-penalty-${nid}`);
@@ -136,7 +135,6 @@ window.FeatureTimeline = (() => {
                         sub.penalty_percentage = sPenalty ? (parseInt(sPenalty.value) || 0) : 0;
                         sub.grace_period_hours = sGrace ? (parseInt(sGrace.value) || 0) : 0;
 
-                        // 強制清空無關資料
                         if (sub.late_mode === 'no_late') { sub.grace_period_hours = 0; sub.penalty_percentage = 0; }
                         if (sub.late_mode === 'infinite') { sub.grace_period_hours = 0; }
                     }
@@ -177,7 +175,8 @@ window.FeatureTimeline = (() => {
     }
 
     // --- 內部共用：產出單一子任務的唯讀 HTML (Viewer) ---
-    function generateReadOnlyTaskHtml(t, effectiveBlockDueDate, isSubTask = false) {
+    // 🌟 核心防護升級：傳入 effectiveBlockLatePolicy 進行靜默比對
+    function generateReadOnlyTaskHtml(t, effectiveBlockDueDate, effectiveBlockLatePolicy, isSubTask = false) {
         let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
@@ -210,19 +209,33 @@ window.FeatureTimeline = (() => {
         let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
         let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
         
+        // 1. 日期靜默比對
         let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
         let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
         
+        // 2. 遲交規則靜默比對 (Silence Rule)
+        let taskLateMode = t.late_mode || 'infinite';
+        let taskPenalty = t.penalty_percentage || 0;
+        let showLateBadge = true;
+
+        if (effectiveBlockLatePolicy) {
+            // 如果子任務的規則跟老大哥(外層區塊)一模一樣，那就閉嘴隱藏
+            if (taskLateMode === effectiveBlockLatePolicy.mode && taskPenalty === effectiveBlockLatePolicy.penalty) {
+                showLateBadge = false;
+            }
+        }
+
         let taskLateBadge = '';
-        if (t.late_mode === 'no_late') {
-            taskLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
-        } else if (t.late_mode === 'custom') {
-            taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 遲交扣 ${t.penalty_percentage || 0}%</span>`;
-        } else {
-            let p = t.penalty_percentage || 0;
-            taskLateBadge = p > 0 
-                ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${p}%</span>`
-                : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
+        if (showLateBadge) {
+            if (taskLateMode === 'no_late') {
+                taskLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
+            } else if (taskLateMode === 'custom') {
+                taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 遲交扣 ${taskPenalty}%</span>`;
+            } else {
+                taskLateBadge = taskPenalty > 0 
+                    ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>`
+                    : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
+            }
         }
 
         const marginStyle = isSubTask ? 'margin-top:10px;' : 'margin-top:14px;';
@@ -257,7 +270,6 @@ window.FeatureTimeline = (() => {
 
         const classAssignments = db.assignments || [];
         
-        // 🌟 核心防護：優先使用 API/UI 寫入的 custom_sessions
         let sessions = [];
         if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
             sessions = [...raw.custom_sessions];
@@ -279,7 +291,6 @@ window.FeatureTimeline = (() => {
             }
         }
 
-        // 孤兒作業救援機制 (Orphan Rescue)
         const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
         sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
@@ -386,6 +397,25 @@ window.FeatureTimeline = (() => {
                         }
                     }
 
+                    // 🌟 提取外層大區塊的遲交規則 (給自己渲染用，也準備往下傳遞)
+                    let aRaw = a.raw_data || {};
+                    if (typeof aRaw === 'string') {
+                        try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
+                    }
+                    
+                    let blockLateMode = 'infinite';
+                    let blockPenalty = 0;
+                    
+                    if (aRaw.late_policy) {
+                        if (!aRaw.late_policy.allow_late) blockLateMode = 'no_late';
+                        else if (aRaw.late_policy.grace_period_hours > 0) blockLateMode = 'custom';
+                        else blockLateMode = 'infinite';
+                        blockPenalty = aRaw.late_policy.penalty_percentage || 0;
+                    }
+                    
+                    // 打包成 Policy 物件
+                    const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty };
+
                     let tasksHtml = '';
                     if (a.tasks && a.tasks.length > 0) {
                         a.tasks.forEach(t => {
@@ -399,7 +429,8 @@ window.FeatureTimeline = (() => {
                                 if (t.subTasks && t.subTasks.length > 0) {
                                     tasksHtml += `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">`;
                                     t.subTasks.forEach(sub => {
-                                        tasksHtml += generateReadOnlyTaskHtml(sub, effectiveBlockDueDate, true);
+                                        // 🌟 將外層規則往下傳遞，執行靜默比對
+                                        tasksHtml += generateReadOnlyTaskHtml(sub, effectiveBlockDueDate, effectiveBlockLatePolicy, true);
                                     });
                                     tasksHtml += `</div>`;
                                 } else {
@@ -407,7 +438,8 @@ window.FeatureTimeline = (() => {
                                 }
                                 tasksHtml += `</div>`;
                             } else {
-                                tasksHtml += generateReadOnlyTaskHtml(t, effectiveBlockDueDate, false);
+                                // 🌟 將外層規則往下傳遞，執行靜默比對
+                                tasksHtml += generateReadOnlyTaskHtml(t, effectiveBlockDueDate, effectiveBlockLatePolicy, false);
                             }
                         });
                     }
@@ -418,26 +450,11 @@ window.FeatureTimeline = (() => {
                     let pubBadge = a.is_published ? `<span style="background:#2ECC71; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">✅ 發佈</span>` 
                                                   : `<span style="background:#94A3B8; color:white; font-size:0.9rem; padding:2px 6px; border-radius:4px; margin-left:8px;">🙈 未發佈</span>`;
 
-                    let aRaw = a.raw_data || {};
-                    if (typeof aRaw === 'string') {
-                        try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
-                    }
-                    
-                    let lateMode = 'infinite';
-                    let penalty = 0;
-                    
-                    if (aRaw.late_policy) {
-                        if (!aRaw.late_policy.allow_late) lateMode = 'no_late';
-                        else if (aRaw.late_policy.grace_period_hours > 0) lateMode = 'custom';
-                        else lateMode = 'infinite';
-                        penalty = aRaw.late_policy.penalty_percentage || 0;
-                    }
-
                     let lateBadgeText = '';
-                    if (lateMode === 'no_late') lateBadgeText = ' (🚫 無遲交)';
-                    else if (lateMode === 'custom') lateBadgeText = ` (⏳ 遲交扣 ${penalty}%)`;
+                    if (blockLateMode === 'no_late') lateBadgeText = ' (🚫 無遲交)';
+                    else if (blockLateMode === 'custom') lateBadgeText = ` (⏳ 遲交扣 ${blockPenalty}%)`;
                     else {
-                        lateBadgeText = penalty > 0 ? ` (♾️ 遲交扣 ${penalty}%)` : ' (♾️ 可遲交)';
+                        lateBadgeText = blockPenalty > 0 ? ` (♾️ 遲交扣 ${blockPenalty}%)` : ' (♾️ 可遲交)';
                     }
 
                     let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:1rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
@@ -592,7 +609,6 @@ window.FeatureTimeline = (() => {
                 </div>`;
         }
 
-        // 🌟 核心修正：移除囉嗦的「繼承」選項，乾淨保留三模式，無限期可帶入預設 0% 扣分
         let tLateMode = t.late_mode || 'infinite';
 
         return `
@@ -798,7 +814,6 @@ window.FeatureTimeline = (() => {
              `;
         }
 
-        // 🌟 核心修正：外層區塊同享 3 個乾淨選項的待遇
         const bLateMode = bState.late_mode || 'infinite';
 
         container.innerHTML = `
@@ -882,7 +897,7 @@ window.FeatureTimeline = (() => {
                 description: '', 
                 due_date: '', 
                 is_published: false, 
-                late_mode: 'infinite', // 🌟 無痛最省事預設
+                late_mode: 'infinite',
                 late_grace: 0,
                 late_penalty: 0,
                 tasks: [] 
@@ -949,7 +964,6 @@ window.FeatureTimeline = (() => {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
             
-            // 🌟 智慧映射舊資料至新三大模式
             if (aRaw.late_policy) {
                 if (!aRaw.late_policy.allow_late) {
                     bState.late_mode = 'no_late';
@@ -1262,7 +1276,6 @@ window.FeatureTimeline = (() => {
                 try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; }
             }
             
-            // 🌟 核心轉換：拋棄 is_inherited，只專注於三大實質規則寫入資料庫
             let mode = bState.late_mode || 'infinite';
             let allowLate = (mode === 'infinite' || mode === 'custom');
             let grace = (mode === 'custom') ? (parseInt(bState.late_grace) || 0) : 0;
@@ -1274,7 +1287,6 @@ window.FeatureTimeline = (() => {
                 penalty_percentage: penalty
             };
             
-            // 清理舊資料遺留欄位
             delete mergedRawData.allow_late; 
             delete mergedRawData.late_policy.is_inherited; 
             
