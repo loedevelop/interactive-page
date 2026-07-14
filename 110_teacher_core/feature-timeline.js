@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v9.3 文字對齊與全類型補齊版：修正作業類型標籤，並補齊巢狀作業內層的兩種缺失類型
+ * 🌟 v9.4 專業命名版：徹底移除白痴字眼，全面正名為「作業群組」
  */
 
 window.FeatureTimeline = (() => {
@@ -179,7 +179,7 @@ window.FeatureTimeline = (() => {
         
         let extraTag = '';
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
-        else if (t.type === 'group') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(內部巢狀資料夾)</span>';
+        else if (t.type === 'group') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(內部作業群組)</span>';
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
         let taskTitleDisplay = '';
@@ -416,7 +416,7 @@ window.FeatureTimeline = (() => {
                                 tasksHtml += `
                                     <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
                                         <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
-                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名巢狀作業'}</span>
+                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名作業群組'}</span>
                                         </div>
                                 `;
                                 if (t.subTasks && t.subTasks.length > 0) {
@@ -426,7 +426,7 @@ window.FeatureTimeline = (() => {
                                     });
                                     tasksHtml += `</div>`;
                                 } else {
-                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此巢狀作業尚無內容)</div>`;
+                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此作業群組尚無內容)</div>`;
                                 }
                                 tasksHtml += `</div>`;
                             } else {
@@ -749,24 +749,24 @@ window.FeatureTimeline = (() => {
                          ondragend="this.setAttribute('draggable', 'false');"
                          style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 2px solid #CBD5E1; margin-bottom: 20px; transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 15px; border-bottom: 2px solid #E2E8F0; padding-bottom: 10px;">
-                            <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個巢狀作業"
+                            <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個作業群組"
                                   onmousedown="document.getElementById('group-block-${idx}').setAttribute('draggable', 'true')"
                                   onmouseup="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')"
                                   onmouseleave="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
                             <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 巢狀作業大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#3B82F6; padding:8px 12px; background:white; border:1px solid #93C5FD; border-radius:6px; outline:none;">${t.title || ''}</div>
-                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個巢狀作業">🗑️</button>
+                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 作業群組大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#3B82F6; padding:8px 12px; background:white; border:1px solid #93C5FD; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個作業群組">🗑️</button>
                         </div>
                         
                         <div style="padding-left: 20px; border-left: 3px solid #E2E8F0; margin-left: 10px;">
                             ${subTasksHtml}
                             
                             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top: 10px;">
-                                <span style="font-size:0.85rem; color:#94A3B8; font-weight:bold; margin-right:5px;">巢狀作業類型：</span>
+                                <span style="font-size:0.85rem; color:#94A3B8; font-weight:bold; margin-right:5px;">作業群組類型：</span>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'link')">+ 🔗 連結</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2ECC71;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'drive')">+ 📁 Drive</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'group')">+ 🗂️ 巢狀作業</button>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'group')">+ 🗂️ 作業群組</button>
                                 ${addSubResourceHtml}
                             </div>
                         </div>
@@ -874,7 +874,7 @@ window.FeatureTimeline = (() => {
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('check')">+ 📌 一般任務</button>
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('link')">+ 🔗 連結任務</button>
                     <button class="btn btn-action" style="font-size:1rem; background: #2ECC71;" onclick="window.FeatureTimeline.addTopTask('drive')">+ 📁 Drive</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 巢狀作業</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 作業群組</button>
                     ${addResourceHtml}
                 </div>
 
