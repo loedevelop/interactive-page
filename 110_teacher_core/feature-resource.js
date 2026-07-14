@@ -32,11 +32,13 @@ window.FeatureResource = (() => {
             const safeData = resData || [];
             db.resourceLibrary = safeData;
 
+            // 修正：保留所有資源，將 scope === 'global' 納入 mapping，打通全域資源判斷
             db.resourceMappings = safeData
-                .filter(r => r.scope === 'class' && r.target_class_id)
+                .filter(r => (r.scope === 'class' && r.target_class_id) || r.scope === 'global')
                 .map(r => ({
                     resource_id: r.id,
-                    class_id: r.target_class_id
+                    class_id: r.scope === 'global' ? 'ALL' : r.target_class_id,
+                    scope: r.scope
                 }));
             
         } catch (err) {

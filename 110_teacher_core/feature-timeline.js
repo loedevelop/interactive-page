@@ -584,16 +584,25 @@ window.FeatureTimeline = (() => {
         `;
     }
 
+    // 🌟 修復 1：讓連結內部的下拉選單能正確支援全域與班級專屬資源
     function getResourceDropdownHtmlForBuilder(htmlIdxStr, currentUrl, isSub, parentIdx, subIdx) {
         if (!bState) return '';
-        const resIds = (db.resourceMappings || []).filter(m => m.class_id === bState.classId).map(m => m.resource_id);
-        const res = (db.resourceLibrary || []).filter(r => resIds.includes(r.id));
-        if (res.length === 0) return '';
         
-        let opts = res.map(r => `<option value="${r.url}" ${currentUrl === r.url ? 'selected' : ''}>${r.icon} ${r.name}</option>`).join('');
+        const availableResources = (db.resourceLibrary || []).filter(r => 
+            r.scope === 'global' || 
+            (r.scope === 'class' && r.target_class_id === bState.classId)
+        );
+
+        if (availableResources.length === 0) return '';
         
-        // 綁定不同的呼叫邏輯
-        let changeAction = isSub ? `window.FeatureTimeline.updateSubTaskUrl(${parentIdx}, ${subIdx}, this.value)` : `window.FeatureTimeline.updateTopTaskUrl(${parentIdx}, this.value)`;
+        let opts = availableResources.map(r => {
+            const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
+            return `<option value="${r.url}" ${currentUrl === r.url ? 'selected' : ''}>${r.icon} ${r.name} (${scopeIcon})</option>`;
+        }).join('');
+        
+        let changeAction = isSub 
+            ? `window.FeatureTimeline.updateSubTaskUrl(${parentIdx}, ${subIdx}, this.value)` 
+            : `window.FeatureTimeline.updateTopTaskUrl(${parentIdx}, this.value)`;
 
         return `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="${changeAction}">
                     <option value="">📚 手動套用資源庫</option>${opts}
@@ -697,24 +706,31 @@ window.FeatureTimeline = (() => {
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : getHistoryDropdownHtml();
 
         let classResOpts = '';
-        const resIds = (db.resourceMappings || []).filter(m => m.class_id === bState.classId).map(m => m.resource_id);
-        const classResList = (db.resourceLibrary || []).filter(r => resIds.includes(r.id));
+        
+        // 🌟 修復 2：最下方的下拉選單正確支援全域與班級專屬資源，避免反灰
+        const classResList = (db.resourceLibrary || []).filter(r => 
+            r.scope === 'global' || 
+            (r.scope === 'class' && r.target_class_id === bState.classId)
+        );
         
         if (classResList.length > 0) {
-            classResOpts = classResList.map(r => `<option value="${r.id}">${r.icon} ${r.name}</option>`).join('');
+            classResOpts = classResList.map(r => {
+                const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
+                return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
+            }).join('');
         }
 
         let addResourceHtml = '';
         if (classResList.length > 0) {
             addResourceHtml = `
                 <select class="form-control" style="width:auto; padding:6px 12px; font-size:1rem; font-weight:800; border:2px solid #8B5CF6; color:#8B5CF6; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(this.value); this.value=''; }">
-                    <option value="" disabled selected>+ 📚 班級資源</option>
+                    <option value="" disabled selected>+ 📚 班級與全域資源</option>
                     ${classResOpts}
                 </select>
             `;
         } else {
              addResourceHtml = `
-                <button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫派發資源給本班級">+ 📚 本班尚無班級資源</button>
+                <button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>
              `;
         }
         
