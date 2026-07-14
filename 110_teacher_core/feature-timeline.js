@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v9.0 極簡繼承覆寫版：期限與遲交規則雙軌一體化、全域資源整合、百寶箱巢狀支援
+ * 🌟 v9.1 霸王色除錯版：拔除腦殘繼承 UI、精簡為三大遲交模式、支援無限期扣分
  */
 
 window.FeatureTimeline = (() => {
@@ -96,6 +96,10 @@ window.FeatureTimeline = (() => {
         if (graceEl) bState.late_grace = parseInt(graceEl.value) || 0;
         if (penaltyEl) bState.late_penalty = parseInt(penaltyEl.value) || 0;
 
+        // 強制資料乾淨
+        if (bState.late_mode === 'no_late') { bState.late_grace = 0; bState.late_penalty = 0; }
+        if (bState.late_mode === 'infinite') { bState.late_grace = 0; }
+
         bState.tasks.forEach((t, idx) => {
             if (t.type === 'group') {
                 const gTitle = document.getElementById(`group-title-${idx}`);
@@ -127,9 +131,15 @@ window.FeatureTimeline = (() => {
                         sub.description = (text === '') ? '' : sDesc.innerHTML;
                     }
                     
-                    if (sLateMode) sub.late_mode = sLateMode.value;
-                    if (sGrace) sub.grace_period_hours = parseInt(sGrace.value) || 0;
-                    if (sPenalty) sub.penalty_percentage = parseInt(sPenalty.value) || 0;
+                    if (sLateMode) {
+                        sub.late_mode = sLateMode.value;
+                        sub.penalty_percentage = sPenalty ? (parseInt(sPenalty.value) || 0) : 0;
+                        sub.grace_period_hours = sGrace ? (parseInt(sGrace.value) || 0) : 0;
+
+                        // 強制清空無關資料
+                        if (sub.late_mode === 'no_late') { sub.grace_period_hours = 0; sub.penalty_percentage = 0; }
+                        if (sub.late_mode === 'infinite') { sub.grace_period_hours = 0; }
+                    }
                 });
             } else {
                 const tTitle = document.getElementById(`task-title-${idx}`);
@@ -154,9 +164,14 @@ window.FeatureTimeline = (() => {
                     t.description = (text === '') ? '' : tDesc.innerHTML;
                 }
 
-                if (tLateMode) t.late_mode = tLateMode.value;
-                if (tGrace) t.grace_period_hours = parseInt(tGrace.value) || 0;
-                if (tPenalty) t.penalty_percentage = parseInt(tPenalty.value) || 0;
+                if (tLateMode) {
+                    t.late_mode = tLateMode.value;
+                    t.penalty_percentage = tPenalty ? (parseInt(tPenalty.value) || 0) : 0;
+                    t.grace_period_hours = tGrace ? (parseInt(tGrace.value) || 0) : 0;
+
+                    if (t.late_mode === 'no_late') { t.grace_period_hours = 0; t.penalty_percentage = 0; }
+                    if (t.late_mode === 'infinite') { t.grace_period_hours = 0; }
+                }
             }
         });
     }
@@ -199,9 +214,16 @@ window.FeatureTimeline = (() => {
         let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
         
         let taskLateBadge = '';
-        if (t.late_mode === 'no_late') taskLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
-        else if (t.late_mode === 'infinite') taskLateBadge = `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
-        else if (t.late_mode === 'custom') taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 遲交扣 ${t.penalty_percentage}%</span>`;
+        if (t.late_mode === 'no_late') {
+            taskLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
+        } else if (t.late_mode === 'custom') {
+            taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 遲交扣 ${t.penalty_percentage || 0}%</span>`;
+        } else {
+            let p = t.penalty_percentage || 0;
+            taskLateBadge = p > 0 
+                ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${p}%</span>`
+                : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
+        }
 
         const marginStyle = isSubTask ? 'margin-top:10px;' : 'margin-top:14px;';
         
@@ -401,24 +423,21 @@ window.FeatureTimeline = (() => {
                         try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
                     }
                     
-                    let allowLateFlag = false;
-                    let penaltyStr = '';
-                    if (aRaw.late_policy) {
-                        allowLateFlag = aRaw.late_policy.allow_late;
-                        if (allowLateFlag && aRaw.late_policy.penalty_percentage > 0) {
-                            penaltyStr = ` (扣 ${aRaw.late_policy.penalty_percentage}%)`;
-                        }
-                    } else {
-                        allowLateFlag = aRaw.allow_late !== false; 
-                    }
+                    let lateMode = 'infinite';
+                    let penalty = 0;
                     
+                    if (aRaw.late_policy) {
+                        if (!aRaw.late_policy.allow_late) lateMode = 'no_late';
+                        else if (aRaw.late_policy.grace_period_hours > 0) lateMode = 'custom';
+                        else lateMode = 'infinite';
+                        penalty = aRaw.late_policy.penalty_percentage || 0;
+                    }
+
                     let lateBadgeText = '';
-                    if (aRaw.late_policy && !aRaw.late_policy.is_inherited) {
-                        if (!aRaw.late_policy.allow_late) lateBadgeText = ' (🚫 無遲交)';
-                        else if (aRaw.late_policy.penalty_percentage === 0) lateBadgeText = ' (♾️ 可遲交)';
-                        else lateBadgeText = ` (⏳ 扣 ${aRaw.late_policy.penalty_percentage}%)`;
-                    } else {
-                        lateBadgeText = allowLateFlag ? ` (繼承可遲交${penaltyStr})` : '';
+                    if (lateMode === 'no_late') lateBadgeText = ' (🚫 無遲交)';
+                    else if (lateMode === 'custom') lateBadgeText = ` (⏳ 遲交扣 ${penalty}%)`;
+                    else {
+                        lateBadgeText = penalty > 0 ? ` (♾️ 遲交扣 ${penalty}%)` : ' (♾️ 可遲交)';
                     }
 
                     let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:1rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
@@ -573,8 +592,8 @@ window.FeatureTimeline = (() => {
                 </div>`;
         }
 
-        // 🌟 核心防雷：單行極簡 UI，結合期限與遲交規則
-        let tLateMode = t.late_mode || 'inherit';
+        // 🌟 核心修正：移除囉嗦的「繼承」選項，乾淨保留三模式，無限期可帶入預設 0% 扣分
+        let tLateMode = t.late_mode || 'infinite';
 
         return `
             <div id="${idPrefix}-block-${htmlIdxStr}" draggable="false" 
@@ -599,18 +618,26 @@ window.FeatureTimeline = (() => {
                         </div>
                         <div style="display:flex; align-items:center; gap:5px;">
                             <label style="font-size:0.9rem; font-weight:bold; color:#64748B;">遲交:</label>
-                            <select id="${idPrefix}-late-mode-${htmlIdxStr}" class="form-control" style="padding:6px; font-size:0.9rem; width:auto;" onchange="document.getElementById('${idPrefix}-late-custom-${htmlIdxStr}').style.display = (this.value === 'custom') ? 'flex' : 'none'">
-                                <option value="inherit" ${tLateMode === 'inherit' ? 'selected' : ''}>預設 (繼承)</option>
+                            <select id="${idPrefix}-late-mode-${htmlIdxStr}" class="form-control" style="padding:6px; font-size:0.9rem; width:auto;" onchange="
+                                const m = this.value;
+                                document.getElementById('${idPrefix}-late-custom-${htmlIdxStr}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
+                                document.getElementById('${idPrefix}-grace-wrapper-${htmlIdxStr}').style.display = (m === 'custom') ? 'flex' : 'none';
+                            ">
                                 <option value="no_late" ${tLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                <option value="infinite" ${tLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交 (無限期)</option>
-                                <option value="custom" ${tLateMode === 'custom' ? 'selected' : ''}>⏳ 允許遲交 (自訂)</option>
+                                <option value="infinite" ${tLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交 (無限期，可扣分)</option>
+                                <option value="custom" ${tLateMode === 'custom' ? 'selected' : ''}>⏳ 允許遲交 (自訂寬限，可扣分)</option>
                             </select>
                         </div>
-                        <div id="${idPrefix}-late-custom-${htmlIdxStr}" style="display:${tLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px; background:#F8FAFC; padding:4px 8px; border-radius:6px; border:1px solid #E2E8F0;">
-                            <label style="font-size:0.85rem; color:#64748B;">寬限(時):</label>
-                            <input type="number" id="${idPrefix}-grace-${htmlIdxStr}" class="form-control" style="padding:4px; width:60px;" value="${t.grace_period_hours || 0}" min="0">
-                            <label style="font-size:0.85rem; color:#64748B;">扣分(%):</label>
-                            <input type="number" id="${idPrefix}-penalty-${htmlIdxStr}" class="form-control" style="padding:4px; width:60px;" value="${t.penalty_percentage || 0}" min="0" max="100">
+                        
+                        <div id="${idPrefix}-late-custom-${htmlIdxStr}" style="display:${(tLateMode === 'infinite' || tLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:5px; background:#F8FAFC; padding:4px 8px; border-radius:6px; border:1px solid #E2E8F0;">
+                            <div id="${idPrefix}-grace-wrapper-${htmlIdxStr}" style="display:${tLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
+                                <label style="font-size:0.85rem; color:#64748B;">寬限(時):</label>
+                                <input type="number" id="${idPrefix}-grace-${htmlIdxStr}" class="form-control" style="padding:4px; width:50px;" value="${t.grace_period_hours || 0}" min="0">
+                            </div>
+                            <div style="display:flex; align-items:center; gap:5px;">
+                                <label style="font-size:0.85rem; color:#64748B;">扣分(%):</label>
+                                <input type="number" id="${idPrefix}-penalty-${htmlIdxStr}" class="form-control" style="padding:4px; width:50px;" value="${t.penalty_percentage || 0}" min="0" max="100">
+                            </div>
                         </div>
                     </div>
 
@@ -771,8 +798,8 @@ window.FeatureTimeline = (() => {
              `;
         }
 
-        // 🌟 核心防雷：最外層的極簡單行下拉選單，與期限並列
-        const bLateMode = bState.late_mode || 'inherit';
+        // 🌟 核心修正：外層區塊同享 3 個乾淨選項的待遇
+        const bLateMode = bState.late_mode || 'infinite';
 
         container.innerHTML = `
             <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">
@@ -792,16 +819,19 @@ window.FeatureTimeline = (() => {
                         
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label style="font-weight:800; font-size:1rem; color:#334155;">遲交規則：</label>
-                            <select id="builder-late-mode-${bState.containerId}" class="form-control" style="padding:4px 8px; font-size:1rem; width:auto;" onchange="document.getElementById('builder-late-custom-${bState.containerId}').style.display = (this.value === 'custom') ? 'flex' : 'none'">
-                                <option value="inherit" ${bLateMode === 'inherit' ? 'selected' : ''}>預設 (繼承)</option>
+                            <select id="builder-late-mode-${bState.containerId}" class="form-control" style="padding:4px 8px; font-size:1rem; width:auto;" onchange="
+                                const m = this.value;
+                                document.getElementById('builder-late-custom-${bState.containerId}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
+                                document.getElementById('builder-grace-wrapper-${bState.containerId}').style.display = (m === 'custom') ? 'flex' : 'none';
+                            ">
                                 <option value="no_late" ${bLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                <option value="infinite" ${bLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交 (無限期，不扣分)</option>
-                                <option value="custom" ${bLateMode === 'custom' ? 'selected' : ''}>⏳ 允許遲交 (自訂)</option>
+                                <option value="infinite" ${bLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交 (無限期，可扣分)</option>
+                                <option value="custom" ${bLateMode === 'custom' ? 'selected' : ''}>⏳ 允許遲交 (自訂寬限，可扣分)</option>
                             </select>
                         </div>
 
-                        <div id="builder-late-custom-${bState.containerId}" style="display:${bLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:10px; background:#F1F5F9; padding:4px 10px; border-radius:6px; border:1px solid #CBD5E1;">
-                            <div style="display:flex; align-items:center; gap:5px;">
+                        <div id="builder-late-custom-${bState.containerId}" style="display:${(bLateMode === 'infinite' || bLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:#F1F5F9; padding:4px 10px; border-radius:6px; border:1px solid #CBD5E1;">
+                            <div id="builder-grace-wrapper-${bState.containerId}" style="display:${bLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
                                 <label style="font-size:0.9rem; font-weight:bold; color:#475569;">寬限(小時):</label>
                                 <input type="number" id="builder-grace-${bState.containerId}" class="form-control" style="padding:4px; width:70px;" value="${bState.late_grace || 0}" min="0">
                             </div>
@@ -852,7 +882,7 @@ window.FeatureTimeline = (() => {
                 description: '', 
                 due_date: '', 
                 is_published: false, 
-                late_mode: 'inherit',
+                late_mode: 'infinite', // 🌟 無痛最省事預設
                 late_grace: 0,
                 late_penalty: 0,
                 tasks: [] 
@@ -919,20 +949,19 @@ window.FeatureTimeline = (() => {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
             
+            // 🌟 智慧映射舊資料至新三大模式
             if (aRaw.late_policy) {
-                if (aRaw.late_policy.is_inherited) {
-                    bState.late_mode = 'inherit';
-                } else if (!aRaw.late_policy.allow_late) {
+                if (!aRaw.late_policy.allow_late) {
                     bState.late_mode = 'no_late';
-                } else if (aRaw.late_policy.allow_late && aRaw.late_policy.grace_period_hours === 0 && aRaw.late_policy.penalty_percentage === 0) {
-                    bState.late_mode = 'infinite';
-                } else {
+                } else if (aRaw.late_policy.grace_period_hours > 0) {
                     bState.late_mode = 'custom';
+                } else {
+                    bState.late_mode = 'infinite';
                 }
                 bState.late_grace = aRaw.late_policy.grace_period_hours || 0;
                 bState.late_penalty = aRaw.late_policy.penalty_percentage || 0;
             } else {
-                bState.late_mode = 'inherit';
+                bState.late_mode = 'infinite';
                 bState.late_grace = 0;
                 bState.late_penalty = 0;
             }
@@ -1025,20 +1054,19 @@ window.FeatureTimeline = (() => {
             if (typeof aRaw === 'string') {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
+            
             if (aRaw.late_policy) {
-                if (aRaw.late_policy.is_inherited) {
-                    bState.late_mode = 'inherit';
-                } else if (!aRaw.late_policy.allow_late) {
+                if (!aRaw.late_policy.allow_late) {
                     bState.late_mode = 'no_late';
-                } else if (aRaw.late_policy.allow_late && aRaw.late_policy.grace_period_hours === 0 && aRaw.late_policy.penalty_percentage === 0) {
-                    bState.late_mode = 'infinite';
-                } else {
+                } else if (aRaw.late_policy.grace_period_hours > 0) {
                     bState.late_mode = 'custom';
+                } else {
+                    bState.late_mode = 'infinite';
                 }
                 bState.late_grace = aRaw.late_policy.grace_period_hours || 0;
                 bState.late_penalty = aRaw.late_policy.penalty_percentage || 0;
             } else {
-                bState.late_mode = 'inherit';
+                bState.late_mode = 'infinite';
                 bState.late_grace = 0;
                 bState.late_penalty = 0;
             }
@@ -1096,7 +1124,7 @@ window.FeatureTimeline = (() => {
                     url_text: '', 
                     description: '',
                     due_date: '',
-                    late_mode: 'inherit',
+                    late_mode: 'infinite',
                     grace_period_hours: 0,
                     penalty_percentage: 0,
                     resource_id: res.id
@@ -1196,14 +1224,14 @@ window.FeatureTimeline = (() => {
             if (type === 'group') {
                 bState.tasks.push({ id: `group_${Date.now()}`, type: 'group', title: '', subTasks: [] });
             } else {
-                bState.tasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '', late_mode: 'inherit', grace_period_hours: 0, penalty_percentage: 0 });
+                bState.tasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0 });
             }
             renderBuilderUI();
         },
         addSubTask: (parentIdx, type) => {
             syncState();
             if (!bState.tasks[parentIdx].subTasks) bState.tasks[parentIdx].subTasks = [];
-            bState.tasks[parentIdx].subTasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '', late_mode: 'inherit', grace_period_hours: 0, penalty_percentage: 0 });
+            bState.tasks[parentIdx].subTasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0 });
             renderBuilderUI();
         },
         removeTask: (idx) => { syncState(); bState.tasks.splice(idx, 1); renderBuilderUI(); },
@@ -1234,19 +1262,21 @@ window.FeatureTimeline = (() => {
                 try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; }
             }
             
-            // 將最外層極簡 UI 的狀態轉回 DB 相容的 late_policy 結構
-            let isInherit = (bState.late_mode === 'inherit' || !bState.late_mode);
-            let allowLate = (bState.late_mode === 'infinite' || bState.late_mode === 'custom');
-            let grace = (bState.late_mode === 'custom') ? (parseInt(bState.late_grace) || 0) : 0;
-            let penalty = (bState.late_mode === 'custom') ? (parseInt(bState.late_penalty) || 0) : 0;
+            // 🌟 核心轉換：拋棄 is_inherited，只專注於三大實質規則寫入資料庫
+            let mode = bState.late_mode || 'infinite';
+            let allowLate = (mode === 'infinite' || mode === 'custom');
+            let grace = (mode === 'custom') ? (parseInt(bState.late_grace) || 0) : 0;
+            let penalty = (mode !== 'no_late') ? (parseInt(bState.late_penalty) || 0) : 0;
 
             mergedRawData.late_policy = {
-                is_inherited: isInherit,
                 allow_late: allowLate,
                 grace_period_hours: grace,
                 penalty_percentage: penalty
             };
+            
+            // 清理舊資料遺留欄位
             delete mergedRawData.allow_late; 
+            delete mergedRawData.late_policy.is_inherited; 
             
             const payload = {
                 class_id: bState.classId,
