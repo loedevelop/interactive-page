@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v6.3 孤兒作業救援版：完美防禦排程覆寫與結算變更災難
+ * 🌟 v8.7 SaaS 百寶箱終極版：完美防禦排程覆寫 + 遲交快照機制 + 巢狀任務群組支援
  */
 
 window.FeatureTimeline = (() => {
@@ -13,7 +13,8 @@ window.FeatureTimeline = (() => {
     }
 
     let bState = null; 
-    let dragTaskIndex = null;
+    let dragTopTaskIndex = null;
+    let dragSubTaskData = null; // { parentIdx, subIdx }
     let dragAssignId = null;
 
     function checkCanEditTimeline(classId) {
@@ -74,7 +75,12 @@ window.FeatureTimeline = (() => {
         const descEl = document.getElementById(`builder-desc-${nid}`);
         const dueEl = document.getElementById(`builder-due-${nid}`);
         const pubEl = document.getElementById(`builder-pub-${nid}`);
+        
+        // 遲交快照與覆寫欄位
+        const inheritEl = document.getElementById(`builder-late-inherit-${nid}`);
         const allowLateEl = document.getElementById(`builder-allow-late-${nid}`);
+        const graceEl = document.getElementById(`builder-grace-${nid}`);
+        const penaltyEl = document.getElementById(`builder-penalty-${nid}`);
         
         if (titleEl) {
             let text = titleEl.textContent.trim();
@@ -83,7 +89,13 @@ window.FeatureTimeline = (() => {
         
         if (dueEl) bState.due_date = dueEl.value;
         if (pubEl) bState.is_published = pubEl.checked;
-        if (allowLateEl) bState.allow_late = allowLateEl.checked;
+        
+        if (inheritEl && bState.late_policy) {
+            bState.late_policy.is_inherited = inheritEl.checked;
+            bState.late_policy.allow_late = allowLateEl ? allowLateEl.checked : false;
+            bState.late_policy.grace_period_hours = graceEl ? (parseInt(graceEl.value) || 0) : 0;
+            bState.late_policy.penalty_percentage = penaltyEl ? (parseInt(penaltyEl.value) || 0) : 0;
+        }
         
         if (descEl) {
             let text = descEl.textContent.trim();
@@ -91,26 +103,103 @@ window.FeatureTimeline = (() => {
         }
 
         bState.tasks.forEach((t, idx) => {
-            const tTitle = document.getElementById(`task-title-${idx}`);
-            const tUrl = document.getElementById(`task-url-${idx}`);
-            const tUrlText = document.getElementById(`task-url-text-${idx}`);
-            const tDesc = document.getElementById(`task-desc-${idx}`);
-            const tDue = document.getElementById(`task-due-${idx}`);
-            
-            if (tTitle) {
-                let text = tTitle.textContent.trim();
-                t.title = (text === '') ? '' : tTitle.innerHTML;
-            }
-
-            if (tUrl) t.url = tUrl.value;
-            if (tUrlText) t.url_text = tUrlText.value; 
-            if (tDue) t.due_date = tDue.value;
-            
-            if (tDesc) {
-                let text = tDesc.textContent.trim();
-                t.description = (text === '') ? '' : tDesc.innerHTML;
+            if (t.type === 'group') {
+                const gTitle = document.getElementById(`group-title-${idx}`);
+                if (gTitle) {
+                    let text = gTitle.textContent.trim();
+                    t.title = (text === '') ? '' : gTitle.innerHTML;
+                }
+                
+                (t.subTasks || []).forEach((sub, sIdx) => {
+                    const sTitle = document.getElementById(`sub-title-${idx}-${sIdx}`);
+                    const sUrl = document.getElementById(`sub-url-${idx}-${sIdx}`);
+                    const sUrlText = document.getElementById(`sub-url-text-${idx}-${sIdx}`);
+                    const sDesc = document.getElementById(`sub-desc-${idx}-${sIdx}`);
+                    const sDue = document.getElementById(`sub-due-${idx}-${sIdx}`);
+                    
+                    if (sTitle) {
+                        let text = sTitle.textContent.trim();
+                        sub.title = (text === '') ? '' : sTitle.innerHTML;
+                    }
+                    if (sUrl) sub.url = sUrl.value;
+                    if (sUrlText) sub.url_text = sUrlText.value; 
+                    if (sDue) sub.due_date = sDue.value;
+                    if (sDesc) {
+                        let text = sDesc.textContent.trim();
+                        sub.description = (text === '') ? '' : sDesc.innerHTML;
+                    }
+                });
+            } else {
+                const tTitle = document.getElementById(`task-title-${idx}`);
+                const tUrl = document.getElementById(`task-url-${idx}`);
+                const tUrlText = document.getElementById(`task-url-text-${idx}`);
+                const tDesc = document.getElementById(`task-desc-${idx}`);
+                const tDue = document.getElementById(`task-due-${idx}`);
+                
+                if (tTitle) {
+                    let text = tTitle.textContent.trim();
+                    t.title = (text === '') ? '' : tTitle.innerHTML;
+                }
+                if (tUrl) t.url = tUrl.value;
+                if (tUrlText) t.url_text = tUrlText.value; 
+                if (tDue) t.due_date = tDue.value;
+                if (tDesc) {
+                    let text = tDesc.textContent.trim();
+                    t.description = (text === '') ? '' : tDesc.innerHTML;
+                }
             }
         });
+    }
+
+    // --- 內部共用：產出單一子任務的唯讀 HTML (Viewer) ---
+    function generateReadOnlyTaskHtml(t, effectiveBlockDueDate, isSubTask = false) {
+        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
+        let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
+        
+        let extraTag = '';
+        if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
+        else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
+
+        let taskTitleDisplay = '';
+        let linkContent = '';
+
+        if (t.type === 'link') {
+            let actualUrlText = (t.url_text || '').trim();
+            let actualTitle = (t.title || '').trim();
+
+            if (actualUrlText !== '') {
+                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${actualTitle || '未命名任務'}</span>`;
+                linkContent = t.url ? `<a href="${t.url}" target="_blank" class="rt-normalize" style="margin-left:10px; font-size:1rem; color:var(--primary); text-decoration:underline; font-weight:800;">${actualUrlText}</a>` : `<span class="rt-normalize" style="margin-left:10px; font-size:1rem; color:#94A3B8;">(未設定網址)</span>`;
+            } else {
+                let fallbackText = actualTitle || '未命名連結';
+                if (t.url) {
+                    taskTitleDisplay = `<a href="${t.url}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;">${fallbackText}</a>`;
+                } else {
+                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (未設定網址)</span>`;
+                }
+            }
+        } else {
+            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${t.title || '未命名任務'}</span>`;
+        }
+
+        let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
+        let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
+        
+        let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
+        let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
+
+        const marginStyle = isSubTask ? 'margin-top:10px;' : 'margin-top:14px;';
+        
+        return `
+            <div style="${marginStyle}">
+                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
+                    <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="學生端核取方塊">
+                    ${iconHtml}${taskTitleDisplay}${linkContent}
+                    ${extraTag} ${dueBadge}
+                </div>
+                ${taskDescHtml}
+            </div>
+        `;
     }
 
     function renderTimeline(classId, scrollMode = 'current', targetId = null) {
@@ -136,7 +225,6 @@ window.FeatureTimeline = (() => {
         if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
             sessions = [...raw.custom_sessions];
         } else {
-            // 退回舊有邏輯
             sessions = db.sessions[classId] || [];
             if (sessions.length === 0) {
                 let meetDays = (cls.meetDays || cls.meet_days || raw.meet_days || []).map(Number);
@@ -154,10 +242,7 @@ window.FeatureTimeline = (() => {
             }
         }
 
-        // =========================================
-        // 🚨 終極防禦：孤兒作業救援機制 (Orphan Rescue)
-        // 無條件聯集該班級所有曾出過作業的日期，防止「一併更改過去排程」導致舊作業破圖消失
-        // =========================================
+        // 孤兒作業救援機制 (Orphan Rescue)
         const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
         sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
@@ -249,9 +334,18 @@ window.FeatureTimeline = (() => {
             if (nodeAssignments.length > 0) {
                 nodeAssignments.forEach(a => {
                     let effectiveBlockDueDate = a.due_date;
+                    // 這裡的 dueDate 偵測我們只針對單純任務，若有群組則取外層預設
                     if (!effectiveBlockDueDate && a.tasks && a.tasks.length > 0) {
-                        const explicitDates = a.tasks.map(t => t.due_date).filter(d => d);
-                        if (explicitDates.length === a.tasks.length && explicitDates.every(d => d === explicitDates[0])) {
+                        const explicitDates = [];
+                        a.tasks.forEach(t => {
+                            if (t.type === 'group') {
+                                (t.subTasks || []).forEach(sub => { if(sub.due_date) explicitDates.push(sub.due_date); });
+                            } else {
+                                if(t.due_date) explicitDates.push(t.due_date);
+                            }
+                        });
+                        
+                        if (explicitDates.length > 0 && explicitDates.every(d => d === explicitDates[0])) {
                             effectiveBlockDueDate = explicitDates[0];
                         }
                     }
@@ -259,51 +353,27 @@ window.FeatureTimeline = (() => {
                     let tasksHtml = '';
                     if (a.tasks && a.tasks.length > 0) {
                         a.tasks.forEach(t => {
-                            let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
-                            let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
-                            
-                            let extraTag = '';
-                            if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
-                            else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
-
-                            let taskTitleDisplay = '';
-                            let linkContent = '';
-
-                            if (t.type === 'link') {
-                                let actualUrlText = (t.url_text || '').trim();
-                                let actualTitle = (t.title || '').trim();
-
-                                if (actualUrlText !== '') {
-                                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${actualTitle || '未命名任務'}</span>`;
-                                    linkContent = t.url ? `<a href="${t.url}" target="_blank" class="rt-normalize" style="margin-left:10px; font-size:1rem; color:var(--primary); text-decoration:underline; font-weight:800;">${actualUrlText}</a>` : `<span class="rt-normalize" style="margin-left:10px; font-size:1rem; color:#94A3B8;">(未設定網址)</span>`;
+                            if (t.type === 'group') {
+                                // 處理巢狀群組呈現 (Viewer)
+                                tasksHtml += `
+                                    <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
+                                        <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
+                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組'}</span>
+                                        </div>
+                                `;
+                                if (t.subTasks && t.subTasks.length > 0) {
+                                    tasksHtml += `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">`;
+                                    t.subTasks.forEach(sub => {
+                                        tasksHtml += generateReadOnlyTaskHtml(sub, effectiveBlockDueDate, true);
+                                    });
+                                    tasksHtml += `</div>`;
                                 } else {
-                                    let fallbackText = actualTitle || '未命名連結';
-                                    if (t.url) {
-                                        taskTitleDisplay = `<a href="${t.url}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;">${fallbackText}</a>`;
-                                    } else {
-                                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (未設定網址)</span>`;
-                                    }
+                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此群組尚無內容)</div>`;
                                 }
+                                tasksHtml += `</div>`;
                             } else {
-                                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${t.title || '未命名任務'}</span>`;
+                                tasksHtml += generateReadOnlyTaskHtml(t, effectiveBlockDueDate, false);
                             }
-
-                            let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                            let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
-                            
-                            let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
-                            let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
-
-                            tasksHtml += `
-                                <div style="margin-top:14px;">
-                                    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                                        <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="學生端核取方塊">
-                                        ${iconHtml}${taskTitleDisplay}${linkContent}
-                                        ${extraTag} ${dueBadge}
-                                    </div>
-                                    ${taskDescHtml}
-                                </div>
-                            `;
                         });
                     }
 
@@ -318,8 +388,17 @@ window.FeatureTimeline = (() => {
                         try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
                     }
                     
-                    let allowLateFlag = aRaw.allow_late !== false; 
-                    let lateBadgeText = allowLateFlag ? ' (接受遲交)' : '';
+                    let allowLateFlag = false;
+                    let penaltyStr = '';
+                    if (aRaw.late_policy) {
+                        allowLateFlag = aRaw.late_policy.allow_late;
+                        if (allowLateFlag && aRaw.late_policy.penalty_percentage > 0) {
+                            penaltyStr = ` (扣 ${aRaw.late_policy.penalty_percentage}%)`;
+                        }
+                    } else {
+                        allowLateFlag = aRaw.allow_late !== false; 
+                    }
+                    let lateBadgeText = allowLateFlag ? ` (接受遲交${penaltyStr})` : '';
                     let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:1rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
@@ -431,14 +510,92 @@ window.FeatureTimeline = (() => {
         }
     }
 
-    function getResourceDropdownHtml(idx, currentUrl) {
+    // --- 內部共用：產出單一子任務的 UI HTML (Builder) ---
+    function generateBuilderTaskHtml(t, parentIdx, subIdx = null) {
+        let isSub = subIdx !== null;
+        let idPrefix = isSub ? `sub` : `task`;
+        let htmlIdxStr = isSub ? `${parentIdx}-${subIdx}` : `${parentIdx}`;
+        let dragMethod = isSub ? `window.FeatureTimeline.dragSubTaskStart(event, ${parentIdx}, ${subIdx})` : `window.FeatureTimeline.dragTopTaskStart(event, ${parentIdx})`;
+        let dropMethod = isSub ? `window.FeatureTimeline.dropSubTask(event, ${parentIdx}, ${subIdx})` : `window.FeatureTimeline.dropTopTask(event, ${parentIdx})`;
+        let removeMethod = isSub ? `window.FeatureTimeline.removeSubTask(${parentIdx}, ${subIdx})` : `window.FeatureTimeline.removeTask(${parentIdx})`;
+        
+        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
+        let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.2rem; margin-right:4px;">${iconStr}</span>`;
+        
+        let urlInputHtml = '';
+        if (t.type === 'link') {
+            let sameBtn = '';
+            // 判斷上一個是否也是連結，提供同上按鈕
+            if (isSub) {
+                if (subIdx > 0 && bState.tasks[parentIdx].subTasks[subIdx-1].type === 'link') {
+                    sameBtn = `<button class="btn-icon" style="font-size:0.9rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevUrlSub(${parentIdx}, ${subIdx})">👇 同上 URL</button>`;
+                }
+            } else {
+                if (parentIdx > 0 && bState.tasks[parentIdx-1].type === 'link') {
+                    sameBtn = `<button class="btn-icon" style="font-size:0.9rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevUrlTop(${parentIdx})">👇 同上 URL</button>`;
+                }
+            }
+            
+            // 獨立的 resource dropdown 呼叫邏輯
+            let resOptsHtml = getResourceDropdownHtmlForBuilder(htmlIdxStr, t.url, isSub, parentIdx, subIdx);
+
+            urlInputHtml = `
+                <div style="display:flex; gap:5px; margin-top:8px; width:100%; flex-wrap:wrap;">
+                    <input type="text" id="${idPrefix}-url-text-${htmlIdxStr}" class="form-control" placeholder="🔗 顯示文字 (留空則標題變連結)" value="${t.url_text || ''}" style="flex:1; min-width:120px; padding:8px;">
+                    <input type="url" id="${idPrefix}-url-${htmlIdxStr}" class="form-control" placeholder="🔗 https://..." value="${t.url || ''}" style="flex:2; min-width:180px; padding:8px;">
+                    ${resOptsHtml}
+                    ${sameBtn}
+                </div>`;
+        } else if (t.type === 'drive') {
+            urlInputHtml = `
+                <div style="margin-top:8px; font-size:0.9rem; color:#4A90E2; background:#E0F0FF; padding:8px 12px; border-radius:6px;">
+                    💡 <b>智慧派發模式</b>：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。
+                </div>`;
+        }
+
+        return `
+            <div id="${idPrefix}-block-${htmlIdxStr}" draggable="false" 
+                 ondragstart="${dragMethod}" 
+                 ondragover="event.preventDefault(); this.classList.add('drag-over');" 
+                 ondragleave="this.classList.remove('drag-over');"
+                 ondrop="this.classList.remove('drag-over'); ${dropMethod}"
+                 ondragend="this.setAttribute('draggable', 'false');"
+                 style="background: white; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 12px; transition: border 0.2s;">
+                <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
+                    <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳排序"
+                          onmousedown="document.getElementById('${idPrefix}-block-${htmlIdxStr}').setAttribute('draggable', 'true')"
+                          onmouseup="document.getElementById('${idPrefix}-block-${htmlIdxStr}').setAttribute('draggable', 'false')"
+                          onmouseleave="document.getElementById('${idPrefix}-block-${htmlIdxStr}').setAttribute('draggable', 'false')">↕️</span>
+                    <div style="padding-top:4px;">${iconHtml}</div>
+                    <div id="${idPrefix}-title-${htmlIdxStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
+                    <div style="display:flex; align-items:center; gap:5px; padding-top:4px;">
+                        <label style="font-size:0.9rem; color:#64748B;">期限:</label>
+                        <input type="date" id="${idPrefix}-due-${htmlIdxStr}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承外層期限">
+                    </div>
+                    <div style="padding-top:4px;">
+                        <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="${removeMethod}">❌</button>
+                    </div>
+                </div>
+                ${urlInputHtml}
+                <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
+                    <div id="${idPrefix}-desc-${htmlIdxStr}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function getResourceDropdownHtmlForBuilder(htmlIdxStr, currentUrl, isSub, parentIdx, subIdx) {
         if (!bState) return '';
         const resIds = (db.resourceMappings || []).filter(m => m.class_id === bState.classId).map(m => m.resource_id);
         const res = (db.resourceLibrary || []).filter(r => resIds.includes(r.id));
         if (res.length === 0) return '';
         
         let opts = res.map(r => `<option value="${r.url}" ${currentUrl === r.url ? 'selected' : ''}>${r.icon} ${r.name}</option>`).join('');
-        return `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="window.FeatureTimeline.updateTaskUrl(${idx}, this.value)">
+        
+        // 綁定不同的呼叫邏輯
+        let changeAction = isSub ? `window.FeatureTimeline.updateSubTaskUrl(${parentIdx}, ${subIdx}, this.value)` : `window.FeatureTimeline.updateTopTaskUrl(${parentIdx}, this.value)`;
+
+        return `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="${changeAction}">
                     <option value="">📚 手動套用資源庫</option>${opts}
                 </select>`;
     }
@@ -468,62 +625,52 @@ window.FeatureTimeline = (() => {
         if (!container) return;
 
         let tasksHtml = bState.tasks.map((t, idx) => {
-            let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
-            let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.2rem; margin-right:4px;">${iconStr}</span>`;
-            
-            let urlInputHtml = '';
-            if (t.type === 'link') {
-                let sameBtn = '';
-                if (idx > 0 && bState.tasks[idx-1].type === 'link') {
-                    sameBtn = `<button class="btn-icon" style="font-size:0.9rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevUrl(${idx})">👇 同上 URL</button>`;
-                }
-                urlInputHtml = `
-                    <div style="display:flex; gap:5px; margin-top:8px; width:100%; flex-wrap:wrap;">
-                        <input type="text" id="task-url-text-${idx}" class="form-control" placeholder="🔗 顯示文字 (留空則標題變連結)" value="${t.url_text || ''}" style="flex:1; min-width:120px; padding:8px;">
-                        <input type="url" id="task-url-${idx}" class="form-control" placeholder="🔗 https://..." value="${t.url || ''}" style="flex:2; min-width:180px; padding:8px;">
-                        ${getResourceDropdownHtml(idx, t.url)}
-                        ${sameBtn}
-                    </div>`;
-            } else if (t.type === 'drive') {
-                urlInputHtml = `
-                    <div style="margin-top:8px; font-size:0.9rem; color:#4A90E2; background:#E0F0FF; padding:8px 12px; border-radius:6px;">
-                        💡 <b>智慧派發模式</b>：學生端將自動讀取「學生名單」中的個人專屬 Drive 資料夾，老師無須在此填寫網址。
-                    </div>`;
-            }
+            if (t.type === 'group') {
+                // 巢狀群組 UI
+                let subTasksHtml = (t.subTasks || []).map((sub, sIdx) => {
+                    return generateBuilderTaskHtml(sub, idx, sIdx);
+                }).join('');
 
-            return `
-                <div id="task-block-${idx}" draggable="false" 
-                     ondragstart="window.FeatureTimeline.dragTaskStart(event, ${idx})" 
-                     ondragover="event.preventDefault(); this.classList.add('drag-over');" 
-                     ondragleave="this.classList.remove('drag-over');"
-                     ondrop="this.classList.remove('drag-over'); window.FeatureTimeline.dropTask(event, ${idx})"
-                     ondragend="this.setAttribute('draggable', 'false');"
-                     style="background: white; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 12px; transition: border 0.2s;">
-                    <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
-                        <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳排序小項"
-                              onmousedown="document.getElementById('task-block-${idx}').setAttribute('draggable', 'true')"
-                              onmouseup="document.getElementById('task-block-${idx}').setAttribute('draggable', 'false')"
-                              onmouseleave="document.getElementById('task-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
-                        <div style="padding-top:4px;">${iconHtml}</div>
-                        <div id="task-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
-                        <div style="display:flex; align-items:center; gap:5px; padding-top:4px;">
-                            <label style="font-size:0.9rem; color:#64748B;">期限:</label>
-                            <input type="date" id="task-due-${idx}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承主區塊期限">
+                return `
+                    <div id="group-block-${idx}" draggable="false"
+                         ondragstart="window.FeatureTimeline.dragTopTaskStart(event, ${idx})" 
+                         ondragover="event.preventDefault(); this.classList.add('drag-over');" 
+                         ondragleave="this.classList.remove('drag-over');"
+                         ondrop="this.classList.remove('drag-over'); window.FeatureTimeline.dropTopTask(event, ${idx})"
+                         ondragend="this.setAttribute('draggable', 'false');"
+                         style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 2px solid #CBD5E1; margin-bottom: 20px; transition: border 0.2s;">
+                        <div style="display:flex; gap:10px; align-items:center; margin-bottom: 15px; border-bottom: 2px solid #E2E8F0; padding-bottom: 10px;">
+                            <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個群組"
+                                  onmousedown="document.getElementById('group-block-${idx}').setAttribute('draggable', 'true')"
+                                  onmouseup="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')"
+                                  onmouseleave="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
+                            <span style="font-size:1.4rem;">🗂️</span>
+                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#3B82F6; padding:8px 12px; background:white; border:1px solid #93C5FD; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個群組">🗑️</button>
                         </div>
-                        <div style="padding-top:4px;">
-                            <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})">❌</button>
+                        
+                        <!-- 子任務存放區 -->
+                        <div style="padding-left: 20px; border-left: 3px solid #E2E8F0; margin-left: 10px;">
+                            ${subTasksHtml}
+                            
+                            <!-- 群組內的專屬新增按鈕列 -->
+                            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top: 10px;">
+                                <span style="font-size:0.85rem; color:#94A3B8; font-weight:bold; margin-right:5px;">新增子任務：</span>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'check')">+ 📌 一般</button>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'link')">+ 🔗 連結</button>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2ECC71;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'drive')">+ 📁 Drive</button>
+                            </div>
                         </div>
                     </div>
-                    ${urlInputHtml}
-                    <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
-                        <div id="task-desc-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
-                    </div>
-                </div>
-            `;
+                `;
+            } else {
+                // 普通頂層任務 UI
+                return generateBuilderTaskHtml(t, idx, null);
+            }
         }).join('');
 
         let tasksContainerHtml = tasksHtml ? `
-            <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #E2E8F0;">
+            <div style="margin-bottom: 15px;">
                 ${tasksHtml}
             </div>
         ` : '';
@@ -570,6 +717,35 @@ window.FeatureTimeline = (() => {
                 <button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫派發資源給本班級">+ 📚 本班尚無班級資源</button>
              `;
         }
+        
+        const isInherited = bState.late_policy.is_inherited;
+        const disableAttr = isInherited ? 'disabled' : '';
+        const opacityStyle = isInherited ? 'opacity: 0.6; pointer-events: none;' : '';
+
+        const latePolicyHtml = `
+            <div style="background:#FFFBEB; padding:15px; border-radius:8px; border: 1px solid #FEF3C7; margin-bottom: 15px;">
+                <label style="display:flex; align-items:center; gap:8px; font-weight:800; color:#D97706; margin-bottom: 10px; cursor:pointer;">
+                    <input type="checkbox" id="builder-late-inherit-${bState.containerId}" style="transform:scale(1.2);" ${isInherited ? 'checked' : ''} onchange="window.FeatureTimeline.toggleLateInherit(this.checked, '${bState.containerId}')">
+                    🔄 繼承班級遲交預設規則
+                </label>
+                <div id="late-policy-fields-${bState.containerId}" style="${opacityStyle} display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px; border-radius:6px; border:1px solid #FDE68A;">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:0.95rem; color:#92400E;">
+                        <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.late_policy.allow_late ? 'checked' : ''} ${disableAttr} onchange="document.getElementById('late-details-container-${bState.containerId}').style.display = this.checked ? 'flex' : 'none'">
+                        允許遲交
+                    </label>
+                    <div id="late-details-container-${bState.containerId}" style="display: ${bState.late_policy.allow_late ? 'flex' : 'none'}; gap: 15px; align-items: center;">
+                        <div style="display:flex; align-items:center; gap:5px;">
+                            <label style="font-size:0.85rem; font-weight:bold; color:#B45309;">寬限期(小時)</label>
+                            <input type="number" id="builder-grace-${bState.containerId}" class="form-control" style="width:70px; padding:4px;" value="${bState.late_policy.grace_period_hours}" min="0" ${disableAttr}>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:5px;">
+                            <label style="font-size:0.85rem; font-weight:bold; color:#B45309;">扣分(%)</label>
+                            <input type="number" id="builder-penalty-${bState.containerId}" class="form-control" style="width:70px; padding:4px;" value="${bState.late_policy.penalty_percentage}" min="0" max="100" ${disableAttr}>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
 
         container.innerHTML = `
             <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">
@@ -581,30 +757,29 @@ window.FeatureTimeline = (() => {
                     
                     <div id="builder-desc-${bState.containerId}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="font-size:0.85rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
                     
-                    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
+                    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0; margin-bottom: 15px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label style="font-weight:800; font-size:1rem; color:#334155;">期限：</label>
                             <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:4px 8px; font-size:1rem;" value="${bState.due_date || ''}">
                         </div>
                         
-                        <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#475569;">
-                            <input type="checkbox" id="builder-allow-late-${bState.containerId}" style="transform:scale(1.2);" ${bState.allow_late ? 'checked' : ''}>
-                            接受遲交
-                        </label>
-
-                        <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#334155;">
+                        <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#334155; margin-left: auto;">
                             <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
                             📢 發佈
                         </label>
                     </div>
+
+                    ${latePolicyHtml}
                 </div>
 
                 ${tasksContainerHtml}
 
-                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
-                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTask('check')">+ 📌 一般任務</button>
-                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTask('link')">+ 🔗 連結任務</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #2ECC71;" onclick="window.FeatureTimeline.addTask('drive')">+ 📁 Drive 自動繳交區</button>
+                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; background: #F1F5F9; padding: 12px; border-radius: 8px; border: 1px solid #CBD5E1;">
+                    <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">新增最外層：</span>
+                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('check')">+ 📌 一般任務</button>
+                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('link')">+ 🔗 連結任務</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #2ECC71;" onclick="window.FeatureTimeline.addTopTask('drive')">+ 📁 Drive</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 任務群組 (百寶箱)</button>
                     ${addResourceHtml}
                 </div>
 
@@ -619,9 +794,57 @@ window.FeatureTimeline = (() => {
     return {
         renderTimeline,
         scrollToCurrentWeek,
+        toggleLateInherit: (isChecked, containerId) => {
+            const fieldsEl = document.getElementById(`late-policy-fields-${containerId}`);
+            const allowLateEl = document.getElementById(`builder-allow-late-${containerId}`);
+            const graceEl = document.getElementById(`builder-grace-${containerId}`);
+            const penaltyEl = document.getElementById(`builder-penalty-${containerId}`);
+
+            if (isChecked) {
+                fieldsEl.style.opacity = '0.6';
+                fieldsEl.style.pointerEvents = 'none';
+                allowLateEl.disabled = true;
+                graceEl.disabled = true;
+                penaltyEl.disabled = true;
+
+                const cls = db.classes.find(c => c.id === bState.classId);
+                let raw = cls.raw_data || {};
+                if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
+                const defaults = raw.late_submission_defaults || { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 };
+
+                allowLateEl.checked = defaults.allow_late;
+                graceEl.value = defaults.grace_period_hours;
+                penaltyEl.value = defaults.penalty_percentage;
+                document.getElementById(`late-details-container-${containerId}`).style.display = defaults.allow_late ? 'flex' : 'none';
+            } else {
+                fieldsEl.style.opacity = '1';
+                fieldsEl.style.pointerEvents = 'auto';
+                allowLateEl.disabled = false;
+                graceEl.disabled = false;
+                penaltyEl.disabled = false;
+            }
+        },
         openBuilder: (classId, date, containerId) => {
             if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法新增或修改作業。');
-            bState = { editId: null, classId, target_date: date, containerId, title: '', description: '', due_date: '', is_published: false, allow_late: true, tasks: [] };
+            
+            const cls = db.classes.find(c => c.id === classId);
+            let raw = cls.raw_data || {};
+            if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
+            const lateDefaults = raw.late_submission_defaults || { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 };
+
+            bState = { 
+                editId: null, 
+                classId, 
+                target_date: date, 
+                containerId, 
+                title: '', 
+                description: '', 
+                due_date: '', 
+                is_published: false, 
+                late_policy: { is_inherited: true, ...lateDefaults }, 
+                tasks: [] 
+            };
+            
             renderBuilderUI();
             setTimeout(() => { 
                 const titleEl = document.getElementById(`builder-title-${containerId}`);
@@ -651,10 +874,6 @@ window.FeatureTimeline = (() => {
                 sessions = db.sessions[a.class_id] || [];
             }
             
-            // =========================================
-            // 🚨 編輯模式同步啟動孤兒救援
-            // 確保舊作業在編輯時能正確計算 nodeIndex，不會被錯誤塞到第一天 (Day 0)
-            // =========================================
             const assignmentDates = (db.assignments || []).filter(ast => ast.class_id === a.class_id).map(ast => ast.target_date);
             sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
@@ -686,7 +905,17 @@ window.FeatureTimeline = (() => {
             if (typeof aRaw === 'string') {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
-            bState.allow_late = aRaw.allow_late !== false;
+            
+            if (aRaw.late_policy) {
+                bState.late_policy = { ...aRaw.late_policy };
+            } else {
+                bState.late_policy = {
+                    is_inherited: false,
+                    allow_late: aRaw.allow_late !== false,
+                    grace_period_hours: 0,
+                    penalty_percentage: 0
+                };
+            }
             
             renderTimeline(a.class_id, 'none');
             renderBuilderUI();
@@ -776,11 +1005,28 @@ window.FeatureTimeline = (() => {
             if (typeof aRaw === 'string') {
                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
             }
-            bState.allow_late = aRaw.allow_late !== false;
+            if (aRaw.late_policy) {
+                bState.late_policy = JSON.parse(JSON.stringify(aRaw.late_policy));
+            } else {
+                bState.late_policy = {
+                    is_inherited: false,
+                    allow_late: aRaw.allow_late !== false,
+                    grace_period_hours: 0,
+                    penalty_percentage: 0
+                };
+            }
 
+            // 遞迴重置所有任務與子任務的 ID，避免與原史衝突
             bState.tasks = JSON.parse(JSON.stringify(a.tasks)).map(t => { 
-                t.id = `task_${Date.now()}_${Math.random()}`; 
-                delete t.resource_id; 
+                t.id = `task_${Date.now()}_${Math.random()}`;
+                delete t.resource_id;
+                if (t.type === 'group' && t.subTasks) {
+                    t.subTasks = t.subTasks.map(sub => {
+                        sub.id = `task_${Date.now()}_${Math.random()}`;
+                        delete sub.resource_id;
+                        return sub;
+                    });
+                }
                 return t; 
             });
             renderBuilderUI();
@@ -829,14 +1075,26 @@ window.FeatureTimeline = (() => {
             }
             renderBuilderUI();
         },
-        dragTaskStart: (e, idx) => { dragTaskIndex = idx; e.dataTransfer.effectAllowed = 'move'; },
-        dropTask: (e, targetIdx) => {
-            e.preventDefault();
-            if (dragTaskIndex === null || dragTaskIndex === targetIdx) return;
+        // --- 拖曳排序邏輯分離 (頂層 vs 子層隔離) ---
+        dragTopTaskStart: (e, idx) => { dragTopTaskIndex = idx; dragSubTaskData = null; e.dataTransfer.effectAllowed = 'move'; },
+        dropTopTask: (e, targetIdx) => {
+            e.preventDefault(); e.stopPropagation();
+            if (dragTopTaskIndex === null || dragTopTaskIndex === targetIdx) return;
             syncState();
-            const draggedItem = bState.tasks.splice(dragTaskIndex, 1)[0];
+            const draggedItem = bState.tasks.splice(dragTopTaskIndex, 1)[0];
             bState.tasks.splice(targetIdx, 0, draggedItem);
-            dragTaskIndex = null;
+            dragTopTaskIndex = null;
+            renderBuilderUI();
+        },
+        dragSubTaskStart: (e, parentIdx, subIdx) => { dragSubTaskData = { parentIdx, subIdx }; dragTopTaskIndex = null; e.dataTransfer.effectAllowed = 'move'; },
+        dropSubTask: (e, targetParentIdx, targetSubIdx) => {
+            e.preventDefault(); e.stopPropagation();
+            if (!dragSubTaskData || dragSubTaskData.parentIdx !== targetParentIdx || dragSubTaskData.subIdx === targetSubIdx) return;
+            syncState();
+            const parentGroup = bState.tasks[targetParentIdx];
+            const draggedItem = parentGroup.subTasks.splice(dragSubTaskData.subIdx, 1)[0];
+            parentGroup.subTasks.splice(targetSubIdx, 0, draggedItem);
+            dragSubTaskData = null;
             renderBuilderUI();
         },
         dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
@@ -905,16 +1163,36 @@ window.FeatureTimeline = (() => {
             }
             dragAssignId = null;
         },
-        addTask: (type) => {
+        // --- 任務增刪改邏輯 ---
+        addTopTask: (type) => {
             syncState(); 
-            bState.tasks.push({ id: `task_${Date.now()}`, type, title: '', url: '', url_text: '', description: '', due_date: '' });
+            if (type === 'group') {
+                bState.tasks.push({ id: `group_${Date.now()}`, type: 'group', title: '', subTasks: [] });
+            } else {
+                bState.tasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '' });
+            }
+            renderBuilderUI();
+        },
+        addSubTask: (parentIdx, type) => {
+            syncState();
+            if (!bState.tasks[parentIdx].subTasks) bState.tasks[parentIdx].subTasks = [];
+            bState.tasks[parentIdx].subTasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '' });
             renderBuilderUI();
         },
         removeTask: (idx) => { syncState(); bState.tasks.splice(idx, 1); renderBuilderUI(); },
-        updateTaskUrl: (idx, val) => { syncState(); bState.tasks[idx].url = val; renderBuilderUI(); },
-        copyPrevUrl: (idx) => {
+        removeSubTask: (parentIdx, subIdx) => { syncState(); bState.tasks[parentIdx].subTasks.splice(subIdx, 1); renderBuilderUI(); },
+        updateTopTaskUrl: (idx, val) => { syncState(); bState.tasks[idx].url = val; renderBuilderUI(); },
+        updateSubTaskUrl: (parentIdx, subIdx, val) => { syncState(); bState.tasks[parentIdx].subTasks[subIdx].url = val; renderBuilderUI(); },
+        copyPrevUrlTop: (idx) => {
             syncState();
             if(idx > 0 && bState.tasks[idx-1].url) bState.tasks[idx].url = bState.tasks[idx-1].url;
+            renderBuilderUI();
+        },
+        copyPrevUrlSub: (parentIdx, subIdx) => {
+            syncState();
+            if(subIdx > 0 && bState.tasks[parentIdx].subTasks[subIdx-1].url) {
+                bState.tasks[parentIdx].subTasks[subIdx].url = bState.tasks[parentIdx].subTasks[subIdx-1].url;
+            }
             renderBuilderUI();
         },
         saveBlock: async (btnEl) => {
@@ -928,7 +1206,14 @@ window.FeatureTimeline = (() => {
             if (typeof mergedRawData === 'string') {
                 try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; }
             }
-            mergedRawData.allow_late = !!bState.allow_late;
+            
+            mergedRawData.late_policy = {
+                is_inherited: !!bState.late_policy.is_inherited,
+                allow_late: !!bState.late_policy.allow_late,
+                grace_period_hours: parseInt(bState.late_policy.grace_period_hours) || 0,
+                penalty_percentage: parseInt(bState.late_policy.penalty_percentage) || 0
+            };
+            delete mergedRawData.allow_late; 
             
             const payload = {
                 class_id: bState.classId,
