@@ -173,7 +173,6 @@ const ApiService = (() => {
         try {
             if (!userId) throw new Error("缺少 userId 參數");
 
-            // 雙管齊下：同時搜尋該使用者作為「學生」與「老師」的班級
             const [stdRes, staffRes] = await Promise.all([
                 window.supabaseClient.from('student_enrollments').select('class_id').eq('user_id', userId).is('deleted_at', null),
                 window.supabaseClient.from('class_staff').select('class_id').eq('user_id', userId).is('deleted_at', null)
@@ -183,7 +182,6 @@ const ApiService = (() => {
             if (!stdRes.error && stdRes.data) classIds.push(...stdRes.data.map(e => e.class_id));
             if (!staffRes.error && staffRes.data) classIds.push(...staffRes.data.map(e => e.class_id));
 
-            // 去重複班級 ID
             classIds = [...new Set(classIds)];
 
             const sessionStr = localStorage.getItem('LogOnEnglish_Session');
@@ -267,7 +265,7 @@ const ApiService = (() => {
     return { 
         fetchClasses, 
         fetchStudents, 
-        fetchClassStaff, // 👈 開放給前端使用
+        fetchClassStaff,
         fetchAssignments, 
         syncProgress,
         archiveClass

@@ -1,36 +1,33 @@
-# [LogOn Web 系統開發交接文檔 - Handoff Prompt]
+### 📋 系統重構交接文件 (Handoff Prompt)
 
-## 👨‍💻 你的角色與行為準則 (Persona & Directives)
-請你扮演一位具備「軟體工匠精神 (Software Craftsmanship)」的全端神人。面對問題請發揮 Root Cause Analysis 能力，給出解決方案時追求持續重構與 Best Practices。
-* **絕對完整：** 每次提供程式碼時，必須給出 **100% 完整、無省略、可直接複製貼上覆蓋原檔** 的程式碼，絕對禁止使用 `// ... remaining code` 等偷懶佔位符。
-* **自動 Git 指令：** 在每次輸出任何程式碼或文檔修改後，**必須在回覆的最末端，自動附上 VS Code terminal 可用的 `git add .`, `git commit -m "..."`, `git push` 指令碼**。
-* **專業用語：** 嚴禁使用「百寶箱」等幼稚詞彙，請遵守系統專屬的專業術語。
+**【專案背景與核心理念】**
+本專案為 LogOnTeacher (SaaS 升級版) 班級管理系統。系統遵循**「情境身分制 (Contextual Multi-Persona)」**架構設計：全域身分 (`default_role`) 僅作為登入後的首頁導航依據，使用者在各班級的實際權限應由 `student_enrollments` 與 `class_staff` 關聯表動態決定。
+
+**【本次解決的核心痛點】**
+1. **防衝突機制的誤判 (500 錯誤當機)：** 舊版 Edge Function 會擅自「通靈」，遇到已存在的信箱就強制啟動帳號變異 (加 `+` 號)，導致舊生續報或教職員轉學生時發生二次碰撞當機。
+2. **歷史技術債 (Legacy Data) 導致解析失敗：** 早期帳號的 `raw_data` 為空物件 `{}` 或缺少 `nameEN`，導致後端存取時發生 `TypeError`。
+3. **歷史遺留身分 (`user`) 導致路由卡死：** 部分舊帳號 `default_role` 停留在無效的 `user`，導致前端登入後無法判別導向。
+
+**【✅ 已完成的架構重構與修改模組】**
+
+**1. 前端邏輯重構：變異決策權下放 UI (`110_teacher_core/feature-member-management.js`)**
+* **實作內容：** 拔除後端的猜測邏輯。在新增成員表單的 Email 欄位下方，加入明確的選項 `[ ] 此為共用信箱 (系統將結合姓名自動變異生成獨立的分身帳號)`。
+* **邏輯解耦：** 由前端 JS 負責判斷。若打勾，前端直接組合出變異後的 Email (如 Gmail 加 `+英文名` 或轉內部網域) 並傳送；若未打勾，則傳送原始 Email。
+
+**2. 後端邊緣函數純粹化與防護網 (`supabase/functions/admin_create_user/index.ts`)**
+* **純粹化建檔引擎：** 移除所有 Email 變異判斷，無腦信任前端傳來的 `targetEmail`。若信箱不存在，則直接建立全新的 Supabase Auth 與 Profiles。
+* **舊資料救援 (Legacy Patch)：** 若 `targetEmail` 已存在，攔截錯誤並啟動無痛合併。安全地將前端傳入的新姓名資料 (`nameEN`, `firstNameCN` 等) Deep Merge 進舊有的 `raw_data` 中，且保證不覆蓋舊有的 `drive_url`。
+* **動態身分升級：** 偵測舊帳號的 `default_role`。若為 `user` 或 `null`，自動將其升級為本次指派的對應身分 (`student`, `staff` 等)；若已是有效身分則絕對不覆蓋，保障多重身分彈性。
+
+**3. 資料庫層級清洗 (SQL Editor 手動執行完畢)**
+* 將 `profiles` 資料表的 `default_role` 預設值改為 `student`。
+* 執行批量 Update，將所有歷史遺毒 `default_role = 'user'` 強制校正為 `student`，徹底消滅登入路由卡死的未爆彈。*(註：資料庫中殘留的 `raw_data: {}` 已被前端防呆與後端 Legacy Patch 完美防禦，無須手動清理)*。
+
+**【📝 給後續文件更新 (Documentation) 的 Action Items】**
+在更新《系統架構白皮書》或 API 文件時，請確保寫入以下三點新原則：
+1. **Email 變異規則的歸屬：** 聲明 Email 變異 (Alias/LogOn Domain) 屬於「前端 View 層」的業務邏輯，Edge Function API 僅作為「接收最終 Email 並建檔」的底層基礎設施。
+2. **`default_role` 的降級宣告：** 明確定義 `profiles.default_role` 僅作為「Landing Portal (登入後首頁導向)」使用，不可用於判斷班級內的實質操作權限。
+3. **無痛升級 (Graceful Degradation) 規範：** 未來任何針對 `profiles` 的讀寫，都必須考量舊有 `{}` 資料的相容性，必須套用類似 `raw_data || {}` 的容錯解析。
 
 ---
-
-## 🏗️ 專案總覽與核心架構 (Project Overview & Architecture)
-本專案為 **LogOn Web 多模態 AI 自適應學習系統**，採用 JS (前端) ↔ Supabase (資料庫/Edge Functions/Auth) ↔ Python + Gemini (AI 大腦層) 的三層式微服務架構。
-
-**三大架構鐵律 (絕對不可違背)：**
-1. **情境身分制 (Contextual Multi-Persona) & RLS：** 廢除布林值身分判定，全面依賴 `class_staff` 關聯表的 `staff_role` (如 `primary_teacher`, `co_teacher`) 進行權限閘門管控。
-2. **軟刪除 (Soft Deletes) & 原子化寫入 (RPC)：** 絕對禁止使用 `.delete()` 物理刪除。刪除動作必須寫入 `deleted_at: NOW()`。具備連鎖效應的操作 (如刪除班級) 必須強制透過 Supabase RPC 執行，防止孤兒資料。
-3. **JSONB (`raw_data`) 無限擴充制：** 表格皆具備 `raw_data` 欄位。未知欄位、AI 非結構化回傳值、客製化設定 (如遲交規則細項)，一律寫入此 JSONB 中。
-
----
-
-## 📝 最新完成進度與模組狀態 (Current State)
-我們剛剛完成了 `110_teacher_core/feature-timeline.js` 的底層重構 (v9.4)，確立了**「作業模組與 UI 渲染防呆標準」**：
-* **專業術語正名：** 建立作業的 UI 選項已嚴格正名為「作業類型」(最外層)、「作業群組」(群組容器 🗂️)、「巢狀作業類型」(內層)。
-* **遲交規則極簡三模式：** `no_late` (🚫 無遲交)、`infinite` (♾️ 無限期，可扣分)、`custom` (⏳ 自訂寬限，可扣分)。預設為「無限期且 0% 扣分」。
-* **靜默繼承渲染 (Silence Rule)：** 子任務在渲染前，必須比對外層大區塊的遲交規則。**「沒有打破沉默就不出聲」**——只要子任務規則與外層一模一樣，UI 絕對隱藏該子任務的遲交標籤，消滅冗餘資訊。
-
----
-
-## 🎯 接下來的待辦任務 (Pending Tasks / Roadmap)
-目前「任務 2：接受遲交繼承機制」已完成。請根據我的後續指示，從以下清單中挑選任務接續開發：
-* **任務 3：** 檔案上傳優化
-* **任務 4：** 已出作業的編輯同步
-* **任務 5：** 作業細節矩陣 (Gradebook Matrix)
-* **任務 6：** 學生端內建錄音器 (銜接 AI 語音辨識邊緣函數)
-
-請先簡短確認你已理解上述架構與規則，並等待我下達下一步的具體開發指令。
+*(請以這個狀態作為 Context，我們接下來要進行什麼開發或文件撰寫？)*

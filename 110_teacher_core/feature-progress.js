@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-progress.js
- * 🌟 v4.0 規格重構版：導入「離線優先背景同步佇列 (Web Sync Queue)」與互動式打勾
+ * 🌟 AST N階展開版：支援深度優先搜尋 (DFS) 展平子任務，完美支援無限嵌套結構
  */
 
 window.FeatureProgress = (() => {
@@ -12,7 +12,6 @@ window.FeatureProgress = (() => {
     const STORE_NAME = 'ProgressQueue';
     let localDB = null;
 
-    // 1. 初始化 IndexedDB
     function initDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, 1);
@@ -21,14 +20,12 @@ window.FeatureProgress = (() => {
             request.onupgradeneeded = event => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    // 使用 task_id + student_id 組合鍵作為唯一辨識，防止重複打勾積壓
                     db.createObjectStore(STORE_NAME, { keyPath: ['task_id', 'student_id'] });
                 }
             };
         });
     }
 
-    // 2. 寫入本地佇列
     async function enqueueTask(studentId, taskId, isCompleted) {
         if (!localDB) await initDB();
         return new Promise((resolve, reject) => {
@@ -47,7 +44,6 @@ window.FeatureProgress = (() => {
         });
     }
 
-    // 3. 背景巡邏兵：上傳資料到 Supabase
     async function processQueue() {
         if (!navigator.onLine || !localDB) return;
         
@@ -59,15 +55,12 @@ window.FeatureProgress = (() => {
             const pendingItems = request.result;
             if (pendingItems.length === 0) return;
 
-            // 顯示正在同步的狀態 (可選)
             const syncIndicator = document.getElementById('sync-indicator');
             if(syncIndicator) syncIndicator.style.display = 'inline-block';
 
             for (const item of pendingItems) {
                 try {
-                    // 呼叫 api.js 的原子化寫入
                     await window.ApiService.syncProgress(item.student_id, item.task_id, item.is_completed);
-                    // 成功後從本地刪除
                     const deleteTx = localDB.transaction(STORE_NAME, 'readwrite');
                     deleteTx.objectStore(STORE_NAME).delete([item.task_id, item.student_id]);
                 } catch (err) {
@@ -79,15 +72,13 @@ window.FeatureProgress = (() => {
         };
     }
 
-    // 啟動背景定時器 (每 5 秒檢查一次是否有離線資料需要上傳)
     initDB().then(() => {
         setInterval(processQueue, 5000);
         window.addEventListener('online', processQueue);
     });
 
-
     // ==========================================
-    // 貳、 畫面渲染與比對邏輯 (UI Rendering)
+    // 貳、 畫面渲染與 AST 展平比對邏輯 (AST Flatten & Rendering)
     // ==========================================
     
     async function fetchAndRenderReport(classId) {
@@ -102,7 +93,6 @@ window.FeatureProgress = (() => {
         container.innerHTML = '<div style="padding: 40px; text-align:center; color: var(--primary); font-weight:800; font-size: 1.2rem;">⏳ 正在交叉比對全班進度資料，請稍候...</div>';
 
         try {
-            // 🌟 1. 撈取該班級的學生名單 (對齊 v4.0：使用 user_id 並加入 deleted_at 過濾)
             const { data: enrollments, error: enrollError } = await window.supabaseClient
                 .from('student_enrollments')
                 .select(`
@@ -117,7 +107,6 @@ window.FeatureProgress = (() => {
 
             const students = enrollments ? enrollments.map(e => e.profiles).filter(p => p !== null) : [];
 
-            // 🌟 2. 撈取該班級的所有作業 (對齊 v4.0：加入 deleted_at 過濾)
             const { data: assignments, error: assignError } = await window.supabaseClient
                 .from('assignments')
                 .select('id, title, target_date, tasks')
@@ -126,7 +115,6 @@ window.FeatureProgress = (() => {
                 .order('target_date', { ascending: false });
             if (assignError) throw new Error('讀取作業清單失敗: ' + assignError.message);
 
-            // 🌟 3. 撈取完成紀錄
             const { data: completions, error: compError } = await window.supabaseClient
                 .from('task_completions')
                 .select('student_id, task_id')
@@ -147,7 +135,26 @@ window.FeatureProgress = (() => {
             return;
         }
 
-        const validAssignments = assignments.filter(a => a.tasks && a.tasks.length > 0);
+        // 🌟 遞迴穿透 AST，將 N 層群組內的實體任務攤平為一維陣列
+        const getActionableTasks = (tasksList) => {
+            let res = [];
+            if (!tasksList) return res;
+            tasksList.forEach(t => {
+                if (t.type === 'group') {
+                    res = res.concat(getActionableTasks(t.subTasks));
+                } else {
+                    res.push(t);
+                }
+            });
+            return res;
+        };
+
+        const validAssignments = assignments.map(a => {
+            return {
+                ...a,
+                actionableTasks: getActionableTasks(a.tasks || [])
+            };
+        }).filter(a => a.actionableTasks.length > 0);
 
         if (validAssignments.length === 0) {
             container.innerHTML = `
@@ -165,9 +172,9 @@ window.FeatureProgress = (() => {
         let allTaskIds = [];
 
         validAssignments.forEach(a => {
-            topHeaderHtml += `<th colspan="${a.tasks.length}" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:var(--primary-dark); font-weight:900; text-align:center; min-width:150px;">📅 ${a.target_date}<br>${a.title}</th>`;
+            topHeaderHtml += `<th colspan="${a.actionableTasks.length}" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:var(--primary-dark); font-weight:900; text-align:center; min-width:150px;">📅 ${a.target_date}<br>${a.title}</th>`;
             
-            a.tasks.forEach((t, idx) => {
+            a.actionableTasks.forEach((t, idx) => {
                 allTaskIds.push(t.id);
                 let shortTitle = t.title ? t.title.replace(/<[^>]*>?/gm, '') : '未命名';
                 if(shortTitle.length > 15) shortTitle = shortTitle.substring(0, 15) + '...';
@@ -185,7 +192,6 @@ window.FeatureProgress = (() => {
                 const isDone = completions.some(c => c.student_id === std.id && c.task_id === taskId);
                 if (isDone) {
                     stdDoneCount++;
-                    // 🌟 修改為可點擊的按鈕，綁定 toggle 邏輯
                     rowHtml += `<td id="cell-${std.id}-${taskId}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${taskId}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; font-size:1.2rem; background:#ECFDF5; user-select:none; transition:0.2s;" title="點擊取消">✅</td>`;
                 } else {
                     rowHtml += `<td id="cell-${std.id}-${taskId}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${taskId}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; color:#CBD5E1; font-size:0.8rem; background:#FFF; user-select:none; transition:0.2s;" title="點擊打勾">—</td>`;
@@ -256,11 +262,9 @@ window.FeatureProgress = (() => {
         const percentCell = document.getElementById(`percent-${studentId}`);
         if (!cell || !percentCell) return;
 
-        // 1. 判斷當前狀態並反轉
         const isCurrentlyDone = cell.innerText.includes('✅');
         const willBeDone = !isCurrentlyDone;
 
-        // 2. 極速前景回饋 (Optimistic UI)
         if (willBeDone) {
             cell.innerText = '✅';
             cell.style.background = '#ECFDF5';
@@ -274,7 +278,6 @@ window.FeatureProgress = (() => {
             cell.title = '點擊打勾';
         }
 
-        // 3. 即時重新計算該學生的百分比
         let currentDone = parseInt(percentCell.getAttribute('data-done'));
         let total = parseInt(percentCell.getAttribute('data-total'));
         currentDone = willBeDone ? currentDone + 1 : currentDone - 1;
@@ -286,10 +289,8 @@ window.FeatureProgress = (() => {
         percentCell.style.color = percentColor;
         percentCell.innerHTML = `${newPercentage}%<br><span style="font-size:0.7rem; color:#94A3B8;">(${currentDone}/${total})</span>`;
 
-        // 4. 將動作寫入本地背景佇列 (IndexedDB)
         enqueueTask(studentId, taskId, willBeDone).catch(err => {
             console.error("無法寫入本地佇列", err);
-            // 若瀏覽器不支援 IndexedDB，則直接退回同步打 API
             window.ApiService.syncProgress(studentId, taskId, willBeDone).catch(e => console.error("同步失敗", e));
         });
     }

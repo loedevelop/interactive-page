@@ -1,11 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 描述：學生端專屬的邏輯與進度渲染引擎。
- * 🌟 遲交判定、多檔上傳與作業群組 (Group) 巢狀渲染升級版：
- * 1. 【音檔處理】多選音檔自動切割上傳，並在檔名後方加上 _1, _2。
- * 2. 【遲交連動】接軌老師端設定，若不接受遲交直接鎖死按鈕；若接受則自動於檔名追加 _late。
- * 3. 【字體統一】加入 .rt-normalize，確保學生端檢視的文字大小也不會暴走。
- * 4. 【作業群組】完美支援「🗂️ 作業群組」的樹狀展開，修正進度分母演算法 (不計入容器本身，精準計算子任務)。
+ * 🌟 遲交判定、多檔上傳與作業群組 (Group) 巢狀遞迴渲染 (N-ary Tree) 升級版
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -212,7 +208,7 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 獨立抽出的渲染子任務 Helper 函數 (支援靜默對齊與獨立狀態)
+        // 🌟 獨立抽出的渲染子任務 Helper 函數
         const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, isSubTask = false) => {
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
@@ -274,7 +270,6 @@ window.FeatureStudentTimeline = (() => {
             let cleanTaskDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '').trim() : '';
             let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${task.description}</div>` : '';
             
-            // 🌟 遲交靜默法則 (Silence Rule)：與大區塊相同就不渲染
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
@@ -354,14 +349,12 @@ window.FeatureStudentTimeline = (() => {
                         }
                     }
 
-                    // 🌟 修正進度分母公式：排除作業群組(容器本身)，精準計算內部子任務與外層一般任務
-                    if (course.tasks) {
-                        course.tasks.forEach(t => {
+                    // 🌟 AST 遞迴進度計算：精準支援無限嵌套結構
+                    const countTasksRecursive = (tasksList) => {
+                        if (!tasksList) return;
+                        tasksList.forEach(t => {
                             if (t.type === 'group') {
-                                if (t.subTasks && t.subTasks.length > 0) {
-                                    totalTasksInDate += t.subTasks.length;
-                                    doneTasksInDate += t.subTasks.filter(sub => completedTasks.includes(`${course.id}_${sub.id}`)).length;
-                                }
+                                countTasksRecursive(t.subTasks);
                             } else {
                                 totalTasksInDate += 1;
                                 if (completedTasks.includes(`${course.id}_${t.id}`)) {
@@ -369,7 +362,8 @@ window.FeatureStudentTimeline = (() => {
                                 }
                             }
                         });
-                    }
+                    };
+                    if (course.tasks) countTasksRecursive(course.tasks);
 
                     let cleanBlockDesc = course.description ? course.description.replace(/<[^>]*>?/gm, '').trim() : '';
                     let blockDescHtml = cleanBlockDesc !== '' ? `<div class="rt-normalize" style="font-size:0.95rem; color:#64748B; margin-top:8px;">${course.description}</div>` : '';
@@ -377,17 +371,18 @@ window.FeatureStudentTimeline = (() => {
                     let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (允許遲交)' : '';
                     let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
-                    let tasksHtml = '';
-                    if (course.tasks && course.tasks.length > 0) {
-                        // 🌟 實作巢狀遞迴渲染 (Tree Traversal)
-                        tasksHtml = course.tasks.map((task) => {
+                    // 🌟 DFS 深度優先搜尋渲染器 (Tree Traversal for Unlimited Depth)
+                    const renderTaskTree = (tasksList, depth = 0) => {
+                        if (!tasksList || tasksList.length === 0) return '';
+                        
+                        return tasksList.map(task => {
                             if (task.type === 'group') {
                                 let groupTitle = task.title || '未命名作業群組';
                                 let subTasksHtml = '';
                                 
                                 if (task.subTasks && task.subTasks.length > 0) {
                                     subTasksHtml = `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">` +
-                                        task.subTasks.map(sub => renderTaskItem(sub, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, true)).join('') +
+                                        renderTaskTree(task.subTasks, depth + 1) +
                                         `</div>`;
                                 } else {
                                     subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此作業群組尚無內容)</div>`;
@@ -402,9 +397,14 @@ window.FeatureStudentTimeline = (() => {
                                     </div>
                                 `;
                             } else {
-                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, false);
+                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth > 0);
                             }
                         }).join('');
+                    };
+
+                    let tasksHtml = '';
+                    if (course.tasks && course.tasks.length > 0) {
+                        tasksHtml = renderTaskTree(course.tasks);
                     }
 
                     return `
