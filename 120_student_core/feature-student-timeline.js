@@ -1,10 +1,11 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 描述：學生端專屬的邏輯與進度渲染引擎。
- * 🌟 遲交判定與多檔上傳升級版：
+ * 🌟 遲交判定、多檔上傳與作業群組 (Group) 巢狀渲染升級版：
  * 1. 【音檔處理】多選音檔自動切割上傳，並在檔名後方加上 _1, _2。
  * 2. 【遲交連動】接軌老師端設定，若不接受遲交直接鎖死按鈕；若接受則自動於檔名追加 _late。
  * 3. 【字體統一】加入 .rt-normalize，確保學生端檢視的文字大小也不會暴走。
+ * 4. 【作業群組】完美支援「🗂️ 作業群組」的樹狀展開，修正進度分母演算法 (不計入容器本身，精準計算子任務)。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -211,8 +212,85 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        let html = '';
+        // 🌟 獨立抽出的渲染子任務 Helper 函數 (支援靜默對齊與獨立狀態)
+        const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, isSubTask = false) => {
+            const canUpload = !(isLateUpload && !allowLateFlag);
+            const compositeKey = `${course.id}_${task.id}`;
+            const isTaskDone = completedTasks.includes(compositeKey);
+            const checked = isTaskDone ? 'checked' : '';
 
+            let iconStr = task.type === 'check' ? '📌' : (task.type === 'link' ? '🔗' : '📁');
+            let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
+            let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', this.checked)" ${checked}>`;
+
+            let btn = '';
+            let taskTitleDisplay = '';
+            let linkContent = '';
+
+            if (task.type === 'link') {
+                let actualUrlText = (task.url_text || '').trim();
+                let actualTitle = (task.title || '').trim();
+
+                if (actualUrlText !== '') {
+                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${actualTitle || '未命名任務'}</span>`;
+                    linkContent = task.url ? `<a href="${task.url}" target="_blank" class="btn-action" style="margin-left:10px; font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 8px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
+                } else {
+                    let fallbackText = actualTitle || '未命名連結';
+                    if (task.url) {
+                        taskTitleDisplay = `<a href="${task.url}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${fallbackText}</a>`;
+                    } else {
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (無網址)</span>`;
+                    }
+                }
+            } else if (task.type === 'drive') {
+                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title || '未命名任務'}</span>`;
+
+                if (!canUpload) {
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
+                    btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⛔ 已逾期，停止收件</div>`;
+                } else if (!studentDriveUrl) {
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
+                    btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⚠️ 您的專屬資料夾尚未設定</div>`;
+                } else {
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功或前往雲端硬碟後將自動打勾">`;
+                    const uniqueId = `file-input-${course.id}-${task.id}`;
+                    const statusId = `upload-status-${course.id}-${task.id}`;
+                    const safeTitleForJS = (task.title || '未命名任務').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    const safeNodeTitle = node.title.replace(/[\\/:*?"<>|]/g, '_');
+
+                    btn = `
+                        <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap;">
+                            <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
+                            <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
+                            <button onclick="window.FeatureStudentTimeline.openDriveAndCheck('${course.id}', '${task.id}')" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
+                            <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
+                        </div>
+                    `;
+                }
+            } else {
+                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title || '未命名任務'}</span>`;
+            }
+
+            let cleanTaskDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '').trim() : '';
+            let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${task.description}</div>` : '';
+            
+            // 🌟 遲交靜默法則 (Silence Rule)：與大區塊相同就不渲染
+            let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
+            let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
+
+            const marginStyle = isSubTask ? 'margin-top:10px;' : 'margin-top:14px;';
+
+            return `
+                <div style="${marginStyle}">
+                    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
+                        ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
+                    </div>
+                    ${taskDescHtml}
+                </div>
+            `;
+        };
+
+        let html = '';
         const reversedNodes = timelineNodes.map((node, index) => ({ node, weekIndex: index + 1 })).reverse();
 
         reversedNodes.forEach(({ node, weekIndex }) => {
@@ -258,7 +336,6 @@ window.FeatureStudentTimeline = (() => {
                         }
                     }
                     
-                    // 🌟 解析老師端設定的遲交權限與逾期狀態
                     let aRaw = course.raw_data || {};
                     if (typeof aRaw === 'string') {
                         try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
@@ -276,12 +353,22 @@ window.FeatureStudentTimeline = (() => {
                             isLateUpload = true;
                         }
                     }
-                    
-                    const canUpload = !(isLateUpload && !allowLateFlag);
 
+                    // 🌟 修正進度分母公式：排除作業群組(容器本身)，精準計算內部子任務與外層一般任務
                     if (course.tasks) {
-                        totalTasksInDate += course.tasks.length;
-                        doneTasksInDate += course.tasks.filter(t => completedTasks.includes(`${course.id}_${t.id}`)).length;
+                        course.tasks.forEach(t => {
+                            if (t.type === 'group') {
+                                if (t.subTasks && t.subTasks.length > 0) {
+                                    totalTasksInDate += t.subTasks.length;
+                                    doneTasksInDate += t.subTasks.filter(sub => completedTasks.includes(`${course.id}_${sub.id}`)).length;
+                                }
+                            } else {
+                                totalTasksInDate += 1;
+                                if (completedTasks.includes(`${course.id}_${t.id}`)) {
+                                    doneTasksInDate += 1;
+                                }
+                            }
+                        });
                     }
 
                     let cleanBlockDesc = course.description ? course.description.replace(/<[^>]*>?/gm, '').trim() : '';
@@ -292,77 +379,31 @@ window.FeatureStudentTimeline = (() => {
 
                     let tasksHtml = '';
                     if (course.tasks && course.tasks.length > 0) {
+                        // 🌟 實作巢狀遞迴渲染 (Tree Traversal)
                         tasksHtml = course.tasks.map((task) => {
-                            const compositeKey = `${course.id}_${task.id}`;
-                            const isTaskDone = completedTasks.includes(compositeKey);
-                            const checked = isTaskDone ? 'checked' : '';
-                            
-                            let iconStr = task.type === 'check' ? '📌' : (task.type === 'link' ? '🔗' : '📁');
-                            let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
-                            let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', this.checked)" ${checked}>`;
-
-                            let btn = '';
-                            let taskTitleDisplay = '';
-                            let linkContent = '';
-
-                            if (task.type === 'link') {
-                                let actualUrlText = (task.url_text || '').trim();
-                                let actualTitle = (task.title || '').trim();
-
-                                if (actualUrlText !== '') {
-                                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${actualTitle || '未命名任務'}</span>`;
-                                    linkContent = task.url ? `<a href="${task.url}" target="_blank" class="btn-action" style="margin-left:10px; font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 8px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
-                                } else {
-                                    let fallbackText = actualTitle || '未命名連結';
-                                    if (task.url) {
-                                        taskTitleDisplay = `<a href="${task.url}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${fallbackText}</a>`;
-                                    } else {
-                                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (無網址)</span>`;
-                                    }
-                                }
-                            } else if (task.type === 'drive') {
-                                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title || '未命名任務'}</span>`;
+                            if (task.type === 'group') {
+                                let groupTitle = task.title || '未命名作業群組';
+                                let subTasksHtml = '';
                                 
-                                if (!canUpload) {
-                                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
-                                    btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⛔ 已逾期，停止收件</div>`;
-                                } else if (!studentDriveUrl) {
-                                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
-                                    btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⚠️ 您的專屬資料夾尚未設定</div>`;
+                                if (task.subTasks && task.subTasks.length > 0) {
+                                    subTasksHtml = `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">` +
+                                        task.subTasks.map(sub => renderTaskItem(sub, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, true)).join('') +
+                                        `</div>`;
                                 } else {
-                                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功或前往雲端硬碟後將自動打勾">`;
-                                    const uniqueId = `file-input-${course.id}-${task.id}`;
-                                    const statusId = `upload-status-${course.id}-${task.id}`;
-                                    const safeTitleForJS = (task.title || '未命名任務').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                    const safeNodeTitle = node.title.replace(/[\\/:*?"<>|]/g, '_');
-
-                                    // 🌟 加入 isLateUpload 標記
-                                    btn = `
-                                        <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap;">
-                                            <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
-                                            <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
-                                            <button onclick="window.FeatureStudentTimeline.openDriveAndCheck('${course.id}', '${task.id}')" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
-                                            <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
-                                        </div>
-                                    `;
+                                    subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此作業群組尚無內容)</div>`;
                                 }
-                            } else {
-                                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title || '未命名任務'}</span>`;
-                            }
 
-                            let cleanTaskDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '').trim() : '';
-                            let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${task.description}</div>` : '';
-                            let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
-                            let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
-
-                            return `
-                                <div style="margin-top:14px;">
-                                    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                                        ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
+                                return `
+                                    <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
+                                        <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
+                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
+                                        </div>
+                                        ${subTasksHtml}
                                     </div>
-                                    ${taskDescHtml}
-                                </div>
-                            `;
+                                `;
+                            } else {
+                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, false);
+                            }
                         }).join('');
                     }
 
@@ -494,7 +535,6 @@ window.FeatureStudentTimeline = (() => {
                 alert(`❌ 進度同步失敗：\n${err.message || err.details}`);
             }
         },
-        // 🌟 核心：支援多圖合併 PDF 與 多音檔連續上傳
         handleFileSelect: async (inputElement, assignmentId, taskId, taskTitle, statusId, dateKey, isLate) => {
             const filesArray = Array.from(inputElement.files);
             if (filesArray.length === 0) return;
@@ -517,16 +557,13 @@ window.FeatureStudentTimeline = (() => {
                 const cleanDateKey = dateKey.replace(/[\\/:*?"<>|]/g, '_');
                 const safeDateStr = (cleanDateKey && cleanDateKey !== '未分類日期') ? `${cleanDateKey}_` : '';
                 
-                // 判斷遲交標記
                 const lateSuffixStr = isLate ? '_late' : '';
                 
-                // 檢查檔案類型陣列
                 const allImages = filesArray.every(file => file.type.startsWith('image/'));
                 const allAudio = filesArray.every(file => file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|m4a|ogg|aac)$/i));
 
                 const API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec'; 
 
-                // 📁 情況 A：多筆音檔獨立上傳
                 if (filesArray.length > 1 && allAudio) {
                     statusEl.textContent = `⏳ 準備上傳 ${filesArray.length} 個音檔...`;
                     for (let i = 0; i < filesArray.length; i++) {
@@ -534,7 +571,6 @@ window.FeatureStudentTimeline = (() => {
                         if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB。`);
                         
                         const ext = file.name.substring(file.name.lastIndexOf('.'));
-                        // 檔名加上 _1, _2 等後綴，並在最後墊上遲交標記 (若有)
                         const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitle}_${i+1}${lateSuffixStr}${ext}`;
                         const finalMimeType = file.type || 'audio/mpeg';
                         
@@ -563,10 +599,9 @@ window.FeatureStudentTimeline = (() => {
                     statusEl.style.color = '#10B981';
                     setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true), 500);
                     inputElement.value = ''; 
-                    return; // 音檔全數上傳完畢，提早結束
+                    return; 
                 }
 
-                // 📁 情況 B：影像合併為 PDF 或是 單一檔案上傳
                 let base64Data = '', finalMimeType = '', finalFileName = '';
 
                 if (filesArray.length > 1) {
