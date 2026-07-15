@@ -1,8 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class.js
- * 🌟 v8.6 SaaS 終極大腦版：零壓縮完美排版 + 安全排程生效日對話框 (雙半部整合版) + 遲交繼承預設機制
+ * 🌟 v8.7 SaaS 終極大腦版：修復新建課程無腦觸發排程防呆缺陷
  */
-console.log("💡💡💡 FeatureClass v8.6 SaaS 終極大腦版載入！(啟用排程異動生效日選擇與遲交繼承機制)");
+console.log("💡💡💡 FeatureClass v8.7 SaaS 終極大腦版載入！(修復新建課程排程防呆 Bypass 機制)");
 
 window.FeatureClass = (() => {
     const db = window.TeacherDB;
@@ -760,6 +760,9 @@ window.FeatureClass = (() => {
                     const oldEDate = normalizeDateString(c.endDate || c.end_date || '');
                     const oldMeetDaysStr = (c.meetDays || c.meet_days || []).map(Number).sort().join(',');
                     const newMeetDaysStr = meetDaysArr.sort().join(',');
+                    
+                    // 🛡️ [生命週期防呆] 判斷是否為「全新建立且尚未設定過排程」的班級
+                    const isNewClassSetup = (!oldSDate && !oldEDate);
                     const isDatesChanged = (oldSDate !== sDate) || (oldEDate !== eDate) || (oldMeetDaysStr !== newMeetDaysStr);
 
                     const executeSave = async (finalCustomSessions, assignUpdatesMap = new Map()) => {
@@ -944,7 +947,11 @@ window.FeatureClass = (() => {
                         // 🌟 終極修復：沒有衝突的排程變更，也要跳出「安全排程異動對話框」來決定生效日！
                         let finalSessions = [...newFullSessions];
                         
-                        if (isDatesChanged) {
+                        if (isNewClassSetup) {
+                            // 💡 新建課程第一次設定排程，Bypass 異動防呆視窗，直接鋪設全學期
+                            console.log('💡 [排程引擎] 偵測到為新建課程第一次設定排程，Bypass 異動對話框，靜默放行。');
+                            finalSessions = [...newFullSessions];
+                        } else if (isDatesChanged) {
                             const safeRes = await askSafeScheduleChange(todayStr);
                             if (!safeRes) { 
                                 btn.innerHTML = originalText; 

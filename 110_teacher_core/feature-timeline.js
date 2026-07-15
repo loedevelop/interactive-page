@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v9.4 專業命名版：徹底移除白痴字眼，全面正名為「作業群組」
+ * 🌟 v9.5 專業命名版：修復作業群組多型突變缺陷、完善層級靜默繼承機制 (Silence Rule)
  */
 
 window.FeatureTimeline = (() => {
@@ -101,9 +101,23 @@ window.FeatureTimeline = (() => {
         bState.tasks.forEach((t, idx) => {
             if (t.type === 'group') {
                 const gTitle = document.getElementById(`group-title-${idx}`);
+                const gDue = document.getElementById(`group-due-${idx}`);
+                const gLateMode = document.getElementById(`group-late-mode-${idx}`);
+                const gGrace = document.getElementById(`group-grace-${idx}`);
+                const gPenalty = document.getElementById(`group-penalty-${idx}`);
+
                 if (gTitle) {
                     let text = gTitle.textContent.trim();
                     t.title = (text === '') ? '' : gTitle.innerHTML;
+                }
+                if (gDue) t.due_date = gDue.value;
+                if (gLateMode) {
+                    t.late_mode = gLateMode.value;
+                    t.grace_period_hours = gGrace ? (parseInt(gGrace.value) || 0) : 0;
+                    t.penalty_percentage = gPenalty ? (parseInt(gPenalty.value) || 0) : 0;
+
+                    if (t.late_mode === 'no_late') { t.grace_period_hours = 0; t.penalty_percentage = 0; }
+                    if (t.late_mode === 'infinite') { t.grace_period_hours = 0; }
                 }
                 
                 (t.subTasks || []).forEach((sub, sIdx) => {
@@ -212,10 +226,14 @@ window.FeatureTimeline = (() => {
         
         let taskLateMode = t.late_mode || 'infinite';
         let taskPenalty = t.penalty_percentage || 0;
+        let taskGrace = t.grace_period_hours || 0;
         let showLateBadge = true;
 
+        // 🤫 靜默比對原則 (Silence Rule)：若模式、寬限期、扣分比例完全一致，則隱藏冗餘標籤
         if (effectiveBlockLatePolicy) {
-            if (taskLateMode === effectiveBlockLatePolicy.mode && taskPenalty === effectiveBlockLatePolicy.penalty) {
+            if (taskLateMode === effectiveBlockLatePolicy.mode && 
+                taskPenalty === effectiveBlockLatePolicy.penalty && 
+                taskGrace === (effectiveBlockLatePolicy.grace || 0)) {
                 showLateBadge = false;
             }
         }
@@ -225,7 +243,7 @@ window.FeatureTimeline = (() => {
             if (taskLateMode === 'no_late') {
                 taskLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
             } else if (taskLateMode === 'custom') {
-                taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 遲交扣 ${taskPenalty}%</span>`;
+                taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 寬限 ${taskGrace}h (-${taskPenalty}%)</span>`;
             } else {
                 taskLateBadge = taskPenalty > 0 
                     ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>`
@@ -399,30 +417,59 @@ window.FeatureTimeline = (() => {
                     
                     let blockLateMode = 'infinite';
                     let blockPenalty = 0;
+                    let blockGrace = 0;
                     
                     if (aRaw.late_policy) {
                         if (!aRaw.late_policy.allow_late) blockLateMode = 'no_late';
-                        else if (aRaw.late_policy.grace_period_hours > 0) blockLateMode = 'custom';
+                        else if (aRaw.late_policy.grace_period_hours > 0) {
+                            blockLateMode = 'custom';
+                            blockGrace = aRaw.late_policy.grace_period_hours;
+                        }
                         else blockLateMode = 'infinite';
                         blockPenalty = aRaw.late_policy.penalty_percentage || 0;
                     }
                     
-                    const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty };
+                    const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty, grace: blockGrace };
 
                     let tasksHtml = '';
                     if (a.tasks && a.tasks.length > 0) {
                         a.tasks.forEach(t => {
                             if (t.type === 'group') {
+                                // 🌳 群組繼承邏輯：群組本身的政策將傳遞給子任務
+                                let groupDueDate = t.due_date || effectiveBlockDueDate;
+                                let groupPolicy = {
+                                    mode: t.late_mode || effectiveBlockLatePolicy.mode,
+                                    penalty: t.penalty_percentage !== undefined ? t.penalty_percentage : effectiveBlockLatePolicy.penalty,
+                                    grace: t.grace_period_hours !== undefined ? t.grace_period_hours : (effectiveBlockLatePolicy.grace || 0)
+                                };
+
+                                let showGroupLateBadge = true;
+                                if (groupPolicy.mode === effectiveBlockLatePolicy.mode && 
+                                    groupPolicy.penalty === effectiveBlockLatePolicy.penalty && 
+                                    groupPolicy.grace === effectiveBlockLatePolicy.grace) {
+                                    showGroupLateBadge = false;
+                                }
+
+                                let gLateBadge = '';
+                                if (showGroupLateBadge) {
+                                    if (groupPolicy.mode === 'no_late') gLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
+                                    else if (groupPolicy.mode === 'custom') gLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 寬限 ${groupPolicy.grace}h (-${groupPolicy.penalty}%)</span>`;
+                                    else gLateBadge = groupPolicy.penalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${groupPolicy.penalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
+                                }
+                                let gDueBadge = (t.due_date && t.due_date !== effectiveBlockDueDate) ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
+
                                 tasksHtml += `
                                     <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
                                         <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
                                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名作業群組'}</span>
+                                            ${gDueBadge} ${gLateBadge}
                                         </div>
                                 `;
                                 if (t.subTasks && t.subTasks.length > 0) {
                                     tasksHtml += `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">`;
                                     t.subTasks.forEach(sub => {
-                                        tasksHtml += generateReadOnlyTaskHtml(sub, effectiveBlockDueDate, effectiveBlockLatePolicy, true);
+                                        // 🎯 將群組自身的規則向下傳遞，實現 Silence Rule
+                                        tasksHtml += generateReadOnlyTaskHtml(sub, groupDueDate, groupPolicy, true);
                                     });
                                     tasksHtml += `</div>`;
                                 } else {
@@ -443,7 +490,7 @@ window.FeatureTimeline = (() => {
 
                     let lateBadgeText = '';
                     if (blockLateMode === 'no_late') lateBadgeText = ' (🚫 無遲交)';
-                    else if (blockLateMode === 'custom') lateBadgeText = ` (⏳ 遲交扣 ${blockPenalty}%)`;
+                    else if (blockLateMode === 'custom') lateBadgeText = ` (⏳ 寬限 ${blockGrace}h (-${blockPenalty}%))`;
                     else {
                         lateBadgeText = blockPenalty > 0 ? ` (♾️ 遲交扣 ${blockPenalty}%)` : ' (♾️ 可遲交)';
                     }
@@ -740,6 +787,9 @@ window.FeatureTimeline = (() => {
                      `;
                 }
 
+                // 🌟 群組多型表單 (Identity Preservation)：群組專屬的獨立藍色表單，包含期限與遲交預設規則
+                let gLateMode = t.late_mode || 'infinite';
+
                 return `
                     <div id="group-block-${idx}" draggable="false"
                          ondragstart="window.FeatureTimeline.dragTopTaskStart(event, ${idx})" 
@@ -747,26 +797,58 @@ window.FeatureTimeline = (() => {
                          ondragleave="this.classList.remove('drag-over');"
                          ondrop="this.classList.remove('drag-over'); window.FeatureTimeline.dropTopTask(event, ${idx})"
                          ondragend="this.setAttribute('draggable', 'false');"
-                         style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 2px solid #CBD5E1; margin-bottom: 20px; transition: border 0.2s;">
-                        <div style="display:flex; gap:10px; align-items:center; margin-bottom: 15px; border-bottom: 2px solid #E2E8F0; padding-bottom: 10px;">
-                            <span style="cursor: grab; font-size:1.2rem; color:#94A3B8; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個作業群組"
+                         style="background: #EFF6FF; padding: 15px; border-radius: 8px; border: 2px solid #93C5FD; margin-bottom: 20px; transition: border 0.2s;">
+                        
+                        <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
+                            <span style="cursor: grab; font-size:1.2rem; color:#60A5FA; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個作業群組"
                                   onmousedown="document.getElementById('group-block-${idx}').setAttribute('draggable', 'true')"
                                   onmouseup="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')"
                                   onmouseleave="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
                             <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 作業群組大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#3B82F6; padding:8px 12px; background:white; border:1px solid #93C5FD; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 作業群組大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#1E3A8A; padding:8px 12px; background:white; border:1px solid #BFDBFE; border-radius:6px; outline:none;">${t.title || ''}</div>
                             <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個作業群組">🗑️</button>
                         </div>
+
+                        <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #BFDBFE; margin-bottom:15px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label style="font-weight:800; font-size:0.9rem; color:#1E3A8A;">群組專屬期限：</label>
+                                <input type="date" id="group-due-${idx}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem;" value="${t.due_date || ''}">
+                            </div>
+                            
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label style="font-weight:800; font-size:0.9rem; color:#1E3A8A;">群組遲交預設 (靜默繼承)：</label>
+                                <select id="group-late-mode-${idx}" class="form-control" style="padding:4px 8px; font-size:0.9rem; width:auto;" onchange="
+                                    const m = this.value;
+                                    document.getElementById('group-late-custom-${idx}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
+                                    document.getElementById('group-grace-wrapper-${idx}').style.display = (m === 'custom') ? 'flex' : 'none';
+                                ">
+                                    <option value="no_late" ${gLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
+                                    <option value="infinite" ${gLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交</option>
+                                    <option value="custom" ${gLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
+                                </select>
+                            </div>
+
+                            <div id="group-late-custom-${idx}" style="display:${(gLateMode === 'infinite' || gLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:#DBEAFE; padding:4px 10px; border-radius:6px;">
+                                <div id="group-grace-wrapper-${idx}" style="display:${gLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
+                                    <label style="font-size:0.85rem; font-weight:bold; color:#1E3A8A;">寬限(小時):</label>
+                                    <input type="number" id="group-grace-${idx}" class="form-control" style="padding:4px; width:60px;" value="${t.grace_period_hours || 0}" min="0">
+                                </div>
+                                <div style="display:flex; align-items:center; gap:5px;">
+                                    <label style="font-size:0.85rem; font-weight:bold; color:#1E3A8A;">扣分(%):</label>
+                                    <input type="number" id="group-penalty-${idx}" class="form-control" style="padding:4px; width:60px;" value="${t.penalty_percentage || 0}" min="0" max="100">
+                                </div>
+                            </div>
+                        </div>
                         
-                        <div style="padding-left: 20px; border-left: 3px solid #E2E8F0; margin-left: 10px;">
+                        <div style="padding-left: 20px; border-left: 3px solid #BFDBFE; margin-left: 10px;">
                             ${subTasksHtml}
                             
                             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top: 10px;">
-                                <span style="font-size:0.85rem; color:#94A3B8; font-weight:bold; margin-right:5px;">作業群組類型：</span>
+                                <span style="font-size:0.85rem; color:#60A5FA; font-weight:bold; margin-right:5px;">新增子任務：</span>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'link')">+ 🔗 連結</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2ECC71;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'drive')">+ 📁 Drive</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'group')">+ 🗂️ 作業群組</button>
+                                <!-- 🚫 修復：禁止在子任務區塊再新增巢狀群組 -->
                                 ${addSubResourceHtml}
                             </div>
                         </div>
@@ -832,12 +914,12 @@ window.FeatureTimeline = (() => {
                     
                     <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">期限：</label>
+                            <label style="font-weight:800; font-size:1rem; color:#334155;">大區塊期限：</label>
                             <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:4px 8px; font-size:1rem;" value="${bState.due_date || ''}">
                         </div>
                         
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">遲交規則：</label>
+                            <label style="font-weight:800; font-size:1rem; color:#334155;">大區塊遲交規則：</label>
                             <select id="builder-late-mode-${bState.containerId}" class="form-control" style="padding:4px 8px; font-size:1rem; width:auto;" onchange="
                                 const m = this.value;
                                 document.getElementById('builder-late-custom-${bState.containerId}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
@@ -1261,7 +1343,7 @@ window.FeatureTimeline = (() => {
         addTopTask: (type) => {
             syncState(); 
             if (type === 'group') {
-                bState.tasks.push({ id: `group_${Date.now()}`, type: 'group', title: '', subTasks: [] });
+                bState.tasks.push({ id: `group_${Date.now()}`, type: 'group', title: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, subTasks: [] });
             } else {
                 bState.tasks.push({ id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0 });
             }
