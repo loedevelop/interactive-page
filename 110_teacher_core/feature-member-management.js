@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-member-management.js
- * 🌟 v6.3 SaaS 雲端對接版：導入 Sub-Tabs 智慧連動、表單動態防呆機制
+ * 🌟 v6.6 終極解耦版：導入共用信箱前端變異選項，拔除後端通靈邏輯
  */
 
 export class MemberManager {
@@ -18,7 +18,6 @@ export class MemberManager {
         this.initUI();
     }
 
-    // 🌟 新增：由外部 Sub-Tabs 呼叫，只修改預選身分，但不強迫打開表單
     syncWithTab(tabName) {
         const roleSelect = document.getElementById('memberRole');
         if (!roleSelect) return;
@@ -27,11 +26,9 @@ export class MemberManager {
         else if (tabName === 'staff') roleSelect.value = 'co_teacher';
         else if (tabName === 'parent') roleSelect.value = 'parent';
         
-        // 觸發 change 事件，讓動態欄位 (如選擇學生) 正確顯示
         roleSelect.dispatchEvent(new Event('change'));
     }
 
-    // 🌟 新增：由表格內的快捷按鈕呼叫，展開表單、預選身分、並捲動到視角內
     openAndSync(tabName, studentId = null) {
         const toggleBtn = document.getElementById('toggleMemberFormBtn');
         const form = document.getElementById('addMemberForm');
@@ -42,7 +39,6 @@ export class MemberManager {
         
         this.syncWithTab(tabName);
         
-        // 稍微延遲以確保表單動畫與 API (如讀取學生名單) 執行完畢
         setTimeout(() => {
             if (studentId) {
                 const childSelect = document.getElementById('childUserId');
@@ -115,10 +111,14 @@ export class MemberManager {
                         <div class="form-group" style="margin-top: 0;">
                             <label>📧 聯絡信箱 (Email) <span style="color:red;">*</span></label>
                             <input type="email" id="memberEmail" class="form-control" required placeholder="例如：name@example.com">
+                            <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; color: #475569; margin-top: 8px; font-size: 0.9rem;">
+                                <input type="checkbox" id="isSharedEmail" style="transform: scale(1.1);">
+                                <span>🔗 此為共用信箱 (系統將結合姓名自動變異生成獨立的分身帳號)</span>
+                            </label>
                         </div>
 
                         <div class="form-group" style="margin-top: 0;">
-                            <label>📱 手機號碼 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(強烈建議填寫，避免撞名)</span></label>
+                            <label>📱 手機號碼 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(若為共用信箱，請務必填寫以生成帳號)</span></label>
                             <input type="tel" id="memberPhone" class="form-control" placeholder="例如：0912345678">
                         </div>
                     </div>
@@ -127,7 +127,6 @@ export class MemberManager {
                         <div class="form-group" style="margin-top: 0;">
                             <label style="display: flex; align-items: center; gap: 8px;">
                                 🏷️ 指派身分 <span style="color:red;">*</span>
-                                <span id="studentEmailRuleIcon" style="display: none; cursor: pointer; font-size: 0.85rem; color: #3B82F6; background: #EFF6FF; padding: 2px 8px; border-radius: 12px; border: 1px solid #BFDBFE; user-select: none;">💡 帳號防衝突規則</span>
                             </label>
                             
                             <div style="position: relative;">
@@ -137,18 +136,6 @@ export class MemberManager {
                                     ${this.renderStaffOptions()}
                                     <option value="parent">👨‍👩‍👧 家長 (Parent)</option>
                                 </select>
-                                
-                                <div id="studentEmailRulePopup" style="display: none; position: absolute; top: calc(100% + 8px); left: 0; background: #ffffff; border: 1px solid #BFDBFE; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); padding: 15px; width: 320px; z-index: 1000;">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <h5 style="margin: 0; color: #1E3A8A; font-size: 0.95rem;">💡 帳號防衝突規則</h5>
-                                        <span id="closeRulePopup" style="cursor: pointer; font-size: 1rem; color: #94A3B8; padding: 0 5px;">✖</span>
-                                    </div>
-                                    <p style="margin: 0 0 5px 0; font-size: 0.85rem; color: #475569; line-height: 1.5;">若輸入的 <b>家長信箱</b> 已註冊，系統將自動生成學生的專屬登入帳號：</p>
-                                    <ul style="margin: 0; padding-left: 20px; font-size: 0.85rem; color: #475569; line-height: 1.6;">
-                                        <li><b>Gmail：</b> 插入 <code>+學生姓名</code> <br><span style="color:#64748B;">(例: parent<b>+JasonLiu</b>@gmail.com)</span></li>
-                                        <li><b>非 Gmail：</b> 轉為內部網域 <code>姓名.手機末四碼@LogOnEnglish.com</code> <br><span style="color:#64748B;">(例: <b>JasonLiu.5678</b>@LogOnEnglish.com)</span></li>
-                                    </ul>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -229,9 +216,6 @@ export class MemberManager {
         });
 
         const roleSelect = document.getElementById('memberRole');
-        const ruleIcon = document.getElementById('studentEmailRuleIcon');
-        const rulePopup = document.getElementById('studentEmailRulePopup');
-        const closePopupBtn = document.getElementById('closeRulePopup');
 
         roleSelect.addEventListener('change', async (e) => {
             const selectedRole = e.target.value;
@@ -242,8 +226,6 @@ export class MemberManager {
             childGroup.style.display = 'none';
             childSelect.removeAttribute('required');
             driveGroup.style.display = 'none';
-            ruleIcon.style.display = 'none';
-            rulePopup.style.display = 'none'; 
 
             if (selectedRole === 'parent') {
                 childGroup.style.display = 'block';
@@ -251,22 +233,6 @@ export class MemberManager {
                 await this.fetchClassStudents(); 
             } else if (selectedRole === 'student') {
                 driveGroup.style.display = 'block';
-                ruleIcon.style.display = 'inline-flex'; 
-            }
-        });
-
-        ruleIcon.addEventListener('click', (e) => {
-            e.stopPropagation(); 
-            rulePopup.style.display = rulePopup.style.display === 'none' ? 'block' : 'none';
-        });
-
-        closePopupBtn.addEventListener('click', () => {
-            rulePopup.style.display = 'none';
-        });
-
-        document.addEventListener('click', (e) => {
-            if (rulePopup.style.display === 'block' && !rulePopup.contains(e.target) && e.target !== ruleIcon) {
-                rulePopup.style.display = 'none';
             }
         });
 
@@ -339,11 +305,35 @@ export class MemberManager {
 
         const fallbackName = document.getElementById('sysDisplayName').value.trim() || fullCN || nameEN;
         
-        const email = document.getElementById('memberEmail').value.trim();
+        let targetEmail = document.getElementById('memberEmail').value.trim().toLowerCase();
         const phone = document.getElementById('memberPhone').value.trim();
         const role = document.getElementById('memberRole').value;
         const childUserId = document.getElementById('childUserId').value;
         const driveLink = document.getElementById('memberDriveLink').value.trim();
+        const isShared = document.getElementById('isSharedEmail').checked;
+
+        // 🌟 核心防衝突變異邏輯：權力下放前端
+        let isMutated = false;
+        if (isShared) {
+            const [username, domain] = targetEmail.split("@");
+            const supportedAliasDomains = ["gmail.com", "googlemail.com", "icloud.com"];
+            const rawEn = nameEN;
+            const rawLastCN = lastNameCN;
+            const rawFirstCN = firstNameCN;
+            const mutationName = (rawEn || rawLastCN + rawFirstCN).replace(/\s+/g, '') || "User";
+
+            if (supportedAliasDomains.includes(domain)) {
+                targetEmail = `${username}+${mutationName}@${domain}`.toLowerCase();
+            } else {
+                if (!phone || phone.replace(/[^0-9]/g, "").length < 4) {
+                    alert("⚠️ 此信箱網域不支援別名，系統需轉換為 LogOn 內部網域。請務必填寫「手機號碼」(至少4碼)！");
+                    return;
+                }
+                const phoneLast4 = phone.replace(/[^0-9]/g, "").slice(-4);
+                targetEmail = `${mutationName}.${phoneLast4}@logonenglish.com`.toLowerCase();
+            }
+            isMutated = true;
+        }
 
         const rawDataPayload = {
             nameEN: nameEN,
@@ -365,16 +355,14 @@ export class MemberManager {
         let targetUserId = null;
         let isExistingUser = false;
         let loginPassword = '';
-        let loginEmail = '';
-        let isMutated = false;
+        let isMutatedFromBackend = false;
 
         try {
-            const result = await this.invokeSilentCreation(fallbackName, email, phone, role, rawDataPayload);
+            const result = await this.invokeSilentCreation(fallbackName, targetEmail, phone, role, rawDataPayload, isMutated, document.getElementById('memberEmail').value.trim());
             targetUserId = result.user_id;
             isExistingUser = result.is_existing;
             loginPassword = result.login_password;
-            loginEmail = result.login_email;
-            isMutated = result.is_mutated;
+            isMutatedFromBackend = result.is_mutated;
 
             try {
                 if (role === 'student') {
@@ -393,10 +381,10 @@ export class MemberManager {
 
             msgBox.style.color = '#10B981'; 
             if (isExistingUser) {
-                msgBox.innerHTML = `✅ 此帳號已存在，已成功指派至本班！`;
+                msgBox.innerHTML = `✅ 此帳號已存在，已成功同步資料並指派至本班！`;
             } else {
-                if (isMutated) {
-                    msgBox.innerHTML = `✅ 已啟動防衝突機制建立學生！<br><span style="font-size:0.85em; color:#475569;">學生登入帳號: <b>${loginEmail}</b><br>預設密碼: <b>${loginPassword}</b></span>`;
+                if (isMutatedFromBackend) {
+                    msgBox.innerHTML = `✅ 已自動生成分身帳號！<br><span style="font-size:0.85em; color:#475569;">登入帳號: <b>${targetEmail}</b><br>預設密碼: <b>${loginPassword}</b></span>`;
                 } else {
                     msgBox.innerHTML = `✅ 成功加入！<br><span style="font-size:0.85em; color:#475569;">預設密碼為: <b>${loginPassword}</b></span>`;
                 }
@@ -406,10 +394,7 @@ export class MemberManager {
             document.getElementById('sysDisplayName').value = ''; 
             document.getElementById('childSelectionGroup').style.display = 'none';
             document.getElementById('studentDriveGroup').style.display = 'none';
-            document.getElementById('studentEmailRuleIcon').style.display = 'none';
-            document.getElementById('studentEmailRulePopup').style.display = 'none';
 
-            // 🌟 成功後自動重刷名單，讓老師立刻看到新增的人員
             if (window.FeatureClassMembers && typeof window.FeatureClassMembers.renderStudentManager === 'function') {
                 await window.FeatureClassMembers.renderStudentManager(this.classId);
             }
@@ -429,14 +414,16 @@ export class MemberManager {
         }
     }
 
-    async invokeSilentCreation(name, email, phone, roleType, rawDataPayload) {
+    async invokeSilentCreation(name, email, phone, roleType, rawDataPayload, isMutated, originalEmail) {
         const { data, error } = await this.supabase.functions.invoke('admin_create_user', {
             body: { 
                 name: name, 
                 email: email, 
                 phone: phone, 
                 roleType: roleType,
-                rawData: rawDataPayload 
+                rawData: rawDataPayload,
+                isMutated: isMutated,
+                originalEmail: isMutated ? originalEmail : null
             }
         });
 
@@ -489,7 +476,6 @@ export class MemberManager {
     }
 }
 
-// 🌟 將實例儲存至 window，方便 feature-class-students 呼叫 openAndSync 進行 UI 連動
 window.RenderMemberManagerForm = function(containerId, classId, currentUserRole) {
     window.currentMemberManager = new MemberManager(containerId, classId, currentUserRole);
 };

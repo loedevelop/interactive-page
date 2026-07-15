@@ -1,6 +1,9 @@
 /**
  * Supabase Edge Function: admin_create_user
- * 🌟 實作「學生帳號防衝突雙軌制」：Gmail 體系採用 + 號；非 Gmail 體系採用 LogOnEnglish 專屬網域。
+ * 🌟 純粹化建檔引擎與舊資料救援 (Legacy Patch)
+ * 1. 變異邏輯已移交前端處理，後端僅接收最終 Email。
+ * 2. 舊帳號救援：當 Email 已存在時，無痛合併缺失的 raw_data (如 nameEN)，修復舊系統遺毒避免 500 當機。
+ * 3. 尊重情境身分制，絕對不更動現有帳號的 default_role。
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -30,20 +33,19 @@ serve(async (req) => {
     });
 
     const body = await req.json();
-    const { name, email, phone, roleType, rawData = {} } = body;
+    // 前端已經傳來處理好的最終 Email (若有打勾，已是變異後的 Email)
+    const { name, email, phone, roleType, rawData = {}, isMutated, originalEmail } = body;
 
     if (!name || !email) {
       throw new Error("姓名與 Email 為必填欄位");
     }
 
     let targetEmail = email.trim().toLowerCase();
-    let isMutated = false;
-    let originalEmail = null;
 
-    // 1. 查詢 Email 是否已存在
+    // 1. 查詢 Email 是否已存在 (撈取 raw_data 進行後續修復)
     const { data: existingProfile, error: searchError } = await supabaseAdmin
       .from("profiles")
-      .select("id, email")
+      .select("id, email, raw_data")
       .eq("email", targetEmail)
       .maybeSingle();
 
@@ -51,50 +53,53 @@ serve(async (req) => {
       throw new Error(`查詢帳號時發生錯誤: ${searchError.message}`);
     }
 
-    // 2. 🚦 針對已存在帳號的「分流防護邏輯」
+    // 2. 🚦 帳號已存在 -> 執行「舊資料救援 Legacy Patch」後直接放行
     if (existingProfile) {
-      originalEmail = targetEmail;
-
-      // 情況 A：如果身分是「學生」，啟動您決定的帳號自動變形雙軌制
-      if (roleType === "student") {
-        const [username, domain] = targetEmail.split("@");
-        const supportedAliasDomains = ["gmail.com", "googlemail.com", "icloud.com"];
-        
-        // 擷取姓名並去除空白 (優先使用英文名，若無則使用中文名)
-        const rawEn = (rawData.nameEN || "").trim();
-        const rawLastCN = (rawData.lastNameCN || "").trim();
-        const rawFirstCN = (rawData.firstNameCN || "").trim();
-        const studentName = (rawEn || rawLastCN + rawFirstCN).replace(/\s+/g, '') || "Student";
-
-        if (supportedAliasDomains.includes(domain)) {
-          // 策略 1: Gmail 體系 -> 加 + 號與學生姓名
-          targetEmail = `${username}+${studentName}@${domain}`.toLowerCase();
-        } else {
-          // 策略 2: 非 Gmail 體系 -> 轉內部網域並加手機末四碼
-          if (!phone || phone.replace(/[^0-9]/g, "").length < 4) {
-            throw new Error("此信箱不支援別名，系統需轉換為 LogOn 內部網域帳號。請務必填寫家長「手機號碼」(至少4碼)，以生成該學生專屬帳號。");
-          }
-          const phoneLast4 = phone.replace(/[^0-9]/g, "").slice(-4);
-          targetEmail = `${studentName}.${phoneLast4}@logonenglish.com`.toLowerCase();
+        let oldRawData = existingProfile.raw_data;
+        if (typeof oldRawData === "string") {
+            try { oldRawData = JSON.parse(oldRawData); } catch (e) { oldRawData = {}; }
+        } else if (!oldRawData || typeof oldRawData !== "object") {
+            oldRawData = {};
         }
-        isMutated = true;
-      } 
-      // 情況 B：如果是「教職員」或「家長」，絕對不變形，直接綁定原帳號
-      else {
+
+        // 安全合併：保留既有欄位 (如 drive_url)，補齊缺失的姓名結構以防其他模組崩潰
+        const mergedRawData = {
+            ...oldRawData,
+            nameEN: rawData.nameEN || oldRawData.nameEN || "",
+            lastNameCN: rawData.lastNameCN || oldRawData.lastNameCN || "",
+            firstNameCN: rawData.firstNameCN || oldRawData.firstNameCN || "",
+            passportLast: rawData.passportLast || oldRawData.passportLast || "",
+            passportFirst: rawData.passportFirst || oldRawData.passportFirst || ""
+        };
+        
+        // 確保不會洗掉已有的專屬 Drive 連結
+        if (rawData.drive_url) {
+            mergedRawData.drive_url = rawData.drive_url;
+        }
+
+        // 靜默更新舊帳號的 raw_data (絕對不碰 default_role)
+        const { error: updateErr } = await supabaseAdmin
+            .from("profiles")
+            .update({ raw_data: mergedRawData })
+            .eq("id", existingProfile.id);
+
+        if (updateErr) {
+            console.error("更新舊帳號 raw_data 失敗:", updateErr);
+        }
+
         return new Response(
           JSON.stringify({
             success: true,
             user_id: existingProfile.id,
             login_email: existingProfile.email,
             is_existing: true,
-            message: "此帳號已存在，系統將直接賦予該帳號本班權限。"
+            message: "此帳號已存在，系統已安全更新資料並回傳 ID。"
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
         );
-      }
     }
 
-    // 3. 建立全新的 Auth 帳號 (全新信箱，或是經過變形後的學生信箱)
+    // 3. 帳號不存在 -> 建立全新的 Auth 帳號
     const defaultPassword = "LogOn" + new Date().getFullYear();
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: targetEmail,
@@ -103,7 +108,9 @@ serve(async (req) => {
       user_metadata: { name: name },
     });
 
-    if (authError) throw authError;
+    if (authError) {
+        throw new Error(`建立驗證帳號失敗: ${authError.message}`);
+    }
 
     const newUserId = authData.user.id;
 
@@ -115,14 +122,14 @@ serve(async (req) => {
       ta_junior: "staff",
     };
 
-    // 4. 同步寫入 Profiles，並將預設密碼寫入
+    // 4. 同步寫入 Profiles
     const { error: profileError } = await supabaseAdmin.from("profiles").insert([{
       id: newUserId,
       email: targetEmail,
       password: defaultPassword,
       name: name,
       phone: phone || null,
-      default_role: defaultRoleMap[roleType] || "student",
+      default_role: defaultRoleMap[roleType] || "student", // 僅在新建時給予預設值，之後不再依賴
       raw_data: { 
         ...rawData, 
         source: "admin_silent_creation",
@@ -133,7 +140,7 @@ serve(async (req) => {
     if (profileError) {
       // Rollback
       await supabaseAdmin.auth.admin.deleteUser(newUserId);
-      throw profileError;
+      throw new Error(`寫入使用者主檔失敗: ${profileError.message}`);
     }
 
     return new Response(
@@ -162,7 +169,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 } // 永遠以 400 回傳，避免前端收到 500 當機
     );
   }
 });
