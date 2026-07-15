@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v9.5 專業命名版：修復作業群組多型突變缺陷、完善層級靜默繼承機制 (Silence Rule)
+ * 🌟 v9.6 專業極簡版：UI 視覺分群、文字極簡正名、實體作業無損類型切換下拉選單
  */
 
 window.FeatureTimeline = (() => {
@@ -193,7 +193,7 @@ window.FeatureTimeline = (() => {
         
         let extraTag = '';
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
-        else if (t.type === 'group') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(內部作業群組)</span>';
+        else if (t.type === 'group') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(內部群組作業)</span>';
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
         let taskTitleDisplay = '';
@@ -229,7 +229,6 @@ window.FeatureTimeline = (() => {
         let taskGrace = t.grace_period_hours || 0;
         let showLateBadge = true;
 
-        // 🤫 靜默比對原則 (Silence Rule)：若模式、寬限期、扣分比例完全一致，則隱藏冗餘標籤
         if (effectiveBlockLatePolicy) {
             if (taskLateMode === effectiveBlockLatePolicy.mode && 
                 taskPenalty === effectiveBlockLatePolicy.penalty && 
@@ -435,7 +434,6 @@ window.FeatureTimeline = (() => {
                     if (a.tasks && a.tasks.length > 0) {
                         a.tasks.forEach(t => {
                             if (t.type === 'group') {
-                                // 🌳 群組繼承邏輯：群組本身的政策將傳遞給子任務
                                 let groupDueDate = t.due_date || effectiveBlockDueDate;
                                 let groupPolicy = {
                                     mode: t.late_mode || effectiveBlockLatePolicy.mode,
@@ -461,19 +459,18 @@ window.FeatureTimeline = (() => {
                                 tasksHtml += `
                                     <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
                                         <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
-                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名作業群組'}</span>
+                                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組作業'}</span>
                                             ${gDueBadge} ${gLateBadge}
                                         </div>
                                 `;
                                 if (t.subTasks && t.subTasks.length > 0) {
                                     tasksHtml += `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">`;
                                     t.subTasks.forEach(sub => {
-                                        // 🎯 將群組自身的規則向下傳遞，實現 Silence Rule
                                         tasksHtml += generateReadOnlyTaskHtml(sub, groupDueDate, groupPolicy, true);
                                     });
                                     tasksHtml += `</div>`;
                                 } else {
-                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此作業群組尚無內容)</div>`;
+                                    tasksHtml += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此群組作業尚無內容)</div>`;
                                 }
                                 tasksHtml += `</div>`;
                             } else {
@@ -500,7 +497,7 @@ window.FeatureTimeline = (() => {
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
                     const dragHandleHtml = canEditTimeline 
-                        ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
+                        ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
                     const actionButtonsHtml = canEditTimeline 
@@ -540,7 +537,7 @@ window.FeatureTimeline = (() => {
             const builderContainerId = `builder-container-${index}`;
 
             const addBlockBtn = canEditTimeline 
-                ? `<button class="btn btn-primary" onclick="window.FeatureTimeline.openBuilder('${classId}', '${nodeDate}', '${builderContainerId}')">+ 新增作業區塊</button>` 
+                ? `<button class="btn btn-primary" onclick="window.FeatureTimeline.openBuilder('${classId}', '${nodeDate}', '${builderContainerId}')">+ 新增區塊</button>` 
                 : '';
                 
             const nodeDragEvents = canEditTimeline 
@@ -614,8 +611,14 @@ window.FeatureTimeline = (() => {
         let dropMethod = isSub ? `window.FeatureTimeline.dropSubTask(event, ${parentIdx}, ${subIdx})` : `window.FeatureTimeline.dropTopTask(event, ${parentIdx})`;
         let removeMethod = isSub ? `window.FeatureTimeline.removeSubTask(${parentIdx}, ${subIdx})` : `window.FeatureTimeline.removeTask(${parentIdx})`;
         
-        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : (t.type === 'group' ? '🗂️' : '📁'));
-        let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.2rem; margin-right:4px;">${iconStr}</span>`;
+        // 🌟 無損類型切換：將靜態圖示替換為動態下拉選單
+        let typeSelectorHtml = `
+            <select class="form-control" style="width:auto; padding:2px 4px; font-size:1rem; border:1px solid #CBD5E1; border-radius:4px; background:#F8FAFC; cursor:pointer; color:#334155; font-weight:bold; outline:none;" onchange="window.FeatureTimeline.changeTaskType(${parentIdx}, ${subIdx !== null ? subIdx : 'null'}, this.value)">
+                <option value="check" ${t.type === 'check' ? 'selected' : ''}>📌 一般</option>
+                <option value="link" ${t.type === 'link' ? 'selected' : ''}>🔗 連結</option>
+                <option value="drive" ${t.type === 'drive' ? 'selected' : ''}>📁 Drive</option>
+            </select>
+        `;
         
         let urlInputHtml = '';
         if (t.type === 'link') {
@@ -661,7 +664,7 @@ window.FeatureTimeline = (() => {
                           onmousedown="document.getElementById('${idPrefix}-block-${htmlIdxStr}').setAttribute('draggable', 'true')"
                           onmouseup="document.getElementById('${idPrefix}-block-${htmlIdxStr}').setAttribute('draggable', 'false')"
                           onmouseleave="document.getElementById('${idPrefix}-block-${htmlIdxStr}').setAttribute('draggable', 'false')">↕️</span>
-                    <div style="padding-top:4px;">${iconHtml}</div>
+                    <div style="padding-top:4px;">${typeSelectorHtml}</div>
                     <div id="${idPrefix}-title-${htmlIdxStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
                     
                     <div style="display:flex; align-items:center; gap:10px; padding-top:4px; flex-wrap:wrap;">
@@ -677,8 +680,8 @@ window.FeatureTimeline = (() => {
                                 document.getElementById('${idPrefix}-grace-wrapper-${htmlIdxStr}').style.display = (m === 'custom') ? 'flex' : 'none';
                             ">
                                 <option value="no_late" ${tLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                <option value="infinite" ${tLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交 (無限期，可扣分)</option>
-                                <option value="custom" ${tLateMode === 'custom' ? 'selected' : ''}>⏳ 允許遲交 (自訂寬限，可扣分)</option>
+                                <option value="infinite" ${tLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交</option>
+                                <option value="custom" ${tLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
                             </select>
                         </div>
                         
@@ -738,13 +741,13 @@ window.FeatureTimeline = (() => {
         let opts = allAssigns.map(a => `<option value="${a.id}">${a.target_date} - ${a.title.replace(/<[^>]*>?/gm, '')}</option>`).join('');
         return `
             <div style="margin-bottom:15px; padding-bottom:15px; border-bottom:1px solid #E2E8F0;">
-                <label style="font-size:0.9rem; font-weight:800; color:#64748B;">🔄 快速載入過去的作業樣板：</label>
+                <label style="font-size:0.9rem; font-weight:800; color:#64748B;">🔄 快速載入過去的區塊樣板：</label>
                 <div style="display:flex; gap:10px; margin-top:5px; align-items:center;">
                     <select id="history-select-${bState.containerId}" class="form-control" style="flex:1;" onchange="window.FeatureTimeline.copyHistory(this.value)">
-                        <option value="">-- 選擇歷史作業 --</option>
+                        <option value="">-- 選擇歷史紀錄 --</option>
                         ${opts}
                     </select>
-                    <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.deleteHistoryTemplate()" title="刪除選取的歷史作業">🗑️ 刪除紀錄</button>
+                    <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.deleteHistoryTemplate()" title="刪除選取的歷史紀錄">🗑️ 刪除紀錄</button>
                 </div>
             </div>`;
     }
@@ -776,7 +779,7 @@ window.FeatureTimeline = (() => {
                 let addSubResourceHtml = '';
                 if (classResList.length > 0) {
                     addSubResourceHtml = `
-                        <select class="form-control" style="width:auto; padding:4px 10px; font-size:0.9rem; font-weight:800; border:2px solid #8B5CF6; color:#8B5CF6; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addSubResourceTaskAsLink(${idx}, this.value); this.value=''; }">
+                        <select class="form-control" style="width:auto; padding:4px 10px; font-size:0.9rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addSubResourceTaskAsLink(${idx}, this.value); this.value=''; }">
                             <option value="" disabled selected>+ 📚 班級與全域資源</option>
                             ${classResOpts}
                         </select>
@@ -787,7 +790,6 @@ window.FeatureTimeline = (() => {
                      `;
                 }
 
-                // 🌟 群組多型表單 (Identity Preservation)：群組專屬的獨立藍色表單，包含期限與遲交預設規則
                 let gLateMode = t.late_mode || 'infinite';
 
                 return `
@@ -800,13 +802,13 @@ window.FeatureTimeline = (() => {
                          style="background: #EFF6FF; padding: 15px; border-radius: 8px; border: 2px solid #93C5FD; margin-bottom: 20px; transition: border 0.2s;">
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
-                            <span style="cursor: grab; font-size:1.2rem; color:#60A5FA; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個作業群組"
+                            <span style="cursor: grab; font-size:1.2rem; color:#60A5FA; padding:4px 4px 0 0; display:inline-block;" title="拖曳整個群組作業"
                                   onmousedown="document.getElementById('group-block-${idx}').setAttribute('draggable', 'true')"
                                   onmouseup="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')"
                                   onmouseleave="document.getElementById('group-block-${idx}').setAttribute('draggable', 'false')">↕️</span>
                             <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 作業群組大標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#1E3A8A; padding:8px 12px; background:white; border:1px solid #BFDBFE; border-radius:6px; outline:none;">${t.title || ''}</div>
-                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個作業群組">🗑️</button>
+                            <div id="group-title-${idx}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題 (例如：Vocab)" style="flex:1; font-size:1.1rem; font-weight:900; color:#1E3A8A; padding:8px 12px; background:white; border:1px solid #BFDBFE; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeTask(${idx})" title="刪除整個群組作業">🗑️</button>
                         </div>
 
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #BFDBFE; margin-bottom:15px;">
@@ -816,7 +818,7 @@ window.FeatureTimeline = (() => {
                             </div>
                             
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <label style="font-weight:800; font-size:0.9rem; color:#1E3A8A;">群組遲交預設 (靜默繼承)：</label>
+                                <label style="font-weight:800; font-size:0.9rem; color:#1E3A8A;">群組遲交規則：</label>
                                 <select id="group-late-mode-${idx}" class="form-control" style="padding:4px 8px; font-size:0.9rem; width:auto;" onchange="
                                     const m = this.value;
                                     document.getElementById('group-late-custom-${idx}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
@@ -844,11 +846,11 @@ window.FeatureTimeline = (() => {
                             ${subTasksHtml}
                             
                             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top: 10px;">
-                                <span style="font-size:0.85rem; color:#60A5FA; font-weight:bold; margin-right:5px;">新增子任務：</span>
+                                <span style="font-size:0.85rem; color:#60A5FA; font-weight:bold; margin-right:5px;">群組作業類型：</span>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'check')">+ 📌 一般</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'link')">+ 🔗 連結</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2ECC71;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'drive')">+ 📁 Drive</button>
-                                <!-- 🚫 修復：禁止在子任務區塊再新增巢狀群組 -->
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'link')">+ 🔗 連結</button>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addSubTask(${idx}, 'drive')">+ 📁 Drive</button>
+                                <div style="width: 1px; height: 20px; background: #BFDBFE; margin: 0 5px;"></div>
                                 ${addSubResourceHtml}
                             </div>
                         </div>
@@ -889,7 +891,7 @@ window.FeatureTimeline = (() => {
         let addResourceHtml = '';
         if (classResList.length > 0) {
             addResourceHtml = `
-                <select class="form-control" style="width:auto; padding:6px 12px; font-size:1rem; font-weight:800; border:2px solid #8B5CF6; color:#8B5CF6; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(this.value); this.value=''; }">
+                <select class="form-control" style="width:auto; padding:6px 12px; font-size:1rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(this.value); this.value=''; }">
                     <option value="" disabled selected>+ 📚 班級與全域資源</option>
                     ${classResOpts}
                 </select>
@@ -914,20 +916,20 @@ window.FeatureTimeline = (() => {
                     
                     <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">大區塊期限：</label>
+                            <label style="font-weight:800; font-size:1rem; color:#334155;">區塊期限：</label>
                             <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:4px 8px; font-size:1rem;" value="${bState.due_date || ''}">
                         </div>
                         
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">大區塊遲交規則：</label>
+                            <label style="font-weight:800; font-size:1rem; color:#334155;">區塊遲交規則：</label>
                             <select id="builder-late-mode-${bState.containerId}" class="form-control" style="padding:4px 8px; font-size:1rem; width:auto;" onchange="
                                 const m = this.value;
                                 document.getElementById('builder-late-custom-${bState.containerId}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
                                 document.getElementById('builder-grace-wrapper-${bState.containerId}').style.display = (m === 'custom') ? 'flex' : 'none';
                             ">
                                 <option value="no_late" ${bLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                <option value="infinite" ${bLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交 (無限期，可扣分)</option>
-                                <option value="custom" ${bLateMode === 'custom' ? 'selected' : ''}>⏳ 允許遲交 (自訂寬限，可扣分)</option>
+                                <option value="infinite" ${bLateMode === 'infinite' ? 'selected' : ''}>♾️ 允許遲交</option>
+                                <option value="custom" ${bLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
                             </select>
                         </div>
 
@@ -952,11 +954,13 @@ window.FeatureTimeline = (() => {
                 ${tasksContainerHtml}
 
                 <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; background: #F1F5F9; padding: 12px; border-radius: 8px; border: 1px solid #CBD5E1;">
-                    <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">作業類型：</span>
-                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('check')">+ 📌 一般任務</button>
-                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('link')">+ 🔗 連結任務</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #2ECC71;" onclick="window.FeatureTimeline.addTopTask('drive')">+ 📁 Drive</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 作業群組</button>
+                    <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">新增：</span>
+                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addTopTask('check')">+ 📌 一般</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addTopTask('link')">+ 🔗 連結</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addTopTask('drive')">+ 📁 Drive</button>
+                    <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
+                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addTopTask('group')">+ 🗂️ 群組作業</button>
+                    <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     ${addResourceHtml}
                 </div>
 
@@ -1191,7 +1195,7 @@ window.FeatureTimeline = (() => {
             if (!selectEl) return;
             const historyId = selectEl.value;
             
-            if (!historyId) return alert('⚠️ 請先選擇要刪除的歷史作業！');
+            if (!historyId) return alert('⚠️ 請先選擇要刪除的歷史紀錄！');
             if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
             
             try {
@@ -1365,6 +1369,17 @@ window.FeatureTimeline = (() => {
                 penalty_percentage: 0,
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
+            renderBuilderUI();
+        },
+        changeTaskType: (parentIdx, subIdx, newType) => {
+            syncState();
+            let task = subIdx === null ? bState.tasks[parentIdx] : bState.tasks[parentIdx].subTasks[subIdx];
+            
+            task.type = newType;
+            if (newType === 'link' && !task.url) {
+                task.url = '';
+                task.url_text = '';
+            }
             renderBuilderUI();
         },
         removeTask: (idx) => { syncState(); bState.tasks.splice(idx, 1); renderBuilderUI(); },
