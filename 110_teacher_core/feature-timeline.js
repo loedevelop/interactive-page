@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v11.7 全端工匠 UX 升級版：
- * 1. 排序方向鍵移至最右側，與刪除按鈕 (❌/🗑️) 緊密群組，符合操作直覺。
+ * 🌟 v11.8 全端工匠 UX 升級版：
+ * 1. 徹底修復 DOM 結構：排序方向鍵強制置右，與刪除按鈕 (❌/🗑️) 緊密群組。
  * 2. 移除佔版面的 Drive 提示字串，改為按鈕旁的「?」ToolTip 懸浮泡泡。
- * 3. 調整群組階層色系，將預設背景改為淺紫色，提升視覺層次感。
+ * 3. 群組區塊背景套用淺紫色 (Light Purple)，提升視覺層次感。
  */
 
 window.FeatureTimeline = (() => {
@@ -144,13 +144,12 @@ window.FeatureTimeline = (() => {
     }
 
     function getLevelStyle(depth) {
-        // 🌟 更新色系：第一層 (群組) 改為淺紫色 (Purple theme)
         const styles = [
-            { border: '#C084FC', bg: '#F3E8FF', text: '#581C87' }, // L1: Purple
-            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2: Blue
-            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L3: Green
-            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }, // L4: Orange
-            { border: '#EF4444', bg: '#FEF2F2', text: '#7F1D1D' }  // L5+: Red
+            { border: '#D8B4FE', bg: '#F3E8FF', text: '#581C87' }, // L1: 淺紫色
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L3
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }, // L4
+            { border: '#EF4444', bg: '#FEF2F2', text: '#7F1D1D' }  // L5+
         ];
         return styles[Math.min(depth, 4)];
     }
@@ -255,7 +254,7 @@ window.FeatureTimeline = (() => {
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
                 html += `
-                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
+                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid ${lvl.border}; border-radius: 8px;">
                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px;">
                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組作業'}</span>
                             ${gDueBadge} ${gLateBadge}
@@ -570,7 +569,7 @@ window.FeatureTimeline = (() => {
         const canLeft = depth > 0;
         const canRight = idx > 0 && hasPrevSiblingGroup;
 
-        // 🌟 移除原本的 margin-right，以便能與刪除按鈕緊密靠攏
+        // 🌟 乾淨的 flex 排版，無外距，準備群組化
         return `
             <div style="display:flex; gap:4px;">
                 <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canUp ? 'white' : '#F1F5F9'}; cursor:${canUp ? 'pointer' : 'not-allowed'}; opacity:${canUp ? '1' : '0.4'}; border-radius:4px;" onclick="${canUp ? `window.FeatureTimeline.moveNodeUp('${pathStr}')` : ''}" ${canUp ? '' : 'disabled'} title="上移">⬆️</button>
@@ -581,6 +580,7 @@ window.FeatureTimeline = (() => {
         `;
     }
 
+    // 🌟 編輯模式 UI (Builder Tree)
     function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '') {
         let treeHtml = tasks.map((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -613,14 +613,14 @@ window.FeatureTimeline = (() => {
 
                 return `
                     <div id="group-block-${pathStr}"
-                         style="${marginStyle} margin-bottom: 10px; background: ${lvl.bg}; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; transition: border 0.2s;">
+                         style="${marginStyle} margin-bottom: 10px; background: #F3E8FF; padding: 12px; border-radius: 8px; border: 1px solid #D8B4FE; transition: border 0.2s;">
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
                             <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:${lvl.text}; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:#581C87; padding:8px 12px; background:white; border:1px solid #D8B4FE; border-radius:6px; outline:none;">${t.title || ''}</div>
                             
                             <!-- 🌟 箭頭與刪除鍵群組化置右 -->
-                            <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
                                 ${arrowHtml}
                                 <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
                             </div>
@@ -712,7 +712,7 @@ window.FeatureTimeline = (() => {
                             ${sameBtn}
                         </div>`;
                 } else if (t.type === 'drive') {
-                    // 🌟 移除原本佔版面的文字提示區塊
+                    // 🌟 徹底拔除 Drive 下方的藍色提示字串
                     urlInputHtml = '';
                 }
 
@@ -756,7 +756,7 @@ window.FeatureTimeline = (() => {
                             </div>
 
                             <!-- 🌟 箭頭與刪除鍵群組化置右 -->
-                            <div style="display:flex; align-items:center; gap:8px; padding-top:4px;">
+                            <div style="display:flex; align-items:center; gap:8px; padding-top:4px; margin-left:auto;">
                                 ${arrowHtml}
                                 <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')">❌</button>
                             </div>
