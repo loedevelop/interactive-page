@@ -1,10 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v11.5 全端工匠 UX 升級版：
- * 1. 徹底拔除實體作業的粗色邊框，回歸乾淨的 1px 灰邊框。
- * 2. 實作「相鄰節點合併 (Adjacent Sibling Merge)」演算法，消弭多餘間隙。
- * 3. 唯讀檢視與學生端視覺完全對齊 (透明背景與極簡外框)。
- * 4. 編輯模式維持原有視覺不變。
+ * 🌟 v11.6 全端工匠 UX 升級版：
+ * 1. 恢復群組內任務的「卡片區塊感 (Card UI)」，徹底解決編輯時界線不明的問題。
+ * 2. 每個任務擁有獨立的邊框、圓角、間距與微陰影，視覺層次分明。
+ * 3. 唯讀與編輯模式的區塊視覺保持一致。
  */
 
 window.FeatureTimeline = (() => {
@@ -155,8 +154,8 @@ window.FeatureTimeline = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    // 🌟 相鄰節點合併渲染器 (唯讀模式) - 與學生端對齊的極簡透明版
-    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isFirstLeaf, isLastLeaf) {
+    // 🌟 相鄰節點合併渲染器 (唯讀模式) - 恢復強烈的卡片區塊感
+    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth) {
         let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
@@ -211,12 +210,9 @@ window.FeatureTimeline = (() => {
             else if (taskLateMode === 'custom') taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 寬限 ${taskGrace}h (-${taskPenalty}%)</span>`;
             else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
         }
-
-        // 🌟 徹底拔除邊框，背景透明化，與學生端對齊
-        let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
         
         return `
-            <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
+            <div style="margin-top: 8px; margin-bottom: 8px; padding: 12px; background: white; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); transition: 0.2s;">
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                     <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="老師唯讀端核取方塊">
                     ${iconHtml}${taskTitleDisplay}${linkContent}
@@ -230,10 +226,8 @@ window.FeatureTimeline = (() => {
     function renderReadOnlyTaskTree(tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, depth = 0) {
         if (!tasks || tasks.length === 0) return '';
         let html = '';
-        tasks.forEach((t, idx) => {
+        tasks.forEach((t) => {
             const lvl = getLevelStyle(depth);
-            const isFirstLeaf = idx === 0 || tasks[idx - 1].type === 'group';
-            const isLastLeaf = idx === tasks.length - 1 || tasks[idx + 1].type === 'group';
 
             if (t.type === 'group') {
                 let groupDueDate = t.due_date || effectiveBlockDueDate;
@@ -260,7 +254,6 @@ window.FeatureTimeline = (() => {
 
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
-                // 🌟 拔除粗色左邊框 (border-left: 4px)，保留專屬背景色與極簡 1px 外框
                 html += `
                     <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px;">
@@ -270,7 +263,7 @@ window.FeatureTimeline = (() => {
                 `;
                 
                 if (t.subTasks && t.subTasks.length > 0) {
-                    html += `<div style="padding-left: 20px; display:flex; flex-direction:column;">`;
+                    html += `<div style="padding-left: 10px; display:flex; flex-direction:column;">`;
                     html += renderReadOnlyTaskTree(t.subTasks, groupDueDate, groupPolicy, depth + 1);
                     html += `</div>`;
                 } else {
@@ -278,7 +271,7 @@ window.FeatureTimeline = (() => {
                 }
                 html += `</div>`;
             } else {
-                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isFirstLeaf, isLastLeaf);
+                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth);
             }
         });
         return html;
@@ -587,7 +580,7 @@ window.FeatureTimeline = (() => {
         `;
     }
 
-    // 🌟 相鄰節點合併渲染器 (編輯模式) - 100% 保持原狀不變
+    // 🌟 編輯模式：完全恢復獨立的卡片外觀，不再強制合併，確保各輸入區塊界線分明
     function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '') {
         let treeHtml = tasks.map((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -597,14 +590,11 @@ window.FeatureTimeline = (() => {
             
             const hasPrevSiblingGroup = idx > 0 && tasks[idx - 1].type === 'group';
             const arrowHtml = getArrowButtonsHtml(pathStr, idx, tasks.length, depth, hasPrevSiblingGroup);
-            
-            const isFirstLeaf = idx === 0 || tasks[idx - 1].type === 'group';
-            const isLastLeaf = idx === tasks.length - 1 || tasks[idx + 1].type === 'group';
 
             if (t.type === 'group') {
                 let subTasksHtml = '';
                 if (t.subTasks && t.subTasks.length > 0) {
-                    subTasksHtml = `<div style="padding-left: 20px; display:flex; flex-direction:column;">` +
+                    subTasksHtml = `<div style="padding-left: 10px; display:flex; flex-direction:column;">` +
                                    renderBuilderTree(t.subTasks, pathArray, classResOpts) +
                                    `</div>`;
                 } else {
@@ -623,7 +613,7 @@ window.FeatureTimeline = (() => {
 
                 return `
                     <div id="group-block-${pathStr}"
-                         style="${marginStyle} margin-bottom: 10px; background: ${lvl.bg}; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; transition: border 0.2s;">
+                         style="${marginStyle} margin-bottom: 10px; background: ${lvl.bg}; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; transition: border 0.2s;">
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
                             ${arrowHtml}
@@ -720,16 +710,10 @@ window.FeatureTimeline = (() => {
 
                 let tLateMode = t.late_mode || 'infinite';
 
-                let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
-                let marginBottom = isLastLeaf ? '10px' : '0px';
-                let radiusTop = isFirstLeaf ? '6px' : '0px';
-                let radiusBottom = isLastLeaf ? '6px' : '0px';
-                let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : 'none';
-                let borderBottom = '1px solid #E2E8F0';
-
+                // 🌟 恢復卡片邊框、圓角與陰影，保證編輯時界線分明
                 return `
                     <div id="node-block-${pathStr}"
-                         style="margin-top:${marginTop}; margin-bottom:${marginBottom}; background: white; padding: 10px; border-left: 1px solid #E2E8F0; border-right: 1px solid #E2E8F0; border-top: ${borderTop}; border-bottom: ${borderBottom}; border-radius: ${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: border 0.2s;">
+                         style="margin-top: 10px; margin-bottom: 10px; background: white; padding: 12px; border: 1px solid #CBD5E1; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.04); transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
                             ${arrowHtml}
                             <div style="padding-top:4px;">${typeSelectorHtml}</div>

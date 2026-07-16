@@ -1,6 +1,7 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-progress.js
  * 🌟 AST N階展開版：支援深度優先搜尋 (DFS) 展平子任務，完美支援無限嵌套結構
+ * 🛠️ 修正版：修復 HTML Injection 破圖漏洞，解除字數截斷限制，支援完整文字自動換行。
  */
 
 window.FeatureProgress = (() => {
@@ -172,13 +173,20 @@ window.FeatureProgress = (() => {
         let allTaskIds = [];
 
         validAssignments.forEach(a => {
-            topHeaderHtml += `<th colspan="${a.actionableTasks.length}" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:var(--primary-dark); font-weight:900; text-align:center; min-width:150px;">📅 ${a.target_date}<br>${a.title}</th>`;
+            // 安全處理大區塊標題
+            let safeGroupTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '未命名';
+            
+            topHeaderHtml += `<th colspan="${a.actionableTasks.length}" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:var(--primary-dark); font-weight:900; text-align:center; min-width:150px; white-space:normal; word-break:break-word; line-height:1.4;">📅 ${a.target_date}<br>${safeGroupTitle}</th>`;
             
             a.actionableTasks.forEach((t, idx) => {
                 allTaskIds.push(t.id);
-                let shortTitle = t.title ? t.title.replace(/<[^>]*>?/gm, '') : '未命名';
-                if(shortTitle.length > 15) shortTitle = shortTitle.substring(0, 15) + '...';
-                subHeaderHtml += `<th style="border:1px solid #CBD5E1; padding:8px 10px; background:#F1F5F9; color:#475569; font-size:0.85rem; font-weight:800; white-space:nowrap; text-align:center;" title="${t.title}">${idx + 1}. ${shortTitle}</th>`;
+                // 移除 HTML 標籤
+                let cleanTitle = t.title ? t.title.replace(/<[^>]*>?/gm, '') : '未命名';
+                // 安全跳脫引號，避免 title 屬性被提早閉合產生 injection 破圖
+                let safeTitleAttr = cleanTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                
+                // 拔除字串截斷，改用 CSS 控制合理寬度並允許換行
+                subHeaderHtml += `<th style="border:1px solid #CBD5E1; padding:8px 10px; background:#F1F5F9; color:#475569; font-size:0.85rem; font-weight:800; white-space:normal; word-break:break-word; text-align:center; min-width:120px; max-width:200px; line-height:1.4;" title="${safeTitleAttr}">${idx + 1}. ${cleanTitle}</th>`;
             });
         });
 
