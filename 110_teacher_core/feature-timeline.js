@@ -1,11 +1,14 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v11.9 全端工匠 UX 升級版：
- * 1. 徹底修復 DOM 結構：排序方向鍵強制置右，與刪除按鈕 (❌/🗑️) 緊密群組。
- * 2. 移除佔版面的 Drive 提示字串，改為按鈕旁的「?」ToolTip 懸浮泡泡。
- * 3. 群組區塊背景套用淺紫色 (Light Purple)，提升視覺層次感。
- * 4. 新增 [📢 推播] 按鈕與防呆確認對話框，準備介接 LINE Notify 微服務。
+ * 🌟 v12.0 全端工匠 UX 升級版：
+ * 1. 加入 console.log 破除快取疑慮。
+ * 2. 徹底修復 DOM 結構：排序方向鍵強制置右，與刪除按鈕 (❌/🗑️) 緊密群組。
+ * 3. 移除佔版面的 Drive 提示字串，改為按鈕旁的「?」ToolTip 懸浮泡泡。
+ * 4. 群組區塊背景套用淺紫色 (Light Purple)，提升視覺層次感。
+ * 5. 新增 [📢 推播] 按鈕與防呆確認對話框，準備介接 LINE Notify 微服務。
  */
+
+console.log("🚀 FeatureTimeline v12.0 載入成功！(LINE Notify 推播版)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -699,7 +702,7 @@ window.FeatureTimeline = (() => {
                     let resOptsHtml = '';
                     if (classResOpts) {
                         resOptsHtml = `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="window.FeatureTimeline.updateNodeUrl('${pathStr}', this.value)">
-                            <option value="">📚 手動套用資源庫</option>${classResOpts}
+                            <option value="">📚 手掌握套用資源庫</option>${classResOpts}
                         </select>`;
                     }
 
@@ -1028,7 +1031,6 @@ window.FeatureTimeline = (() => {
                 }
             }, 300);
         },
-        // 🌟 新增：推播防呆確認與委派執行
         confirmLinePush: (assignId, classId) => {
             const a = (db.assignments || []).find(x => x.id === assignId);
             if (!a) return;
