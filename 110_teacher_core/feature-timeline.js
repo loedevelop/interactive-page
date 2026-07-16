@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v11.0 全端工匠穩定版 (Explicit AST Navigation)：
- * 1. 徹底廢除節點 D&D 拖曳，改為 [⬆️] [⬇️] [⬅️] [➡️] 精準方向鍵排版，零誤判。
- * 2. 拔除 L1/L2 文字標籤，完全依賴左側引導線 (Tree Lines) 與縮排呈現階層。
- * 3. 實作智慧防呆按鈕，當無法升降級時自動 Disabled。
+ * 🌟 v11.1 全端工匠 UX 升級版 (Visual Hierarchy Refactoring)：
+ * 1. 徹底移除連接用垂直直線 (Tree Lines)，改用純縮排呈現乾淨版面。
+ * 2. 同級區塊垂直間距縮減 50%，版面更緊湊。
+ * 3. 群組 (Group) 外觀完美對齊實體作業，共用 `border-left: 4px solid` 視覺階層設計。
  */
 
 window.FeatureTimeline = (() => {
@@ -16,7 +16,7 @@ window.FeatureTimeline = (() => {
     }
 
     let bState = null; 
-    let dragAssignId = null; // 僅保留最外層作業區塊的拖曳，內部 AST 節點改用方向鍵
+    let dragAssignId = null; 
 
     function checkCanEditTimeline(classId) {
         const cls = db.classes.find(c => c.id === classId);
@@ -143,13 +143,14 @@ window.FeatureTimeline = (() => {
         if (bState.tasks) syncTasksState(bState.tasks);
     }
 
+    // 🌟 系統化階層色碼
     function getLevelStyle(depth) {
         const styles = [
-            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1: Gray Default
-            { border: '#60A5FA', bg: '#EFF6FF', text: '#1E3A8A' }, // L2: Blue
-            { border: '#A78BFA', bg: '#F5F3FF', text: '#5B21B6' }, // L3: Purple
-            { border: '#34D399', bg: '#ECFDF5', text: '#064E3B' }, // L4: Emerald
-            { border: '#FB923C', bg: '#FFF7ED', text: '#7C2D12' }  // L5+: Orange
+            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2
+            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, // L3
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L4
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  // L5+
         ];
         return styles[Math.min(depth, 4)];
     }
@@ -211,12 +212,13 @@ window.FeatureTimeline = (() => {
             else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
         }
 
-        const marginStyle = depth > 0 ? 'margin-top:10px;' : 'margin-top:14px;';
+        // 🌟 縮減 50% 垂直間距，移除 L1 標籤，外殼統一粗左邊框
+        const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
         
         return `
             <div style="${marginStyle} padding:10px; background:white; border:1px solid #E2E8F0; border-left:4px solid ${lvl.border}; border-radius:6px;">
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                    <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="學生端核取方塊">
+                    <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="老師唯讀端核取方塊">
                     ${iconHtml}${taskTitleDisplay}${linkContent}
                     ${extraTag} ${dueBadge} ${taskLateBadge}
                 </div>
@@ -253,22 +255,23 @@ window.FeatureTimeline = (() => {
                 }
                 let gDueBadge = (t.due_date && t.due_date !== effectiveBlockDueDate) ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
 
-                const marginStyle = depth > 0 ? 'margin-top:10px;' : 'margin-top:15px;';
+                // 🌟 移除子層級外殼垂直線，統一採用 `border-left: 4px solid`
+                const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
 
                 html += `
-                    <div style="${marginStyle} padding: 12px; background: ${lvl.bg}; border: 2px solid ${lvl.border}; border-radius: 8px;">
-                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
+                    <div style="${marginStyle} padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; border-radius: 6px;">
+                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px;">
                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組作業'}</span>
                             ${gDueBadge} ${gLateBadge}
                         </div>
                 `;
                 
                 if (t.subTasks && t.subTasks.length > 0) {
-                    html += `<div style="padding-left: 20px; border-left: 3px solid ${lvl.border}; margin-left: 10px; display:flex; flex-direction:column; gap:10px;">`;
+                    html += `<div style="padding-left: 20px; display:flex; flex-direction:column;">`;
                     html += renderReadOnlyTaskTree(t.subTasks, groupDueDate, groupPolicy, depth + 1);
                     html += `</div>`;
                 } else {
-                    html += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此群組作業尚無內容)</div>`;
+                    html += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top: 5px;">(此群組作業尚無內容)</div>`;
                 }
                 html += `</div>`;
             } else {
@@ -450,7 +453,7 @@ window.FeatureTimeline = (() => {
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
                     const dragHandleHtml = canEditTimeline 
-                        ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
+                        ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
                     const actionButtonsHtml = canEditTimeline 
@@ -565,7 +568,6 @@ window.FeatureTimeline = (() => {
         return current.subTasks;
     }
 
-    // 🌟 AST 方向鍵 UI 生成器
     function getArrowButtonsHtml(pathStr, idx, arrLength, depth, hasPrevSiblingGroup) {
         const canUp = idx > 0;
         const canDown = idx < arrLength - 1;
@@ -595,11 +597,12 @@ window.FeatureTimeline = (() => {
             if (t.type === 'group') {
                 let subTasksHtml = '';
                 if (t.subTasks && t.subTasks.length > 0) {
-                    subTasksHtml = `<div style="padding-left: 20px; border-left: 3px solid ${lvl.border}; margin-left: 10px; display:flex; flex-direction:column; gap:10px;">` +
+                    // 🌟 移除 border-left 直線，純縮排顯示
+                    subTasksHtml = `<div style="padding-left: 20px; display:flex; flex-direction:column;">` +
                                    renderBuilderTree(t.subTasks, pathArray, classResOpts) +
                                    `</div>`;
                 } else {
-                    subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此群組作業尚無內容)</div>`;
+                    subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此群組作業尚無內容)</div>`;
                 }
 
                 let addResourceHtml = classResOpts ? `
@@ -611,18 +614,21 @@ window.FeatureTimeline = (() => {
 
                 let gLateMode = t.late_mode || 'infinite';
 
+                // 🌟 縮減 50% 垂直間距，移除 L1 標籤，外殼統一粗左邊框
+                const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
+
                 return `
                     <div id="group-block-${pathStr}"
-                         style="background: ${lvl.bg}; padding: 15px; border-radius: 8px; border: 2px solid ${lvl.border}; margin-bottom: 20px; transition: border 0.2s; margin-top: ${depth > 0 ? '10px' : '0'};">
+                         style="${marginStyle} background: ${lvl.bg}; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; transition: border 0.2s;">
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
                             ${arrowHtml}
                             <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:${lvl.text}; padding:8px 12px; background:white; border:1px solid ${lvl.border}; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:${lvl.text}; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.title || ''}</div>
                             <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
                         </div>
 
-                        <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid ${lvl.border}; margin-bottom:15px;">
+                        <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <label style="font-weight:800; font-size:0.9rem; color:${lvl.text};">群組期限：</label>
                                 <input type="date" id="node-due-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem;" value="${t.due_date || ''}">
@@ -641,7 +647,7 @@ window.FeatureTimeline = (() => {
                                 </select>
                             </div>
 
-                            <div id="node-late-custom-${pathStr}" style="display:${(gLateMode === 'infinite' || gLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:${lvl.border}40; padding:4px 10px; border-radius:6px;">
+                            <div id="node-late-custom-${pathStr}" style="display:${(gLateMode === 'infinite' || gLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:#F8FAFC; padding:4px 10px; border-radius:6px; border: 1px solid #E2E8F0;">
                                 <div id="node-grace-wrapper-${pathStr}" style="display:${gLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
                                     <label style="font-size:0.85rem; font-weight:bold; color:${lvl.text};">寬限(小時):</label>
                                     <input type="number" id="node-grace-${pathStr}" class="form-control" style="padding:4px; width:60px;" value="${t.grace_period_hours || 0}" min="0">
@@ -660,9 +666,9 @@ window.FeatureTimeline = (() => {
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
-                                <div style="width: 1px; height: 20px; background: ${lvl.border}; margin: 0 5px;"></div>
+                                <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
-                                <div style="width: 1px; height: 20px; background: ${lvl.border}; margin: 0 5px;"></div>
+                                <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 ${addResourceHtml}
                             </div>
                         </div>
@@ -710,9 +716,12 @@ window.FeatureTimeline = (() => {
 
                 let tLateMode = t.late_mode || 'infinite';
 
+                // 🌟 縮減 50% 垂直間距，移除 L1 標籤，外殼統一粗左邊框
+                const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
+
                 return `
                     <div id="node-block-${pathStr}"
-                         style="background: white; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; border-left: 5px solid ${lvl.border}; margin-bottom: 12px; transition: border 0.2s; margin-top:${depth>0 ? '8px' : '0'};">
+                         style="${marginStyle} background: white; padding: 10px; border-radius: 8px; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
                             ${arrowHtml}
                             <div style="padding-top:4px;">${typeSelectorHtml}</div>
@@ -1151,7 +1160,6 @@ window.FeatureTimeline = (() => {
             }
         },
 
-        // 🌟 AST Tree Mutation Actions
         addNode: (pathStr, type) => {
             syncState();
             let targetArr;
@@ -1186,7 +1194,6 @@ window.FeatureTimeline = (() => {
             renderBuilderUI();
         },
         
-        // 🌟 核心：四大排版演算法 (AST Node Navigation)
         moveNodeUp: (pathStr) => {
             syncState();
             const arr = pathStr.split('-').map(Number);
@@ -1301,7 +1308,6 @@ window.FeatureTimeline = (() => {
             renderBuilderUI();
         },
 
-        // 最外層大區塊 D&D 保留
         dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
         dropAssign: async (e, targetId, classId) => {
             e.preventDefault(); e.stopPropagation(); 

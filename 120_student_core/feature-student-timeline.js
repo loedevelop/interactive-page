@@ -1,7 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 描述：學生端專屬的邏輯與進度渲染引擎。
- * 🌟 遲交判定、多檔上傳與作業群組 (Group) 巢狀遞迴渲染 (N-ary Tree) 升級版
+ * 🌟 UX 視覺升級版：
+ * 1. 移除垂直導線，改用純縮排呈現。
+ * 2. 垂直間距縮減 50%，提升資訊閱讀密度。
+ * 3. 實體作業與群組容器共用相同的「粗左邊框 (Left Border Accent)」階層視覺。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -128,6 +131,18 @@ window.FeatureStudentTimeline = (() => {
         }
     }
 
+    // 🌟 系統化階層色碼
+    function getLevelStyle(depth) {
+        const styles = [
+            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1: Gray Default
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2: Blue
+            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, // L3: Purple
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L4: Emerald
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  // L5+: Orange
+        ];
+        return styles[Math.min(depth, 4)];
+    }
+
     function renderCourses() {
         const container = document.getElementById('course-container');
         if (!container) return;
@@ -208,8 +223,9 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 獨立抽出的渲染子任務 Helper 函數
-        const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, isSubTask = false) => {
+        // 🌟 獨立實體任務渲染器 (與群組外觀徹底對齊)
+        const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth) => {
+            const lvl = getLevelStyle(depth);
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
             const isTaskDone = completedTasks.includes(compositeKey);
@@ -273,10 +289,11 @@ window.FeatureStudentTimeline = (() => {
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
-            const marginStyle = isSubTask ? 'margin-top:10px;' : 'margin-top:14px;';
+            // 🌟 縮減 50% 垂直間距，外殼樣式與群組完全一致 (粗左邊框)
+            const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
 
             return `
-                <div style="${marginStyle}">
+                <div style="${marginStyle} padding:10px; background:white; border:1px solid #E2E8F0; border-left:4px solid ${lvl.border}; border-radius:6px;">
                     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                         ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
                     </div>
@@ -349,7 +366,6 @@ window.FeatureStudentTimeline = (() => {
                         }
                     }
 
-                    // 🌟 AST 遞迴進度計算：精準支援無限嵌套結構
                     const countTasksRecursive = (tasksList) => {
                         if (!tasksList) return;
                         tasksList.forEach(t => {
@@ -371,40 +387,46 @@ window.FeatureStudentTimeline = (() => {
                     let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (允許遲交)' : '';
                     let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
-                    // 🌟 DFS 深度優先搜尋渲染器 (Tree Traversal for Unlimited Depth)
+                    // 🌟 DFS 深度優先搜尋渲染器 (移除左側直線，縮減間距)
                     const renderTaskTree = (tasksList, depth = 0) => {
                         if (!tasksList || tasksList.length === 0) return '';
                         
                         return tasksList.map(task => {
+                            const lvl = getLevelStyle(depth);
+                            
                             if (task.type === 'group') {
                                 let groupTitle = task.title || '未命名作業群組';
                                 let subTasksHtml = '';
                                 
+                                // 🌟 移除 border-left 直線，純縮排顯示
                                 if (task.subTasks && task.subTasks.length > 0) {
-                                    subTasksHtml = `<div style="padding-left: 18px; border-left: 3px solid #CBD5E1; margin-left: 8px; display:flex; flex-direction:column; gap:10px;">` +
+                                    subTasksHtml = `<div style="padding-left: 20px; display:flex; flex-direction:column;">` +
                                         renderTaskTree(task.subTasks, depth + 1) +
                                         `</div>`;
                                 } else {
-                                    subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px;">(此作業群組尚無內容)</div>`;
+                                    subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此作業群組尚無內容)</div>`;
                                 }
 
+                                // 🌟 縮減 50% 垂直間距，統一採用與實體任務相同的「粗左邊框」設計
+                                const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
+
                                 return `
-                                    <div style="margin-top:15px; padding: 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
-                                        <div style="font-weight:900; color:#3B82F6; font-size:1.05rem; margin-bottom: 10px; display:flex; align-items:center; gap:8px;">
+                                    <div style="${marginStyle} padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; border-radius: 6px;">
+                                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
                                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                         </div>
                                         ${subTasksHtml}
                                     </div>
                                 `;
                             } else {
-                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth > 0);
+                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth);
                             }
                         }).join('');
                     };
 
                     let tasksHtml = '';
                     if (course.tasks && course.tasks.length > 0) {
-                        tasksHtml = renderTaskTree(course.tasks);
+                        tasksHtml = renderTaskTree(course.tasks, 0);
                     }
 
                     return `
