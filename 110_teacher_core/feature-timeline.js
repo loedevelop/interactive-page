@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
  * 🌟 v11.5 全端工匠 UX 升級版：
- * 1. 導入「相鄰節點合併 (Adjacent Sibling Merge)」演算法，讓連續作業無縫組合成單一列表。
- * 2. 徹底移除礙眼的垂直引導直線，改用縮排對齊。
- * 3. 垂直間距縮減 50%，提升版面整潔度。
+ * 1. 徹底拔除實體作業的粗色邊框，回歸乾淨的 1px 灰邊框。
+ * 2. 實作「相鄰節點合併 (Adjacent Sibling Merge)」演算法，消弭多餘間隙。
+ * 3. 唯讀檢視與編輯模式的視覺完全對齊。
  */
 
 window.FeatureTimeline = (() => {
@@ -156,7 +156,6 @@ window.FeatureTimeline = (() => {
 
     // 🌟 相鄰節點合併渲染器 (唯讀模式)
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isFirstLeaf, isLastLeaf) {
-        const lvl = getLevelStyle(depth);
         let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
@@ -212,16 +211,16 @@ window.FeatureTimeline = (() => {
             else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
         }
 
-        // CSS 相鄰合併邏輯
+        // 🌟 徹底拔除粗色左邊框，換回乾淨的 1px 灰邊框
         let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
         let marginBottom = isLastLeaf ? '10px' : '0px';
         let radiusTop = isFirstLeaf ? '6px' : '0px';
         let radiusBottom = isLastLeaf ? '6px' : '0px';
-        let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : '1px solid #F1F5F9';
-        let borderBottom = isLastLeaf ? '1px solid #E2E8F0' : 'none';
+        let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : 'none';
+        let borderBottom = '1px solid #E2E8F0';
         
         return `
-            <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:4px solid ${lvl.border}; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
+            <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:1px solid #E2E8F0; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                     <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="老師唯讀端核取方塊">
                     ${iconHtml}${taskTitleDisplay}${linkContent}
@@ -460,7 +459,7 @@ window.FeatureTimeline = (() => {
                     let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
                     const dragHandleHtml = canEditTimeline 
-                        ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序大區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
+                        ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
                     const actionButtonsHtml = canEditTimeline 
@@ -724,17 +723,17 @@ window.FeatureTimeline = (() => {
 
                 let tLateMode = t.late_mode || 'infinite';
 
-                // CSS 相鄰合併邏輯
+                // 🌟 相鄰無縫合併邏輯：徹底移除粗左邊框，換回極簡白框
                 let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
                 let marginBottom = isLastLeaf ? '10px' : '0px';
                 let radiusTop = isFirstLeaf ? '6px' : '0px';
                 let radiusBottom = isLastLeaf ? '6px' : '0px';
-                let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : '1px solid #F1F5F9';
-                let borderBottom = isLastLeaf ? '1px solid #E2E8F0' : 'none';
+                let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : 'none';
+                let borderBottom = '1px solid #E2E8F0';
 
                 return `
                     <div id="node-block-${pathStr}"
-                         style="margin-top:${marginTop}; margin-bottom:${marginBottom}; background: white; padding: 10px; border-left: 4px solid ${lvl.border}; border-right: 1px solid #E2E8F0; border-top: ${borderTop}; border-bottom: ${borderBottom}; border-radius: ${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: border 0.2s;">
+                         style="margin-top:${marginTop}; margin-bottom:${marginBottom}; background: white; padding: 10px; border-left: 1px solid #E2E8F0; border-right: 1px solid #E2E8F0; border-top: ${borderTop}; border-bottom: ${borderBottom}; border-radius: ${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
                             ${arrowHtml}
                             <div style="padding-top:4px;">${typeSelectorHtml}</div>

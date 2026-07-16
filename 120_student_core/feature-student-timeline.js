@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 描述：學生端專屬的邏輯與進度渲染引擎。
- * 🌟 UX 視覺升級版：
- * 1. 導入「相鄰節點合併 (Adjacent Sibling Merge)」演算法，連續作業無縫組合成單一列表。
- * 2. 移除多餘的卡片留白，大幅提升資訊閱讀密度。
+ * 🌟 UX 視覺終極打磨版：
+ * 1. 拔除實體作業的粗色邊框，回歸極簡白底灰框設計。
+ * 2. 實作「真・無縫合併 (True Sibling Merge)」，連續作業完美融合單一區塊。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -221,9 +221,8 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 相鄰節點合併渲染器
+        // 🌟 獨立實體任務渲染器 (徹底移除粗左邊框，實現無縫清單合併)
         const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
-            const lvl = getLevelStyle(depth);
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
             const isTaskDone = completedTasks.includes(compositeKey);
@@ -287,16 +286,17 @@ window.FeatureStudentTimeline = (() => {
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
-            // 🌟 CSS 相鄰合併邏輯：去除縫隙，只保留必要的框線
+            // 🌟 真・無縫合併 (True Sibling Merge)
             let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
             let marginBottom = isLastLeaf ? '10px' : '0px';
             let radiusTop = isFirstLeaf ? '6px' : '0px';
             let radiusBottom = isLastLeaf ? '6px' : '0px';
-            let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : '1px solid #F1F5F9';
-            let borderBottom = isLastLeaf ? '1px solid #E2E8F0' : 'none';
+            // 只有第一筆有上邊框，後續緊貼，消除相鄰間距。移除粗色左邊框，全改為1px灰邊框。
+            let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : 'none';
+            let borderBottom = '1px solid #E2E8F0';
 
             return `
-                <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:4px solid ${lvl.border}; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
+                <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:1px solid #E2E8F0; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
                     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                         ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
                     </div>
