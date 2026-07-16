@@ -2,9 +2,8 @@
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 描述：學生端專屬的邏輯與進度渲染引擎。
  * 🌟 UX 視覺升級版：
- * 1. 移除垂直導線，改用純縮排呈現。
- * 2. 垂直間距縮減 50%，提升資訊閱讀密度。
- * 3. 實體作業與群組容器共用相同的「粗左邊框 (Left Border Accent)」階層視覺。
+ * 1. 導入「相鄰節點合併 (Adjacent Sibling Merge)」演算法，連續作業無縫組合成單一列表。
+ * 2. 移除多餘的卡片留白，大幅提升資訊閱讀密度。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -131,14 +130,13 @@ window.FeatureStudentTimeline = (() => {
         }
     }
 
-    // 🌟 系統化階層色碼
     function getLevelStyle(depth) {
         const styles = [
-            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1: Gray Default
-            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2: Blue
-            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, // L3: Purple
-            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L4: Emerald
-            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  // L5+: Orange
+            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2
+            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, // L3
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L4
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  // L5+
         ];
         return styles[Math.min(depth, 4)];
     }
@@ -223,8 +221,8 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 獨立實體任務渲染器 (與群組外觀徹底對齊)
-        const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth) => {
+        // 🌟 相鄰節點合併渲染器
+        const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
             const lvl = getLevelStyle(depth);
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
@@ -289,11 +287,16 @@ window.FeatureStudentTimeline = (() => {
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
-            // 🌟 縮減 50% 垂直間距，外殼樣式與群組完全一致 (粗左邊框)
-            const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
+            // 🌟 CSS 相鄰合併邏輯：去除縫隙，只保留必要的框線
+            let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
+            let marginBottom = isLastLeaf ? '10px' : '0px';
+            let radiusTop = isFirstLeaf ? '6px' : '0px';
+            let radiusBottom = isLastLeaf ? '6px' : '0px';
+            let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : '1px solid #F1F5F9';
+            let borderBottom = isLastLeaf ? '1px solid #E2E8F0' : 'none';
 
             return `
-                <div style="${marginStyle} padding:10px; background:white; border:1px solid #E2E8F0; border-left:4px solid ${lvl.border}; border-radius:6px;">
+                <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:4px solid ${lvl.border}; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
                     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                         ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
                     </div>
@@ -387,18 +390,18 @@ window.FeatureStudentTimeline = (() => {
                     let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (允許遲交)' : '';
                     let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
-                    // 🌟 DFS 深度優先搜尋渲染器 (移除左側直線，縮減間距)
                     const renderTaskTree = (tasksList, depth = 0) => {
                         if (!tasksList || tasksList.length === 0) return '';
                         
-                        return tasksList.map(task => {
+                        return tasksList.map((task, idx) => {
                             const lvl = getLevelStyle(depth);
+                            const isFirstLeaf = idx === 0 || tasksList[idx - 1].type === 'group';
+                            const isLastLeaf = idx === tasksList.length - 1 || tasksList[idx + 1].type === 'group';
                             
                             if (task.type === 'group') {
                                 let groupTitle = task.title || '未命名作業群組';
                                 let subTasksHtml = '';
                                 
-                                // 🌟 移除 border-left 直線，純縮排顯示
                                 if (task.subTasks && task.subTasks.length > 0) {
                                     subTasksHtml = `<div style="padding-left: 20px; display:flex; flex-direction:column;">` +
                                         renderTaskTree(task.subTasks, depth + 1) +
@@ -407,11 +410,10 @@ window.FeatureStudentTimeline = (() => {
                                     subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此作業群組尚無內容)</div>`;
                                 }
 
-                                // 🌟 縮減 50% 垂直間距，統一採用與實體任務相同的「粗左邊框」設計
-                                const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:8px;';
+                                const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
                                 return `
-                                    <div style="${marginStyle} padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; border-radius: 6px;">
+                                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; border-radius: 6px;">
                                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
                                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                         </div>
@@ -419,7 +421,7 @@ window.FeatureStudentTimeline = (() => {
                                     </div>
                                 `;
                             } else {
-                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth);
+                                return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf);
                             }
                         }).join('');
                     };
