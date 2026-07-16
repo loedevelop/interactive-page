@@ -4,6 +4,7 @@
  * 🌟 UX 視覺終極打磨版：
  * 1. 拔除實體作業的粗色邊框，回歸極簡白底灰框設計。
  * 2. 實作「真・無縫合併 (True Sibling Merge)」，連續作業完美融合單一區塊。
+ * 3. 大區塊保有專屬背景色，實體作業以透明背景透出大區塊色彩。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -221,7 +222,7 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 獨立實體任務渲染器 (徹底移除粗左邊框，實現無縫清單合併，背景透明)
+        // 🌟 獨立實體任務渲染器 (徹底移除粗左邊框，背景透明化)
         const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
@@ -286,9 +287,9 @@ window.FeatureStudentTimeline = (() => {
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
-            // 🌟 真・無縫合併 (True Sibling Merge) 與背景透明化
-            // 拔除左右方框，只留底部分隔線，最後一項無底線
-            let borderBottom = isLastLeaf ? 'none' : '1px solid #F1F5F9';
+            // 🌟 真・無縫合併 (True Sibling Merge) 
+            // 保留底部半透明細灰線，避免死白或顏色衝突，完美透出父層大區塊的背景色
+            let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
             return `
                 <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
@@ -407,9 +408,9 @@ window.FeatureStudentTimeline = (() => {
 
                                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
-                                // 🌟 拔除粗色左邊框 (取消 border-left: 4px)，且背景改為透明
+                                // 🌟 恢復大區塊專屬背景色 (lvl.bg)，拔除粗左線，保留1px極簡外框
                                 return `
-                                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: transparent; border: 1px solid #E2E8F0; border-radius: 6px;">
+                                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
                                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                         </div>

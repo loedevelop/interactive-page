@@ -3,7 +3,8 @@
  * 🌟 v11.5 全端工匠 UX 升級版：
  * 1. 徹底拔除實體作業的粗色邊框，回歸乾淨的 1px 灰邊框。
  * 2. 實作「相鄰節點合併 (Adjacent Sibling Merge)」演算法，消弭多餘間隙。
- * 3. 唯讀檢視與編輯模式的視覺完全對齊。
+ * 3. 唯讀檢視與學生端視覺完全對齊 (透明背景與極簡外框)。
+ * 4. 編輯模式維持原有視覺不變。
  */
 
 window.FeatureTimeline = (() => {
@@ -154,7 +155,7 @@ window.FeatureTimeline = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    // 🌟 相鄰節點合併渲染器 (唯讀模式)
+    // 🌟 相鄰節點合併渲染器 (唯讀模式) - 與學生端對齊的極簡透明版
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isFirstLeaf, isLastLeaf) {
         let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
@@ -211,16 +212,11 @@ window.FeatureTimeline = (() => {
             else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
         }
 
-        // 🌟 徹底拔除粗色左邊框，換回乾淨的 1px 灰邊框
-        let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
-        let marginBottom = isLastLeaf ? '10px' : '0px';
-        let radiusTop = isFirstLeaf ? '6px' : '0px';
-        let radiusBottom = isLastLeaf ? '6px' : '0px';
-        let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : 'none';
-        let borderBottom = '1px solid #E2E8F0';
+        // 🌟 徹底拔除邊框，背景透明化，與學生端對齊
+        let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
         
         return `
-            <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:1px solid #E2E8F0; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
+            <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                     <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="老師唯讀端核取方塊">
                     ${iconHtml}${taskTitleDisplay}${linkContent}
@@ -264,8 +260,9 @@ window.FeatureTimeline = (() => {
 
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
+                // 🌟 拔除粗色左邊框 (border-left: 4px)，保留專屬背景色與極簡 1px 外框
                 html += `
-                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; border-radius: 6px;">
+                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px;">
                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組作業'}</span>
                             ${gDueBadge} ${gLateBadge}
@@ -590,7 +587,7 @@ window.FeatureTimeline = (() => {
         `;
     }
 
-    // 🌟 相鄰節點合併渲染器 (編輯模式)
+    // 🌟 相鄰節點合併渲染器 (編輯模式) - 100% 保持原狀不變
     function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '') {
         let treeHtml = tasks.map((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -723,7 +720,6 @@ window.FeatureTimeline = (() => {
 
                 let tLateMode = t.late_mode || 'infinite';
 
-                // 🌟 相鄰無縫合併邏輯：徹底移除粗左邊框，換回極簡白框
                 let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
                 let marginBottom = isLastLeaf ? '10px' : '0px';
                 let radiusTop = isFirstLeaf ? '6px' : '0px';
