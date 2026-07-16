@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v11.6 全端工匠 UX 升級版：
- * 1. 恢復群組內任務的「卡片區塊感 (Card UI)」，徹底解決編輯時界線不明的問題。
- * 2. 每個任務擁有獨立的邊框、圓角、間距與微陰影，視覺層次分明。
- * 3. 唯讀與編輯模式的區塊視覺保持一致。
+ * 🌟 v11.7 全端工匠 UX 升級版：
+ * 1. 排序方向鍵移至最右側，與刪除按鈕 (❌/🗑️) 緊密群組，符合操作直覺。
+ * 2. 移除佔版面的 Drive 提示字串，改為按鈕旁的「?」ToolTip 懸浮泡泡。
+ * 3. 調整群組階層色系，將預設背景改為淺紫色，提升視覺層次感。
  */
 
 window.FeatureTimeline = (() => {
@@ -144,17 +144,17 @@ window.FeatureTimeline = (() => {
     }
 
     function getLevelStyle(depth) {
+        // 🌟 更新色系：第一層 (群組) 改為淺紫色 (Purple theme)
         const styles = [
-            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1
-            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2
-            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, // L3
-            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L4
-            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  // L5+
+            { border: '#C084FC', bg: '#F3E8FF', text: '#581C87' }, // L1: Purple
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2: Blue
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L3: Green
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }, // L4: Orange
+            { border: '#EF4444', bg: '#FEF2F2', text: '#7F1D1D' }  // L5+: Red
         ];
         return styles[Math.min(depth, 4)];
     }
 
-    // 🌟 相鄰節點合併渲染器 (唯讀模式) - 恢復強烈的卡片區塊感
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth) {
         let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
@@ -570,8 +570,9 @@ window.FeatureTimeline = (() => {
         const canLeft = depth > 0;
         const canRight = idx > 0 && hasPrevSiblingGroup;
 
+        // 🌟 移除原本的 margin-right，以便能與刪除按鈕緊密靠攏
         return `
-            <div style="display:flex; gap:4px; margin-right: 10px;">
+            <div style="display:flex; gap:4px;">
                 <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canUp ? 'white' : '#F1F5F9'}; cursor:${canUp ? 'pointer' : 'not-allowed'}; opacity:${canUp ? '1' : '0.4'}; border-radius:4px;" onclick="${canUp ? `window.FeatureTimeline.moveNodeUp('${pathStr}')` : ''}" ${canUp ? '' : 'disabled'} title="上移">⬆️</button>
                 <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canDown ? 'white' : '#F1F5F9'}; cursor:${canDown ? 'pointer' : 'not-allowed'}; opacity:${canDown ? '1' : '0.4'}; border-radius:4px;" onclick="${canDown ? `window.FeatureTimeline.moveNodeDown('${pathStr}')` : ''}" ${canDown ? '' : 'disabled'} title="下移">⬇️</button>
                 <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canLeft ? 'white' : '#F1F5F9'}; cursor:${canLeft ? 'pointer' : 'not-allowed'}; opacity:${canLeft ? '1' : '0.4'}; border-radius:4px;" onclick="${canLeft ? `window.FeatureTimeline.moveNodeLeft('${pathStr}')` : ''}" ${canLeft ? '' : 'disabled'} title="向左 (移出目前群組)">⬅️</button>
@@ -580,7 +581,6 @@ window.FeatureTimeline = (() => {
         `;
     }
 
-    // 🌟 編輯模式：完全恢復獨立的卡片外觀，不再強制合併，確保各輸入區塊界線分明
     function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '') {
         let treeHtml = tasks.map((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -616,10 +616,14 @@ window.FeatureTimeline = (() => {
                          style="${marginStyle} margin-bottom: 10px; background: ${lvl.bg}; padding: 12px; border-radius: 8px; border: 1px solid #E2E8F0; transition: border 0.2s;">
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
-                            ${arrowHtml}
                             <span style="font-size:1.4rem;">🗂️</span>
                             <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:${lvl.text}; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.title || ''}</div>
-                            <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
+                            
+                            <!-- 🌟 箭頭與刪除鍵群組化置右 -->
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                ${arrowHtml}
+                                <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
+                            </div>
                         </div>
 
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
@@ -659,7 +663,13 @@ window.FeatureTimeline = (() => {
                                 <span style="font-size:0.85rem; color:${lvl.text}; font-weight:bold; margin-right:5px; opacity:0.8;">子層作業新增：</span>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
+                                
+                                <!-- 🌟 Drive 新增與 Tooltip 泡泡 -->
+                                <div style="display:inline-flex; align-items:center; gap:4px;">
+                                    <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
+                                    <span title="💡 智慧派發模式：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。" style="cursor:help; background:#E2E8F0; color:#475569; border-radius:50%; width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:bold;">?</span>
+                                </div>
+
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
@@ -702,20 +712,16 @@ window.FeatureTimeline = (() => {
                             ${sameBtn}
                         </div>`;
                 } else if (t.type === 'drive') {
-                    urlInputHtml = `
-                        <div style="margin-top:8px; font-size:0.9rem; color:#4A90E2; background:#E0F0FF; padding:8px 12px; border-radius:6px;">
-                            💡 <b>智慧派發模式</b>：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。
-                        </div>`;
+                    // 🌟 移除原本佔版面的文字提示區塊
+                    urlInputHtml = '';
                 }
 
                 let tLateMode = t.late_mode || 'infinite';
 
-                // 🌟 恢復卡片邊框、圓角與陰影，保證編輯時界線分明
                 return `
                     <div id="node-block-${pathStr}"
                          style="margin-top: 10px; margin-bottom: 10px; background: white; padding: 12px; border: 1px solid #CBD5E1; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.04); transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
-                            ${arrowHtml}
                             <div style="padding-top:4px;">${typeSelectorHtml}</div>
                             <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
                             
@@ -749,7 +755,9 @@ window.FeatureTimeline = (() => {
                                 </div>
                             </div>
 
-                            <div style="padding-top:4px;">
+                            <!-- 🌟 箭頭與刪除鍵群組化置右 -->
+                            <div style="display:flex; align-items:center; gap:8px; padding-top:4px;">
+                                ${arrowHtml}
                                 <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')">❌</button>
                             </div>
                         </div>
@@ -892,7 +900,13 @@ window.FeatureTimeline = (() => {
                     <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">外層作業新增：</span>
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addNode(null, 'check')">+ 📌 一般</button>
                     <button class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
+                    
+                    <!-- 🌟 Drive 新增與 Tooltip 泡泡 -->
+                    <div style="display:inline-flex; align-items:center; gap:4px;">
+                        <button class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
+                        <span title="💡 智慧派發模式：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。" style="cursor:help; background:#E2E8F0; color:#475569; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.85rem; font-weight:bold;">?</span>
+                    </div>
+
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
