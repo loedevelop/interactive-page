@@ -221,7 +221,7 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 獨立實體任務渲染器 (徹底移除粗左邊框，實現無縫清單合併)
+        // 🌟 獨立實體任務渲染器 (徹底移除粗左邊框，實現無縫清單合併，背景透明)
         const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
@@ -286,17 +286,12 @@ window.FeatureStudentTimeline = (() => {
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
-            // 🌟 真・無縫合併 (True Sibling Merge)
-            let marginTop = isFirstLeaf ? (depth > 0 ? '5px' : '10px') : '0px';
-            let marginBottom = isLastLeaf ? '10px' : '0px';
-            let radiusTop = isFirstLeaf ? '6px' : '0px';
-            let radiusBottom = isLastLeaf ? '6px' : '0px';
-            // 只有第一筆有上邊框，後續緊貼，消除相鄰間距。移除粗色左邊框，全改為1px灰邊框。
-            let borderTop = isFirstLeaf ? '1px solid #E2E8F0' : 'none';
-            let borderBottom = '1px solid #E2E8F0';
+            // 🌟 真・無縫合併 (True Sibling Merge) 與背景透明化
+            // 拔除左右方框，只留底部分隔線，最後一項無底線
+            let borderBottom = isLastLeaf ? 'none' : '1px solid #F1F5F9';
 
             return `
-                <div style="margin-top:${marginTop}; margin-bottom:${marginBottom}; padding:10px; background:white; border-left:1px solid #E2E8F0; border-right:1px solid #E2E8F0; border-top:${borderTop}; border-bottom:${borderBottom}; border-radius:${radiusTop} ${radiusTop} ${radiusBottom} ${radiusBottom}; transition: 0.2s;">
+                <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
                     <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                         ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
                     </div>
@@ -412,8 +407,9 @@ window.FeatureStudentTimeline = (() => {
 
                                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
+                                // 🌟 拔除粗色左邊框 (取消 border-left: 4px)，且背景改為透明
                                 return `
-                                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-left: 4px solid ${lvl.border}; border-radius: 6px;">
+                                    <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: transparent; border: 1px solid #E2E8F0; border-radius: 6px;">
                                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
                                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                         </div>
