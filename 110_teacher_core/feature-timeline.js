@@ -1,9 +1,10 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v11.8 全端工匠 UX 升級版：
+ * 🌟 v11.9 全端工匠 UX 升級版：
  * 1. 徹底修復 DOM 結構：排序方向鍵強制置右，與刪除按鈕 (❌/🗑️) 緊密群組。
  * 2. 移除佔版面的 Drive 提示字串，改為按鈕旁的「?」ToolTip 懸浮泡泡。
  * 3. 群組區塊背景套用淺紫色 (Light Purple)，提升視覺層次感。
+ * 4. 新增 [📢 推播] 按鈕與防呆確認對話框，準備介接 LINE Notify 微服務。
  */
 
 window.FeatureTimeline = (() => {
@@ -451,8 +452,10 @@ window.FeatureTimeline = (() => {
                         ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` 
                         : '';
                         
+                    // 🌟 新增 [📢 推播] 按鈕
                     const actionButtonsHtml = canEditTimeline 
                         ? `<div style="display:flex; gap:8px; align-items:center;">
+                               <button class="btn-icon" style="font-size:1rem; background:#ECFDF5; color:#065F46; padding:4px 10px; border-radius:6px; cursor:pointer; border:1px solid #A7F3D0; font-weight:bold;" onclick="window.FeatureTimeline.confirmLinePush('${a.id}', '${classId}')" title="推播至 LINE 群組">📢 推播</button>
                                <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.moveAssignment('${a.id}', '${classId}')" title="更換日期">📅 改期</button>
                                <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
                                <button class="btn-icon btn-danger" style="font-size:1rem; border:none; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.deleteAssignment('${a.id}', '${classId}')" title="刪除">🗑️</button>
@@ -569,7 +572,6 @@ window.FeatureTimeline = (() => {
         const canLeft = depth > 0;
         const canRight = idx > 0 && hasPrevSiblingGroup;
 
-        // 🌟 乾淨的 flex 排版，無外距，準備群組化
         return `
             <div style="display:flex; gap:4px;">
                 <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canUp ? 'white' : '#F1F5F9'}; cursor:${canUp ? 'pointer' : 'not-allowed'}; opacity:${canUp ? '1' : '0.4'}; border-radius:4px;" onclick="${canUp ? `window.FeatureTimeline.moveNodeUp('${pathStr}')` : ''}" ${canUp ? '' : 'disabled'} title="上移">⬆️</button>
@@ -580,7 +582,6 @@ window.FeatureTimeline = (() => {
         `;
     }
 
-    // 🌟 編輯模式 UI (Builder Tree)
     function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '') {
         let treeHtml = tasks.map((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -619,7 +620,6 @@ window.FeatureTimeline = (() => {
                             <span style="font-size:1.4rem;">🗂️</span>
                             <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:#581C87; padding:8px 12px; background:white; border:1px solid #D8B4FE; border-radius:6px; outline:none;">${t.title || ''}</div>
                             
-                            <!-- 🌟 箭頭與刪除鍵群組化置右 -->
                             <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
                                 ${arrowHtml}
                                 <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
@@ -664,7 +664,6 @@ window.FeatureTimeline = (() => {
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
                                 
-                                <!-- 🌟 Drive 新增與 Tooltip 泡泡 -->
                                 <div style="display:inline-flex; align-items:center; gap:4px;">
                                     <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
                                     <span title="💡 智慧派發模式：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。" style="cursor:help; background:#E2E8F0; color:#475569; border-radius:50%; width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:bold;">?</span>
@@ -712,7 +711,6 @@ window.FeatureTimeline = (() => {
                             ${sameBtn}
                         </div>`;
                 } else if (t.type === 'drive') {
-                    // 🌟 徹底拔除 Drive 下方的藍色提示字串
                     urlInputHtml = '';
                 }
 
@@ -755,7 +753,6 @@ window.FeatureTimeline = (() => {
                                 </div>
                             </div>
 
-                            <!-- 🌟 箭頭與刪除鍵群組化置右 -->
                             <div style="display:flex; align-items:center; gap:8px; padding-top:4px; margin-left:auto;">
                                 ${arrowHtml}
                                 <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')">❌</button>
@@ -901,7 +898,6 @@ window.FeatureTimeline = (() => {
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addNode(null, 'check')">+ 📌 一般</button>
                     <button class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
                     
-                    <!-- 🌟 Drive 新增與 Tooltip 泡泡 -->
                     <div style="display:inline-flex; align-items:center; gap:4px;">
                         <button class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                         <span title="💡 智慧派發模式：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。" style="cursor:help; background:#E2E8F0; color:#475569; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.85rem; font-weight:bold;">?</span>
@@ -1031,6 +1027,64 @@ window.FeatureTimeline = (() => {
                     viewContainer.scrollBy({ top: nRect.top - cRect.top - 15, behavior: 'smooth' });
                 }
             }, 300);
+        },
+        // 🌟 新增：推播防呆確認與委派執行
+        confirmLinePush: (assignId, classId) => {
+            const a = (db.assignments || []).find(x => x.id === assignId);
+            if (!a) return;
+
+            const cls = db.classes.find(c => c.id === classId);
+            let raw = cls?.raw_data || {};
+            if (typeof raw === 'string') {
+                try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
+            }
+            if (!raw.line_notify_token) {
+                return alert('⚠️ 此班級尚未綁定 LINE Notify Token！\n請先至「⚙️ 班級設定」中進行綁定。');
+            }
+
+            const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
+            const overlayId = 'line-push-modal';
+            let existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = overlayId;
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+
+            overlay.innerHTML = `
+                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                    <h3 style="margin-top: 0; color: #059669; margin-bottom: 10px; border-bottom: 1px solid #E2E8F0; padding-bottom: 10px;">📢 推播至 LINE 群組</h3>
+                    <div style="margin-bottom:20px; font-size:1rem; color:#475569; line-height:1.5;">
+                        準備將 <strong>「${cleanTitle}」</strong> 的作業詳情，傳送至已綁定的 LINE 群組。
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight:bold; font-size:1rem;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
+                        <button class="btn btn-primary" id="btn-confirm-push" style="padding: 8px 20px; font-weight:bold; font-size:1rem; background:#10B981; border:none;" onclick="window.FeatureTimeline.executeLinePush('${assignId}', '${classId}')">🚀 確認發送</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        },
+        executeLinePush: async (assignId, classId) => {
+            const btn = document.getElementById('btn-confirm-push');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ 發送中...';
+            btn.disabled = true;
+
+            try {
+                if (!window.ServiceLineNotify || typeof window.ServiceLineNotify.pushAssignment !== 'function') {
+                    throw new Error("系統提示：LINE 推播微服務尚未載入。");
+                }
+                
+                await window.ServiceLineNotify.pushAssignment(classId, assignId);
+                
+                document.getElementById('line-push-modal').remove();
+                alert('✅ 已成功發送至 LINE 群組！');
+            } catch (err) {
+                alert('❌ 推播失敗: ' + err.message);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
         },
         moveAssignment: (assignId, classId) => {
             const a = (db.assignments || []).find(x => x.id === assignId);
