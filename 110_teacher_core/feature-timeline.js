@@ -1,16 +1,17 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.1 終極瘦身大腦版 (完美還原 LINE 推播功能)：
+ * 🌟 v13.2 極致解耦版 (DRY 原則落實)：
  * 1. 成功將所有 UI 渲染邏輯抽離至 TimelineTemplates。
- * 2. 依照指示，將中斷開發的 LINE Notify 按鈕與底層呼叫邏輯完整保留。
- * 3. 大幅減少行數，架構極度清晰。
+ * 2. 成功將所有 日期運算 邏輯抽離，全面改用 window.UtilsDate。
+ * 3. 完美保留 LINE Notify 推播功能與底層呼叫邏輯。
  */
 
-console.log("🚀 FeatureTimeline v13.1 載入成功！(UI 模板解耦完成 + 保留推播功能)");
+console.log("🚀 FeatureTimeline v13.2 載入成功！(日期與 UI 雙解耦完成 + 保留推播功能)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
     const TPL = window.TimelineTemplates; // 引入 UI 模板工廠
+    const DateUtils = window.UtilsDate;   // 引入全域日期工具箱
     
     if (db.assignments) {
         const originalLength = db.assignments.length;
@@ -42,35 +43,6 @@ window.FeatureTimeline = (() => {
             container.scrollBy({ top: scrollAmount, behavior: 'smooth' });
         }
     };
-
-    function toLocalISODate(dateObj) {
-        const yyyy = dateObj.getFullYear();
-        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
-        const dd = String(dateObj.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-    }
-
-    function parseLocalDate(dateStr) {
-        if (!dateStr) return new Date();
-        const [y, m, d] = dateStr.split('-');
-        return new Date(y, m - 1, d);
-    }
-
-    function getWeekStartStr(dateStr, weekStartDay = 'sunday') {
-        if (!dateStr) return '';
-        const [y, m, d] = dateStr.split('-');
-        const dt = new Date(y, m - 1, d);
-        let day = dt.getDay(); 
-
-        if (weekStartDay === 'monday') {
-            let diff = day === 0 ? 6 : day - 1;
-            dt.setDate(dt.getDate() - diff);
-        } else {
-            dt.setDate(dt.getDate() - day);
-        }
-        
-        return toLocalISODate(dt);
-    }
 
     function syncTasksState(tasks, parentPathArray = []) {
         tasks.forEach((t, idx) => {
@@ -184,10 +156,10 @@ window.FeatureTimeline = (() => {
                 let endDateStr = cls.endDate || cls.end_date || raw.end_date;
 
                 if (startDateStr && endDateStr && meetDays.length > 0) {
-                    let s = parseLocalDate(startDateStr);
-                    let e = parseLocalDate(endDateStr);
+                    let s = DateUtils.parseLocalDate(startDateStr);
+                    let e = DateUtils.parseLocalDate(endDateStr);
                     while (s <= e) {
-                        if (meetDays.includes(s.getDay())) sessions.push(toLocalISODate(s));
+                        if (meetDays.includes(s.getDay())) sessions.push(DateUtils.toLocalISODate(s));
                         s.setDate(s.getDate() + 1);
                     }
                 }
@@ -204,8 +176,8 @@ window.FeatureTimeline = (() => {
 
         const weekStartSetting = raw.week_start_day || 'sunday';
         const now = new Date();
-        const todayStr = toLocalISODate(now);
-        const currentWeekStart = getWeekStartStr(todayStr, weekStartSetting);
+        const todayStr = DateUtils.toLocalISODate(now);
+        const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
         const mode = cls.calcMode || cls.calc_mode || 'single';
 
         let timelineNodes = [];
@@ -214,7 +186,7 @@ window.FeatureTimeline = (() => {
         } else if (mode === 'weekly') {
             const weeksMap = new Map();
             sessions.forEach(d => {
-                const weekStr = getWeekStartStr(d, weekStartSetting);
+                const weekStr = DateUtils.getWeekStartStr(d, weekStartSetting);
                 if (!weeksMap.has(weekStr)) {
                     weeksMap.set(weekStr, []);
                 }
@@ -231,7 +203,7 @@ window.FeatureTimeline = (() => {
         let html = '';
 
         timelineNodes.forEach((node, index) => {
-            const nodeWeekStart = getWeekStartStr(node.dates[0], weekStartSetting);
+            const nodeWeekStart = DateUtils.getWeekStartStr(node.dates[0], weekStartSetting);
             let isCurrent = (nodeWeekStart === currentWeekStart);
             let isFuture = node.dates[0] > todayStr;
             const nodeDate = node.dates[0];
@@ -374,7 +346,7 @@ window.FeatureTimeline = (() => {
             else if (mode === 'weekly') {
                 const weeksMap = new Map();
                 sessions.forEach(d => {
-                    const weekStr = getWeekStartStr(d, weekStartSetting);
+                    const weekStr = DateUtils.getWeekStartStr(d, weekStartSetting);
                     if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
                     weeksMap.get(weekStr).push(d);
                 });
