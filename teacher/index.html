@@ -175,7 +175,7 @@
     <script src="../020_js_core/supabase-client.js?v=15"></script>
     <script src="../020_js_core/auth-guard.js?v=15"></script>
     <script src="../020_js_core/store.js?v=17"></script>  
-    <script src="../020_js_core/api.js?v=17"></script> 
+    <script src="../020_js_core/api.js?v=18"></script> <!-- ✅ 版本號升級至 v18：支援 Nested Folder -->
     <script src="../020_js_core/utils-date.js?v=4"></script> 
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
@@ -185,22 +185,21 @@
     <script src="../110_teacher_core/store-assignment-builder.js?v=2"></script> 
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=24"></script>
+    <script src="../110_teacher_core/feature-class.js?v=25"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=1"></script>
     <script src="../110_teacher_core/feature-timeline.js?v=55"></script> 
     <script src="../110_teacher_core/feature-resource.js?v=16"></script>
     <script src="../110_teacher_core/feature-profile.js?v=15"></script>
-    <script src="../110_teacher_core/feature-class-members.js?v=15"></script>
+    <script src="../110_teacher_core/feature-class-members.js?v=16"></script>
     <script src="../110_teacher_core/feature-progress.js?v=17"></script>
 
     <script type="module">
-        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=16';
+        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=17'; // ✅ 版本號升級至 v17
         
         window.RenderMemberManagerForm = function(classId, currentUserRole) {
             new MemberManager('unified-member-management-container', classId, currentUserRole);
         };
         
-        // 渲染 Profile 卡片
         window.addEventListener('DOMContentLoaded', () => {
             try {
                 const sessionStr = localStorage.getItem('LogOnEnglish_Session');

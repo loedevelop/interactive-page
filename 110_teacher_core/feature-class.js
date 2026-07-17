@@ -1,12 +1,12 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class.js
- * 🌟 v8.8 瘦身解耦版：HTML 模板已全數抽離至 ui-class-templates.js
+ * 🌟 v8.9 SaaS 降級支援版：實作建立班級時自動生成 Google Drive 公海收件匣
  */
-console.log("💡💡💡 FeatureClass v8.8 瘦身解耦版載入！(UI 模板已分離)");
+console.log("💡💡💡 FeatureClass v8.9 載入！(整合雲端自動建檔機制)");
 
 window.FeatureClass = (() => {
     const db = window.TeacherDB;
-    const TPL = window.ClassTemplates; // 引入 UI 模板工廠
+    const TPL = window.ClassTemplates; 
 
     // --- 私有工具函式 ---
     function toLocalISODate(dateObj) {
@@ -301,15 +301,33 @@ window.FeatureClass = (() => {
                 if (!name) return alert('⚠️ 請輸入班級名稱！');
 
                 const btn = this; const originalText = btn.innerHTML;
-                btn.innerHTML = '⏳ 雲端建立中...'; btn.disabled = true;
+                btn.innerHTML = '⏳ 雲端建立資料夾中...'; btn.disabled = true;
 
                 try {
                     const { data: { user }, error: authError } = await window.supabaseClient.auth.getUser();
                     if (authError || !user) throw new Error('無法取得授權狀態');
                     
+                    // 🌟 核心防護層：強制呼叫 GAS 建立班級公海資料夾
+                    let folderId = "";
+                    try {
+                        if (!window.ApiService || typeof window.ApiService.createGASFolder !== 'function') {
+                            throw new Error("系統 API 模組未就緒");
+                        }
+                        const safeFolderName = `${name}_作業收件匣`;
+                        const folderRes = await window.ApiService.createGASFolder(safeFolderName);
+                        if (folderRes && folderRes.folderId) folderId = folderRes.folderId;
+                    } catch (folderErr) {
+                        // 建立資料夾失敗，則強力阻擋開班，確保資料絕對完整
+                        throw new Error(`Google Drive 資料夾建立失敗，系統為保證資料完整性已終止開班程序。(${folderErr.message})`);
+                    }
+
+                    btn.innerHTML = '⏳ 寫入資料庫...';
+
                     const initialRawData = { 
-                        name_display_mode: modeSelector ? modeSelector.value : "default", week_start_day: 'sunday',
-                        late_submission_defaults: { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 }
+                        name_display_mode: modeSelector ? modeSelector.value : "default", 
+                        week_start_day: 'sunday',
+                        late_submission_defaults: { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 },
+                        drive_folder_id: folderId // 🌟 確實將資料夾 ID 寫入 JSONB
                     };
                     
                     const payload = { name: name, icon: iconInput ? iconInput.value : "📘", calc_mode: 'single', meet_days: [], raw_data: initialRawData };
@@ -326,7 +344,7 @@ window.FeatureClass = (() => {
                     if (typeof db.save === 'function') db.save();
                     if (window.TeacherUI) window.TeacherUI.renderSidebar();
                     renderClassManager();
-                    alert(`✅ 成功建立班級：「${name}」！`);
+                    alert(`✅ 成功建立班級：「${name}」！\n(系統已在背景自動建立專屬雲端收件匣)`);
                 } catch (err) { alert('❌ 新增失敗: ' + err.message); } 
                 finally { btn.innerHTML = originalText; btn.disabled = false; }
             };

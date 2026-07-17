@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class-members.js
- * 🌟 v6.4 SaaS 次級頁籤架構版：實作學生/教職/家長三層實體隔離，並改用 Supabase 原生查詢修復名單 0 人 Bug
+ * 🌟 v6.5 SaaS 擴充版：優先解析 student_enrollments JSONB 以讀取專屬資料夾 ID
  */
 
 window.FeatureClassMembers = (() => {
@@ -10,10 +10,8 @@ window.FeatureClassMembers = (() => {
         db.students = []; 
     }
 
-    // 紀錄當下所在的 Tab，防止重整畫面時跑回預設值
     let currentActiveTab = 'student';
 
-    // 🧠 核心大腦：名字動態組合邏輯
     function calculateDisplayName(profile, effectiveMode) {
         const rawData = profile.raw_data || {};
         const enName = (rawData.nameEN || '').trim();
@@ -39,7 +37,6 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // 🧑‍🏫 抓取「教職員」名單 (改用 Supabase 原生查詢)
     async function fetchStaffForClass(classId, effectiveMode) {
         try {
             const { data: rawStaff, error } = await window.supabaseClient
@@ -73,12 +70,12 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // 🎓 抓取「學生」名單 (改用 Supabase 原生查詢，修復名單消失 Bug)
+    // 🌟 擴充：讀取 student_enrollments.raw_data 以取得 drive_folder_id
     async function fetchStudentsForClass(classId, effectiveMode) {
         try {
             const { data: rawStudents, error } = await window.supabaseClient
                 .from('student_enrollments')
-                .select('user_id, drive_link, profiles(*)')
+                .select('user_id, drive_link, raw_data, profiles(*)') 
                 .eq('class_id', classId)
                 .is('deleted_at', null);
 
@@ -86,13 +83,17 @@ window.FeatureClassMembers = (() => {
             
             return (rawStudents || []).map(s => {
                 const p = Array.isArray(s.profiles) ? s.profiles[0] : (s.profiles || {});
+                let enrollRaw = s.raw_data || {};
+                if (typeof enrollRaw === 'string') { try { enrollRaw = JSON.parse(enrollRaw); } catch(e){} }
+                
                 return {
                     id: s.user_id,
                     class_id: classId,
                     displayName: calculateDisplayName(p, effectiveMode),
                     email: p.email || '未設定',
                     password: p.password || '系統預設',
-                    drive_url: s.drive_link || (p.raw_data ? p.raw_data.drive_url : '') || ''
+                    // 🌟 優先採用 JSONB 內的 drive_folder_id 
+                    drive_url: enrollRaw.drive_folder_id || s.drive_link || (p.raw_data ? p.raw_data.drive_url : '') || ''
                 };
             });
         } catch (error) {
@@ -101,7 +102,6 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // 👨‍👩‍👧 抓取「家長對照」名單 (透過關聯追蹤)
     async function fetchParentsForClass(classStudents, effectiveMode) {
         if (!classStudents || classStudents.length === 0) return [];
         try {
@@ -141,7 +141,6 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // --- 🌟 次級頁籤切換邏輯 ---
     function switchTab(tabName) {
         currentActiveTab = tabName;
         
@@ -162,13 +161,11 @@ window.FeatureClassMembers = (() => {
         }
         if (content) content.style.display = 'block';
         
-        // 💡 UX 智慧連動：切換上方頁籤時，同步改變下方表單的預設身分
         if (window.currentMemberManager && typeof window.currentMemberManager.syncWithTab === 'function') {
             window.currentMemberManager.syncWithTab(tabName);
         }
     }
 
-    // 暴露給全域按鈕呼叫
     window.FeatureClassMembers_SwitchTab = switchTab;
 
     async function renderStudentManager(classId) {
@@ -199,7 +196,6 @@ window.FeatureClassMembers = (() => {
                 }
             }
 
-            // 🌟 平行抓取三方資料
             const [classStaff, classStudents] = await Promise.all([
                 fetchStaffForClass(classId, effectiveMode),
                 fetchStudentsForClass(classId, effectiveMode)
@@ -210,9 +206,6 @@ window.FeatureClassMembers = (() => {
 
             const canManageStaff = currentUserRole === 'admin' || currentUserRole === 'primary_teacher';
 
-            // ==========================================
-            // 1️⃣ 產生「學生」表格 HTML (預設區塊)
-            // ==========================================
             let studentTbody = classStudents.map((s, idx) => {
                 const safeName = s.displayName.replace(/"/g, '&quot;');
                 return `
@@ -239,9 +232,6 @@ window.FeatureClassMembers = (() => {
                 `;
             }).join('');
 
-            // ==========================================
-            // 2️⃣ 產生「教職員」表格 HTML (防護區塊)
-            // ==========================================
             let staffTbody = classStaff.map((s, idx) => {
                 const safeName = s.displayName.replace(/"/g, '&quot;');
                 let actionBtn = `<span style="color:#94A3B8; font-size:0.85em;">權限不足</span>`;
@@ -263,9 +253,6 @@ window.FeatureClassMembers = (() => {
                 `;
             }).join('');
 
-            // ==========================================
-            // 3️⃣ 產生「家長綁定矩陣」表格 HTML (對照區塊)
-            // ==========================================
             let parentTbody = classStudents.map((student, idx) => {
                 const safeStudentName = student.displayName.replace(/"/g, '&quot;');
                 const boundParents = classParents.filter(p => p.child_id === student.id);
@@ -294,11 +281,9 @@ window.FeatureClassMembers = (() => {
             }).join('');
 
 
-            // 🌟 組合最終畫面：導入 Sub-Tabs 次級頁籤切換架構
             container.innerHTML = `
                 <div style="background: white; border-radius: 12px; border: 2px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                     
-                    <!-- 次級頁籤導覽列 (Sub-Tabs) -->
                     <div style="display: flex; background: #F8FAFC; border-bottom: 1px solid #CBD5E1; padding: 0 10px; overflow-x: auto; white-space: nowrap;">
                         <button id="sub-tab-btn-student" class="member-sub-tab active" style="padding: 12px 20px; background: #EFF6FF; border: none; border-bottom: 3px solid #3B82F6; color: #1E40AF; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; border-radius: 8px 8px 0 0;" onclick="window.FeatureClassMembers_SwitchTab('student')">
                             🎓 學生名單 (${classStudents.length})
@@ -313,7 +298,6 @@ window.FeatureClassMembers = (() => {
 
                     <div style="padding: 20px;">
                         
-                        <!-- 🎓 容器一：學生名單 -->
                         <div id="sub-tab-content-student" class="member-tab-content" style="display: block; animation: fadeIn 0.3s;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                                 <h3 style="margin: 0; color: #1E293B;">👥 課程學生與帳號管理</h3>
@@ -340,7 +324,6 @@ window.FeatureClassMembers = (() => {
                             </div>
                         </div>
 
-                        <!-- 🧑‍🏫 容器二：教職員團隊 -->
                         <div id="sub-tab-content-staff" class="member-tab-content" style="display: none; animation: fadeIn 0.3s;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                                 <h3 style="margin-top: 0; margin-bottom: 0; color: #1E293B;">🧑‍🏫 班級內部教職員團隊</h3>
@@ -364,7 +347,6 @@ window.FeatureClassMembers = (() => {
                             </div>
                         </div>
 
-                        <!-- 👨‍👩‍👧 容器三：家長綁定對照矩陣 -->
                         <div id="sub-tab-content-parent" class="member-tab-content" style="display: none; animation: fadeIn 0.3s;">
                             <div style="background: #FFFBEB; border: 1px dashed #FDE68A; padding: 12px; border-radius: 8px; margin-bottom: 15px; color: #92400E; font-size: 0.9rem;">
                                 💡 <b>家長觀測端說明：</b> 您必須先建立學生，然後在此處將家長的信箱「綁定」給對應的學生。一個家長可以綁定多位學生。
@@ -394,7 +376,6 @@ window.FeatureClassMembers = (() => {
                 </div>
             `;
             
-            // 恢復上次切換的 Tab
             switchTab(currentActiveTab);
 
         } catch (err) {
@@ -407,7 +388,7 @@ window.FeatureClassMembers = (() => {
         renderStudentManager,
         switchTab,
         
-        // 💾 僅允許儲存 Drive，封印前端 Email 修改
+        // 🌟 擴充：儲存 Drive URL 時同步寫回 raw_data.drive_folder_id 保持資料雙軌一致
         saveStudent: async (studentId, classId) => {
             const drive = document.getElementById(`std-drive-${studentId}`).value.trim();
             const btn = window.event.target;
@@ -416,6 +397,7 @@ window.FeatureClassMembers = (() => {
             btn.disabled = true;
 
             try {
+                // 1. 同步寫入 profiles
                 const { data: oldProf } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', studentId).maybeSingle();
                 const mergedRawData = { ...(oldProf?.raw_data || {}), drive_url: drive };
 
@@ -426,9 +408,15 @@ window.FeatureClassMembers = (() => {
 
                 if (profileError) throw profileError;
 
+                // 2. 寫入 student_enrollments 並封裝進 JSONB
+                const { data: enrollData } = await window.supabaseClient.from('student_enrollments').select('raw_data').eq('class_id', classId).eq('user_id', studentId).maybeSingle();
+                let oldEnrollRaw = enrollData?.raw_data || {};
+                if (typeof oldEnrollRaw === 'string') { try { oldEnrollRaw = JSON.parse(oldEnrollRaw); } catch(e){} }
+                const mergedEnrollRaw = { ...oldEnrollRaw, drive_folder_id: drive };
+
                 const { error: enrollError } = await window.supabaseClient
                     .from('student_enrollments')
-                    .update({ drive_link: drive })
+                    .update({ drive_link: drive, raw_data: mergedEnrollRaw })
                     .eq('class_id', classId)
                     .eq('user_id', studentId);
                     
@@ -443,7 +431,6 @@ window.FeatureClassMembers = (() => {
             }
         },
         
-        // 🗑️ 退選學生 (Soft Delete)
         deleteStudent: async (id, classId) => {
             if (!confirm('⚠️ 確定要把該名學生從本班級移除嗎？\n\n(注意：這只是將學生退出本班，系統主檔仍會保留。如果該學生有綁定家長，家長將自動無法觀測本班進度)')) return;
             
@@ -457,7 +444,6 @@ window.FeatureClassMembers = (() => {
             await renderStudentManager(classId);
         },
 
-        // 🧑‍🏫 移除教職員 (Soft Delete)
         removeStaff: async (userId, classId) => {
             if (!confirm('⚠️ 確定要把該名教職員從本班級團隊移除嗎？\n(注意：對方的帳號仍會保留在系統中)')) return;
             
@@ -471,7 +457,6 @@ window.FeatureClassMembers = (() => {
             await renderStudentManager(classId);
         },
 
-        // ✂️ 解除家長綁定 (物理刪除 Mapping 牽線)
         removeParentMapping: async (parentId, childId, classId) => {
             if (!confirm('⚠️ 確定要解除該名家長對此學生的觀測權限嗎？\n(家長端將立即失去觀測此學生的資格)')) return;
             

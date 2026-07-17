@@ -1,14 +1,10 @@
 /**
  * 📂 檔案路徑：020_js_core/api.js
- * 🌟 v6.4 白皮書終極版：GAS 檔案上傳微服務封裝 (支援 Metadata 標籤傳遞)
- * 描述：網路通訊層核心樞紐。純粹負責與 Supabase 及外部 Edge/GAS 進行安全的資料交換。
+ * 🌟 v6.6 白皮書終極版：GAS 支援子資料夾建立 (Nested Folder Support)
  */
 
 const ApiService = (() => {
     
-    // ==========================================
-    // 🛡️ 內部工具函式 (Internal Utilities)
-    // ==========================================
     const safeParseJSON = (rawData) => {
         if (!rawData) return {};
         if (typeof rawData === 'object') return rawData;
@@ -20,9 +16,6 @@ const ApiService = (() => {
         }
     };
 
-    // ==========================================
-    // 1. 班級與名單獲取 (Class & Roster Fetchers)
-    // ==========================================
     const fetchClasses = async () => {
         try {
             const sessionStr = localStorage.getItem('LogOnEnglish_Session');
@@ -57,7 +50,6 @@ const ApiService = (() => {
 
             return data.map(row => {
                 const parsedRaw = safeParseJSON(row.raw_data);
-                
                 let role = 'ta_junior'; 
                 if (isAdmin) {
                     role = 'admin';
@@ -103,10 +95,7 @@ const ApiService = (() => {
                 const parsedRaw = safeParseJSON(row.raw_data);
                 let profileRaw = {};
                 const profileObj = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
-                
-                if (profileObj && profileObj.raw_data) {
-                    profileRaw = safeParseJSON(profileObj.raw_data);
-                }
+                if (profileObj && profileObj.raw_data) profileRaw = safeParseJSON(profileObj.raw_data);
 
                 return {
                     ...row,
@@ -145,9 +134,7 @@ const ApiService = (() => {
             return data.map(row => {
                 const profileObj = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
                 let profileRaw = {};
-                if (profileObj && profileObj.raw_data) {
-                    profileRaw = safeParseJSON(profileObj.raw_data);
-                }
+                if (profileObj && profileObj.raw_data) profileRaw = safeParseJSON(profileObj.raw_data);
 
                 return {
                     ...row,
@@ -164,9 +151,6 @@ const ApiService = (() => {
         }
     };
 
-    // ==========================================
-    // 2. 作業與進度管理 
-    // ==========================================
     const fetchAssignments = async (userId) => {
         try {
             if (!userId) throw new Error("缺少 userId 參數");
@@ -233,47 +217,74 @@ const ApiService = (() => {
 
             if (error) throw error;
             return { success: true };
-
         } catch (error) {
             console.error("[API Error - syncProgress]", error);
             throw new Error("進度同步失敗：" + error.message);
         }
     };
 
-    // ==========================================
-    // 3. 系統破壞性操作 (RPC Atomic Calls)
-    // ==========================================
     const archiveClass = async (classId) => {
         try {
             if (!classId) throw new Error("必須提供班級 ID");
 
-            const { error } = await window.supabaseClient.rpc('archive_class_atomic', { 
-                target_class_id: classId 
-            });
-
+            const { error } = await window.supabaseClient.rpc('archive_class_atomic', { target_class_id: classId });
             if (error) throw error;
             return { success: true };
-            
         } catch (error) {
             console.error("[API Error - archiveClass RPC]", error);
             throw new Error(`班級封存操作失敗。請確認您具備 Admin 或 Primary Teacher 權限。(${error.message})`);
         }
     };
 
-    // ==========================================
-    // 4. 外部微服務整合 (External Services)
-    // ==========================================
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
+
+    // 🌟 擴充：支援 parentFolderId 建立嵌套資料夾
+    const createGASFolder = async (folderName, parentFolderId = null) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); 
+
+        try {
+            const payload = { action: 'create_folder', folderName };
+            if (parentFolderId) payload.parentFolderId = parentFolderId;
+
+            const response = await fetch(GAS_API_URL, {
+                method: 'POST',
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(payload)
+            });
+
+            clearTimeout(timeoutId);
+            if (!response.ok) throw new Error(`連線異常 (HTTP ${response.status})`);
+            const result = JSON.parse(await response.text());
+            
+            if (result.status !== 'success') throw new Error(result.message || '雲端無法建立資料夾');
+            return result; 
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') throw new Error('建立資料夾逾時，請檢查網路。');
+            console.error("[API Error - createGASFolder]", error);
+            throw error;
+        }
+    };
+
     const uploadToGAS = async (base64Data, fileName, mimeType, folderId, assignmentId = null, taskId = null) => {
-        const API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
         try {
-            const payload = { fileData: base64Data, fileName, mimeType, folderId };
+            const payload = { 
+                action: 'upload_file',
+                fileData: base64Data, 
+                fileName, 
+                mimeType, 
+                folderId 
+            };
             if (assignmentId) payload.assignmentId = assignmentId;
             if (taskId) payload.taskId = taskId;
 
-            const response = await fetch(API_URL, {
+            const response = await fetch(GAS_API_URL, {
                 method: 'POST',
                 redirect: 'follow',
                 signal: controller.signal,
@@ -289,7 +300,7 @@ const ApiService = (() => {
             if (result.status !== 'success') {
                 throw new Error(result.message || '雲端儲存空間回報未知錯誤');
             }
-            return result; // 會回傳包含 fileId 的物件
+            return result; 
         } catch (error) {
             clearTimeout(timeoutId);
             if (error.name === 'AbortError') {
@@ -301,13 +312,7 @@ const ApiService = (() => {
     };
 
     return { 
-        fetchClasses, 
-        fetchStudents, 
-        fetchClassStaff,
-        fetchAssignments, 
-        syncProgress,
-        archiveClass,
-        uploadToGAS
+        fetchClasses, fetchStudents, fetchClassStaff, fetchAssignments, syncProgress, archiveClass, createGASFolder, uploadToGAS
     };
 })();
 

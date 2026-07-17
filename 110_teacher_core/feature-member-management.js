@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-member-management.js
- * 🌟 v6.6 終極解耦版：導入共用信箱前端變異選項，拔除後端通靈邏輯
+ * 🌟 v6.7 終極解耦版：實作學生加入班級時「自動生成專屬個人資料夾」並綁定 JSONB
  */
 
 export class MemberManager {
@@ -141,7 +141,7 @@ export class MemberManager {
                     </div>
 
                     <div class="form-group" id="studentDriveGroup" style="display: none; margin-top: 15px;">
-                        <label>📁 專屬 Drive 連結 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(選填：學生的個人雲端硬碟)</span></label>
+                        <label>📁 專屬 Drive 連結 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(選填：若不填寫，系統將自動於班級資料夾中生成)</span></label>
                         <input type="url" id="memberDriveLink" class="form-control" placeholder="請貼上 Google Drive 連結...">
                     </div>
 
@@ -312,7 +312,6 @@ export class MemberManager {
         const driveLink = document.getElementById('memberDriveLink').value.trim();
         const isShared = document.getElementById('isSharedEmail').checked;
 
-        // 🌟 核心防衝突變異邏輯：權力下放前端
         let isMutated = false;
         if (isShared) {
             const [username, domain] = targetEmail.split("@");
@@ -342,10 +341,6 @@ export class MemberManager {
             lastNameCN: lastNameCN,
             firstNameCN: firstNameCN
         };
-        
-        if (role === 'student' && driveLink) {
-            rawDataPayload.drive_url = driveLink;
-        }
 
         btn.disabled = true;
         btn.innerHTML = '⏳ 資料驗證與建檔中...';
@@ -366,7 +361,8 @@ export class MemberManager {
 
             try {
                 if (role === 'student') {
-                    await this.assignStudent(targetUserId, driveLink);
+                    // 🌟 核心防護：將建立資料夾的職責委託給 assignStudent 處理
+                    await this.assignStudent(targetUserId, driveLink, fallbackName);
                 } else if (['co_teacher', 'ta_senior', 'ta_junior'].includes(role)) {
                     await this.assignStaff(targetUserId, role);
                 } else if (role === 'parent') {
@@ -384,9 +380,9 @@ export class MemberManager {
                 msgBox.innerHTML = `✅ 此帳號已存在，已成功同步資料並指派至本班！`;
             } else {
                 if (isMutatedFromBackend) {
-                    msgBox.innerHTML = `✅ 已自動生成分身帳號！<br><span style="font-size:0.85em; color:#475569;">登入帳號: <b>${targetEmail}</b><br>預設密碼: <b>${loginPassword}</b></span>`;
+                    msgBox.innerHTML = `✅ 已自動生成分身帳號與個人資料夾！<br><span style="font-size:0.85em; color:#475569;">登入帳號: <b>${targetEmail}</b><br>預設密碼: <b>${loginPassword}</b></span>`;
                 } else {
-                    msgBox.innerHTML = `✅ 成功加入！<br><span style="font-size:0.85em; color:#475569;">預設密碼為: <b>${loginPassword}</b></span>`;
+                    msgBox.innerHTML = `✅ 成功加入並生成專屬資料夾！<br><span style="font-size:0.85em; color:#475569;">預設密碼為: <b>${loginPassword}</b></span>`;
                 }
             }
             
@@ -442,10 +438,60 @@ export class MemberManager {
         return data; 
     }
 
-    async assignStudent(userId, driveLink) {
+    // 🌟 核心升級：加入班級即刻生成資料夾 (路線二：班級絕對隔離)
+    async assignStudent(userId, driveLink, studentName) {
+        let finalDriveLink = driveLink || null;
+        let enrollRawData = {};
+
+        // 情境：老師沒有手動填寫 Google Drive 網址，系統啟動自動生成機制
+        if (!finalDriveLink) {
+            const { data: classData } = await this.supabase
+                .from('classes')
+                .select('raw_data')
+                .eq('id', this.classId)
+                .maybeSingle();
+
+            let classRaw = classData?.raw_data || {};
+            if (typeof classRaw === 'string') {
+                try { classRaw = JSON.parse(classRaw); } catch(e){}
+            }
+
+            const parentFolderId = classRaw.drive_folder_id;
+
+            if (parentFolderId && window.ApiService && typeof window.ApiService.createGASFolder === 'function') {
+                // 產生高辨識度且具備唯一性的檔名 (例: 林家宇_a7b2)
+                const shortId = userId.substring(userId.length - 4);
+                const safeName = (studentName || '未命名學生').replace(/[\\/:*?"<>|]/g, '_').trim();
+                const folderName = `${safeName}_${shortId}`;
+
+                try {
+                    console.log(`[自動建檔] 準備在班級目錄下建立專屬資料夾: ${folderName}`);
+                    const res = await window.ApiService.createGASFolder(folderName, parentFolderId);
+                    
+                    if (res && res.folderId) {
+                        enrollRawData.drive_folder_id = res.folderId; // 精準寫入 JSONB
+                    }
+                } catch (e) {
+                    console.warn('⚠️ 自動建立學生資料夾失敗，將保持空值，後續上傳將走公海收件匣降級策略:', e);
+                }
+            }
+        }
+
+        const payload = {
+            class_id: this.classId,
+            user_id: userId,
+            drive_link: finalDriveLink,
+            deleted_at: null
+        };
+
+        if (Object.keys(enrollRawData).length > 0) {
+            payload.raw_data = enrollRawData;
+        }
+
         const { error } = await this.supabase
             .from('student_enrollments')
-            .upsert({ class_id: this.classId, user_id: userId, drive_link: driveLink || null, deleted_at: null }, { onConflict: 'class_id,user_id' });
+            .upsert(payload, { onConflict: 'class_id,user_id' });
+            
         if (error) throw new Error('學生已存在於本班或關聯寫入失敗');
     }
 
