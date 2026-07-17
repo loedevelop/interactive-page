@@ -145,7 +145,6 @@
         <div>
             <div class="input-group">
                 <label for="email">使用者 Email (帳號)</label>
-                <!-- 移除了寫死的 value，避免資安與幽靈快取問題 -->
                 <input type="email" id="email" placeholder="例如: name@test.com">
             </div>
             <div class="input-group">
@@ -180,7 +179,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script type="module" src="./020_js_core/supabase-client.js"></script>
+    <!-- 🚨 升級版本號以破除快取，確保讀取最新 API -->
+    <script type="module" src="./020_js_core/supabase-client.js?v=16"></script>
 
     <script>
         // ==========================================

@@ -1,11 +1,11 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.4 極致防禦版 (加入錯誤邊界 Error Boundaries)：
- * 1. 加入 renderTimeline 全局 try...catch，避免靜默崩潰。
- * 2. 確保 UtilsDate 與 TimelineTemplates 若載入失敗，會直接顯示於 UI。
+ * 🌟 v13.6 終極指揮官版 (The Thin Orchestrator) - 完整修復版：
+ * 1. 成功拔除超過 200 行的節點操作邏輯。
+ * 2. 全面委託 window.BuilderStore 進行狀態管理，並補回所有被遺漏的 API 代理 (包含 getTaskParentArray)。
  */
 
-console.log("🚀 FeatureTimeline v13.4 載入成功！(防禦邊界升級版)");
+console.log("🚀 FeatureTimeline v13.6 載入成功！(極致瘦身，Store 完美解耦)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -16,7 +16,6 @@ window.FeatureTimeline = (() => {
         if (db.assignments.length !== originalLength && typeof db.save === 'function') db.save(); 
     }
 
-    let bState = null; 
     let dragAssignId = null; 
 
     function checkCanEditTimeline(classId) {
@@ -28,7 +27,7 @@ window.FeatureTimeline = (() => {
     }
 
     const scrollToCurrentWeek = () => {
-        if (bState) return; 
+        if (window.BuilderStore && window.BuilderStore.getState()) return; 
         const targetNode = document.querySelector('.timeline-node[data-is-current="true"]');
         const container = document.querySelector('.view-section.active');
         if (targetNode && container) {
@@ -38,86 +37,6 @@ window.FeatureTimeline = (() => {
             container.scrollBy({ top: scrollAmount, behavior: 'smooth' });
         }
     };
-
-    function syncTasksState(tasks, parentPathArray = []) {
-        tasks.forEach((t, idx) => {
-            const pathArray = [...parentPathArray, idx];
-            const pathStr = pathArray.join('-');
-            
-            const titleEl = document.getElementById(`node-title-${pathStr}`);
-            if (titleEl) {
-                let text = titleEl.textContent.trim();
-                t.title = (text === '') ? '' : titleEl.innerHTML;
-            }
-            
-            const dueEl = document.getElementById(`node-due-${pathStr}`);
-            const lateModeEl = document.getElementById(`node-late-mode-${pathStr}`);
-            const graceEl = document.getElementById(`node-grace-${pathStr}`);
-            const penaltyEl = document.getElementById(`node-penalty-${pathStr}`);
-            
-            if (dueEl) t.due_date = dueEl.value;
-            if (lateModeEl) t.late_mode = lateModeEl.value;
-            if (graceEl) t.grace_period_hours = parseInt(graceEl.value) || 0;
-            if (penaltyEl) t.penalty_percentage = parseInt(penaltyEl.value) || 0;
-            
-            if (t.late_mode === 'no_late') { t.grace_period_hours = 0; t.penalty_percentage = 0; }
-            if (t.late_mode === 'infinite') { t.grace_period_hours = 0; }
-            
-            if (t.type === 'group') {
-                if (t.subTasks) syncTasksState(t.subTasks, pathArray);
-            } else {
-                const urlEl = document.getElementById(`node-url-${pathStr}`);
-                const urlTextEl = document.getElementById(`node-url-text-${pathStr}`);
-                const descEl = document.getElementById(`node-desc-${pathStr}`);
-                if (urlEl) t.url = urlEl.value;
-                if (urlTextEl) t.url_text = urlTextEl.value;
-                if (descEl) {
-                    let text = descEl.textContent.trim();
-                    t.description = (text === '') ? '' : descEl.innerHTML;
-                }
-            }
-        });
-    }
-
-    function syncState() {
-        if (!bState) return;
-        const nid = bState.containerId;
-        const titleEl = document.getElementById(`builder-title-${nid}`);
-        const descEl = document.getElementById(`builder-desc-${nid}`);
-        const dueEl = document.getElementById(`builder-due-${nid}`);
-        const pubEl = document.getElementById(`builder-pub-${nid}`);
-        const lateModeEl = document.getElementById(`builder-late-mode-${nid}`);
-        const graceEl = document.getElementById(`builder-grace-${nid}`);
-        const penaltyEl = document.getElementById(`builder-penalty-${nid}`);
-        
-        if (titleEl) {
-            let text = titleEl.textContent.trim();
-            bState.title = (text === '') ? '' : titleEl.innerHTML;
-        }
-        if (dueEl) bState.due_date = dueEl.value;
-        if (pubEl) bState.is_published = pubEl.checked;
-        if (descEl) {
-            let text = descEl.textContent.trim();
-            bState.description = (text === '') ? '' : descEl.innerHTML;
-        }
-
-        if (lateModeEl) bState.late_mode = lateModeEl.value;
-        if (graceEl) bState.late_grace = parseInt(graceEl.value) || 0;
-        if (penaltyEl) bState.late_penalty = parseInt(penaltyEl.value) || 0;
-
-        if (bState.late_mode === 'no_late') { bState.late_grace = 0; bState.late_penalty = 0; }
-        if (bState.late_mode === 'infinite') { bState.late_grace = 0; }
-        if (bState.tasks) syncTasksState(bState.tasks);
-    }
-
-    function getTaskParentArray(pathArray) {
-        if (!pathArray || pathArray.length <= 1) return bState.tasks;
-        let current = bState.tasks[pathArray[0]];
-        for (let i = 1; i < pathArray.length - 1; i++) {
-            current = current.subTasks[pathArray[i]];
-        }
-        return current.subTasks;
-    }
 
     function getTimelineSessions(cls, DateUtils) {
         if (!cls) return [];
@@ -156,30 +75,25 @@ window.FeatureTimeline = (() => {
         const container = document.getElementById('timeline-container');
         if (!container) return;
 
-        // 🛡️ 防禦邊界：捕捉一切渲染異常
         try {
             const TPL = window.TimelineTemplates; 
             const DateUtils = window.UtilsDate;   
 
             if (!TPL || !DateUtils) {
-                container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 系統錯誤：核心依賴模組 (TimelineTemplates 或 UtilsDate) 遺失，請檢查網路或重新整理。</div>`;
+                container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 系統錯誤：核心依賴模組遺失。</div>`;
                 return;
             }
             
             container.className = '';
-
             const cls = (db && db.classes) ? db.classes.find(c => c.id === classId) : null;
             if (!cls) {
-                container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 找不到該班級的主檔資料 (classId: ${classId})</div>`;
+                container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 找不到該班級的主檔資料</div>`;
                 return;
             }
             
             const canEditTimeline = checkCanEditTimeline(classId);
-
             let raw = cls.raw_data || {};
-            if (typeof raw === 'string') {
-                try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
-            }
+            if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
 
             const classAssignments = (db && db.assignments) ? db.assignments : [];
             let sessions = getTimelineSessions(cls, DateUtils);
@@ -196,8 +110,7 @@ window.FeatureTimeline = (() => {
             }
 
             const weekStartSetting = raw.week_start_day || 'sunday';
-            const now = new Date();
-            const todayStr = DateUtils.toLocalISODate(now);
+            const todayStr = DateUtils.toLocalISODate(new Date());
             const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
             const mode = cls.calcMode || cls.calc_mode || 'single';
 
@@ -212,15 +125,11 @@ window.FeatureTimeline = (() => {
                     weeksMap.get(weekStr).push(d);
                 });
                 weeksMap.forEach((chunk) => {
-                    timelineNodes.push({ 
-                        title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], 
-                        dates: chunk 
-                    });
+                    timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], dates: chunk });
                 });
             }
 
             let html = '';
-
             timelineNodes.forEach((node, index) => {
                 const nodeWeekStart = DateUtils.getWeekStartStr(node.dates[0], weekStartSetting);
                 let isCurrent = (nodeWeekStart === currentWeekStart);
@@ -233,39 +142,29 @@ window.FeatureTimeline = (() => {
                     nodeAssignments.forEach(a => {
                         let effectiveBlockDueDate = a.due_date;
                         let aRaw = a.raw_data || {};
-                        if (typeof aRaw === 'string') {
-                            try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
-                        }
+                        if (typeof aRaw === 'string') { try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; } }
                         
                         let blockLateMode = 'infinite', blockPenalty = 0, blockGrace = 0;
                         if (aRaw.late_policy) {
                             if (!aRaw.late_policy.allow_late) blockLateMode = 'no_late';
-                            else if (aRaw.late_policy.grace_period_hours > 0) {
-                                blockLateMode = 'custom';
-                                blockGrace = aRaw.late_policy.grace_period_hours;
-                            }
+                            else if (aRaw.late_policy.grace_period_hours > 0) { blockLateMode = 'custom'; blockGrace = aRaw.late_policy.grace_period_hours; }
                             blockPenalty = aRaw.late_policy.penalty_percentage || 0;
                         }
                         const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty, grace: blockGrace };
-
-                        // 防禦：確保 a.tasks 為陣列
                         let tasksHtml = TPL.renderReadOnlyTree(a.tasks || [], effectiveBlockDueDate, effectiveBlockLatePolicy, 0);
                         assignmentsHtml += TPL.getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml);
                     });
                 }
-
                 const builderContainerId = `builder-container-${index}`;
                 html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId);
             });
             
             container.innerHTML = TPL.getTimelineStyleBlock();
-            
             const timelineWrapper = document.createElement('div');
             timelineWrapper.style.borderLeft = '3px solid #E2E8F0';
             timelineWrapper.style.marginLeft = '20px';
             timelineWrapper.style.paddingLeft = '50px'; 
             timelineWrapper.innerHTML = html;
-
             container.appendChild(timelineWrapper);
 
             if (scrollMode === 'current') {
@@ -289,7 +188,7 @@ window.FeatureTimeline = (() => {
                         if (mutation.attributeName === 'class' || mutation.attributeName === 'style') {
                             const style = window.getComputedStyle(viewProgress);
                             if (style.display !== 'none' && viewProgress.classList.contains('active')) {
-                                if (!bState) setTimeout(scrollToCurrentWeek, 100); 
+                                if (!window.BuilderStore || !window.BuilderStore.getState()) setTimeout(scrollToCurrentWeek, 100); 
                             }
                         }
                     });
@@ -300,18 +199,14 @@ window.FeatureTimeline = (() => {
 
         } catch (error) {
             console.error("Timeline Render Crashed:", error);
-            container.innerHTML = `
-                <div style="padding:20px; background:#FEE2E2; border:2px solid #EF4444; border-radius:10px; margin: 20px;">
-                    <h3 style="color:#B91C1C; margin-top:0;">⚠️ 進度軸渲染失敗</h3>
-                    <p style="color:#7F1D1D;">錯誤原因：${error.message}</p>
-                    <p style="color:#7F1D1D; font-size: 0.9em; margin-bottom:0;">(請將此截圖回報給工程團隊)</p>
-                </div>
-            `;
+            container.innerHTML = `<div style="padding:20px; background:#FEE2E2; border:2px solid #EF4444; border-radius:10px; margin: 20px;"><h3 style="color:#B91C1C; margin-top:0;">⚠️ 進度軸渲染失敗</h3><p style="color:#7F1D1D;">錯誤原因：${error.message}</p></div>`;
         }
     }
 
     function renderBuilderUI() {
         const TPL = window.TimelineTemplates;
+        if (!window.BuilderStore) return;
+        const bState = window.BuilderStore.getState();
         if (!bState || !TPL) return;
         const container = document.getElementById(bState.containerId);
         if (!container) return;
@@ -327,26 +222,23 @@ window.FeatureTimeline = (() => {
 
         let tasksHtml = bState.tasks && bState.tasks.length > 0 ? TPL.renderBuilderTree(bState.tasks, [], classResOpts) : '';
         let tasksContainerHtml = tasksHtml ? `<div style="margin-bottom: 15px;">${tasksHtml}</div>` : '';
-        
         const allAssignsForHistory = (db && db.assignments || []).filter(a => a.class_id === bState.classId);
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : TPL.getHistoryDropdownHtml(allAssignsForHistory, bState.containerId);
 
         container.innerHTML = TPL.getBuilderFormHtml(bState, classResOpts, tasksContainerHtml, historyHtml);
     }
 
+    // --- 公開協調 API (Orchestrator Proxy) ---
     return {
-        getTaskParentArray, 
         renderTimeline,
         scrollToCurrentWeek,
+        
+        // 🚨 修正核心遺漏：這行絕對不能少！供給 ui-timeline-templates.js 調用
+        getTaskParentArray: (pathArray) => window.BuilderStore.getTaskParentArray(pathArray),
+        
         openBuilder: (classId, date, containerId) => {
             if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法新增或修改作業。');
-            
-            bState = { 
-                editId: null, classId, target_date: date, containerId, 
-                title: '', description: '', due_date: '', is_published: false, 
-                late_mode: 'infinite', late_grace: 0, late_penalty: 0, tasks: [] 
-            };
-            
+            window.BuilderStore.initNew(classId, date, containerId);
             renderBuilderUI();
             setTimeout(() => { 
                 const titleEl = document.getElementById(`builder-title-${containerId}`);
@@ -390,22 +282,7 @@ window.FeatureTimeline = (() => {
             const nodeIndex = timelineNodes.findIndex(node => node.dates.includes(targetDateStr));
             const cId = `builder-container-${nodeIndex >= 0 ? nodeIndex : 0}`; 
 
-            bState = JSON.parse(JSON.stringify(a));
-            bState.editId = a.id; bState.classId = a.class_id; bState.containerId = cId;
-            
-            let aRaw = a.raw_data || {};
-            if (typeof aRaw === 'string') { try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; } }
-            
-            if (aRaw.late_policy) {
-                if (!aRaw.late_policy.allow_late) bState.late_mode = 'no_late';
-                else if (aRaw.late_policy.grace_period_hours > 0) bState.late_mode = 'custom';
-                else bState.late_mode = 'infinite';
-                bState.late_grace = aRaw.late_policy.grace_period_hours || 0;
-                bState.late_penalty = aRaw.late_policy.penalty_percentage || 0;
-            } else {
-                bState.late_mode = 'infinite'; bState.late_grace = 0; bState.late_penalty = 0;
-            }
-            
+            window.BuilderStore.initEdit(a, cId);
             renderTimeline(a.class_id, 'none');
             renderBuilderUI();
             
@@ -419,334 +296,32 @@ window.FeatureTimeline = (() => {
                 }
             }, 300);
         },
-        
-        confirmLinePush: (assignId, classId) => {
-            const TPL = window.TimelineTemplates;
-            if(!db || !db.assignments) return;
-            const a = db.assignments.find(x => x.id === assignId);
-            if (!a || !TPL) return;
 
-            const cls = db.classes.find(c => c.id === classId);
-            let raw = cls?.raw_data || {};
-            if (typeof raw === 'string') {
-                try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
-            }
-            if (!raw.line_notify_token) {
-                return alert('⚠️ 此班級尚未綁定 LINE Notify Token！\n請先至「⚙️ 班級設定」中進行綁定。');
-            }
-
-            const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
-            const overlayId = 'line-push-modal';
-            let existing = document.getElementById(overlayId);
-            if (existing) existing.remove();
-
-            const overlay = document.createElement('div');
-            overlay.id = overlayId;
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-
-            overlay.innerHTML = TPL.getLinePushModalHtml(cleanTitle, assignId, classId, overlayId);
-            document.body.appendChild(overlay);
-        },
-        executeLinePush: async (assignId, classId) => {
-            const btn = document.getElementById('btn-confirm-push');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⏳ 發送中...';
-            btn.disabled = true;
-
-            try {
-                if (!window.ServiceLineNotify || typeof window.ServiceLineNotify.pushAssignment !== 'function') {
-                    throw new Error("系統提示：LINE 推播微服務尚未載入。");
-                }
-                await window.ServiceLineNotify.pushAssignment(classId, assignId);
-                document.getElementById('line-push-modal').remove();
-                alert('✅ 已成功發送至 LINE 群組！');
-            } catch (err) {
-                alert('❌ 推播失敗: ' + err.message);
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        },
-
-        moveAssignment: (assignId, classId) => {
-            const TPL = window.TimelineTemplates;
-            if(!db || !db.assignments) return;
-            const a = db.assignments.find(x => x.id === assignId);
-            if (!a || !TPL) return;
-            if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法搬移此作業。');
-
-            const overlay = document.createElement('div');
-            overlay.id = 'move-assign-modal';
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-            const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
-            overlay.innerHTML = TPL.getMoveAssignModalHtml(cleanTitle, window.UtilsDate.normalizeDateString(a.target_date), a.id, classId);
-            document.body.appendChild(overlay);
-        },
-        submitMove: async (assignId, classId, oldDate) => {
-            const newDate = document.getElementById('move-target-date').value;
-            if (!newDate) return alert('⚠️ 請選擇目標日期');
-            if (newDate === oldDate) return document.getElementById('move-assign-modal').remove(); 
-            
-            const btn = document.getElementById('btn-confirm-move');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⏳ 處理中...';
-            btn.disabled = true;
-            
-            try {
-                const { data: updatedRows, error } = await window.supabaseClient
-                    .from('assignments')
-                    .update({ target_date: newDate })
-                    .eq('id', assignId)
-                    .is('deleted_at', null)
-                    .select(); 
-                    
-                if (error) throw error;
-                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
-                
-                const idx = db.assignments.findIndex(a => a.id === assignId);
-                if(idx > -1) db.assignments[idx].target_date = newDate;
-                
-                document.getElementById('move-assign-modal').remove();
-                window.FeatureTimeline.renderTimeline(classId, 'target', `assign-block-${assignId}`);
-            } catch (err) {
-                alert('❌ 改期失敗: ' + err.message);
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
+        // --- Proxy 到 Store 的樹狀邏輯 ---
+        addNode: (pathStr, type) => { window.BuilderStore.addNode(pathStr, type); renderBuilderUI(); },
+        removeNode: (pathStr) => { window.BuilderStore.removeNode(pathStr); renderBuilderUI(); },
+        moveNodeUp: (pathStr) => { window.BuilderStore.moveNodeUp(pathStr); renderBuilderUI(); },
+        moveNodeDown: (pathStr) => { window.BuilderStore.moveNodeDown(pathStr); renderBuilderUI(); },
+        moveNodeLeft: (pathStr) => { window.BuilderStore.moveNodeLeft(pathStr); renderBuilderUI(); },
+        moveNodeRight: (pathStr) => { window.BuilderStore.moveNodeRight(pathStr); renderBuilderUI(); },
+        changeNodeType: (pathStr, newType) => { window.BuilderStore.changeNodeType(pathStr, newType); renderBuilderUI(); },
+        updateNodeUrl: (pathStr, val) => { window.BuilderStore.updateNodeUrl(pathStr, val); renderBuilderUI(); },
+        copyPrevNodeUrl: (pathStr) => { window.BuilderStore.copyPrevNodeUrl(pathStr); renderBuilderUI(); },
+        addResourceTaskAsLink: (pathStr, resId) => {
+            if(!db || !db.resourceLibrary) return;
+            const res = db.resourceLibrary.find(r => r.id === resId);
+            if (res) { window.BuilderStore.addResourceTaskAsLink(pathStr, res); renderBuilderUI(); }
         },
         copyHistory: (historyId) => {
             if(!historyId || !db || !db.assignments) return;
             const a = db.assignments.find(x => x.id === historyId);
-            if (!a) return;
-            syncState(); 
-            bState.title = a.title; bState.description = a.description;
-            bState.due_date = a.due_date; bState.is_published = a.is_published;
-            
-            let aRaw = a.raw_data || {};
-            if (typeof aRaw === 'string') { try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; } }
-            
-            if (aRaw.late_policy) {
-                if (!aRaw.late_policy.allow_late) bState.late_mode = 'no_late';
-                else if (aRaw.late_policy.grace_period_hours > 0) bState.late_mode = 'custom';
-                else bState.late_mode = 'infinite';
-                bState.late_grace = aRaw.late_policy.grace_period_hours || 0;
-                bState.late_penalty = aRaw.late_policy.penalty_percentage || 0;
-            } else {
-                bState.late_mode = 'infinite'; bState.late_grace = 0; bState.late_penalty = 0;
-            }
-
-            const assignNewIdsRecursive = (tasksList) => {
-                return (tasksList || []).map(t => {
-                    const cloned = { ...t, id: `task_${Date.now()}_${Math.random()}` };
-                    delete cloned.resource_id;
-                    if (cloned.type === 'group' && cloned.subTasks) cloned.subTasks = assignNewIdsRecursive(cloned.subTasks);
-                    return cloned;
-                });
-            };
-            bState.tasks = assignNewIdsRecursive(JSON.parse(JSON.stringify(a.tasks || [])));
-            renderBuilderUI();
-        },
-        deleteHistoryTemplate: async () => {
-            if (!bState) return;
-            const selectEl = document.getElementById(`history-select-${bState.containerId}`);
-            if (!selectEl) return;
-            const historyId = selectEl.value;
-            if (!historyId) return alert('⚠️ 請先選擇要刪除的歷史紀錄！');
-            if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
-            
-            try {
-                const { data: updatedRows, error } = await window.supabaseClient
-                    .from('assignments')
-                    .update({ deleted_at: new Date().toISOString() })
-                    .eq('id', historyId)
-                    .is('deleted_at', null)
-                    .select(); 
-                if (error) throw error;
-                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的修改");
-                db.assignments = db.assignments.filter(a => a.id !== historyId);
-                alert('✅ 已成功封存！');
-                renderBuilderUI();
-            } catch (err) {
-                alert('❌ 封存失敗: ' + err.message);
-            }
+            if (a) { window.BuilderStore.copyHistory(a); renderBuilderUI(); }
         },
 
-        addNode: (pathStr, type) => {
-            syncState();
-            let targetArr;
-            if (!pathStr) targetArr = bState.tasks;
-            else {
-                const arr = pathStr.split('-').map(Number);
-                const parentArr = getTaskParentArray(arr);
-                const targetNode = parentArr[arr[arr.length - 1]];
-                if (!targetNode.subTasks) targetNode.subTasks = [];
-                targetArr = targetNode.subTasks;
-            }
-            targetArr.push({
-                id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
-                due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
-                ...(type === 'group' ? { subTasks: [] } : {})
-            });
-            renderBuilderUI();
-        },
-        removeNode: (pathStr) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            getTaskParentArray(arr).splice(arr[arr.length - 1], 1);
-            renderBuilderUI();
-        },
-        
-        moveNodeUp: (pathStr) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            const idx = arr[arr.length - 1];
-            if (idx > 0) {
-                const parentArr = getTaskParentArray(arr);
-                [parentArr[idx - 1], parentArr[idx]] = [parentArr[idx], parentArr[idx - 1]];
-            }
-            renderBuilderUI();
-        },
-        moveNodeDown: (pathStr) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            const idx = arr[arr.length - 1];
-            const parentArr = getTaskParentArray(arr);
-            if (idx < parentArr.length - 1) [parentArr[idx], parentArr[idx + 1]] = [parentArr[idx + 1], parentArr[idx]];
-            renderBuilderUI();
-        },
-        moveNodeLeft: (pathStr) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            if (arr.length > 1) {
-                const parentArr = getTaskParentArray(arr);
-                const idx = arr[arr.length - 1];
-                const nodeToMove = parentArr.splice(idx, 1)[0]; 
-                const grandParentPath = arr.slice(0, -1);
-                const grandParentArr = getTaskParentArray(grandParentPath);
-                const parentGroupIdx = grandParentPath[grandParentPath.length - 1];
-                grandParentArr.splice(parentGroupIdx + 1, 0, nodeToMove);
-            }
-            renderBuilderUI();
-        },
-        moveNodeRight: (pathStr) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            const idx = arr[arr.length - 1];
-            if (idx > 0) {
-                const parentArr = getTaskParentArray(arr);
-                const prevSibling = parentArr[idx - 1];
-                if (prevSibling.type === 'group') {
-                    const nodeToMove = parentArr.splice(idx, 1)[0];
-                    if (!prevSibling.subTasks) prevSibling.subTasks = [];
-                    prevSibling.subTasks.push(nodeToMove);
-                }
-            }
-            renderBuilderUI();
-        },
-        changeNodeType: (pathStr, newType) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            const parentArr = getTaskParentArray(arr);
-            let task = parentArr[arr[arr.length - 1]];
-            task.type = newType;
-            if (newType === 'link' && !task.url) { task.url = ''; task.url_text = ''; }
-            renderBuilderUI();
-        },
-        updateNodeUrl: (pathStr, val) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            getTaskParentArray(arr)[arr[arr.length - 1]].url = val;
-            renderBuilderUI();
-        },
-        copyPrevNodeUrl: (pathStr) => {
-            syncState();
-            const arr = pathStr.split('-').map(Number);
-            const idx = arr[arr.length - 1];
-            if (idx > 0) {
-                const parentArr = getTaskParentArray(arr);
-                if (parentArr[idx - 1].url) parentArr[idx].url = parentArr[idx - 1].url;
-            }
-            renderBuilderUI();
-        },
-        addResourceTaskAsLink: (pathStr, resId) => {
-            syncState();
-            if(!db || !db.resourceLibrary) return;
-            const res = db.resourceLibrary.find(r => r.id === resId);
-            if (!res) return;
-            
-            let targetArr;
-            if (!pathStr) targetArr = bState.tasks;
-            else {
-                const arr = pathStr.split('-').map(Number);
-                const targetNode = getTaskParentArray(arr)[arr[arr.length - 1]];
-                if (!targetNode.subTasks) targetNode.subTasks = [];
-                targetArr = targetNode.subTasks;
-            }
-            
-            targetArr.push({
-                id: `task_${Date.now()}_${Math.random()}`, type: 'link', title: res.name, url: res.url, url_text: '', 
-                description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id
-            });
-            renderBuilderUI();
-        },
-
-        dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
-        dropAssign: async (e, targetId, classId) => {
-            e.preventDefault(); e.stopPropagation(); 
-            if (!dragAssignId || dragAssignId === targetId || !db || !db.assignments) return;
-
-            const arr = db.assignments;
-            const fromIdx = arr.findIndex(a => a.id === dragAssignId);
-            const toIdx = arr.findIndex(a => a.id === targetId);
-
-            if (fromIdx > -1 && toIdx > -1) {
-                const targetDate = arr[toIdx].target_date;
-                const [dragged] = arr.splice(fromIdx, 1);
-                const oldDate = dragged.target_date;
-                dragged.target_date = targetDate; 
-                arr.splice(toIdx, 0, dragged);
-                
-                renderTimeline(classId, 'none'); 
-                if (oldDate !== targetDate) {
-                    try {
-                        const { data: updatedRows, error } = await window.supabaseClient
-                            .from('assignments').update({ target_date: targetDate }).eq('id', dragAssignId).is('deleted_at', null).select(); 
-                        if (error) throw error;
-                        if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
-                    } catch (err) {
-                        dragged.target_date = oldDate; 
-                        renderTimeline(classId, 'none');
-                        alert('❌ 排序更新失敗: ' + err.message);
-                    }
-                }
-            }
-            dragAssignId = null;
-        },
-        dropAssignToNode: async (e, targetDate, classId) => {
-            e.preventDefault();
-            if (!dragAssignId || !db || !db.assignments) return;
-            const dragged = db.assignments.find(a => a.id === dragAssignId);
-            
-            if (dragged && dragged.target_date !== targetDate) {
-                const oldDate = dragged.target_date;
-                dragged.target_date = targetDate;
-                renderTimeline(classId, 'none'); 
-
-                try {
-                    const { data: updatedRows, error } = await window.supabaseClient
-                        .from('assignments').update({ target_date: targetDate }).eq('id', dragAssignId).is('deleted_at', null).select(); 
-                    if (error) throw error;
-                    if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
-                } catch (err) {
-                    dragged.target_date = oldDate; 
-                    renderTimeline(classId, 'none');
-                    alert('❌ 拖曳更新失敗: ' + err.message);
-                }
-            }
-            dragAssignId = null;
-        },
-        
+        // --- 資料庫 API 操作與流程防呆 ---
         saveBlock: async (btnEl) => {
-            syncState(); 
+            window.BuilderStore.sync(); 
+            const bState = window.BuilderStore.getState();
             const titleText = bState.title.replace(/<[^>]*>?/gm, '').trim();
             if (!titleText) return alert('⚠️ 請填寫大區塊標題！');
             if (!db.assignments) db.assignments = [];
@@ -773,8 +348,7 @@ window.FeatureTimeline = (() => {
 
             try {
                 if (bState.editId) {
-                    const { data: updatedRows, error } = await window.supabaseClient
-                        .from('assignments').update(payload).eq('id', bState.editId).is('deleted_at', null).select(); 
+                    const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update(payload).eq('id', bState.editId).is('deleted_at', null).select(); 
                     if (error) throw new Error(error.message);
                     if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                     const idx = db.assignments.findIndex(a => a.id === bState.editId);
@@ -785,8 +359,8 @@ window.FeatureTimeline = (() => {
                     if (!data) throw new Error("資料庫拒絕了請求");
                     db.assignments.push(data); savedId = data.id; 
                 }
-                const savedClassId = bState.classId; // 保存下來供 render 使用
-                bState = null;
+                const savedClassId = bState.classId; 
+                window.BuilderStore.clear();
                 renderTimeline(savedClassId, 'target', `assign-block-${savedId}`);
             } catch (err) {
                 alert('❌ 作業儲存失敗: ' + err.message);
@@ -794,28 +368,177 @@ window.FeatureTimeline = (() => {
             }
         },
         cancelBuilder: () => {
-            const cid = bState.classId;
-            bState = null;
+            const cid = window.BuilderStore.getState().classId;
+            window.BuilderStore.clear();
             renderTimeline(cid, 'none');
+        },
+        deleteHistoryTemplate: async () => {
+            const state = window.BuilderStore.getState();
+            if (!state) return;
+            const selectEl = document.getElementById(`history-select-${state.containerId}`);
+            if (!selectEl) return;
+            const historyId = selectEl.value;
+            if (!historyId) return alert('⚠️ 請先選擇要刪除的歷史紀錄！');
+            if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
+            
+            try {
+                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: new Date().toISOString() }).eq('id', historyId).is('deleted_at', null).select(); 
+                if (error) throw error;
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
+                db.assignments = db.assignments.filter(a => a.id !== historyId);
+                alert('✅ 已成功封存！');
+                renderBuilderUI();
+            } catch (err) { alert('❌ 封存失敗: ' + err.message); }
         },
         deleteAssignment: async (assignId, classId) => {
             if(!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法封存作業。');
-            if(!confirm('確定要封存此作業區塊嗎？\n(注意：這將會隱藏作業，但學生的打勾紀錄仍會保存在系統中)')) return;
+            if(!confirm('確定要封存此作業區塊嗎？\n(注意：這將會隱藏作業，學生的打勾紀錄仍會保存在系統中)')) return;
             
             const btn = window.event.target;
             const originalText = btn.innerHTML;
             btn.innerHTML = '⏳'; btn.disabled = true;
 
             try {
-                const { data: updatedRows, error } = await window.supabaseClient
-                    .from('assignments').update({ deleted_at: new Date().toISOString() }).eq('id', assignId).is('deleted_at', null).select(); 
+                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: new Date().toISOString() }).eq('id', assignId).is('deleted_at', null).select(); 
                 if (error) throw error;
-                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了您的封存請求");
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕請求");
 
                 db.assignments = db.assignments.filter(a => a.id !== assignId);
                 renderTimeline(classId, 'none');
             } catch (err) {
                 alert('❌ 封存失敗: ' + err.message);
+                btn.innerHTML = originalText; btn.disabled = false;
+            }
+        },
+
+        // --- LINE Notify 與 UI 彈窗 ---
+        confirmLinePush: (assignId, classId) => {
+            const TPL = window.TimelineTemplates;
+            if(!db || !db.assignments) return;
+            const a = db.assignments.find(x => x.id === assignId);
+            if (!a || !TPL) return;
+
+            const cls = db.classes.find(c => c.id === classId);
+            let raw = cls?.raw_data || {};
+            if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
+            if (!raw.line_notify_token) return alert('⚠️ 此班級尚未綁定 LINE Notify Token！\n請先至「⚙️ 班級設定」中進行綁定。');
+
+            const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
+            const overlayId = 'line-push-modal';
+            let existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = overlayId;
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+            overlay.innerHTML = TPL.getLinePushModalHtml(cleanTitle, assignId, classId, overlayId);
+            document.body.appendChild(overlay);
+        },
+        executeLinePush: async (assignId, classId) => {
+            const btn = document.getElementById('btn-confirm-push');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ 發送中...'; btn.disabled = true;
+
+            try {
+                if (!window.ServiceLineNotify || typeof window.ServiceLineNotify.pushAssignment !== 'function') throw new Error("系統提示：LINE 推播微服務尚未載入。");
+                await window.ServiceLineNotify.pushAssignment(classId, assignId);
+                document.getElementById('line-push-modal').remove();
+                alert('✅ 已成功發送至 LINE 群組！');
+            } catch (err) {
+                alert('❌ 推播失敗: ' + err.message);
+                btn.innerHTML = originalText; btn.disabled = false;
+            }
+        },
+
+        // --- 拖曳與位移排程 ---
+        dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
+        dropAssign: async (e, targetId, classId) => {
+            e.preventDefault(); e.stopPropagation(); 
+            if (!dragAssignId || dragAssignId === targetId || !db || !db.assignments) return;
+
+            const arr = db.assignments;
+            const fromIdx = arr.findIndex(a => a.id === dragAssignId);
+            const toIdx = arr.findIndex(a => a.id === targetId);
+
+            if (fromIdx > -1 && toIdx > -1) {
+                const targetDate = arr[toIdx].target_date;
+                const [dragged] = arr.splice(fromIdx, 1);
+                const oldDate = dragged.target_date;
+                dragged.target_date = targetDate; 
+                arr.splice(toIdx, 0, dragged);
+                renderTimeline(classId, 'none'); 
+                
+                if (oldDate !== targetDate) {
+                    try {
+                        const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ target_date: targetDate }).eq('id', dragAssignId).is('deleted_at', null).select(); 
+                        if (error) throw error;
+                        if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
+                    } catch (err) {
+                        dragged.target_date = oldDate; 
+                        renderTimeline(classId, 'none');
+                        alert('❌ 排序更新失敗: ' + err.message);
+                    }
+                }
+            }
+            dragAssignId = null;
+        },
+        dropAssignToNode: async (e, targetDate, classId) => {
+            e.preventDefault();
+            if (!dragAssignId || !db || !db.assignments) return;
+            const dragged = db.assignments.find(a => a.id === dragAssignId);
+            
+            if (dragged && dragged.target_date !== targetDate) {
+                const oldDate = dragged.target_date;
+                dragged.target_date = targetDate;
+                renderTimeline(classId, 'none'); 
+
+                try {
+                    const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ target_date: targetDate }).eq('id', dragAssignId).is('deleted_at', null).select(); 
+                    if (error) throw error;
+                    if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
+                } catch (err) {
+                    dragged.target_date = oldDate; 
+                    renderTimeline(classId, 'none');
+                    alert('❌ 拖曳更新失敗: ' + err.message);
+                }
+            }
+            dragAssignId = null;
+        },
+        moveAssignment: (assignId, classId) => {
+            const TPL = window.TimelineTemplates;
+            if(!db || !db.assignments) return;
+            const a = db.assignments.find(x => x.id === assignId);
+            if (!a || !TPL) return;
+            if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法搬移此作業。');
+
+            const overlay = document.createElement('div');
+            overlay.id = 'move-assign-modal';
+            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+            const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
+            overlay.innerHTML = TPL.getMoveAssignModalHtml(cleanTitle, window.UtilsDate.normalizeDateString(a.target_date), a.id, classId);
+            document.body.appendChild(overlay);
+        },
+        submitMove: async (assignId, classId, oldDate) => {
+            const newDate = document.getElementById('move-target-date').value;
+            if (!newDate) return alert('⚠️ 請選擇目標日期');
+            if (newDate === oldDate) return document.getElementById('move-assign-modal').remove(); 
+            
+            const btn = document.getElementById('btn-confirm-move');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ 處理中...'; btn.disabled = true;
+            
+            try {
+                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ target_date: newDate }).eq('id', assignId).is('deleted_at', null).select(); 
+                if (error) throw error;
+                if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
+                
+                const idx = db.assignments.findIndex(a => a.id === assignId);
+                if(idx > -1) db.assignments[idx].target_date = newDate;
+                
+                document.getElementById('move-assign-modal').remove();
+                window.FeatureTimeline.renderTimeline(classId, 'target', `assign-block-${assignId}`);
+            } catch (err) {
+                alert('❌ 改期失敗: ' + err.message);
                 btn.innerHTML = originalText; btn.disabled = false;
             }
         }

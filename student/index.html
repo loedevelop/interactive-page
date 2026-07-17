@@ -6,7 +6,7 @@
     <title>學生學習區 | LogOnEnglish</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
-    <link rel="stylesheet" href="../010_css/style.css">
+    <link rel="stylesheet" href="../010_css/style.css?v=15">
     
     <style>
         body {
@@ -31,9 +31,10 @@
         .btn-primary:hover { background: #D97706; }
     </style>
 
-    <script src="../020_js_core/auth-guard.js"></script>
-
+    <!-- 🌟 020_js_core: 確保核心與連線套件在 Header 提早解析，並加上版本號 -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../020_js_core/config.js?v=15"></script>
+    <script src="../020_js_core/auth-guard.js?v=15"></script>
 </head>
 <body>
 
@@ -42,7 +43,7 @@
             <h1 id="dynamic-student-title" style="margin: 0;">LogOnEnglish | 載入中... 🚀</h1>
             <div id="class-switcher-container" style="margin-top: 8px; display: none;">
                 <select id="class-switcher" onchange="switchClass(this.value)" style="padding: 6px 12px; border-radius: 6px; border: 2px solid #E2E8F0; font-weight: 800; color: #475569; background: #F8FAFC; cursor: pointer; outline: none;">
-                    </select>
+                </select>
             </div>
         </div>
         
@@ -129,8 +130,13 @@
         </div>
     </div>
 
-    <script type="module" src="../020_js_core/supabase-client.js"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=6"></script>
+    <!-- 🌟 020_js_core: 資料庫實例與全域日期工具 (必須在 Feature 前載入) -->
+    <script type="module" src="../020_js_core/supabase-client.js?v=16"></script>
+    <script src="../020_js_core/utils-date.js?v=3"></script>
+
+    <!-- 🌟 120_student_core: 學生端時間軸渲染大腦 -->
+    <script defer src="../120_student_core/feature-student-timeline.js?v=7"></script>
+    
     <script defer>
         function switchClass(newClassId) {
             try {

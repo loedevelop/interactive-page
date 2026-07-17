@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 描述：學生端專屬的邏輯與進度渲染引擎。
- * 🌟 UX 視覺終極打磨版：
+ * 🌟 UX 視覺終極打磨版 & DRY 原則解耦版：
  * 1. 拔除實體作業的粗色邊框，回歸極簡白底灰框設計。
  * 2. 實作「真・無縫合併 (True Sibling Merge)」，連續作業完美融合單一區塊。
- * 3. 大區塊保有專屬背景色，實體作業以透明背景透出大區塊色彩。
+ * 3. 徹底移除私有日期函數，全面對接 window.UtilsDate 金剛不壞引擎。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -13,35 +13,6 @@ window.FeatureStudentTimeline = (() => {
     let studentDriveUrl = null; 
     let studentUsername = '學生';
     let currentClassConfig = null; 
-
-    function toLocalISODate(dateObj) {
-        const yyyy = dateObj.getFullYear();
-        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
-        const dd = String(dateObj.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-    }
-
-    function parseLocalDate(dateStr) {
-        if (!dateStr) return new Date();
-        const [y, m, d] = dateStr.split('-');
-        return new Date(y, m - 1, d);
-    }
-
-    function getWeekStartStr(dateStr, weekStartDay = 'sunday') {
-        if (!dateStr) return '';
-        const [y, m, d] = dateStr.split('-');
-        const dt = new Date(y, m - 1, d);
-        let day = dt.getDay(); 
-
-        if (weekStartDay === 'monday') {
-            let diff = day === 0 ? 6 : day - 1;
-            dt.setDate(dt.getDate() - diff);
-        } else {
-            dt.setDate(dt.getDate() - day);
-        }
-        
-        return toLocalISODate(dt);
-    }
 
     const scrollToCurrentWeek = () => {
         const targetNode = document.querySelector('.timeline-node[data-is-current="true"]');
@@ -145,16 +116,24 @@ window.FeatureStudentTimeline = (() => {
     function renderCourses() {
         const container = document.getElementById('course-container');
         if (!container) return;
+
+        // 🛡️ 防禦邊界：確保 DateUtils 存在
+        const DateUtils = window.UtilsDate;
+        if (!DateUtils) {
+            container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 系統錯誤：核心日期模組遺失，請聯絡管理員。</div>`;
+            return;
+        }
         
         let cls = currentClassConfig || {};
         let raw = cls.raw_data || {};
         
         let mode = cls.calc_mode || cls.calcMode || raw.calc_mode || raw.calcMode || 'single';
-        let meetDays = (cls.meet_days || cls.meetDays || raw.meet_days || raw.meetDays || []).map(Number);
+        let meetDays = (cls.meet_days || cls.meetDays || raw.meet_days || raw.meetDays || []).map(Number).filter(n => !isNaN(n));
         let weekStartSetting = raw.week_start_day || 'sunday';
         
         let sessions = [];
         
+        // 取得排程 (與老師端邏輯對齊)
         if (Array.isArray(cls.sessions) && cls.sessions.length > 0) {
             sessions = cls.sessions;
         } else if (Array.isArray(raw.sessions) && raw.sessions.length > 0) {
@@ -167,17 +146,16 @@ window.FeatureStudentTimeline = (() => {
             let startDateStr = cls.start_date || cls.startDate || raw.start_date || raw.startDate;
             let endDateStr = cls.end_date || cls.endDate || raw.end_date || raw.endDate;
             if (startDateStr && endDateStr && meetDays.length > 0) {
-                let s = parseLocalDate(startDateStr);
-                let e = parseLocalDate(endDateStr);
-                while (s <= e) {
-                    if (meetDays.includes(s.getDay())) sessions.push(toLocalISODate(s));
-                    s.setDate(s.getDate() + 1);
-                }
+                let sNorm = DateUtils.normalizeDateString(startDateStr);
+                let eNorm = DateUtils.normalizeDateString(endDateStr);
+                sessions = DateUtils.generateDates(sNorm, eNorm, meetDays);
             }
             if (sessions.length === 0) {
-                sessions = [...new Set(assignments.map(a => a.target_date))].filter(Boolean).sort();
+                sessions = [...new Set(assignments.map(a => DateUtils.normalizeDateString(a.target_date)))].filter(Boolean).sort();
             }
         }
+
+        sessions = sessions.map(d => DateUtils.normalizeDateString(d)).filter(Boolean);
 
         if (sessions.length === 0) {
             container.innerHTML = `
@@ -196,7 +174,7 @@ window.FeatureStudentTimeline = (() => {
         } else if (mode === 'weekly') {
             const weeksMap = new Map();
             sessions.forEach(d => {
-                const weekStr = getWeekStartStr(d, weekStartSetting);
+                const weekStr = DateUtils.getWeekStartStr(d, weekStartSetting);
                 if (!weeksMap.has(weekStr)) {
                     weeksMap.set(weekStr, []);
                 }
@@ -211,8 +189,8 @@ window.FeatureStudentTimeline = (() => {
             });
         }
 
-        const todayStr = toLocalISODate(new Date());
-        const currentWeekStart = getWeekStartStr(todayStr, weekStartSetting);
+        const todayStr = DateUtils.toLocalISODate(new Date());
+        const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
 
         const styleBlock = document.createElement('style');
         styleBlock.innerHTML = `
@@ -288,7 +266,6 @@ window.FeatureStudentTimeline = (() => {
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
             // 🌟 真・無縫合併 (True Sibling Merge) 
-            // 保留底部半透明細灰線，避免死白或顏色衝突，完美透出父層大區塊的背景色
             let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
             return `
@@ -305,7 +282,7 @@ window.FeatureStudentTimeline = (() => {
         const reversedNodes = timelineNodes.map((node, index) => ({ node, weekIndex: index + 1 })).reverse();
 
         reversedNodes.forEach(({ node, weekIndex }) => {
-            const nodeWeekStart = getWeekStartStr(node.dates[0], weekStartSetting);
+            const nodeWeekStart = DateUtils.getWeekStartStr(node.dates[0], weekStartSetting);
             
             let badge = '';
             let borderColor = '#E2E8F0';
@@ -330,7 +307,7 @@ window.FeatureStudentTimeline = (() => {
                 headerTextColor = '#94A3B8';
             }
 
-            const coursesInDate = assignments.filter(a => node.dates.includes(a.target_date));
+            const coursesInDate = assignments.filter(a => node.dates.includes(DateUtils.normalizeDateString(a.target_date)));
             if (isFutureWeek && coursesInDate.length === 0) return; 
 
             let totalTasksInDate = 0;
@@ -358,10 +335,12 @@ window.FeatureStudentTimeline = (() => {
                     if (effectiveBlockDueDate) {
                         const t_today = new Date();
                         t_today.setHours(0,0,0,0);
-                        const t_due = parseLocalDate(effectiveBlockDueDate);
-                        t_due.setHours(0,0,0,0);
-                        if (t_today > t_due) {
-                            isLateUpload = true;
+                        const t_due = DateUtils.parseLocalDate(effectiveBlockDueDate);
+                        if (t_due) {
+                            t_due.setHours(0,0,0,0);
+                            if (t_today > t_due) {
+                                isLateUpload = true;
+                            }
                         }
                     }
 
@@ -408,7 +387,6 @@ window.FeatureStudentTimeline = (() => {
 
                                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
-                                // 🌟 恢復大區塊專屬背景色 (lvl.bg)，拔除粗左線，保留1px極簡外框
                                 return `
                                     <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px;">

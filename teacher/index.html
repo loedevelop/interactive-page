@@ -178,19 +178,22 @@
     <script src="../020_js_core/config.js?v=15"></script>
     <script src="../020_js_core/supabase-client.js?v=15"></script>
     <script src="../020_js_core/auth-guard.js?v=15"></script>
-    <script src="../020_js_core/store.js?v=16"></script>  <!-- 🚨 關鍵！提供 window.TeacherDB 給其他模組使用 -->
+    <script src="../020_js_core/store.js?v=17"></script>  <!-- 🚨 升級版本號以破除快取 -->
     <script src="../020_js_core/api.js?v=15"></script>
-    <script src="../020_js_core/utils-date.js?v=2"></script>
+    <script src="../020_js_core/utils-date.js?v=3"></script> <!-- 🚨 升級版本號以破除快取 -->
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
     <script src="../110_teacher_core/ui-core.js?v=15"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=1"></script>
     <script src="../110_teacher_core/ui-timeline-templates.js?v=1"></script>
 
+    <!-- 👑 補上漏掉的作業編輯器狀態管理大腦 (保證在 timeline 之前載入) -->
+    <script src="../110_teacher_core/store-assignment-builder.js?v=2"></script> 
+
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
     <script src="../110_teacher_core/feature-class.js?v=24"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=1"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=51"></script> 
+    <script src="../110_teacher_core/feature-timeline.js?v=52"></script> <!-- 🚨 升級版本號以破除快取 -->
     <script src="../110_teacher_core/feature-resource.js?v=16"></script>
     <script src="../110_teacher_core/feature-profile.js?v=15"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=15"></script>
