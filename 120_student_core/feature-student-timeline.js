@@ -1,10 +1,8 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦版 (v13.0) - 404 路徑修復版：
- * 1. 徹底消滅 new Date()，委派給 UtilsDate 判斷逾期。
- * 2. 嚴格遵守情境身分制：精準抓取 student_enrollments 的專屬 Folder ID。
- * 3. 嚴格遵守軟刪除鐵律：updateProgress 導入 deleted_at 取代物理 delete()。
- * 4. [Hotfix] 修復 openDriveAndCheck 相對路徑 404 錯誤，自動補齊 Drive URL 前綴。
+ * 🌟 UX 視覺終極打磨版 & API 解耦版 (v15.0) - 絕對防禦排錯版：
+ * 1. [Hotfix] 絕對防禦 Unique Constraint：使用 update 檢查後再 insert，無縫相容軟刪除。
+ * 2. [Hotfix] 徹底解決 404 相對路徑：加入 safeFormatUrl，自動判斷並補齊 Google Drive URL。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -48,6 +46,23 @@ window.FeatureStudentTimeline = (() => {
             reader.onerror = () => reject(new Error(`讀取檔案失敗: ${file.name}`));
             reader.readAsDataURL(file);
         });
+    }
+
+    // 🌟 工具引擎：安全格式化 URL，徹底消滅 404 相對路徑錯誤
+    function safeFormatUrl(url) {
+        if (!url) return '';
+        let trimmedUrl = String(url).replace(/['"]/g, '').trim();
+        if (trimmedUrl === '') return '';
+        
+        if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+            // 判斷是否為 Google Drive ID (長度大於 20 且無斜線或點)
+            if (trimmedUrl.length > 20 && !trimmedUrl.includes('/') && !trimmedUrl.includes('.')) {
+                return `https://drive.google.com/drive/folders/${trimmedUrl}`;
+            }
+            // 否則視為一般網域，補上 https://
+            return `https://${trimmedUrl}`;
+        }
+        return trimmedUrl;
     }
 
     async function fetchData() {
@@ -228,17 +243,20 @@ window.FeatureStudentTimeline = (() => {
             let taskTitleDisplay = '';
             let linkContent = '';
 
+            // 🌟 修正點：任務連結渲染時，全面套用安全格式化，杜絕 404
+            const formattedTaskUrl = safeFormatUrl(task.url);
+
             if (task.type === 'link') {
                 let actualUrlText = (task.url_text || '').trim();
                 let actualTitle = (task.title || '').trim();
 
                 if (actualUrlText !== '') {
                     taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${actualTitle || '未命名任務'}</span>`;
-                    linkContent = task.url ? `<a href="${task.url}" target="_blank" class="btn-action" style="margin-left:10px; font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 8px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
+                    linkContent = formattedTaskUrl ? `<a href="${formattedTaskUrl}" target="_blank" class="btn-action" style="margin-left:10px; font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 8px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
                 } else {
                     let fallbackText = actualTitle || '未命名連結';
-                    if (task.url) {
-                        taskTitleDisplay = `<a href="${task.url}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${fallbackText}</a>`;
+                    if (formattedTaskUrl) {
+                        taskTitleDisplay = `<a href="${formattedTaskUrl}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${fallbackText}</a>`;
                     } else {
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (無網址)</span>`;
                     }
@@ -517,6 +535,8 @@ window.FeatureStudentTimeline = (() => {
                 setTimeout(scrollToCurrentWeek, 100);
             }
         },
+
+        // 🌟 [Hotfix] 絕對防禦 Unique Constraint：改採先 update 後 insert 的完美相容策略
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             try {
                 const { userId, classId } = await getAuthContext();
@@ -533,24 +553,33 @@ window.FeatureStudentTimeline = (() => {
                         task_id: taskId, 
                         student_id: userId, 
                         class_id: classId,
-                        deleted_at: null
+                        deleted_at: null // 取消可能存在的軟刪除標記
                     };
                     if (fileIds && fileIds.length > 0) {
                         payload.raw_data = { drive_file_ids: fileIds };
                     }
 
-                    await window.supabaseClient.from('task_completions')
-                        .update({ deleted_at: nowTimestamp })
+                    // 1. 嘗試先 Update，如果資料庫中已有實體紀錄 (包含垃圾桶裡的)，就會被覆寫啟用
+                    const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('task_completions')
+                        .update(payload)
                         .match({ task_id: taskId, student_id: userId, class_id: classId })
-                        .is('deleted_at', null);
+                        .select();
+                        
+                    if (updateErr) throw updateErr;
 
-                    const { error } = await window.supabaseClient.from('task_completions').insert([payload]);
-                    if (error) throw error;
+                    // 2. 如果回傳 0 筆，代表資料庫真的沒有這筆紀錄，安全執行 Insert，絕不觸發衝突
+                    if (!updatedRows || updatedRows.length === 0) {
+                        const { error: insertErr } = await window.supabaseClient.from('task_completions')
+                            .insert([payload]);
+                        if (insertErr) throw insertErr;
+                    }
+
                 } else {
                     const { error } = await window.supabaseClient.from('task_completions')
                         .update({ deleted_at: nowTimestamp })
                         .match({ task_id: taskId, student_id: userId, class_id: classId })
                         .is('deleted_at', null);
+                        
                     if (error) throw error;
                 }
             } catch (err) {
@@ -671,20 +700,13 @@ window.FeatureStudentTimeline = (() => {
             }
         },
         
-        // 🌟 [Hotfix] 修復點：自動偵測並補齊 Google Drive 網域前綴
+        // 🌟 [Hotfix] 徹底解決 404 問題：套用 safeFormatUrl 引擎
         openDriveAndCheck: async () => {
             if (!studentDriveUrl) {
                 window.open("https://drive.google.com/", '_blank');
                 return;
             }
-            
-            let targetUrl = studentDriveUrl;
-            // 若只有純粹的 ID，補上 https:// 讓瀏覽器解析為絕對路徑
-            if (!targetUrl.startsWith('http')) {
-                targetUrl = `https://drive.google.com/drive/folders/${targetUrl}`;
-            }
-            
-            window.open(targetUrl, '_blank');
+            window.open(safeFormatUrl(studentDriveUrl), '_blank');
         }
     };
 })();
