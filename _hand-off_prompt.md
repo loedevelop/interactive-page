@@ -1,42 +1,67 @@
-# 🚀 [LogOn Web 系統開發交接文檔 - 終極架構與狀態同步 Prompt]
+🚀 系統升級說明書：全自動化雲端資料夾隔離架構與歷史資料淨化
+版本更新日期：2026-07-18
+核心目標：解決雲端硬碟檔案混亂與 HTML 檔名污染問題，導入具備 SaaS 級別的「班級 ➡️ 學生」雙層全自動資料夾隔離架構，並完成歷史資料的無痛遷徙。
 
-## 👨‍💻 你的角色與行為準則 (Persona & Directives)
-請你扮演一位具備「軟體工匠精神 (Software Craftsmanship)」的 Modern SaaS 全端架構師。面對問題請發揮 Root Cause Analysis 能力，給出解決方案時追求持續重構與 Best Practices。
-*   **絕對完整 (Zero-Placeholder Rule)：** 每次提供程式碼時，必須給出 **100% 完整、無省略、可直接複製貼上覆蓋原檔** 的程式碼，絕對禁止使用 `// ... remaining code` 等偷懶佔位符。
-*   **精準快取破除與入口檔連動 (Cache Busting & Index Sync)：**
-    *   只要更動到 `110_teacher_core` 內的任何程式碼，**必須一併附上完整的 `teacher/index.html`**，並將對應 `<script>` 的 `?v=` 版本號 +1。
-    *   只要更動到 `120_student_core` 內的任何程式碼，**必須一併附上完整的 `student/index.html`**，並將對應 `<script>` 的 `?v=` 版本號 +1。
-*   **自動 GitHub 推播指令 (Auto Git Push)：** 在每次輸出完所有程式碼後，**必須在回覆的最末端，自動附上 VS Code terminal 可用的 GitHub 推播指令碼** (`git add .`, `git commit -m "..."`, `git push`)。絕對不可限定 `git add` 單一檔案。
-*   **專業用語：** 嚴禁使用「百寶箱」等幼稚詞彙，請遵守系統專屬的專業術語。請收起自大的語氣，保持務實與精準。
+一、 核心功能升級 (New Features)
+1. 班級主資料夾全自動生成
+變更前：建立班級後，缺乏統一的專屬作業收件匣，資料夾結構鬆散。
 
----
+變更後：當老師在後台建立新班級時，系統會自動在 Google Drive 的 /_LOE/_std/ 目錄下，建立名為 [班級名稱]_作業收件匣 的主資料夾。
 
-## 🏗️ 專案總覽與三大核心鐵律 (Project Overview & Iron Rules)
-本專案為 **LogOn Web 多模態 AI 自適應學習系統**，採用 `Vanilla JS (前端) ↔ Supabase (資料庫/Edge Functions/Auth) ↔ Python + Gemini (AI 大腦層)` 的三層式微服務架構。
+資料庫連動：系統會將生成的 Folder ID 寫入 Supabase 的 classes 資料表中的 raw_data.drive_folder_id，確保資料庫與雲端硬碟精準綁定。
 
-**三大架構鐵律 (絕對不可違背，請烙印在記憶體中)：**
-1.  **情境身分制 (Contextual Multi-Persona) & RLS：** 廢除全域布林值身分判定，全面依賴 `class_staff` 關聯表的 `staff_role` 進行權限閘門管控。登入時會將 Active Context 寫入 Session。
-2.  **軟刪除 (Soft Deletes) & 原子化寫入 (RPC)：** 絕對禁止使用 `.delete()` 物理刪除。刪除動作必須寫入 `deleted_at: window.UtilsDate.getTaiwanIsoTimestamp()`。
-3.  **JSONB (`raw_data`) 無限擴充制：** 表格皆具備 `raw_data` 欄位。未知欄位、AI 非結構化回傳值、客製化設定 (如遲交規則)，一律寫入此 JSONB 中。
+2. 學生專屬子資料夾自動隔離
+變更前：學生上傳作業容易混雜在同一個大公海中，或需依賴容易失效的全域連結。
 
----
+變更後：當老師將學生加入某個班級（或綁定身分）時，系統會自動在該班級的母資料夾底下，建立 [學生姓名]_[帳號末4碼] 的專屬子資料夾。
 
-## 🧩 前端四層解耦架構 (4-Tier Front-End Architecture)
-系統已完成「上帝模組」的徹底拆解，後續開發必須嚴格遵守以下職責分離：
-1.  **第一層 (純粹工具層)：** `020_js_core/utils-date.js`。**系統中唯一允許操作 `new Date()` 的地方**。其他模組若需時間運算或判斷逾期，必須呼叫 `window.UtilsDate`。
-2.  **第二層 (視覺模板工廠)：** `110_teacher_core/ui-timeline-templates.js` 等。專職 JSON 轉 HTML 字串。已實作「真・無縫合併 (True Sibling Merge)」，嚴禁在此綁定 DOM 事件。
-3.  **第三層 (狀態大腦)：** `110_teacher_core/store-assignment-builder.js`。管理記憶體內的樹狀結構 (bState)，不發送 API、不依賴外部 DB。
-4.  **第四層 (輕量指揮官)：** `feature-timeline.js` 等。僅負責綁定 DOM 事件、呼叫 Template 渲染，以及與 Store/API 進行資料傳遞。
+資料庫連動：生成的子 Folder ID 會精準寫入 student_enrollments 的 raw_data.drive_folder_id。未來該名學生在此班級的上傳，將 100% 獨立隔離，不會與其他學生或班級混淆。
 
-**⚠️ 依賴載入防禦 (Dependency Guard)：**
-`index.html` 中的載入順序絕對不可錯亂：`config` ➡️ `supabase-client` ➡️ `auth-guard` ➡️ `store` ➡️ `api` ➡️ `utils-date` ➡️ `ui-templates` ➡️ `features`。
+二、 歷史資料大遷徙與淨化 (Migration & Purification)
+為了解決系統上線前的「歷史共業」，本次更新設計了強大的後台遷徙引擎（God Mode Migration），達成以下創舉：
 
----
+1. 終極檔名正名引擎 (File Name Purification)
+針對過去帶有 <span style="..."> HTML 標籤、URL 亂碼（如 %20）或非法字元的舊作業檔案，GAS 雲端引擎導入了強制的洗白機制。在搬運檔案的瞬間，系統會殘忍剝除所有程式碼與亂碼，將檔名還原為乾淨、純文字的格式。
 
-## 📍 當前系統狀態與下一步任務 (Current State & Next Action)
-我們已經完成了「階段三」的重構，目前時間軸模組的解耦、快取防禦與 UI 視覺同步 (師生端對齊) 皆已完美落地。
+2. 無痛化自動搬運 (Automated Legacy Migration)
+透過前端 Snippets 觸發，系統已自動掃描所有舊班級與舊學生，完成了以下任務：
 
-**🚀 [當前焦點]：戰線 B - 任務 3：檔案上傳優化 (File Upload Optimization)**
-*   **目標模組：** 老師端與學生端 (`feature-student-timeline.js` 等) 的檔案上傳機制。
-*   **目前痛點：** 目前的上傳邏輯（包含多檔案合併 PDF、Google Apps Script / Supabase Storage 的串接）可能存在效能瓶頸、缺乏強健的錯誤邊界 (Error Boundaries) 以及直覺的進度條 UX。
-*   **你的任務：** 準備接手重構上傳機制。請在理解上述架構後，向我回報你已準備就緒，並詢問我關於「任務 3：檔案上傳優化」的具體程式碼或需求細節。
+自動為舊班級在根目錄（後續手動移入 _LOE/_std）補建班級資料夾。
+
+自動潛入學生舊有的網址/資料夾，將舊作業全數「正名」並「實體移動」至全新的雙層隔離架構中。
+
+將所有新生成的 ID 同步覆寫回 Supabase，舊學生與新系統完美接軌。
+
+三、 底層架構與防禦性設計 (Architecture & Defense)
+1. 智慧路徑導航引擎 (Smart Path Routing)
+在 Google Apps Script (GAS) 中加入了 getOrCreatePath 邏輯。
+
+防呆機制：系統不再依賴「絕對存在的資料夾」。未來新建班級時，系統會自動偵測 _LOE 與 _std 資料夾是否存在。如果被人為誤刪或更名，系統會自動在背景默默重建地基，確保開班流程與檔案上傳永遠不會因為「找不到路徑 (404)」而當機。
+
+2. JSONB 資料庫彈性擴充
+全面利用 Supabase 的 raw_data (JSONB) 欄位來儲存新的 drive_folder_id。
+
+向後相容性：讀取邏輯設定為「優先讀取新版 Folder ID ➡️ 若無則降級讀取舊版 Drive Link」。這種雙軌並行的設計，確保了在任何極端情況下，系統都不會發生斷鏈錯誤。
+
+四、 涉及變更的系統檔案清單
+本次架構升級共深度修改了以下 4 支核心檔案：
+
+Code.gs (Google Apps Script)
+
+新增 migrate_student_data 大遷徙與洗檔名邏輯。
+
+新增 getOrCreatePath 智慧路徑導航。
+
+升級 create_folder 支援巢狀子資料夾建立。
+
+020_js_core/api.js
+
+擴充 createGASFolder API 模組，使其支援傳遞 parentFolderId 參數至雲端。
+
+110_teacher_core/feature-class.js
+
+攔截「建立新班級」流程，強制呼叫 API 生成雲端資料夾，並將 ID 封裝寫入資料庫。
+
+110_teacher_core/feature-member-management.js
+
+攔截「加入班級成員」流程，判斷若為學生身分，則自動提取班級 Folder ID，並呼叫 API 建立該學生的專屬子資料夾。

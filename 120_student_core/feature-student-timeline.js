@@ -1,8 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦版 (v11.0)：
+ * 🌟 UX 視覺終極打磨版 & API 解耦版 (v12.0) - Root Cause 修復版：
  * 1. 徹底消滅 new Date()，委派給 UtilsDate 判斷逾期。
- * 2. [白皮書任務] 將 File ID 靜默寫入 Supabase JSONB，為背景重命名引擎打底。
+ * 2. 嚴格遵守情境身分制：精準抓取 student_enrollments 的專屬 Folder ID。
+ * 3. 嚴格遵守軟刪除鐵律：updateProgress 導入 deleted_at 取代物理 delete()。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -57,16 +58,35 @@ window.FeatureStudentTimeline = (() => {
         try {
             const { userId, classId } = await getAuthContext();
 
+            // 1. 僅取得全域的 Profile Name
             const { data: profileData } = await window.supabaseClient
                 .from('profiles')
-                .select('name, raw_data')
+                .select('name')
                 .eq('id', userId)
                 .single();
                 
             studentUsername = profileData?.name || '學生';
-            const rawData = profileData?.raw_data || {};
-            studentDriveUrl = rawData.drive_url || rawData.driveLink || null;
 
+            // 2. 🌟 核心修復：從 student_enrollments 提取班級專屬隔離狀態
+            const { data: enrollData, error: enrollErr } = await window.supabaseClient
+                .from('student_enrollments')
+                .select('raw_data, drive_link, drive_url')
+                .eq('user_id', userId)
+                .eq('class_id', classId)
+                .is('deleted_at', null)
+                .single();
+
+            if (enrollErr) console.warn("[DB Warning] 找不到該學生的班級註冊紀錄", enrollErr);
+
+            let enrollRaw = enrollData?.raw_data || {};
+            if (typeof enrollRaw === 'string') {
+                try { enrollRaw = JSON.parse(enrollRaw); } catch(e) { enrollRaw = {}; }
+            }
+
+            // 🌟 雙軌降級機制落地：優先讀取 JSONB 中的新版 drive_folder_id，若無才 Fallback
+            studentDriveUrl = enrollRaw.drive_folder_id || enrollData?.drive_link || enrollData?.drive_url || null;
+
+            // 3. 取得班級設定
             const { data: classData } = await window.supabaseClient
                 .from('classes')
                 .select('*')
@@ -74,6 +94,7 @@ window.FeatureStudentTimeline = (() => {
                 .single();
             currentClassConfig = classData || {};
 
+            // 4. 取得作業清單
             const { data: assignData, error: assignErr } = await window.supabaseClient
                 .from('assignments')
                 .select('*')
@@ -84,11 +105,13 @@ window.FeatureStudentTimeline = (() => {
             if (assignErr) throw assignErr;
             assignments = assignData || [];
 
+            // 5. 取得完成狀態 (新增軟刪除防禦)
             const { data: compData, error: compErr } = await window.supabaseClient
                 .from('task_completions')
                 .select('assignment_id, task_id')
                 .eq('student_id', userId)
-                .eq('class_id', classId);
+                .eq('class_id', classId)
+                .is('deleted_at', null);
 
             if (compErr) throw compErr;
             completedTasks = (compData || []).map(row => `${row.assignment_id}_${row.task_id}`);
@@ -499,7 +522,7 @@ window.FeatureStudentTimeline = (() => {
                 setTimeout(scrollToCurrentWeek, 100);
             }
         },
-        // 🌟 擴充 updateProgress 接收 fileIds 並封裝進 JSONB 覆蓋寫入
+        // 🌟 修復違規：全面導入「軟刪除」取代 physical delete
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             try {
                 const { userId, classId } = await getAuthContext();
@@ -508,20 +531,34 @@ window.FeatureStudentTimeline = (() => {
                 else if (!isChecked) completedTasks = completedTasks.filter(id => id !== compositeKey);
                 renderCourses(); 
                 
+                const nowTimestamp = window.UtilsDate.getTaiwanIsoTimestamp();
+
                 if (isChecked) {
-                    const payload = { assignment_id: assignmentId, task_id: taskId, student_id: userId, class_id: classId };
-                    // 若有取得 Google Drive 檔案 ID，則靜默封裝進 JSONB
+                    const payload = { 
+                        assignment_id: assignmentId, 
+                        task_id: taskId, 
+                        student_id: userId, 
+                        class_id: classId,
+                        deleted_at: null
+                    };
                     if (fileIds && fileIds.length > 0) {
                         payload.raw_data = { drive_file_ids: fileIds };
                     }
 
-                    // 確保重新上傳時會覆蓋舊的 File IDs
-                    await window.supabaseClient.from('task_completions').delete().match({ task_id: taskId, student_id: userId, class_id: classId });
+                    // 先將該任務的殘留紀錄「軟刪除」，以防約束衝突
+                    await window.supabaseClient.from('task_completions')
+                        .update({ deleted_at: nowTimestamp })
+                        .match({ task_id: taskId, student_id: userId, class_id: classId })
+                        .is('deleted_at', null);
+
                     const { error } = await window.supabaseClient.from('task_completions').insert([payload]);
-                    
                     if (error) throw error;
                 } else {
-                    const { error } = await window.supabaseClient.from('task_completions').delete().match({ task_id: taskId, student_id: userId, class_id: classId });
+                    // 取消打勾時，套用軟刪除
+                    const { error } = await window.supabaseClient.from('task_completions')
+                        .update({ deleted_at: nowTimestamp })
+                        .match({ task_id: taskId, student_id: userId, class_id: classId })
+                        .is('deleted_at', null);
                     if (error) throw error;
                 }
             } catch (err) {
@@ -548,7 +585,7 @@ window.FeatureStudentTimeline = (() => {
 
             updateStatus('⏳ 檢查檔案...', '#F59E0B');
 
-            let uploadedFileIds = []; // 陣列：用來蒐集 GAS 回傳的 檔案 IDs
+            let uploadedFileIds = [];
 
             try {
                 const { userId, classId } = await getAuthContext(); 
@@ -558,6 +595,7 @@ window.FeatureStudentTimeline = (() => {
                     throw new Error("系統 API 模組尚未載入完成，請重整網頁。");
                 }
 
+                // 若 studentDriveUrl 已經是乾淨的 ID（新版架構），這段 regex 會安全略過
                 let targetFolderId = studentDriveUrl;
                 const match = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
                 if (match && match[1]) targetFolderId = match[1];
@@ -583,13 +621,11 @@ window.FeatureStudentTimeline = (() => {
                         updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
                         const base64Data = (await readFileAsDataURL(file)).split(',')[1];
                         
-                        // 呼叫 API 並將 assignmentId 與 taskId 傳給 GAS 貼標籤
                         const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
-                        uploadedFileIds.push(result.fileId); // 記錄成功上傳的 ID
+                        uploadedFileIds.push(result.fileId); 
                     }
                     
                     updateStatus('✅ 上傳成功', '#10B981');
-                    // 將整包 IDs 傳遞給資料庫儲存
                     setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
                     resetInput(); 
                     return; 
@@ -631,12 +667,10 @@ window.FeatureStudentTimeline = (() => {
                 
                 updateStatus('🚀 上傳雲端中...', '#3B82F6');
                 
-                // 呼叫 API 並將 assignmentId 與 taskId 傳給 GAS 貼標籤
                 const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
-                uploadedFileIds.push(result.fileId); // 記錄成功上傳的 ID
+                uploadedFileIds.push(result.fileId); 
 
                 updateStatus('✅ 上傳成功', '#10B981');
-                // 將 IDs 傳遞給資料庫儲存
                 setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
 
             } catch (err) {
