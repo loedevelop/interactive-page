@@ -1,8 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦版 (v9.0)：
+ * 🌟 UX 視覺終極打磨版 & API 解耦版 (v10.0)：
  * 1. 徹底消滅 new Date()，委派給 UtilsDate 判斷逾期。
- * 2. 徹底消滅底層 Fetch 邏輯，全面委派給 ApiService.uploadToGAS 負責通訊與錯誤邊界攔截。
+ * 2. 徹底消滅底層 Fetch 邏輯，全面委派給 ApiService.uploadToGAS。
+ * 3. [BugFix] 淨化檔名中的 HTML 標籤，保留日期區間字串。
+ * 4. [BugFix] 移除「檢視 Drive」自動打勾的錯誤邏輯，確保進度真實性。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -102,11 +104,11 @@ window.FeatureStudentTimeline = (() => {
 
     function getLevelStyle(depth) {
         const styles = [
-            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, // L1
-            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2
-            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, // L3
-            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L4
-            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  // L5+
+            { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, 
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, 
+            { border: '#8B5CF6', bg: '#F5F3FF', text: '#5B21B6' }, 
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, 
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }  
         ];
         return styles[Math.min(depth, 4)];
     }
@@ -235,17 +237,23 @@ window.FeatureStudentTimeline = (() => {
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
                     btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⚠️ 您的專屬資料夾尚未設定</div>`;
                 } else {
-                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功或前往雲端硬碟後將自動打勾">`;
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
+                    
+                    // 🌟 修復 1：淨化檔名，強制拔除所有可能來自教師端的 HTML 標籤
+                    const pureTaskTitle = (task.title || '未命名任務').replace(/<[^>]*>?/gm, '').trim();
+                    const safeTitleForJS = pureTaskTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    
+                    // 保留 node.title 中的 ~ 符號，只替換不合法的檔名字元
+                    const safeNodeTitle = node.title.replace(/[\\/:*?"<>|]/g, '_');
+
                     const uniqueId = `file-input-${course.id}-${task.id}`;
                     const statusId = `upload-status-${course.id}-${task.id}`;
-                    const safeTitleForJS = (task.title || '未命名任務').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                    const safeNodeTitle = node.title.replace(/[\\/:*?"<>|]/g, '_');
 
                     btn = `
                         <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap;">
                             <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
                             <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
-                            <button onclick="window.FeatureStudentTimeline.openDriveAndCheck('${course.id}', '${task.id}')" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
+                            <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
                             <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                         </div>
                     `;
@@ -521,14 +529,12 @@ window.FeatureStudentTimeline = (() => {
             }
         },
         
-        // 🌟 解耦重構版：將 API 呼叫徹底移交 ApiService
-        handleFileSelect: async (inputElement, assignmentId, taskId, taskTitle, statusId, dateKey, isLate) => {
+        handleFileSelect: async (inputElement, assignmentId, taskId, safeTitleForJS, statusId, dateKey, isLate) => {
             const filesArray = Array.from(inputElement.files);
             if (filesArray.length === 0) return;
             const statusEl = document.getElementById(statusId);
             if (!statusEl) return;
 
-            // UI 狀態輔助閉包 (Clean UX Controller)
             const resetInput = () => { inputElement.value = ''; };
             const updateStatus = (msg, color) => {
                 statusEl.textContent = msg;
@@ -541,7 +547,6 @@ window.FeatureStudentTimeline = (() => {
                 const { userId, classId } = await getAuthContext(); 
                 if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
 
-                // 確認底層通訊模組已掛載
                 if (!window.ApiService || !window.ApiService.uploadToGAS) {
                     throw new Error("系統 API 模組尚未載入完成，請重整網頁。");
                 }
@@ -550,8 +555,9 @@ window.FeatureStudentTimeline = (() => {
                 const match = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
                 if (match && match[1]) targetFolderId = match[1];
 
-                const safeTitle = taskTitle ? taskTitle.replace(/[\\/:*?"<>|]/g, '') : '未命名作業';
                 const classPrefix = (classId || '0000').substring(0, 4);
+                
+                // 保證保留「~」號，絕不替換掉
                 const cleanDateKey = dateKey.replace(/[\\/:*?"<>|]/g, '_');
                 const safeDateStr = (cleanDateKey && cleanDateKey !== '未分類日期') ? `${cleanDateKey}_` : '';
                 
@@ -560,7 +566,6 @@ window.FeatureStudentTimeline = (() => {
                 const allImages = filesArray.every(file => file.type.startsWith('image/'));
                 const allAudio = filesArray.every(file => file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|m4a|ogg|aac)$/i));
 
-                // 🎵 情境 A：多檔案音檔上傳 (迴圈批次呼叫 API)
                 if (filesArray.length > 1 && allAudio) {
                     updateStatus(`⏳ 準備上傳 ${filesArray.length} 個音檔...`, '#F59E0B');
                     for (let i = 0; i < filesArray.length; i++) {
@@ -568,13 +573,12 @@ window.FeatureStudentTimeline = (() => {
                         if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB。`);
                         
                         const ext = file.name.substring(file.name.lastIndexOf('.'));
-                        const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitle}_${i+1}${lateSuffixStr}${ext}`;
+                        const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}_${i+1}${lateSuffixStr}${ext}`;
                         const finalMimeType = file.type || 'audio/mpeg';
                         
                         updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
                         const base64Data = (await readFileAsDataURL(file)).split(',')[1];
                         
-                        // ✅ 將底層通訊委派給 API 層 (具備 Timeout 防護)
                         await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId);
                     }
                     
@@ -584,7 +588,6 @@ window.FeatureStudentTimeline = (() => {
                     return; 
                 }
 
-                // 📄 情境 B：圖片合併 PDF 或是單一檔案上傳
                 let base64Data = '', finalMimeType = '', finalFileName = '';
 
                 if (filesArray.length > 1) {
@@ -607,12 +610,12 @@ window.FeatureStudentTimeline = (() => {
                     }
                     base64Data = pdf.output('datauristring').split(',')[1];
                     finalMimeType = 'application/pdf';
-                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitle}${lateSuffixStr}.pdf`;
+                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}.pdf`;
                 } else {
                     const file = filesArray[0];
                     if (file.size > 25 * 1024 * 1024) throw new Error("檔案超過 25MB。");
                     const ext = file.name.substring(file.name.lastIndexOf('.'));
-                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitle}${lateSuffixStr}${ext}`;
+                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}${ext}`;
                     finalMimeType = file.type;
                     
                     updateStatus('⏳ 處理檔案中...', '#F59E0B');
@@ -621,7 +624,6 @@ window.FeatureStudentTimeline = (() => {
                 
                 updateStatus('🚀 上傳雲端中...', '#3B82F6');
                 
-                // ✅ 將底層通訊委派給 API 層
                 await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId);
 
                 updateStatus('✅ 上傳成功', '#10B981');
@@ -633,9 +635,10 @@ window.FeatureStudentTimeline = (() => {
                 resetInput(); 
             }
         },
-        openDriveAndCheck: async (assignmentId, taskId) => {
+        
+        // 🌟 修復 2：移除自動打勾，點擊檢視就僅僅只是開啟新分頁
+        openDriveAndCheck: async () => {
             window.open(studentDriveUrl || "https://drive.google.com/", '_blank');
-            window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true); 
         }
     };
 })();
