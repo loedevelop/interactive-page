@@ -1,11 +1,12 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class.js
- * 🌟 v8.7 SaaS 終極大腦版：修復新建課程無腦觸發排程防呆缺陷
+ * 🌟 v8.8 瘦身解耦版：HTML 模板已全數抽離至 ui-class-templates.js
  */
-console.log("💡💡💡 FeatureClass v8.7 SaaS 終極大腦版載入！(修復新建課程排程防呆 Bypass 機制)");
+console.log("💡💡💡 FeatureClass v8.8 瘦身解耦版載入！(UI 模板已分離)");
 
 window.FeatureClass = (() => {
     const db = window.TeacherDB;
+    const TPL = window.ClassTemplates; // 引入 UI 模板工廠
 
     // --- 私有工具函式 ---
     function toLocalISODate(dateObj) {
@@ -31,38 +32,24 @@ window.FeatureClass = (() => {
 
     function normalizeDateString(dStr) {
         if (!dStr) return '';
-        
         if (dStr.includes('-')) {
             const parts = dStr.split('-');
-            if (parts[0].length === 4) {
-                return dStr; 
-            }
+            if (parts[0].length === 4) return dStr; 
         }
-        
         if (dStr.includes('/')) {
             const parts = dStr.split('/');
             if (parts.length === 3) {
-                if (parts[2].length === 4) {
-                    return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
-                }
-                if (parts[0].length === 4) {
-                    return `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`;
-                }
+                if (parts[2].length === 4) return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
+                if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`;
             }
         }
-        
         const d = new Date(dStr);
-        if (!isNaN(d.getTime())) {
-            return toLocalISODate(d);
-        }
-        
+        if (!isNaN(d.getTime())) return toLocalISODate(d);
         return dStr;
     }
 
     function generateDates(startStr, endStr, meetDaysArray) {
-        if (!startStr || !endStr || !meetDaysArray || meetDaysArray.length === 0) {
-            return [];
-        }
+        if (!startStr || !endStr || !meetDaysArray || meetDaysArray.length === 0) return [];
         
         const dates = [];
         const [sy, sm, sd] = startStr.split('-');
@@ -73,12 +60,9 @@ window.FeatureClass = (() => {
         end.setHours(23, 59, 59, 999);
         
         while (curr <= end) {
-            if (meetDaysArray.includes(curr.getDay())) {
-                dates.push(toLocalISODate(curr));
-            }
+            if (meetDaysArray.includes(curr.getDay())) dates.push(toLocalISODate(curr));
             curr.setDate(curr.getDate() + 1);
         }
-        
         return dates;
     }
 
@@ -95,7 +79,6 @@ window.FeatureClass = (() => {
         } else {
             dt.setDate(dt.getDate() - day);
         }
-        
         return toLocalISODate(dt);
     }
 
@@ -104,47 +87,27 @@ window.FeatureClass = (() => {
     // --- 核心班級邏輯 ---
     async function updateClassContent(classId) {
         if (!classId) return;
-        
         const cls = db.classes.find(c => c.id === classId);
         if (!cls) return;
         
         const titleEl = document.getElementById('current-class-title');
-        if (titleEl) {
-            titleEl.textContent = `${cls.name}`; 
-        }
+        if (titleEl) titleEl.textContent = `${cls.name}`; 
 
-        if (document.getElementById('class-start-date')) {
-            document.getElementById('class-start-date').value = cls.startDate || cls.start_date || "";
-        }
-        
-        if (document.getElementById('class-end-date')) {
-            document.getElementById('class-end-date').value = cls.endDate || cls.end_date || "";
-        }
+        if (document.getElementById('class-start-date')) document.getElementById('class-start-date').value = cls.startDate || cls.start_date || "";
+        if (document.getElementById('class-end-date')) document.getElementById('class-end-date').value = cls.endDate || cls.end_date || "";
         
         const mDays = cls.meetDays || cls.meet_days || [];
-        document.querySelectorAll('#class-meet-days input').forEach(cb => {
-            cb.checked = mDays.includes(parseInt(cb.value));
-        });
+        document.querySelectorAll('#class-meet-days input').forEach(cb => { cb.checked = mDays.includes(parseInt(cb.value)); });
 
         const savedMode = cls.calcMode || cls.calc_mode || 'single';
-        document.querySelectorAll('input[name="calc_mode"]').forEach(radio => {
-            radio.checked = (radio.value === savedMode);
-        });
+        document.querySelectorAll('input[name="calc_mode"]').forEach(radio => { radio.checked = (radio.value === savedMode); });
 
         let raw = cls.raw_data || cls.rawData || {};
-        if (typeof raw === 'string') {
-            try { 
-                raw = JSON.parse(raw); 
-            } catch (e) { 
-                raw = {}; 
-            }
-        }
+        if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (e) { raw = {}; } }
         
         const weekStart = raw.week_start_day || 'sunday';
         const weekRadios = document.getElementsByName('week_start_day');
-        for (let i = 0; i < weekRadios.length; i++) {
-            weekRadios[i].checked = (weekRadios[i].value === weekStart);
-        }
+        for (let i = 0; i < weekRadios.length; i++) { weekRadios[i].checked = (weekRadios[i].value === weekStart); }
     }
 
     function renderClassManager() {
@@ -152,7 +115,6 @@ window.FeatureClass = (() => {
         if (!container) return;
         
         container.innerHTML = '';
-        
         if (!db.classes || db.classes.length === 0) { 
             container.innerHTML = '<p style="color:#94A3B8; font-weight: bold; padding: 20px;">目前無任何班級。</p>'; 
             return; 
@@ -160,66 +122,17 @@ window.FeatureClass = (() => {
 
         db.classes.forEach(cls => {
             const canManage = cls.staff_role === 'admin' || cls.staff_role === 'primary_teacher';
-            let actionButtonsHTML = '';
-            
-            if (canManage) {
-                actionButtonsHTML = `
-                    <div style="display: flex; gap: 8px;">
-                        <button class="btn" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; padding:6px 12px; border-radius:6px; font-size: 0.9rem; font-weight: bold; cursor:pointer;" onclick="window.FeatureClass.openClassSettings('${cls.id}')" title="班級設定">⚙️ 設定</button>
-                        <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:6px 12px; border-radius:6px; font-size: 0.9rem; font-weight: bold; cursor:pointer;" onclick="window.FeatureClass.toggleDeleteConfirm('${cls.id}', true)">📦 封存</button>
-                    </div>
-                `;
-            } else {
-                actionButtonsHTML = `<span style="font-size: 0.85rem; color: #94A3B8; font-weight: bold; padding:6px 12px;">(僅主老師可設定)</span>`;
-            }
-
             const item = document.createElement('div');
             item.className = 'manage-list-item';
-            
-            item.innerHTML = `
-                <div id="class-info-${cls.id}" style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 0;">
-                    <div style="display: flex; align-items: center; flex: 1;">
-                        <span style="font-size:1.4rem; margin-right:12px;">${cls.icon || '📘'}</span>
-                        <strong style="font-size:1.15rem; color:#1E293B;">${cls.name}</strong>
-                        <span style="margin-left:10px; font-size:0.8rem; background:#E2E8F0; padding:2px 8px; border-radius:12px; color:#475569;">${cls.staff_role || '未知'}</span>
-                    </div>
-                    ${actionButtonsHTML}
-                </div>
-                
-                <div id="class-delete-confirm-${cls.id}" style="display: none; width: 100%; background: #FEF2F2; border: 1px solid #FCA5A5; padding: 15px; border-radius: 8px; margin-top: 10px; animation: popIn 0.3s ease-out;">
-                    <div style="font-weight: 800; color: #DC2626; margin-bottom: 8px;">⚠️ 確定封存此班級？(相關作業與選課紀錄將由資料庫底層 RPC 安全封存)</div>
-                    <label style="display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer; margin-bottom:15px;">
-                        <input type="checkbox" id="del-students-cb-${cls.id}" style="transform:scale(1.2); accent-color: #EF4444;">
-                        <span style="color:#7F1D1D; font-weight: bold;">進階：連同此班級的專屬學生帳號一併「軟刪除」停權</span>
-                    </label>
-                    <div style="display:flex; gap:10px;">
-                        <button class="btn-danger" style="background:#EF4444; color:white; padding:8px 16px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="window.FeatureClass.executeDelete('${cls.id}')">✔️ 確認封存</button>
-                        <button class="btn" style="background:white; color:#64748B; padding:8px 16px; border:1px solid #CBD5E1; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="window.FeatureClass.toggleDeleteConfirm('${cls.id}', false)">❌ 取消</button>
-                    </div>
-                </div>
-            `;
+            item.innerHTML = TPL.getClassManagerItemHtml(cls, canManage);
             container.appendChild(item);
         });
     }
 
     function ensureNewClassFormHasModeSelector() {
         const btnAddClass = document.getElementById('btn-add-class');
-        if (!btnAddClass) return;
-        
-        if (document.getElementById('new-class-display-mode')) return;
-        
-        const modeSelectorHTML = `
-            <div style="margin-top: 15px; margin-bottom: 20px; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px dashed #CBD5E1; width: 100%; box-sizing: border-box;">
-                <label style="display:block; font-weight:bold; color:#475569; margin-bottom:8px;">👥 班級預設名字顯示模式</label>
-                <select id="new-class-display-mode" class="form-control" style="width: 100%; box-sizing: border-box;">
-                    <option value="default">⚙️ 不覆寫 (跟隨系統全域預設)</option>
-                    <option value="en_first">🇺🇸 模式 1：英文名字 + 護照姓氏 (全美語班推薦)</option>
-                    <option value="cn_first">🇹🇼 模式 2：中文全名 + (英文名字) (升學班推薦)</option>
-                </select>
-                <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 8px;">建立後可隨時於「⚙️ 設定」中修改。</div>
-            </div>
-        `;
-        btnAddClass.insertAdjacentHTML('beforebegin', modeSelectorHTML);
+        if (!btnAddClass || document.getElementById('new-class-display-mode')) return;
+        btnAddClass.insertAdjacentHTML('beforebegin', TPL.getModeSelectorHtml());
     }
 
     async function openClassSettings(classId) {
@@ -227,104 +140,28 @@ window.FeatureClass = (() => {
         if (!cls) return;
 
         const overlayId = 'class-settings-modal';
-        const existing = document.getElementById(overlayId);
-        if (existing) {
-            existing.remove();
-        }
+        let existing = document.getElementById(overlayId);
+        if (existing) existing.remove();
 
         const overlay = document.createElement('div');
         overlay.id = overlayId;
         overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-        
         overlay.innerHTML = '<div style="background:white; padding:20px; border-radius:8px; font-weight:bold;">⏳ 讀取班級資料中...</div>';
         document.body.appendChild(overlay);
 
         try {
             let dbRaw = cls.raw_data || cls.rawData || {};
-            if (typeof dbRaw === 'string') {
-                try { 
-                    dbRaw = JSON.parse(dbRaw); 
-                } catch(e) { 
-                    dbRaw = {}; 
-                }
-            }
+            if (typeof dbRaw === 'string') { try { dbRaw = JSON.parse(dbRaw); } catch(e) { dbRaw = {}; } }
             const currentMode = dbRaw.name_display_mode || 'default';
-            // 讀取遲交預設規則，若無則賦予初始值
             const lateDefaults = dbRaw.late_submission_defaults || { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 };
 
             const mainIconSelect = document.getElementById('new-class-icon');
             let iconInputHTML = `<input type="text" id="edit-class-icon" class="form-control" value="${cls.icon || '📘'}" style="width: 100%; text-align: center;">`;
+            if (mainIconSelect) iconInputHTML = `<select id="edit-class-icon" class="form-control" style="width: 100%; text-align: center;">${mainIconSelect.innerHTML}</select>`;
+
+            overlay.innerHTML = TPL.getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId);
             
-            if (mainIconSelect) {
-                iconInputHTML = `<select id="edit-class-icon" class="form-control" style="width: 100%; text-align: center;">${mainIconSelect.innerHTML}</select>`;
-            }
-
-            overlay.innerHTML = `
-                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-                    <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">⚙️ 班級主檔設定</h3>
-                    
-                    <div style="display: flex; gap: 15px; margin-bottom: 20px;">
-                        <div style="width: 80px;">
-                            <label style="display:block; font-weight:bold; color:#475569; margin-bottom:5px;">圖示</label>
-                            ${iconInputHTML}
-                        </div>
-                        <div style="flex: 1;">
-                            <label style="display:block; font-weight:bold; color:#475569; margin-bottom:5px;">班級名稱 <span style="color:#EF4444;">*</span></label>
-                            <input type="text" id="edit-class-name" class="form-control" value="${cls.name}" style="width: 100%;">
-                        </div>
-                    </div>
-
-                    <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0; margin-bottom: 20px;">
-                        <label style="display:block; font-weight:bold; color:#3B82F6; margin-bottom:10px;">👥 名單顯示模式 (優先權：高)</label>
-                        <div style="display: flex; flex-direction: column; gap: 10px;">
-                            <label style="cursor: pointer; font-weight: bold; color: #475569; display: flex; align-items: center;">
-                                <input type="radio" name="edit_class_mode" value="default" ${currentMode === 'default' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
-                                ⚙️ 不覆寫 (跟隨系統全域預設)
-                            </label>
-                            <label style="cursor: pointer; font-weight: bold; color: #475569; display: flex; align-items: center;">
-                                <input type="radio" name="edit_class_mode" value="en_first" ${currentMode === 'en_first' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
-                                🇺🇸 模式 1：英文名字 + 護照姓氏
-                            </label>
-                            <label style="cursor: pointer; font-weight: bold; color: #475569; display: flex; align-items: center;">
-                                <input type="radio" name="edit_class_mode" value="cn_first" ${currentMode === 'cn_first' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
-                                🇹🇼 模式 2：中文全名 + (英文名字)
-                            </label>
-                        </div>
-                    </div>
-
-                    <div style="background: #FFFBEB; padding: 15px; border-radius: 8px; border: 1px solid #FEF3C7; margin-bottom: 25px;">
-                        <label style="display:block; font-weight:bold; color:#D97706; margin-bottom:10px;">⏳ 班級遲交預設規則 (套用於新作業)</label>
-                        <div style="display: flex; flex-direction: column; gap: 10px;">
-                            <label style="cursor: pointer; font-weight: bold; color: #92400E; display: flex; align-items: center;">
-                                <input type="checkbox" id="edit-allow-late" ${lateDefaults.allow_late ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;" onchange="document.getElementById('late-settings-details').style.display = this.checked ? 'block' : 'none'">
-                                允許遲交作業
-                            </label>
-                            <div id="late-settings-details" style="display: ${lateDefaults.allow_late ? 'block' : 'none'}; padding-left: 25px; margin-top: 5px;">
-                                <div style="display: flex; gap: 15px;">
-                                    <div style="flex: 1;">
-                                        <label style="display:block; font-size: 0.85rem; font-weight:bold; color:#B45309; margin-bottom:4px;">寬限期 (小時)</label>
-                                        <input type="number" id="edit-grace-period" class="form-control" value="${lateDefaults.grace_period_hours}" min="0" style="width: 100%; padding: 6px 8px;">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label style="display:block; font-size: 0.85rem; font-weight:bold; color:#B45309; margin-bottom:4px;">遲交扣分 (%)</label>
-                                        <input type="number" id="edit-penalty-percent" class="form-control" value="${lateDefaults.penalty_percentage}" min="0" max="100" style="width: 100%; padding: 6px 8px;">
-                                    </div>
-                                </div>
-                                <div style="font-size: 0.8rem; color: #D97706; margin-top: 8px;">註：修改此預設規則僅影響未來新增的作業，已派發之作業不受影響。</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
-                        <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
-                        <button id="btn-save-class-settings" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;" onclick="window.FeatureClass.saveClassSettings('${classId}')">💾 儲存變更</button>
-                    </div>
-                </div>
-            `;
-            
-            if (mainIconSelect) {
-                document.getElementById('edit-class-icon').value = cls.icon || '📘';
-            }
+            if (mainIconSelect) document.getElementById('edit-class-icon').value = cls.icon || '📘';
         } catch (err) { 
             alert("載入資料失敗：" + err.message); 
             document.getElementById(overlayId).remove(); 
@@ -336,48 +173,23 @@ window.FeatureClass = (() => {
         const newName = document.getElementById('edit-class-name').value.trim();
         const newIcon = document.getElementById('edit-class-icon').value.trim() || '📘';
         const newMode = document.querySelector('input[name="edit_class_mode"]:checked').value;
-        
-        // 取得遲交設定
         const allowLate = document.getElementById('edit-allow-late').checked;
         const gracePeriod = parseInt(document.getElementById('edit-grace-period').value) || 0;
         const penaltyPercent = parseInt(document.getElementById('edit-penalty-percent').value) || 0;
         
-        if (!newName) {
-            return alert("⚠️ 班級名稱不能為空！");
-        }
+        if (!newName) return alert("⚠️ 班級名稱不能為空！");
 
-        btn.innerHTML = '⏳ 儲存中...'; 
-        btn.disabled = true;
+        btn.innerHTML = '⏳ 儲存中...'; btn.disabled = true;
 
         try {
             const cls = db.classes.find(c => c.id === classId);
             let dbRaw = cls.raw_data || cls.rawData || {};
+            if (typeof dbRaw === 'string') { try { dbRaw = JSON.parse(dbRaw); } catch(e) { dbRaw = {}; } }
             
-            if (typeof dbRaw === 'string') { 
-                try { 
-                    dbRaw = JSON.parse(dbRaw); 
-                } catch(e) { 
-                    dbRaw = {}; 
-                } 
-            }
-            
-            const lateSubmissionDefaults = {
-                allow_late: allowLate,
-                grace_period_hours: gracePeriod,
-                penalty_percentage: penaltyPercent
-            };
+            const lateSubmissionDefaults = { allow_late: allowLate, grace_period_hours: gracePeriod, penalty_percentage: penaltyPercent };
+            const mergedRawData = Object.assign({}, dbRaw, { name_display_mode: newMode, late_submission_defaults: lateSubmissionDefaults });
 
-            const mergedRawData = Object.assign({}, dbRaw, { 
-                name_display_mode: newMode,
-                late_submission_defaults: lateSubmissionDefaults
-            });
-
-            const { data: updatedRows, error } = await window.supabaseClient
-                .from('classes')
-                .update({ name: newName, icon: newIcon, raw_data: mergedRawData })
-                .eq('id', classId)
-                .select();
-                
+            const { data: updatedRows, error } = await window.supabaseClient.from('classes').update({ name: newName, icon: newIcon, raw_data: mergedRawData }).eq('id', classId).select();
             if (error) throw error;
             if (!updatedRows || updatedRows.length === 0) throw new Error("設定並未真正寫入雲端 (請聯絡管理員檢查)");
 
@@ -386,16 +198,10 @@ window.FeatureClass = (() => {
             if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') {
                 db.classes = await window.ApiService.fetchClasses();
             } else { 
-                cls.name = newName; 
-                cls.icon = newIcon; 
-                cls.raw_data = mergedRawData; 
-                cls.rawData = mergedRawData; 
+                cls.name = newName; cls.icon = newIcon; cls.raw_data = mergedRawData; cls.rawData = mergedRawData; 
             }
 
-            if (typeof db.save === 'function') {
-                db.save();
-            }
-            
+            if (typeof db.save === 'function') db.save();
             renderClassManager();
             
             if (window.TeacherUI) {
@@ -409,72 +215,30 @@ window.FeatureClass = (() => {
             }
         } catch (err) { 
             alert("❌ 儲存失敗：" + err.message); 
-            btn.innerHTML = '💾 儲存變更'; 
-            btn.disabled = false; 
+            btn.innerHTML = '💾 儲存變更'; btn.disabled = false; 
         }
     }
+    
     // ==========================================
     // 🧠 非同步對話框控制器 (Promisified Modals)
     // ==========================================
-    
-    // 🚨 終極修復：無衝突的安全排程變更，仍需強制詢問「生效日期」
     function askSafeScheduleChange(todayStr) {
         return new Promise((resolve) => {
             const overlayId = 'schedule-safe-modal';
-            const existing = document.getElementById(overlayId);
-            if (existing) {
-                existing.remove();
-            }
+            let existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
 
             const overlay = document.createElement('div');
             overlay.id = overlayId;
             overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-
-            overlay.innerHTML = `
-                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-                    <h3 style="margin-top: 0; color: #10B981; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">📅 排程異動確認</h3>
-                    
-                    <div style="background: #F0FDF4; border: 1px solid #A7F3D0; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; color: #047857;">
-                        系統偵測到您變更了上課日或學期區間（無造成作業衝突）。<br>請決定這次的排程變更要從哪一天開始生效？
-                    </div>
-
-                    <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 25px;">
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 12px; border-radius: 8px; border: 2px solid #10B981; background: #F0FDF4;">
-                            <input type="radio" name="safe_resolve_mode" value="future" checked style="transform: scale(1.2); margin-top: 4px;">
-                            <div>
-                                <div style="font-weight: bold; color: #065F46;">🟢 僅套用至未來 (強烈建議)</div>
-                                <div style="font-size: 0.85rem; color: #047857; margin-top: 4px;">過去的歷史紀錄將被凍結保護，不會被無故塞入空白天數。<br>生效起始日：<input type="date" id="safe-anchor-date" class="form-control" value="${todayStr}" style="padding:2px 4px; margin-left:5px; border:1px solid #34D399; border-radius:4px; font-size:0.85rem;"></div>
-                            </div>
-                        </label>
-                        
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1; background: #F8FAFC;">
-                            <input type="radio" name="safe_resolve_mode" value="full" style="transform: scale(1.2); margin-top: 4px;">
-                            <div>
-                                <div style="font-weight: bold; color: #475569;">🔄 套用至全學期</div>
-                                <div style="font-size: 0.85rem; color: #64748B;">從學期第一天重新鋪設排程 (過去的歷史天數也會跟著改變)。</div>
-                            </div>
-                        </label>
-                    </div>
-
-                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                        <button class="btn" id="btn-cancel-safe" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                        <button id="btn-confirm-safe" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 確認並儲存</button>
-                    </div>
-                </div>
-            `;
-            
+            overlay.innerHTML = TPL.getSafeScheduleModalHtml(todayStr);
             document.body.appendChild(overlay);
 
-            document.getElementById('btn-cancel-safe').onclick = () => { 
-                overlay.remove(); 
-                resolve(null); 
-            };
-            
+            document.getElementById('btn-cancel-safe').onclick = () => { overlay.remove(); resolve(null); };
             document.getElementById('btn-confirm-safe').onclick = () => {
                 const action = document.querySelector('input[name="safe_resolve_mode"]:checked').value;
                 const anchorDate = document.getElementById('safe-anchor-date').value;
-                overlay.remove(); 
-                resolve({ action, anchorDate });
+                overlay.remove(); resolve({ action, anchorDate });
             };
         });
     }
@@ -482,76 +246,20 @@ window.FeatureClass = (() => {
     function askOrphanResolution(orphanCount, affectedDatesCount, todayStr) {
         return new Promise((resolve) => {
             const overlayId = 'schedule-orphan-modal';
-            const existing = document.getElementById(overlayId);
-            if (existing) {
-                existing.remove();
-            }
+            let existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
             
             const overlay = document.createElement('div');
             overlay.id = overlayId;
             overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-            
-            overlay.innerHTML = `
-                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-                    <h3 style="margin-top: 0; color: #DC2626; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">⚠️ 發現排程衝突！</h3>
-                    
-                    <div style="background: #FEF2F2; border: 1px solid #FECACA; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; color: #991B1B;">
-                        系統偵測到您刪減了上課日。<br>這將導致過去的 <strong>[ ${affectedDatesCount} 天 ] (共 ${orphanCount} 份歷史作業)</strong> 失去原本的排程歸屬！請選擇處置方式：
-                    </div>
-
-                    <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 25px;">
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 12px; border-radius: 8px; border: 2px solid #10B981; background: #F0FDF4;">
-                            <input type="radio" name="orphan_resolve_mode" value="future" checked style="transform: scale(1.2); margin-top: 4px;">
-                            <div>
-                                <div style="font-weight: bold; color: #065F46;">🟢 (強烈建議) 僅套用至未來</div>
-                                <div style="font-size: 0.85rem; color: #047857; margin-top: 4px;">歷史課表凍結，舊作業 100% 原封不動。<br>生效起始日：<input type="date" id="orphan-anchor-date" class="form-control" value="${todayStr}" style="padding:2px 4px; margin-left:5px; border:1px solid #34D399; border-radius:4px; font-size:0.85rem;"></div>
-                            </div>
-                        </label>
-                        
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1; background: #F8FAFC;">
-                            <input type="radio" name="orphan_resolve_mode" value="prev" style="transform: scale(1.2); margin-top: 4px;">
-                            <div>
-                                <div style="font-weight: bold; color: #475569;">🟡 往前歸附</div>
-                                <div style="font-size: 0.85rem; color: #64748B;">孤兒作業自動往前擠到最近的合法上課日。</div>
-                            </div>
-                        </label>
-                        
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1; background: #F8FAFC;">
-                            <input type="radio" name="orphan_resolve_mode" value="next" style="transform: scale(1.2); margin-top: 4px;">
-                            <div>
-                                <div style="font-weight: bold; color: #475569;">🟡 往後遞延</div>
-                                <div style="font-size: 0.85rem; color: #64748B;">孤兒作業自動往後延到最近的合法上課日。</div>
-                            </div>
-                        </label>
-                        
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; border: 1px solid #FECACA; background: #FEF2F2;">
-                            <input type="radio" name="orphan_resolve_mode" value="drop" style="transform: scale(1.2); margin-top: 4px;">
-                            <div>
-                                <div style="font-weight: bold; color: #DC2626;">🔴 直接捨棄</div>
-                                <div style="font-size: 0.85rem; color: #991B1B;">直接將這 ${orphanCount} 份作業永久封存。</div>
-                            </div>
-                        </label>
-                    </div>
-
-                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                        <button class="btn" id="btn-cancel-orphan" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                        <button id="btn-confirm-orphan" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 執行修復並儲存</button>
-                    </div>
-                </div>
-            `;
-            
+            overlay.innerHTML = TPL.getOrphanModalHtml(orphanCount, affectedDatesCount, todayStr);
             document.body.appendChild(overlay);
             
-            document.getElementById('btn-cancel-orphan').onclick = () => { 
-                overlay.remove(); 
-                resolve(null); 
-            };
-            
+            document.getElementById('btn-cancel-orphan').onclick = () => { overlay.remove(); resolve(null); };
             document.getElementById('btn-confirm-orphan').onclick = () => {
                 const action = document.querySelector('input[name="orphan_resolve_mode"]:checked').value;
                 const anchorDate = document.getElementById('orphan-anchor-date').value;
-                overlay.remove(); 
-                resolve({ action, anchorDate });
+                overlay.remove(); resolve({ action, anchorDate });
             };
         });
     }
@@ -559,61 +267,19 @@ window.FeatureClass = (() => {
     function askWeeklyToDailyResolution(assignCount) {
         return new Promise((resolve) => {
             const overlayId = 'schedule-unpack-modal';
-            const existing = document.getElementById(overlayId);
-            if (existing) {
-                existing.remove();
-            }
+            let existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
 
             const overlay = document.createElement('div');
             overlay.id = overlayId;
             overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-            
-            overlay.innerHTML = `
-                <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 480px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-                    <h3 style="margin-top: 0; color: #3B82F6; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">🔄 展開週作業：智慧對齊</h3>
-                    
-                    <div style="background: #EFF6FF; border: 1px solid #BFDBFE; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem; color: #1E40AF; line-height: 1.5;">
-                        系統偵測到您將排程改為「單堂結算」。<br>有 <strong>[ ${assignCount} 份 ]</strong> 原本打包在一起的作業需要分配天數。請選擇您的對齊策略：
-                    </div>
-
-                    <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 25px;">
-                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 15px; border-radius: 8px; border: 2px solid #8B5CF6; background: #F5F3FF;">
-                            <input type="radio" name="unpack_strategy" value="smart" checked style="transform: scale(1.3); margin-top: 2px;">
-                            <div>
-                                <div style="font-weight: 900; color: #6D28D9; font-size: 1.05rem;">🌟 智慧分配 (強烈推薦)</div>
-                                <div style="font-size: 0.85rem; color: #5B21B6; margin-top: 4px;">系統將根據每份作業的「繳交期限」，自動分配到期限前的最後一堂課。</div>
-                            </div>
-                        </label>
-                        
-                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 12px; background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px;">
-                            <input type="radio" name="unpack_strategy" value="first" style="transform: scale(1.3);">
-                            <span style="font-weight: bold; color: #334155; font-size: 1rem;">統一集中放在該週的【第一堂】</span>
-                        </label>
-                        
-                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 12px; background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px;">
-                            <input type="radio" name="unpack_strategy" value="last" style="transform: scale(1.3);">
-                            <span style="font-weight: bold; color: #334155; font-size: 1rem;">統一集中放在該週的【最後一堂】</span>
-                        </label>
-                    </div>
-
-                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                        <button class="btn" id="btn-cancel-unpack" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                        <button id="btn-confirm-unpack" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold; background: #8B5CF6; border: none;">✨ 執行對齊並儲存</button>
-                    </div>
-                </div>
-            `;
-            
+            overlay.innerHTML = TPL.getUnpackModalHtml(assignCount);
             document.body.appendChild(overlay);
             
-            document.getElementById('btn-cancel-unpack').onclick = () => { 
-                overlay.remove(); 
-                resolve(null); 
-            };
-            
+            document.getElementById('btn-cancel-unpack').onclick = () => { overlay.remove(); resolve(null); };
             document.getElementById('btn-confirm-unpack').onclick = () => {
                 const strategy = document.querySelector('input[name="unpack_strategy"]:checked').value;
-                overlay.remove(); 
-                resolve(strategy);
+                overlay.remove(); resolve(strategy);
             };
         });
     }
@@ -631,66 +297,38 @@ window.FeatureClass = (() => {
                 const modeSelector = document.getElementById('new-class-display-mode'); 
                 
                 if (!nameInput) return;
-                
                 const name = nameInput.value.trim();
-                if (!name) {
-                    return alert('⚠️ 請輸入班級名稱！');
-                }
+                if (!name) return alert('⚠️ 請輸入班級名稱！');
 
-                const btn = this; 
-                const originalText = btn.innerHTML;
-                btn.innerHTML = '⏳ 雲端建立中...'; 
-                btn.disabled = true;
+                const btn = this; const originalText = btn.innerHTML;
+                btn.innerHTML = '⏳ 雲端建立中...'; btn.disabled = true;
 
                 try {
                     const { data: { user }, error: authError } = await window.supabaseClient.auth.getUser();
-                    if (authError || !user) {
-                        throw new Error('無法取得授權狀態');
-                    }
+                    if (authError || !user) throw new Error('無法取得授權狀態');
                     
                     const initialRawData = { 
-                        name_display_mode: modeSelector ? modeSelector.value : "default", 
-                        week_start_day: 'sunday',
-                        late_submission_defaults: {
-                            allow_late: false,
-                            grace_period_hours: 0,
-                            penalty_percentage: 0
-                        }
+                        name_display_mode: modeSelector ? modeSelector.value : "default", week_start_day: 'sunday',
+                        late_submission_defaults: { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 }
                     };
                     
-                    const payload = { 
-                        name: name, 
-                        icon: iconInput ? iconInput.value : "📘", 
-                        calc_mode: 'single', 
-                        meet_days: [], 
-                        raw_data: initialRawData 
-                    };
-                    
+                    const payload = { name: name, icon: iconInput ? iconInput.value : "📘", calc_mode: 'single', meet_days: [], raw_data: initialRawData };
                     const { data: newClass, error: classError } = await window.supabaseClient.from('classes').insert([payload]).select().single();
                     if (classError) throw classError;
                     
                     await window.supabaseClient.from('class_staff').insert([{ class_id: newClass.id, user_id: user.id, staff_role: 'primary_teacher' }]);
 
                     nameInput.value = '';
-                    
-                    if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') {
-                        db.classes = await window.ApiService.fetchClasses();
-                    }
-                    
+                    if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') db.classes = await window.ApiService.fetchClasses();
                     if (!db.sessions) db.sessions = {};
                     db.sessions[newClass.id] = [];
                     
                     if (typeof db.save === 'function') db.save();
                     if (window.TeacherUI) window.TeacherUI.renderSidebar();
-                    
                     renderClassManager();
                     alert(`✅ 成功建立班級：「${name}」！`);
-                } catch (err) { 
-                    alert('❌ 新增失敗: ' + err.message); 
-                } finally { 
-                    btn.innerHTML = originalText; 
-                    btn.disabled = false; 
-                }
+                } catch (err) { alert('❌ 新增失敗: ' + err.message); } 
+                finally { btn.innerHTML = originalText; btn.disabled = false; }
             };
         }
 
@@ -701,19 +339,13 @@ window.FeatureClass = (() => {
                 
                 const cid = window.TeacherUI.getCurrentClassId();
                 if (!cid) return;
-                
                 const c = db.classes.find(x => x.id === cid);
                 if (!c) return;
                 
                 let sDate = normalizeDateString(document.getElementById('class-start-date').value) || toLocalISODate(new Date());
                 let eDate = normalizeDateString(document.getElementById('class-end-date').value) || '';
                 
-                if (!eDate) { 
-                    const endDt = new Date(sDate); 
-                    endDt.setMonth(endDt.getMonth() + 4); 
-                    eDate = toLocalISODate(endDt); 
-                }
-                
+                if (!eDate) { const endDt = new Date(sDate); endDt.setMonth(endDt.getMonth() + 4); eDate = toLocalISODate(endDt); }
                 document.getElementById('class-start-date').value = sDate;
                 document.getElementById('class-end-date').value = eDate;
 
@@ -723,29 +355,16 @@ window.FeatureClass = (() => {
 
                 let weekStartVal = 'sunday';
                 const weekRadios = document.getElementsByName('week_start_day');
-                for (let i = 0; i < weekRadios.length; i++) { 
-                    if (weekRadios[i].checked) { 
-                        weekStartVal = weekRadios[i].value; 
-                        break; 
-                    } 
-                }
+                for (let i = 0; i < weekRadios.length; i++) { if (weekRadios[i].checked) { weekStartVal = weekRadios[i].value; break; } }
 
                 if (this.disabled) return; 
                 
-                const btn = this; 
-                const originalText = btn.innerHTML; 
-                btn.innerHTML = '⏳ 智慧推演中...'; 
-                btn.disabled = true;
+                const btn = this; const originalText = btn.innerHTML; 
+                btn.innerHTML = '⏳ 智慧推演中...'; btn.disabled = true;
 
                 try {
                     let safeRawDataForCheck = c.raw_data || c.rawData || {};
-                    if (typeof safeRawDataForCheck === 'string') { 
-                        try { 
-                            safeRawDataForCheck = JSON.parse(safeRawDataForCheck); 
-                        } catch (ex) { 
-                            safeRawDataForCheck = {}; 
-                        } 
-                    }
+                    if (typeof safeRawDataForCheck === 'string') { try { safeRawDataForCheck = JSON.parse(safeRawDataForCheck); } catch (ex) { safeRawDataForCheck = {}; } }
                     
                     const oldCalcMode = c.calcMode || c.calc_mode || 'single';
                     const oldSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) ? safeRawDataForCheck.custom_sessions : (db.sessions[cid] || []);
@@ -761,7 +380,6 @@ window.FeatureClass = (() => {
                     const oldMeetDaysStr = (c.meetDays || c.meet_days || []).map(Number).sort().join(',');
                     const newMeetDaysStr = meetDaysArr.sort().join(',');
                     
-                    // 🛡️ [生命週期防呆] 判斷是否為「全新建立且尚未設定過排程」的班級
                     const isNewClassSetup = (!oldSDate && !oldEDate);
                     const isDatesChanged = (oldSDate !== sDate) || (oldEDate !== eDate) || (oldMeetDaysStr !== newMeetDaysStr);
 
@@ -775,9 +393,7 @@ window.FeatureClass = (() => {
                             
                             finalAssignUpdates.forEach(upd => { 
                                 const target = db.assignments.find(a => a.id === upd.id); 
-                                if (target) {
-                                    Object.assign(target, upd.payload); 
-                                }
+                                if (target) Object.assign(target, upd.payload); 
                             });
                             db.assignments = db.assignments.filter(a => !a.deleted_at);
                         }
@@ -786,59 +402,30 @@ window.FeatureClass = (() => {
                         const payload = { start_date: sDate, end_date: eDate, meet_days: meetDaysArr, calc_mode: calcModeVal, raw_data: mergedRawData };
                         
                         const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('classes').update(payload).eq('id', cid).select();
-                        if (updateErr || !updatedRows || updatedRows.length === 0) {
-                            throw new Error("資料庫寫入失敗。");
-                        }
+                        if (updateErr || !updatedRows || updatedRows.length === 0) throw new Error("資料庫寫入失敗。");
 
-                        if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') {
-                            db.classes = await window.ApiService.fetchClasses();
-                        } else { 
-                            c.startDate = sDate; 
-                            c.endDate = eDate; 
-                            c.meetDays = meetDaysArr; 
-                            c.calcMode = calcModeVal; 
-                            c.raw_data = mergedRawData; 
-                            c.rawData = mergedRawData; 
-                        }
+                        if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') db.classes = await window.ApiService.fetchClasses();
+                        else { c.startDate = sDate; c.endDate = eDate; c.meetDays = meetDaysArr; c.calcMode = calcModeVal; c.raw_data = mergedRawData; c.rawData = mergedRawData; }
 
                         if (!db.sessions) db.sessions = {};
                         db.sessions[cid] = finalCustomSessions;
-                        
-                        if (typeof db.save === 'function') {
-                            db.save();
-                        }
+                        if (typeof db.save === 'function') db.save();
 
                         updateClassContent(cid);
                         
-                        btn.innerHTML = '✅ 儲存成功！'; 
-                        btn.style.backgroundColor = '#10B981'; 
-                        btn.style.color = '#fff'; 
-                        btn.style.borderColor = '#10B981';
-                        
-                        if (window.FeatureTimeline && typeof window.FeatureTimeline.renderTimeline === 'function') { 
-                            window.FeatureTimeline.renderTimeline(cid, 'none'); 
-                        }
+                        btn.innerHTML = '✅ 儲存成功！'; btn.style.backgroundColor = '#10B981'; btn.style.color = '#fff'; btn.style.borderColor = '#10B981';
+                        if (window.FeatureTimeline && typeof window.FeatureTimeline.renderTimeline === 'function') window.FeatureTimeline.renderTimeline(cid, 'none'); 
                         
                         setTimeout(() => { 
-                            btn.innerHTML = originalText; 
-                            btn.removeAttribute('style'); 
-                            btn.disabled = false; 
-                            
-                            if (window.TeacherUI && typeof window.TeacherUI.switchTab === 'function') {
-                                return window.TeacherUI.switchTab('timeline');
-                            }
+                            btn.innerHTML = originalText; btn.removeAttribute('style'); btn.disabled = false; 
+                            if (window.TeacherUI && typeof window.TeacherUI.switchTab === 'function') return window.TeacherUI.switchTab('timeline');
                         }, 1200);
                     };
 
                     if (orphanAssigns.length > 0) {
                         const uniqueOrphanDates = [...new Set(orphanAssigns.map(a => a.target_date))].length;
                         const orphanRes = await askOrphanResolution(orphanAssigns.length, uniqueOrphanDates, todayStr);
-                        
-                        if (!orphanRes) { 
-                            btn.innerHTML = originalText; 
-                            btn.disabled = false; 
-                            return; 
-                        }
+                        if (!orphanRes) { btn.innerHTML = originalText; btn.disabled = false; return; }
                         
                         let finalSessions = [...newFullSessions];
                         let assignUpdatesMap = new Map();
@@ -853,9 +440,7 @@ window.FeatureClass = (() => {
                                 if (a.target_date >= orphanRes.anchorDate) {
                                     const candidates = finalSessions.filter(d => d >= a.target_date);
                                     let newTarget = candidates.length > 0 ? candidates[0] : finalSessions[finalSessions.length - 1];
-                                    if (newTarget) {
-                                        assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
-                                    }
+                                    if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
                                 }
                             });
                         } else if (orphanRes.action === 'prev' || orphanRes.action === 'next') {
@@ -868,27 +453,18 @@ window.FeatureClass = (() => {
                                     const candidates = newFullSessions.filter(d => d > a.target_date);
                                     newTarget = candidates.length > 0 ? candidates[0] : newFullSessions[newFullSessions.length - 1];
                                 }
-                                if (newTarget) {
-                                    assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
-                                }
+                                if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
                             });
                         } else if (orphanRes.action === 'drop') {
                             const delTime = new Date().toISOString();
-                            orphanAssigns.forEach(a => {
-                                assignUpdatesMap.set(a.id, { id: a.id, payload: { deleted_at: delTime } });
-                            });
+                            orphanAssigns.forEach(a => assignUpdatesMap.set(a.id, { id: a.id, payload: { deleted_at: delTime } }));
                         }
 
                         if (isWeekToDay) {
                             const survivingCount = classAssigns.filter(a => !(assignUpdatesMap.has(a.id) && assignUpdatesMap.get(a.id).payload.deleted_at)).length;
-                            
                             if (survivingCount > 0) {
                                 const unpackStrategy = await askWeeklyToDailyResolution(survivingCount);
-                                if (!unpackStrategy) { 
-                                    btn.innerHTML = originalText; 
-                                    btn.disabled = false; 
-                                    return; 
-                                }
+                                if (!unpackStrategy) { btn.innerHTML = originalText; btn.disabled = false; return; }
                                 
                                 const weeksMap = new Map();
                                 finalSessions.forEach(d => { 
@@ -910,79 +486,49 @@ window.FeatureClass = (() => {
                                             let effectiveDue = a.due_date;
                                             if (!effectiveDue && a.tasks && a.tasks.length > 0) { 
                                                 const explicitDates = a.tasks.map(t => t.due_date).filter(d => d); 
-                                                if (explicitDates.length > 0) {
-                                                    effectiveDue = explicitDates[0]; 
-                                                }
+                                                if (explicitDates.length > 0) effectiveDue = explicitDates[0]; 
                                             }
                                             if (effectiveDue) { 
                                                 const validDays = weekDays.filter(d => d <= effectiveDue); 
-                                                if (validDays.length > 0) {
-                                                    newTargetD = validDays[validDays.length - 1];
-                                                } else {
-                                                    newTargetD = weekDays[0];
-                                                }
+                                                newTargetD = validDays.length > 0 ? validDays[validDays.length - 1] : weekDays[0];
                                             } else { 
                                                 newTargetD = weekDays[weekDays.length - 1]; 
                                             }
-                                        } else if (unpackStrategy === 'first') { 
-                                            newTargetD = weekDays[0]; 
-                                        } else if (unpackStrategy === 'last') { 
-                                            newTargetD = weekDays[weekDays.length - 1]; 
-                                        }
+                                        } else if (unpackStrategy === 'first') newTargetD = weekDays[0]; 
+                                        else if (unpackStrategy === 'last') newTargetD = weekDays[weekDays.length - 1]; 
                                     }
                                     
                                     if (newTargetD !== a.target_date) {
-                                        if (assignUpdatesMap.has(a.id)) { 
-                                            assignUpdatesMap.get(a.id).payload.target_date = newTargetD; 
-                                        } else { 
-                                            assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
-                                        }
+                                        if (assignUpdatesMap.has(a.id)) assignUpdatesMap.get(a.id).payload.target_date = newTargetD; 
+                                        else assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
                                     }
                                 });
                             }
                         }
                         await executeSave(finalSessions, assignUpdatesMap);
-
                     } else {
-                        // 🌟 終極修復：沒有衝突的排程變更，也要跳出「安全排程異動對話框」來決定生效日！
                         let finalSessions = [...newFullSessions];
-                        
                         if (isNewClassSetup) {
-                            // 💡 新建課程第一次設定排程，Bypass 異動防呆視窗，直接鋪設全學期
                             console.log('💡 [排程引擎] 偵測到為新建課程第一次設定排程，Bypass 異動對話框，靜默放行。');
                             finalSessions = [...newFullSessions];
                         } else if (isDatesChanged) {
                             const safeRes = await askSafeScheduleChange(todayStr);
-                            if (!safeRes) { 
-                                btn.innerHTML = originalText; 
-                                btn.disabled = false; 
-                                return; 
-                            }
+                            if (!safeRes) { btn.innerHTML = originalText; btn.disabled = false; return; }
 
                             if (safeRes.action === 'future') {
                                 const pastSessions = oldSessions.filter(date => date < safeRes.anchorDate);
                                 const calcStart = (safeRes.anchorDate > sDate) ? safeRes.anchorDate : sDate;
                                 const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
                                 finalSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
-                            } else {
-                                finalSessions = [...newFullSessions];
-                            }
-                        } else {
-                            finalSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) 
-                                            ? safeRawDataForCheck.custom_sessions : [...newFullSessions];
-                        }
+                            } else finalSessions = [...newFullSessions];
+                        } else finalSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) ? safeRawDataForCheck.custom_sessions : [...newFullSessions];
 
                         if (isWeekToDay) {
                             const unpackStrategy = await askWeeklyToDailyResolution(classAssigns.length);
-                            if (!unpackStrategy) { 
-                                btn.innerHTML = originalText; 
-                                btn.disabled = false; 
-                                return; 
-                            }
+                            if (!unpackStrategy) { btn.innerHTML = originalText; btn.disabled = false; return; }
                             
                             let assignUpdatesMap = new Map();
                             const weeksMap = new Map();
-                            
                             finalSessions.forEach(d => { 
                                 const ws = getWeekStartStr(d, weekStartVal); 
                                 if (!weeksMap.has(ws)) weeksMap.set(ws, []); 
@@ -999,120 +545,60 @@ window.FeatureClass = (() => {
                                         let effectiveDue = a.due_date;
                                         if (!effectiveDue && a.tasks && a.tasks.length > 0) { 
                                             const explicitDates = a.tasks.map(t => t.due_date).filter(d => d); 
-                                            if (explicitDates.length > 0) {
-                                                effectiveDue = explicitDates[0]; 
-                                            }
+                                            if (explicitDates.length > 0) effectiveDue = explicitDates[0]; 
                                         }
-                                        
                                         if (effectiveDue) { 
                                             const validDays = weekDays.filter(d => d <= effectiveDue); 
-                                            if (validDays.length > 0) {
-                                                newTargetD = validDays[validDays.length - 1];
-                                            } else {
-                                                newTargetD = weekDays[0];
-                                            }
-                                        } else { 
-                                            newTargetD = weekDays[weekDays.length - 1]; 
-                                        }
-                                    } else if (unpackStrategy === 'first') { 
-                                        newTargetD = weekDays[0]; 
-                                    } else if (unpackStrategy === 'last') { 
-                                        newTargetD = weekDays[weekDays.length - 1]; 
-                                    }
+                                            newTargetD = validDays.length > 0 ? validDays[validDays.length - 1] : weekDays[0];
+                                        } else newTargetD = weekDays[weekDays.length - 1]; 
+                                    } else if (unpackStrategy === 'first') newTargetD = weekDays[0]; 
+                                    else if (unpackStrategy === 'last') newTargetD = weekDays[weekDays.length - 1]; 
                                 }
-                                
-                                if (newTargetD !== a.target_date) { 
-                                    assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
-                                }
+                                if (newTargetD !== a.target_date) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
                             });
-                            
                             await executeSave(finalSessions, assignUpdatesMap);
-                        } else {
-                            await executeSave(finalSessions, new Map());
-                        }
+                        } else await executeSave(finalSessions, new Map());
                     }
-                } catch (err) { 
-                    btn.innerHTML = originalText; 
-                    btn.disabled = false; 
-                    console.error(err); 
-                    alert("推演或儲存失敗：" + err.message); 
-                }
+                } catch (err) { btn.innerHTML = originalText; btn.disabled = false; console.error(err); alert("推演或儲存失敗：" + err.message); }
             };
         }
 
-        if (window.TeacherUI) {
-            window.TeacherUI.renderSidebar();
-        }
-        
+        if (window.TeacherUI) window.TeacherUI.renderSidebar();
         renderClassManager();
     });
 
     return { 
-        updateClassContent, 
-        renderClassManager, 
-        editClass: openClassSettings, 
-        openClassSettings, 
-        saveClassSettings,
+        updateClassContent, renderClassManager, editClass: openClassSettings, openClassSettings, saveClassSettings,
         toggleDeleteConfirm: (classId, show) => {
             document.getElementById(`class-info-${classId}`).style.display = show ? 'none' : 'flex';
             document.getElementById(`class-delete-confirm-${classId}`).style.display = show ? 'block' : 'none';
         },
         executeDelete: async (classId) => {
             const btn = window.event ? window.event.target : document.activeElement;
-            const originalText = btn.innerHTML; 
-            btn.innerHTML = '⏳ 雲端 RPC 封存中...'; 
-            btn.disabled = true;
-            
+            const originalText = btn.innerHTML; btn.innerHTML = '⏳ 雲端 RPC 封存中...'; btn.disabled = true;
             try {
-                if (!window.ApiService || typeof window.ApiService.archiveClass !== 'function') {
-                    throw new Error("API 引擎未就緒。");
-                }
-                
+                if (!window.ApiService || typeof window.ApiService.archiveClass !== 'function') throw new Error("API 引擎未就緒。");
                 if (document.getElementById(`del-students-cb-${classId}`).checked) {
                     const { data: enrollments } = await window.supabaseClient.from('student_enrollments').select('user_id').eq('class_id', classId).is('deleted_at', null);
-                    if (enrollments && enrollments.length > 0) {
-                        await window.supabaseClient.from('profiles').update({ deleted_at: new Date().toISOString() }).in('id', enrollments.map(e => e.user_id));
-                    }
+                    if (enrollments && enrollments.length > 0) await window.supabaseClient.from('profiles').update({ deleted_at: new Date().toISOString() }).in('id', enrollments.map(e => e.user_id));
                 }
                 
                 await window.ApiService.archiveClass(classId); 
                 db.classes = await window.ApiService.fetchClasses();
                 
-                if (db.sessions) {
-                    delete db.sessions[classId];
-                }
-                if (db.resourceMappings) {
-                    db.resourceMappings = db.resourceMappings.filter(m => m.class_id !== classId);
-                }
-                if (db.assignments) {
-                    db.assignments = db.assignments.filter(a => a.class_id !== classId);
-                }
+                if (db.sessions) delete db.sessions[classId];
+                if (db.resourceMappings) db.resourceMappings = db.resourceMappings.filter(m => m.class_id !== classId);
+                if (db.assignments) db.assignments = db.assignments.filter(a => a.class_id !== classId);
                 
-                if (typeof db.save === 'function') {
-                    db.save();
-                }
-                
+                if (typeof db.save === 'function') db.save();
                 renderClassManager(); 
-                
-                if (window.TeacherUI) {
-                    window.TeacherUI.renderSidebar();
-                }
+                if (window.TeacherUI) window.TeacherUI.renderSidebar();
                 
                 if (window.TeacherUI && window.TeacherUI.getCurrentClassId() === classId) {
-                    if (db.classes.length > 0) {
-                        window.TeacherUI.activateClassView(db.classes[0].id);
-                    } else { 
-                        const header = document.getElementById('class-context-header'); 
-                        if (header) {
-                            header.style.display = 'none'; 
-                        }
-                    }
+                    if (db.classes.length > 0) window.TeacherUI.activateClassView(db.classes[0].id);
+                    else { const header = document.getElementById('class-context-header'); if (header) header.style.display = 'none'; }
                 }
-            } catch (err) { 
-                alert(err.message); 
-                btn.innerHTML = originalText; 
-                btn.disabled = false; 
-            }
+            } catch (err) { alert(err.message); btn.innerHTML = originalText; btn.disabled = false; }
         }
     };
 })();
