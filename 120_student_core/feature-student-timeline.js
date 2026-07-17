@@ -1,10 +1,8 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 描述：學生端專屬的邏輯與進度渲染引擎。
- * 🌟 UX 視覺終極打磨版 & DRY 原則解耦版：
- * 1. 拔除實體作業的粗色邊框，回歸極簡白底灰框設計。
- * 2. 實作「真・無縫合併 (True Sibling Merge)」，連續作業完美融合單一區塊。
- * 3. 徹底移除私有日期函數，全面對接 window.UtilsDate 金剛不壞引擎。
+ * 🌟 UX 視覺終極打磨版 & 時間引擎極致防禦版：
+ * 1. 徹底消滅 new Date() 與手動 setHours 計算逾期的髒邏輯。
+ * 2. 全面委派給 window.UtilsDate.isPastDue()，保證時間判斷標準一致。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -117,7 +115,6 @@ window.FeatureStudentTimeline = (() => {
         const container = document.getElementById('course-container');
         if (!container) return;
 
-        // 🛡️ 防禦邊界：確保 DateUtils 存在
         const DateUtils = window.UtilsDate;
         if (!DateUtils) {
             container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 系統錯誤：核心日期模組遺失，請聯絡管理員。</div>`;
@@ -133,7 +130,6 @@ window.FeatureStudentTimeline = (() => {
         
         let sessions = [];
         
-        // 取得排程 (與老師端邏輯對齊)
         if (Array.isArray(cls.sessions) && cls.sessions.length > 0) {
             sessions = cls.sessions;
         } else if (Array.isArray(raw.sessions) && raw.sessions.length > 0) {
@@ -189,7 +185,8 @@ window.FeatureStudentTimeline = (() => {
             });
         }
 
-        const todayStr = DateUtils.toLocalISODate(new Date());
+        // 🌟 修復點：透過 UtilsDate 取得今天，拒絕原生的 new Date()
+        const todayStr = DateUtils.getTaiwanTodayString();
         const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
 
         const styleBlock = document.createElement('style');
@@ -200,7 +197,6 @@ window.FeatureStudentTimeline = (() => {
             @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
         `;
 
-        // 🌟 獨立實體任務渲染器 (徹底移除粗左邊框，背景透明化)
         const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
             const canUpload = !(isLateUpload && !allowLateFlag);
             const compositeKey = `${course.id}_${task.id}`;
@@ -265,7 +261,6 @@ window.FeatureStudentTimeline = (() => {
             let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
             let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
-            // 🌟 真・無縫合併 (True Sibling Merge) 
             let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
             return `
@@ -332,16 +327,9 @@ window.FeatureStudentTimeline = (() => {
                     let isLateUpload = false;
                     let allowLateFlag = aRaw.allow_late !== false;
                     
+                    // 🌟 修復點：透過 UtilsDate.isPastDue() 精準判斷逾期，拔除髒 Code
                     if (effectiveBlockDueDate) {
-                        const t_today = new Date();
-                        t_today.setHours(0,0,0,0);
-                        const t_due = DateUtils.parseLocalDate(effectiveBlockDueDate);
-                        if (t_due) {
-                            t_due.setHours(0,0,0,0);
-                            if (t_today > t_due) {
-                                isLateUpload = true;
-                            }
-                        }
+                        isLateUpload = DateUtils.isPastDue(effectiveBlockDueDate);
                     }
 
                     const countTasksRecursive = (tasksList) => {
@@ -378,7 +366,7 @@ window.FeatureStudentTimeline = (() => {
                                 let subTasksHtml = '';
                                 
                                 if (task.subTasks && task.subTasks.length > 0) {
-                                    subTasksHtml = `<div style="padding-left: 20px; display:flex; flex-direction:column;">` +
+                                    subTasksHtml = `<div style="display:flex; flex-direction:column;">` +
                                         renderTaskTree(task.subTasks, depth + 1) +
                                         `</div>`;
                                 } else {
@@ -389,7 +377,7 @@ window.FeatureStudentTimeline = (() => {
 
                                 return `
                                     <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
-                                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
+                                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
                                             <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                         </div>
                                         ${subTasksHtml}

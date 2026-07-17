@@ -1,11 +1,10 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.6 終極指揮官版 (The Thin Orchestrator) - 完整修復版：
- * 1. 成功拔除超過 200 行的節點操作邏輯。
- * 2. 全面委託 window.BuilderStore 進行狀態管理，並補回所有被遺漏的 API 代理 (包含 getTaskParentArray)。
+ * 🌟 v13.7 終極指揮官版：
+ * 1. 徹底消滅所有 new Date()，全面依賴 UtilsDate 處理當日與時間戳。
  */
 
-console.log("🚀 FeatureTimeline v13.6 載入成功！(極致瘦身，Store 完美解耦)");
+console.log("🚀 FeatureTimeline v13.7 載入成功！(時間運算徹底解耦)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -110,8 +109,11 @@ window.FeatureTimeline = (() => {
             }
 
             const weekStartSetting = raw.week_start_day || 'sunday';
-            const todayStr = DateUtils.toLocalISODate(new Date());
+            
+            // 🌟 修復點：透過 UtilsDate 取得今天，拒絕原生的 new Date()
+            const todayStr = DateUtils.getTaiwanTodayString();
             const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
+            
             const mode = cls.calcMode || cls.calc_mode || 'single';
 
             let timelineNodes = [];
@@ -233,7 +235,6 @@ window.FeatureTimeline = (() => {
         renderTimeline,
         scrollToCurrentWeek,
         
-        // 🚨 修正核心遺漏：這行絕對不能少！供給 ui-timeline-templates.js 調用
         getTaskParentArray: (pathArray) => window.BuilderStore.getTaskParentArray(pathArray),
         
         openBuilder: (classId, date, containerId) => {
@@ -297,7 +298,6 @@ window.FeatureTimeline = (() => {
             }, 300);
         },
 
-        // --- Proxy 到 Store 的樹狀邏輯 ---
         addNode: (pathStr, type) => { window.BuilderStore.addNode(pathStr, type); renderBuilderUI(); },
         removeNode: (pathStr) => { window.BuilderStore.removeNode(pathStr); renderBuilderUI(); },
         moveNodeUp: (pathStr) => { window.BuilderStore.moveNodeUp(pathStr); renderBuilderUI(); },
@@ -318,7 +318,6 @@ window.FeatureTimeline = (() => {
             if (a) { window.BuilderStore.copyHistory(a); renderBuilderUI(); }
         },
 
-        // --- 資料庫 API 操作與流程防呆 ---
         saveBlock: async (btnEl) => {
             window.BuilderStore.sync(); 
             const bState = window.BuilderStore.getState();
@@ -382,7 +381,8 @@ window.FeatureTimeline = (() => {
             if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
             
             try {
-                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: new Date().toISOString() }).eq('id', historyId).is('deleted_at', null).select(); 
+                // 🌟 修復點：透過 UtilsDate 取得 ISO 時間戳，拒絕原生的 new Date()
+                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: window.UtilsDate.getTaiwanIsoTimestamp() }).eq('id', historyId).is('deleted_at', null).select(); 
                 if (error) throw error;
                 if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                 db.assignments = db.assignments.filter(a => a.id !== historyId);
@@ -399,7 +399,8 @@ window.FeatureTimeline = (() => {
             btn.innerHTML = '⏳'; btn.disabled = true;
 
             try {
-                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: new Date().toISOString() }).eq('id', assignId).is('deleted_at', null).select(); 
+                // 🌟 修復點：透過 UtilsDate 取得 ISO 時間戳
+                const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: window.UtilsDate.getTaiwanIsoTimestamp() }).eq('id', assignId).is('deleted_at', null).select(); 
                 if (error) throw error;
                 if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕請求");
 
@@ -411,7 +412,6 @@ window.FeatureTimeline = (() => {
             }
         },
 
-        // --- LINE Notify 與 UI 彈窗 ---
         confirmLinePush: (assignId, classId) => {
             const TPL = window.TimelineTemplates;
             if(!db || !db.assignments) return;
@@ -450,7 +450,6 @@ window.FeatureTimeline = (() => {
             }
         },
 
-        // --- 拖曳與位移排程 ---
         dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
         dropAssign: async (e, targetId, classId) => {
             e.preventDefault(); e.stopPropagation(); 

@@ -1,24 +1,18 @@
 /**
  * 📂 檔案路徑：020_js_core/utils-date.js
  * 🌟 系統日期處理工具箱 (Fortified Pure Date Utilities)
- * 升級：加入 safeParse 強力解析引擎，免疫所有 ISO 時間戳與格式變異引發的崩潰。
+ * 升級：徹底收編所有散落於各模組的 new Date() 與「逾期比對」邏輯。
  */
 window.UtilsDate = (() => {
     'use strict';
 
-    /**
-     * 🛡️ 金剛不壞解析器：將任何格式的日期字串安全轉換為 Date 物件
-     */
     function safeParse(dStr) {
         if (!dStr) return null;
-        // 濾除 Supabase 傳回的 ISO 時間戳 (T 之後的部分)
         let s = typeof dStr === 'string' ? dStr.split('T')[0] : String(dStr);
         let parts = s.split(/[-/]/);
         
         if (parts.length === 3) {
-            // 處理 YYYY-MM-DD
             if (parts[0].length === 4) return new Date(parts[0], parts[1] - 1, parts[2]); 
-            // 處理 MM/DD/YYYY (防止瀏覽器相容性問題)
             if (parts[2].length === 4) return new Date(parts[2], parts[0] - 1, parts[1]); 
         }
         
@@ -26,9 +20,6 @@ window.UtilsDate = (() => {
         return isNaN(d.getTime()) ? null : d;
     }
 
-    /**
-     * 將 Date 物件轉換為本地 YYYY-MM-DD 字串
-     */
     function toLocalISODate(dateObj) {
         if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return '';
         const yyyy = dateObj.getFullYear();
@@ -37,17 +28,11 @@ window.UtilsDate = (() => {
         return `${yyyy}-${mm}-${dd}`;
     }
 
-    /**
-     * 解析各式日期字串格式並標準化為 YYYY-MM-DD
-     */
     function normalizeDateString(dStr) {
         const d = safeParse(dStr);
         return d ? toLocalISODate(d) : '';
     }
 
-    /**
-     * 推演指定區間與星期幾的所有合法上課日陣列
-     */
     function generateDates(startStr, endStr, meetDaysArray) {
         if (!startStr || !endStr || !meetDaysArray || meetDaysArray.length === 0) return [];
         
@@ -68,9 +53,6 @@ window.UtilsDate = (() => {
         return dates;
     }
 
-    /**
-     * 計算給定日期所在週的第一天字串
-     */
     function getWeekStartStr(dateStr, weekStartDay = 'sunday') {
         const dt = safeParse(dateStr);
         if (!dt) return '';
@@ -86,9 +68,7 @@ window.UtilsDate = (() => {
         return toLocalISODate(dt);
     }
 
-    /**
-     * 取得台灣時區當前 YYYY-MM-DD 字串
-     */
+    // 🌟 收編 1：取得台灣時區「今天」的標準化字串
     function getTaiwanTodayString() {
         try {
             const formatter = new Intl.DateTimeFormat('en-CA', { 
@@ -104,12 +84,34 @@ window.UtilsDate = (() => {
         return safeParse(dateStr) || new Date();
     }
 
+    // 🌟 收編 2：統一提供 ISO 時間戳 (供資料庫寫入 deleted_at 使用)
+    function getTaiwanIsoTimestamp() {
+        return new Date().toISOString();
+    }
+
+    // 🌟 收編 3：將散落於學生端的「逾期判定髒邏輯」收編為 Pure Function
+    function isPastDue(targetDateStr) {
+        if (!targetDateStr) return false;
+        const target = safeParse(targetDateStr);
+        if (!target) return false;
+        
+        const today = safeParse(getTaiwanTodayString()); 
+        if (!today) return false;
+
+        target.setHours(0, 0, 0, 0);
+        today.setHours(0, 0, 0, 0);
+        
+        return today > target;
+    }
+
     return {
         toLocalISODate,
         getTaiwanTodayString,
         normalizeDateString,
         generateDates,
         getWeekStartStr,
-        parseLocalDate
+        parseLocalDate,
+        getTaiwanIsoTimestamp,
+        isPastDue
     };
 })();
