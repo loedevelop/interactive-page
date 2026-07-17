@@ -1,12 +1,12 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.2 極致解耦版 (DRY 原則落實)：
- * 1. 成功將所有 UI 渲染邏輯抽離至 TimelineTemplates。
- * 2. 成功將所有 日期運算 邏輯抽離，全面改用 window.UtilsDate。
- * 3. 完美保留 LINE Notify 推播功能與底層呼叫邏輯。
+ * 🌟 v13.3 極致解耦與防禦版 (修復進度渲染崩潰 Bug)：
+ * 1. 新增 getTimelineSessions 防禦性函數，徹底根除 db.sessions undefined 崩潰。
+ * 2. 強化 meet_days 的型別安全解析，支援陣列與字串格式轉換。
+ * 3. 徹底落實 DRY 原則，使用 DateUtils.generateDates 取代冗餘的 while 迴圈。
  */
 
-console.log("🚀 FeatureTimeline v13.2 載入成功！(日期與 UI 雙解耦完成 + 保留推播功能)");
+console.log("🚀 FeatureTimeline v13.3 載入成功！(修復排程渲染引擎)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -127,6 +127,49 @@ window.FeatureTimeline = (() => {
         return current.subTasks;
     }
 
+    /**
+     * 🛡️ 防禦性取得/推演班級排程會話陣列 (避免 db.sessions 造成崩潰)
+     */
+    function getTimelineSessions(cls) {
+        if (!cls) return [];
+        let raw = cls.raw_data || {};
+        if (typeof raw === 'string') {
+            try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
+        }
+        
+        // 1. 優先使用客製化排程
+        if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
+            return [...raw.custom_sessions];
+        }
+        
+        // 2. 嘗試讀取資料庫快取 (安全存取)
+        if (db.sessions && db.sessions[cls.id] && db.sessions[cls.id].length > 0) {
+            return [...db.sessions[cls.id]];
+        }
+        
+        // 3. 即時推演：防呆處理 meet_days 型別
+        let rawMeet = cls.meetDays || cls.meet_days || raw.meet_days || [];
+        if (typeof rawMeet === 'string') {
+            if (rawMeet.startsWith('[')) {
+                try { rawMeet = JSON.parse(rawMeet); } catch(e) { rawMeet = []; }
+            } else {
+                rawMeet = rawMeet.split(',');
+            }
+        }
+        let meetDays = Array.isArray(rawMeet) ? rawMeet.map(Number).filter(n => !isNaN(n)) : [];
+        let startDateStr = cls.startDate || cls.start_date || raw.start_date;
+        let endDateStr = cls.endDate || cls.end_date || raw.end_date;
+
+        if (startDateStr && endDateStr && meetDays.length > 0) {
+            startDateStr = DateUtils.normalizeDateString(startDateStr);
+            endDateStr = DateUtils.normalizeDateString(endDateStr);
+            // 完美呼叫 DateUtils.generateDates
+            return DateUtils.generateDates(startDateStr, endDateStr, meetDays);
+        }
+        
+        return [];
+    }
+
     function renderTimeline(classId, scrollMode = 'current', targetId = null) {
         const container = document.getElementById('timeline-container');
         if (!container || !TPL) return;
@@ -145,26 +188,8 @@ window.FeatureTimeline = (() => {
 
         const classAssignments = db.assignments || [];
         
-        let sessions = [];
-        if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
-            sessions = [...raw.custom_sessions];
-        } else {
-            sessions = db.sessions[classId] || [];
-            if (sessions.length === 0) {
-                let meetDays = (cls.meetDays || cls.meet_days || raw.meet_days || []).map(Number);
-                let startDateStr = cls.startDate || cls.start_date || raw.start_date;
-                let endDateStr = cls.endDate || cls.end_date || raw.end_date;
-
-                if (startDateStr && endDateStr && meetDays.length > 0) {
-                    let s = DateUtils.parseLocalDate(startDateStr);
-                    let e = DateUtils.parseLocalDate(endDateStr);
-                    while (s <= e) {
-                        if (meetDays.includes(s.getDay())) sessions.push(DateUtils.toLocalISODate(s));
-                        s.setDate(s.getDate() + 1);
-                    }
-                }
-            }
-        }
+        // 使用防禦性函式取得 Sessions
+        let sessions = getTimelineSessions(cls);
 
         const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
         sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
@@ -303,7 +328,7 @@ window.FeatureTimeline = (() => {
     }
 
     return {
-        getTaskParentArray, // 必須拋出，供 Templates 調用
+        getTaskParentArray, 
         renderTimeline,
         scrollToCurrentWeek,
         openBuilder: (classId, date, containerId) => {
@@ -335,7 +360,9 @@ window.FeatureTimeline = (() => {
             let raw = cls.raw_data || {};
             if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
 
-            let sessions = (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) ? [...raw.custom_sessions] : (db.sessions[a.class_id] || []);
+            // 使用防禦性函式取得 Sessions
+            let sessions = getTimelineSessions(cls);
+            
             const assignmentDates = (db.assignments || []).filter(ast => ast.class_id === a.class_id).map(ast => ast.target_date);
             sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
@@ -386,7 +413,6 @@ window.FeatureTimeline = (() => {
             }, 300);
         },
         
-        // 🌟 LINE 推播邏輯完美回歸！
         confirmLinePush: (assignId, classId) => {
             const a = (db.assignments || []).find(x => x.id === assignId);
             if (!a || !TPL) return;
