@@ -2,10 +2,14 @@
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
  * 🌟 純視覺模板工廠 (UI Templates Factory)
  * 專職字串拼接，將 JSON 轉為 HTML，無狀態、無副作用。
+ * ⚠️ 依據指示：僅修改唯讀模式(Read-Only)達成無縫合併，絕對不更動 Builder 編輯器邏輯。
  */
 
 window.TimelineTemplates = (() => {
 
+    // ==========================================
+    // 0. 共用樣式與工具 (保留舊版全部 RTE 設定)
+    // ==========================================
     function getTimelineStyleBlock() {
         return `
             <style>
@@ -34,7 +38,10 @@ window.TimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth) {
+    // ==========================================
+    // 1. 唯讀模式 (Read-Only) 渲染 - 🌟 本次修改重點 (無縫合併)
+    // ==========================================
+    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf) {
         let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
@@ -65,7 +72,7 @@ window.TimelineTemplates = (() => {
         }
 
         let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
-        let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:42px;">${t.description}</div>` : '';
+        let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${t.description}</div>` : '';
         
         let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
         let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
@@ -90,10 +97,13 @@ window.TimelineTemplates = (() => {
             else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
         }
         
+        // 🌟 無縫合併核心修改：移除 background, border-radius, margin。改用 padding 與 border-bottom。
+        let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
+
         return `
-            <div style="margin-top: 8px; margin-bottom: 8px; padding: 12px; background: white; border: 1px solid #E2E8F0; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); transition: 0.2s;">
+            <div style="padding: 10px 5px; background: transparent; border-bottom: ${borderBottom}; transition: 0.2s;">
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                    <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed;" title="老師唯讀端核取方塊">
+                    <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed; opacity: 0.5;" title="老師唯讀端核取方塊">
                     ${iconHtml}${taskTitleDisplay}${linkContent}
                     ${extraTag} ${dueBadge} ${taskLateBadge}
                 </div>
@@ -105,7 +115,8 @@ window.TimelineTemplates = (() => {
     function renderReadOnlyTree(tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, depth = 0) {
         if (!tasks || tasks.length === 0) return '';
         let html = '';
-        tasks.forEach((t) => {
+        tasks.forEach((t, idx) => {
+            const isLastLeaf = idx === tasks.length - 1 || tasks[idx + 1].type === 'group';
             const lvl = getLevelStyle(depth);
 
             if (t.type === 'group') {
@@ -142,7 +153,8 @@ window.TimelineTemplates = (() => {
                 `;
                 
                 if (t.subTasks && t.subTasks.length > 0) {
-                    html += `<div style="padding-left: 10px; display:flex; flex-direction:column;">`;
+                    // 🌟 移除內縮 padding，確保子項目能夠與群組容器無縫對齊
+                    html += `<div style="display:flex; flex-direction:column;">`;
                     html += renderReadOnlyTree(t.subTasks, groupDueDate, groupPolicy, depth + 1);
                     html += `</div>`;
                 } else {
@@ -150,12 +162,15 @@ window.TimelineTemplates = (() => {
                 }
                 html += `</div>`;
             } else {
-                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth);
+                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf);
             }
         });
         return html;
     }
 
+    // ==========================================
+    // 2. 編輯模式 (Builder) 渲染 - 🚨 絕對保留舊版不動
+    // ==========================================
     function getArrowButtonsHtml(pathStr, idx, arrLength, depth, hasPrevSiblingGroup) {
         const canUp = idx > 0;
         const canDown = idx < arrLength - 1;
@@ -468,7 +483,9 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    // 🌟 LINE 推播按鈕回歸！
+    // ==========================================
+    // 3. 主時間軸與外層區塊 (保留所有功能性)
+    // ==========================================
     function getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml) {
         let cleanBlockDesc = a.description ? a.description.replace(/<[^>]*>?/gm, '').trim() : '';
         let blockDescHtml = cleanBlockDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
@@ -537,6 +554,9 @@ window.TimelineTemplates = (() => {
             </div>`;
     }
 
+    // ==========================================
+    // 4. 防呆對話框 Modals
+    // ==========================================
     function getMoveAssignModalHtml(cleanTitle, targetDate, assignId, classId) {
         return `
             <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
@@ -556,7 +576,6 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    // 🌟 LINE 推播確認對話框 HTML 回歸！
     function getLinePushModalHtml(cleanTitle, assignId, classId, overlayId) {
         return `
             <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
@@ -572,6 +591,7 @@ window.TimelineTemplates = (() => {
         `;
     }
 
+    // --- 確保所有使用到的函式均正確拋出 ---
     return {
         getTimelineStyleBlock,
         renderReadOnlyTree,
