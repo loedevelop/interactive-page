@@ -1,14 +1,33 @@
 /**
  * 📂 檔案路徑：020_js_core/utils-date.js
- * 🌟 系統日期處理工具箱 (Pure Date Utilities)
- * 封裝所有日期計算、格式化、時區推導等無狀態純函式。
+ * 🌟 系統日期處理工具箱 (Fortified Pure Date Utilities)
+ * 升級：加入 safeParse 強力解析引擎，免疫所有 ISO 時間戳與格式變異引發的崩潰。
  */
-
 window.UtilsDate = (() => {
+    'use strict';
+
+    /**
+     * 🛡️ 金剛不壞解析器：將任何格式的日期字串安全轉換為 Date 物件
+     */
+    function safeParse(dStr) {
+        if (!dStr) return null;
+        // 濾除 Supabase 傳回的 ISO 時間戳 (T 之後的部分)
+        let s = typeof dStr === 'string' ? dStr.split('T')[0] : String(dStr);
+        let parts = s.split(/[-/]/);
+        
+        if (parts.length === 3) {
+            // 處理 YYYY-MM-DD
+            if (parts[0].length === 4) return new Date(parts[0], parts[1] - 1, parts[2]); 
+            // 處理 MM/DD/YYYY (防止瀏覽器相容性問題)
+            if (parts[2].length === 4) return new Date(parts[2], parts[0] - 1, parts[1]); 
+        }
+        
+        let d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
     /**
      * 將 Date 物件轉換為本地 YYYY-MM-DD 字串
-     * @param {Date} dateObj
-     * @returns {string}
      */
     function toLocalISODate(dateObj) {
         if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return '';
@@ -19,77 +38,25 @@ window.UtilsDate = (() => {
     }
 
     /**
-     * 取得台灣時區當前 YYYY-MM-DD 字串
-     * @returns {string}
-     */
-    function getTaiwanTodayString() {
-        try {
-            const formatter = new Intl.DateTimeFormat('en-CA', { 
-                timeZone: 'Asia/Taipei', 
-                year: 'numeric', 
-                month: '2-digit', 
-                day: '2-digit' 
-            });
-            return formatter.format(new Date()); 
-        } catch(e) {
-            return toLocalISODate(new Date()); 
-        }
-    }
-
-    /**
      * 解析各式日期字串格式並標準化為 YYYY-MM-DD
-     * @param {string} dStr
-     * @returns {string}
      */
     function normalizeDateString(dStr) {
-        if (!dStr) return '';
-        
-        if (dStr.includes('-')) {
-            const parts = dStr.split('-');
-            if (parts[0].length === 4) {
-                return dStr; 
-            }
-        }
-        
-        if (dStr.includes('/')) {
-            const parts = dStr.split('/');
-            if (parts.length === 3) {
-                if (parts[2].length === 4) {
-                    return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`;
-                }
-                if (parts[0].length === 4) {
-                    return `${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`;
-                }
-            }
-        }
-        
-        const d = new Date(dStr);
-        if (!isNaN(d.getTime())) {
-            return toLocalISODate(d);
-        }
-        
-        return dStr;
+        const d = safeParse(dStr);
+        return d ? toLocalISODate(d) : '';
     }
 
     /**
      * 推演指定區間與星期幾的所有合法上課日陣列
-     * @param {string} startStr - YYYY-MM-DD
-     * @param {string} endStr - YYYY-MM-DD
-     * @param {Array<number>} meetDaysArray - 星期日(0) ~ 星期六(6)
-     * @returns {Array<string>} YYYY-MM-DD 陣列
      */
     function generateDates(startStr, endStr, meetDaysArray) {
-        if (!startStr || !endStr || !meetDaysArray || meetDaysArray.length === 0) {
-            return [];
-        }
+        if (!startStr || !endStr || !meetDaysArray || meetDaysArray.length === 0) return [];
         
-        const dates = [];
-        const [sy, sm, sd] = startStr.split('-');
-        const [ey, em, ed] = endStr.split('-');
+        const curr = safeParse(startStr);
+        const end = safeParse(endStr);
+        if (!curr || !end) return [];
         
-        let curr = new Date(sy, sm - 1, sd);
-        const end = new Date(ey, em - 1, ed);
         end.setHours(23, 59, 59, 999);
+        const dates = [];
         
         while (curr <= end) {
             if (meetDaysArray.includes(curr.getDay())) {
@@ -103,17 +70,12 @@ window.UtilsDate = (() => {
 
     /**
      * 計算給定日期所在週的第一天字串
-     * @param {string} dateStr
-     * @param {string} weekStartDay - 'sunday' or 'monday'
-     * @returns {string}
      */
     function getWeekStartStr(dateStr, weekStartDay = 'sunday') {
-        if (!dateStr) return '';
+        const dt = safeParse(dateStr);
+        if (!dt) return '';
         
-        const [y, m, d] = dateStr.split('-');
-        const dt = new Date(y, m - 1, d);
         let day = dt.getDay(); 
-
         if (weekStartDay === 'monday') {
             let diff = day === 0 ? 6 : day - 1;
             dt.setDate(dt.getDate() - diff);
@@ -125,14 +87,21 @@ window.UtilsDate = (() => {
     }
 
     /**
-     * 安全解析本地 YYYY-MM-DD 為 Date 物件 (避開 UTC 時差跑偏)
-     * @param {string} dateStr
-     * @returns {Date}
+     * 取得台灣時區當前 YYYY-MM-DD 字串
      */
+    function getTaiwanTodayString() {
+        try {
+            const formatter = new Intl.DateTimeFormat('en-CA', { 
+                timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' 
+            });
+            return formatter.format(new Date()); 
+        } catch(e) {
+            return toLocalISODate(new Date()); 
+        }
+    }
+
     function parseLocalDate(dateStr) {
-        if (!dateStr) return new Date();
-        const [y, m, d] = dateStr.split('-');
-        return new Date(y, m - 1, d);
+        return safeParse(dateStr) || new Date();
     }
 
     return {

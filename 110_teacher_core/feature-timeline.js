@@ -1,19 +1,16 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.3 極致解耦與防禦版 (修復進度渲染崩潰 Bug)：
- * 1. 新增 getTimelineSessions 防禦性函數，徹底根除 db.sessions undefined 崩潰。
- * 2. 強化 meet_days 的型別安全解析，支援陣列與字串格式轉換。
- * 3. 徹底落實 DRY 原則，使用 DateUtils.generateDates 取代冗餘的 while 迴圈。
+ * 🌟 v13.4 極致防禦版 (加入錯誤邊界 Error Boundaries)：
+ * 1. 加入 renderTimeline 全局 try...catch，避免靜默崩潰。
+ * 2. 確保 UtilsDate 與 TimelineTemplates 若載入失敗，會直接顯示於 UI。
  */
 
-console.log("🚀 FeatureTimeline v13.3 載入成功！(修復排程渲染引擎)");
+console.log("🚀 FeatureTimeline v13.4 載入成功！(防禦邊界升級版)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
-    const TPL = window.TimelineTemplates; // 引入 UI 模板工廠
-    const DateUtils = window.UtilsDate;   // 引入全域日期工具箱
     
-    if (db.assignments) {
+    if (db && db.assignments) {
         const originalLength = db.assignments.length;
         db.assignments = db.assignments.filter(a => a.target_date !== undefined && a.target_date !== null);
         if (db.assignments.length !== originalLength && typeof db.save === 'function') db.save(); 
@@ -23,6 +20,7 @@ window.FeatureTimeline = (() => {
     let dragAssignId = null; 
 
     function checkCanEditTimeline(classId) {
+        if (!db || !db.classes) return false;
         const cls = db.classes.find(c => c.id === classId);
         if (!cls) return false;
         const userRole = cls.staff_role || (window.TeacherUI && window.TeacherUI.getCurrentUserRole ? window.TeacherUI.getCurrentUserRole(classId) : 'primary_teacher');
@@ -31,15 +29,12 @@ window.FeatureTimeline = (() => {
 
     const scrollToCurrentWeek = () => {
         if (bState) return; 
-        
         const targetNode = document.querySelector('.timeline-node[data-is-current="true"]');
         const container = document.querySelector('.view-section.active');
-        
         if (targetNode && container) {
             const containerRect = container.getBoundingClientRect();
             const nodeRect = targetNode.getBoundingClientRect();
             const scrollAmount = nodeRect.top - containerRect.top - 15;
-            
             container.scrollBy({ top: scrollAmount, behavior: 'smooth' });
         }
     };
@@ -74,7 +69,6 @@ window.FeatureTimeline = (() => {
                 const urlEl = document.getElementById(`node-url-${pathStr}`);
                 const urlTextEl = document.getElementById(`node-url-text-${pathStr}`);
                 const descEl = document.getElementById(`node-desc-${pathStr}`);
-                
                 if (urlEl) t.url = urlEl.value;
                 if (urlTextEl) t.url_text = urlTextEl.value;
                 if (descEl) {
@@ -92,7 +86,6 @@ window.FeatureTimeline = (() => {
         const descEl = document.getElementById(`builder-desc-${nid}`);
         const dueEl = document.getElementById(`builder-due-${nid}`);
         const pubEl = document.getElementById(`builder-pub-${nid}`);
-        
         const lateModeEl = document.getElementById(`builder-late-mode-${nid}`);
         const graceEl = document.getElementById(`builder-grace-${nid}`);
         const penaltyEl = document.getElementById(`builder-penalty-${nid}`);
@@ -114,7 +107,6 @@ window.FeatureTimeline = (() => {
 
         if (bState.late_mode === 'no_late') { bState.late_grace = 0; bState.late_penalty = 0; }
         if (bState.late_mode === 'infinite') { bState.late_grace = 0; }
-
         if (bState.tasks) syncTasksState(bState.tasks);
     }
 
@@ -127,190 +119,205 @@ window.FeatureTimeline = (() => {
         return current.subTasks;
     }
 
-    /**
-     * 🛡️ 防禦性取得/推演班級排程會話陣列 (避免 db.sessions 造成崩潰)
-     */
-    function getTimelineSessions(cls) {
+    function getTimelineSessions(cls, DateUtils) {
         if (!cls) return [];
         let raw = cls.raw_data || {};
         if (typeof raw === 'string') {
             try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
         }
         
-        // 1. 優先使用客製化排程
+        let sessions = [];
         if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
-            return [...raw.custom_sessions];
-        }
-        
-        // 2. 嘗試讀取資料庫快取 (安全存取)
-        if (db.sessions && db.sessions[cls.id] && db.sessions[cls.id].length > 0) {
-            return [...db.sessions[cls.id]];
-        }
-        
-        // 3. 即時推演：防呆處理 meet_days 型別
-        let rawMeet = cls.meetDays || cls.meet_days || raw.meet_days || [];
-        if (typeof rawMeet === 'string') {
-            if (rawMeet.startsWith('[')) {
-                try { rawMeet = JSON.parse(rawMeet); } catch(e) { rawMeet = []; }
-            } else {
-                rawMeet = rawMeet.split(',');
+            sessions = [...raw.custom_sessions];
+        } else if (db && db.sessions && db.sessions[cls.id] && db.sessions[cls.id].length > 0) {
+            sessions = [...db.sessions[cls.id]];
+        } else {
+            let rawMeet = cls.meetDays || cls.meet_days || raw.meet_days || [];
+            if (typeof rawMeet === 'string') {
+                if (rawMeet.startsWith('[')) {
+                    try { rawMeet = JSON.parse(rawMeet); } catch(e) { rawMeet = []; }
+                } else {
+                    rawMeet = rawMeet.split(',');
+                }
+            }
+            let meetDays = Array.isArray(rawMeet) ? rawMeet.map(Number).filter(n => !isNaN(n)) : [];
+            let startDateStr = cls.startDate || cls.start_date || raw.start_date;
+            let endDateStr = cls.endDate || cls.end_date || raw.end_date;
+
+            if (startDateStr && endDateStr && meetDays.length > 0) {
+                sessions = DateUtils.generateDates(startDateStr, endDateStr, meetDays);
             }
         }
-        let meetDays = Array.isArray(rawMeet) ? rawMeet.map(Number).filter(n => !isNaN(n)) : [];
-        let startDateStr = cls.startDate || cls.start_date || raw.start_date;
-        let endDateStr = cls.endDate || cls.end_date || raw.end_date;
-
-        if (startDateStr && endDateStr && meetDays.length > 0) {
-            startDateStr = DateUtils.normalizeDateString(startDateStr);
-            endDateStr = DateUtils.normalizeDateString(endDateStr);
-            // 完美呼叫 DateUtils.generateDates
-            return DateUtils.generateDates(startDateStr, endDateStr, meetDays);
-        }
         
-        return [];
+        return sessions.map(d => DateUtils.normalizeDateString(d)).filter(Boolean);
     }
 
     function renderTimeline(classId, scrollMode = 'current', targetId = null) {
         const container = document.getElementById('timeline-container');
-        if (!container || !TPL) return;
-        
-        container.className = '';
+        if (!container) return;
 
-        const cls = db.classes.find(c => c.id === classId);
-        if (!cls) return;
-        
-        const canEditTimeline = checkCanEditTimeline(classId);
+        // 🛡️ 防禦邊界：捕捉一切渲染異常
+        try {
+            const TPL = window.TimelineTemplates; 
+            const DateUtils = window.UtilsDate;   
 
-        let raw = cls.raw_data || {};
-        if (typeof raw === 'string') {
-            try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
-        }
-
-        const classAssignments = db.assignments || [];
-        
-        // 使用防禦性函式取得 Sessions
-        let sessions = getTimelineSessions(cls);
-
-        const assignmentDates = classAssignments.filter(a => a.class_id === classId).map(a => a.target_date);
-        sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
-
-        if (sessions.length === 0) {
-            container.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px;">無排程資料。請至「⚙️ 課程基本資料」設定學期起訖日與上課日。</p>';
-            return;
-        }
-
-        const weekStartSetting = raw.week_start_day || 'sunday';
-        const now = new Date();
-        const todayStr = DateUtils.toLocalISODate(now);
-        const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
-        const mode = cls.calcMode || cls.calc_mode || 'single';
-
-        let timelineNodes = [];
-        if (mode === 'single') {
-            timelineNodes = sessions.map(d => ({ title: d, dates: [d] }));
-        } else if (mode === 'weekly') {
-            const weeksMap = new Map();
-            sessions.forEach(d => {
-                const weekStr = DateUtils.getWeekStartStr(d, weekStartSetting);
-                if (!weeksMap.has(weekStr)) {
-                    weeksMap.set(weekStr, []);
-                }
-                weeksMap.get(weekStr).push(d);
-            });
-            weeksMap.forEach((chunk) => {
-                timelineNodes.push({ 
-                    title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], 
-                    dates: chunk 
-                });
-            });
-        }
-
-        let html = '';
-
-        timelineNodes.forEach((node, index) => {
-            const nodeWeekStart = DateUtils.getWeekStartStr(node.dates[0], weekStartSetting);
-            let isCurrent = (nodeWeekStart === currentWeekStart);
-            let isFuture = node.dates[0] > todayStr;
-            const nodeDate = node.dates[0];
-            const nodeAssignments = classAssignments.filter(a => a.class_id === classId && node.dates.includes(a.target_date));
+            if (!TPL || !DateUtils) {
+                container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 系統錯誤：核心依賴模組 (TimelineTemplates 或 UtilsDate) 遺失，請檢查網路或重新整理。</div>`;
+                return;
+            }
             
-            let assignmentsHtml = '';
-            if (nodeAssignments.length > 0) {
-                nodeAssignments.forEach(a => {
-                    let effectiveBlockDueDate = a.due_date;
-                    let aRaw = a.raw_data || {};
-                    if (typeof aRaw === 'string') {
-                        try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
-                    }
-                    
-                    let blockLateMode = 'infinite', blockPenalty = 0, blockGrace = 0;
-                    if (aRaw.late_policy) {
-                        if (!aRaw.late_policy.allow_late) blockLateMode = 'no_late';
-                        else if (aRaw.late_policy.grace_period_hours > 0) {
-                            blockLateMode = 'custom';
-                            blockGrace = aRaw.late_policy.grace_period_hours;
-                        }
-                        blockPenalty = aRaw.late_policy.penalty_percentage || 0;
-                    }
-                    const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty, grace: blockGrace };
+            container.className = '';
 
-                    let tasksHtml = TPL.renderReadOnlyTree(a.tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, 0);
-                    assignmentsHtml += TPL.getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml);
+            const cls = (db && db.classes) ? db.classes.find(c => c.id === classId) : null;
+            if (!cls) {
+                container.innerHTML = `<div style="padding:20px; color:#EF4444; font-weight:bold;">⚠️ 找不到該班級的主檔資料 (classId: ${classId})</div>`;
+                return;
+            }
+            
+            const canEditTimeline = checkCanEditTimeline(classId);
+
+            let raw = cls.raw_data || {};
+            if (typeof raw === 'string') {
+                try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
+            }
+
+            const classAssignments = (db && db.assignments) ? db.assignments : [];
+            let sessions = getTimelineSessions(cls, DateUtils);
+
+            const assignmentDates = classAssignments
+                .filter(a => a.class_id === classId && a.target_date)
+                .map(a => DateUtils.normalizeDateString(a.target_date));
+            
+            sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
+
+            if (sessions.length === 0) {
+                container.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px;">無排程資料。請至「⚙️ 課程基本資料」設定學期起訖日與上課日。</p>';
+                return;
+            }
+
+            const weekStartSetting = raw.week_start_day || 'sunday';
+            const now = new Date();
+            const todayStr = DateUtils.toLocalISODate(now);
+            const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
+            const mode = cls.calcMode || cls.calc_mode || 'single';
+
+            let timelineNodes = [];
+            if (mode === 'single') {
+                timelineNodes = sessions.map(d => ({ title: d, dates: [d] }));
+            } else if (mode === 'weekly') {
+                const weeksMap = new Map();
+                sessions.forEach(d => {
+                    const weekStr = DateUtils.getWeekStartStr(d, weekStartSetting);
+                    if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
+                    weeksMap.get(weekStr).push(d);
+                });
+                weeksMap.forEach((chunk) => {
+                    timelineNodes.push({ 
+                        title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], 
+                        dates: chunk 
+                    });
                 });
             }
 
-            const builderContainerId = `builder-container-${index}`;
-            html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId);
-        });
-        
-        container.innerHTML = TPL.getTimelineStyleBlock();
-        
-        const timelineWrapper = document.createElement('div');
-        timelineWrapper.style.borderLeft = '3px solid #E2E8F0';
-        timelineWrapper.style.marginLeft = '20px';
-        timelineWrapper.style.paddingLeft = '50px'; 
-        timelineWrapper.innerHTML = html;
+            let html = '';
 
-        container.appendChild(timelineWrapper);
-
-        if (scrollMode === 'current') {
-            setTimeout(scrollToCurrentWeek, 250);
-        } else if (scrollMode === 'target' && targetId) {
-            setTimeout(() => {
-                const targetEl = document.getElementById(targetId);
-                const viewContainer = document.querySelector('.view-section.active');
-                if (targetEl && viewContainer) {
-                    const cRect = viewContainer.getBoundingClientRect();
-                    const nRect = targetEl.getBoundingClientRect();
-                    viewContainer.scrollBy({ top: nRect.top - cRect.top - 15, behavior: 'smooth' });
-                }
-            }, 300);
-        }
-
-        const viewProgress = document.getElementById('timeline-container').closest('.view-content') || document.getElementById('view-progress');
-        if (viewProgress && !window._timelineObserverAttached) {
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    if (mutation.attributeName === 'class' || mutation.attributeName === 'style') {
-                        const style = window.getComputedStyle(viewProgress);
-                        if (style.display !== 'none' && viewProgress.classList.contains('active')) {
-                            if (!bState) setTimeout(scrollToCurrentWeek, 100); 
+            timelineNodes.forEach((node, index) => {
+                const nodeWeekStart = DateUtils.getWeekStartStr(node.dates[0], weekStartSetting);
+                let isCurrent = (nodeWeekStart === currentWeekStart);
+                let isFuture = node.dates[0] > todayStr;
+                const nodeDate = node.dates[0];
+                const nodeAssignments = classAssignments.filter(a => a.class_id === classId && node.dates.includes(DateUtils.normalizeDateString(a.target_date)));
+                
+                let assignmentsHtml = '';
+                if (nodeAssignments.length > 0) {
+                    nodeAssignments.forEach(a => {
+                        let effectiveBlockDueDate = a.due_date;
+                        let aRaw = a.raw_data || {};
+                        if (typeof aRaw === 'string') {
+                            try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
                         }
-                    }
-                });
+                        
+                        let blockLateMode = 'infinite', blockPenalty = 0, blockGrace = 0;
+                        if (aRaw.late_policy) {
+                            if (!aRaw.late_policy.allow_late) blockLateMode = 'no_late';
+                            else if (aRaw.late_policy.grace_period_hours > 0) {
+                                blockLateMode = 'custom';
+                                blockGrace = aRaw.late_policy.grace_period_hours;
+                            }
+                            blockPenalty = aRaw.late_policy.penalty_percentage || 0;
+                        }
+                        const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty, grace: blockGrace };
+
+                        // 防禦：確保 a.tasks 為陣列
+                        let tasksHtml = TPL.renderReadOnlyTree(a.tasks || [], effectiveBlockDueDate, effectiveBlockLatePolicy, 0);
+                        assignmentsHtml += TPL.getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml);
+                    });
+                }
+
+                const builderContainerId = `builder-container-${index}`;
+                html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId);
             });
-            observer.observe(viewProgress, { attributes: true });
-            window._timelineObserverAttached = true;
+            
+            container.innerHTML = TPL.getTimelineStyleBlock();
+            
+            const timelineWrapper = document.createElement('div');
+            timelineWrapper.style.borderLeft = '3px solid #E2E8F0';
+            timelineWrapper.style.marginLeft = '20px';
+            timelineWrapper.style.paddingLeft = '50px'; 
+            timelineWrapper.innerHTML = html;
+
+            container.appendChild(timelineWrapper);
+
+            if (scrollMode === 'current') {
+                setTimeout(scrollToCurrentWeek, 250);
+            } else if (scrollMode === 'target' && targetId) {
+                setTimeout(() => {
+                    const targetEl = document.getElementById(targetId);
+                    const viewContainer = document.querySelector('.view-section.active');
+                    if (targetEl && viewContainer) {
+                        const cRect = viewContainer.getBoundingClientRect();
+                        const nRect = targetEl.getBoundingClientRect();
+                        viewContainer.scrollBy({ top: nRect.top - cRect.top - 15, behavior: 'smooth' });
+                    }
+                }, 300);
+            }
+
+            const viewProgress = document.getElementById('timeline-container').closest('.view-content') || document.getElementById('view-progress');
+            if (viewProgress && !window._timelineObserverAttached) {
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        if (mutation.attributeName === 'class' || mutation.attributeName === 'style') {
+                            const style = window.getComputedStyle(viewProgress);
+                            if (style.display !== 'none' && viewProgress.classList.contains('active')) {
+                                if (!bState) setTimeout(scrollToCurrentWeek, 100); 
+                            }
+                        }
+                    });
+                });
+                observer.observe(viewProgress, { attributes: true });
+                window._timelineObserverAttached = true;
+            }
+
+        } catch (error) {
+            console.error("Timeline Render Crashed:", error);
+            container.innerHTML = `
+                <div style="padding:20px; background:#FEE2E2; border:2px solid #EF4444; border-radius:10px; margin: 20px;">
+                    <h3 style="color:#B91C1C; margin-top:0;">⚠️ 進度軸渲染失敗</h3>
+                    <p style="color:#7F1D1D;">錯誤原因：${error.message}</p>
+                    <p style="color:#7F1D1D; font-size: 0.9em; margin-bottom:0;">(請將此截圖回報給工程團隊)</p>
+                </div>
+            `;
         }
     }
 
     function renderBuilderUI() {
+        const TPL = window.TimelineTemplates;
         if (!bState || !TPL) return;
         const container = document.getElementById(bState.containerId);
         if (!container) return;
 
         let classResOpts = '';
-        const classResList = (db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
+        const classResList = (db && db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
         if (classResList.length > 0) {
             classResOpts = classResList.map(r => {
                 const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
@@ -321,7 +328,7 @@ window.FeatureTimeline = (() => {
         let tasksHtml = bState.tasks && bState.tasks.length > 0 ? TPL.renderBuilderTree(bState.tasks, [], classResOpts) : '';
         let tasksContainerHtml = tasksHtml ? `<div style="margin-bottom: 15px;">${tasksHtml}</div>` : '';
         
-        const allAssignsForHistory = (db.assignments || []).filter(a => a.class_id === bState.classId);
+        const allAssignsForHistory = (db && db.assignments || []).filter(a => a.class_id === bState.classId);
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : TPL.getHistoryDropdownHtml(allAssignsForHistory, bState.containerId);
 
         container.innerHTML = TPL.getBuilderFormHtml(bState, classResOpts, tasksContainerHtml, historyHtml);
@@ -352,7 +359,8 @@ window.FeatureTimeline = (() => {
             }, 50);
         },
         editAssignment: (assignId) => {
-            const a = (db.assignments || []).find(x => x.id === assignId);
+            if (!db || !db.assignments) return;
+            const a = db.assignments.find(x => x.id === assignId);
             if (!a) return;
             if (!checkCanEditTimeline(a.class_id)) return alert('權限不足：您的身分無法修改此作業。');
             
@@ -360,10 +368,8 @@ window.FeatureTimeline = (() => {
             let raw = cls.raw_data || {};
             if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
 
-            // 使用防禦性函式取得 Sessions
-            let sessions = getTimelineSessions(cls);
-            
-            const assignmentDates = (db.assignments || []).filter(ast => ast.class_id === a.class_id).map(ast => ast.target_date);
+            let sessions = getTimelineSessions(cls, window.UtilsDate);
+            const assignmentDates = db.assignments.filter(ast => ast.class_id === a.class_id).map(ast => window.UtilsDate.normalizeDateString(ast.target_date));
             sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
             const mode = cls.calcMode || 'single';
@@ -373,14 +379,15 @@ window.FeatureTimeline = (() => {
             else if (mode === 'weekly') {
                 const weeksMap = new Map();
                 sessions.forEach(d => {
-                    const weekStr = DateUtils.getWeekStartStr(d, weekStartSetting);
+                    const weekStr = window.UtilsDate.getWeekStartStr(d, weekStartSetting);
                     if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
                     weeksMap.get(weekStr).push(d);
                 });
                 weeksMap.forEach((chunk) => timelineNodes.push({ dates: chunk }));
             }
 
-            const nodeIndex = timelineNodes.findIndex(node => node.dates.includes(a.target_date));
+            const targetDateStr = window.UtilsDate.normalizeDateString(a.target_date);
+            const nodeIndex = timelineNodes.findIndex(node => node.dates.includes(targetDateStr));
             const cId = `builder-container-${nodeIndex >= 0 ? nodeIndex : 0}`; 
 
             bState = JSON.parse(JSON.stringify(a));
@@ -414,7 +421,9 @@ window.FeatureTimeline = (() => {
         },
         
         confirmLinePush: (assignId, classId) => {
-            const a = (db.assignments || []).find(x => x.id === assignId);
+            const TPL = window.TimelineTemplates;
+            if(!db || !db.assignments) return;
+            const a = db.assignments.find(x => x.id === assignId);
             if (!a || !TPL) return;
 
             const cls = db.classes.find(c => c.id === classId);
@@ -448,9 +457,7 @@ window.FeatureTimeline = (() => {
                 if (!window.ServiceLineNotify || typeof window.ServiceLineNotify.pushAssignment !== 'function') {
                     throw new Error("系統提示：LINE 推播微服務尚未載入。");
                 }
-                
                 await window.ServiceLineNotify.pushAssignment(classId, assignId);
-                
                 document.getElementById('line-push-modal').remove();
                 alert('✅ 已成功發送至 LINE 群組！');
             } catch (err) {
@@ -461,7 +468,9 @@ window.FeatureTimeline = (() => {
         },
 
         moveAssignment: (assignId, classId) => {
-            const a = (db.assignments || []).find(x => x.id === assignId);
+            const TPL = window.TimelineTemplates;
+            if(!db || !db.assignments) return;
+            const a = db.assignments.find(x => x.id === assignId);
             if (!a || !TPL) return;
             if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法搬移此作業。');
 
@@ -469,7 +478,7 @@ window.FeatureTimeline = (() => {
             overlay.id = 'move-assign-modal';
             overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
             const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
-            overlay.innerHTML = TPL.getMoveAssignModalHtml(cleanTitle, a.target_date, a.id, classId);
+            overlay.innerHTML = TPL.getMoveAssignModalHtml(cleanTitle, window.UtilsDate.normalizeDateString(a.target_date), a.id, classId);
             document.body.appendChild(overlay);
         },
         submitMove: async (assignId, classId, oldDate) => {
@@ -505,8 +514,8 @@ window.FeatureTimeline = (() => {
             }
         },
         copyHistory: (historyId) => {
-            if(!historyId) return;
-            const a = (db.assignments || []).find(x => x.id === historyId);
+            if(!historyId || !db || !db.assignments) return;
+            const a = db.assignments.find(x => x.id === historyId);
             if (!a) return;
             syncState(); 
             bState.title = a.title; bState.description = a.description;
@@ -526,14 +535,14 @@ window.FeatureTimeline = (() => {
             }
 
             const assignNewIdsRecursive = (tasksList) => {
-                return tasksList.map(t => {
+                return (tasksList || []).map(t => {
                     const cloned = { ...t, id: `task_${Date.now()}_${Math.random()}` };
                     delete cloned.resource_id;
                     if (cloned.type === 'group' && cloned.subTasks) cloned.subTasks = assignNewIdsRecursive(cloned.subTasks);
                     return cloned;
                 });
             };
-            bState.tasks = assignNewIdsRecursive(JSON.parse(JSON.stringify(a.tasks)));
+            bState.tasks = assignNewIdsRecursive(JSON.parse(JSON.stringify(a.tasks || [])));
             renderBuilderUI();
         },
         deleteHistoryTemplate: async () => {
@@ -660,7 +669,8 @@ window.FeatureTimeline = (() => {
         },
         addResourceTaskAsLink: (pathStr, resId) => {
             syncState();
-            const res = (db.resourceLibrary || []).find(r => r.id === resId);
+            if(!db || !db.resourceLibrary) return;
+            const res = db.resourceLibrary.find(r => r.id === resId);
             if (!res) return;
             
             let targetArr;
@@ -682,7 +692,7 @@ window.FeatureTimeline = (() => {
         dragAssignStart: (e, id) => { dragAssignId = id; e.dataTransfer.effectAllowed = 'move'; },
         dropAssign: async (e, targetId, classId) => {
             e.preventDefault(); e.stopPropagation(); 
-            if (!dragAssignId || dragAssignId === targetId) return;
+            if (!dragAssignId || dragAssignId === targetId || !db || !db.assignments) return;
 
             const arr = db.assignments;
             const fromIdx = arr.findIndex(a => a.id === dragAssignId);
@@ -713,7 +723,7 @@ window.FeatureTimeline = (() => {
         },
         dropAssignToNode: async (e, targetDate, classId) => {
             e.preventDefault();
-            if (!dragAssignId) return;
+            if (!dragAssignId || !db || !db.assignments) return;
             const dragged = db.assignments.find(a => a.id === dragAssignId);
             
             if (dragged && dragged.target_date !== targetDate) {
@@ -753,7 +763,7 @@ window.FeatureTimeline = (() => {
             delete mergedRawData.allow_late; delete mergedRawData.late_policy.is_inherited; 
             
             const payload = {
-                class_id: bState.classId, target_date: bState.target_date, title: bState.title, description: bState.description,
+                class_id: bState.classId, target_date: window.UtilsDate.normalizeDateString(bState.target_date), title: bState.title, description: bState.description,
                 due_date: bState.due_date || null, is_published: bState.is_published, tasks: [...bState.tasks], raw_data: mergedRawData
             };
 
@@ -775,8 +785,9 @@ window.FeatureTimeline = (() => {
                     if (!data) throw new Error("資料庫拒絕了請求");
                     db.assignments.push(data); savedId = data.id; 
                 }
+                const savedClassId = bState.classId; // 保存下來供 render 使用
                 bState = null;
-                renderTimeline(payload.class_id, 'target', `assign-block-${savedId}`);
+                renderTimeline(savedClassId, 'target', `assign-block-${savedId}`);
             } catch (err) {
                 alert('❌ 作業儲存失敗: ' + err.message);
                 btnEl.innerHTML = originalText; btnEl.disabled = false;
