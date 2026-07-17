@@ -130,18 +130,18 @@
         </div>
     </div>
 
-    <!-- 🌟 020_js_core: 資料庫實例與全域日期工具 (必須在 Feature 前載入) -->
+    <!-- 🌟 020_js_core: 資料庫實例、API 模組與全域日期工具 (必須在 Feature 前載入) -->
     <script type="module" src="../020_js_core/supabase-client.js?v=16"></script>
+    <script src="../020_js_core/api.js?v=16"></script> <!-- ✅ 白皮書新增掛載：外部通訊層 -->
     <script src="../020_js_core/utils-date.js?v=3"></script>
 
     <!-- 🌟 120_student_core: 學生端時間軸渲染大腦 -->
-    <script defer src="../120_student_core/feature-student-timeline.js?v=8"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=9"></script> <!-- ✅ 版本號升級至 v9 -->
     
     <script defer>
         function switchClass(newClassId) {
             try {
                 sessionStorage.setItem('currentClassId', newClassId);
-                // 同步更新至本地儲存，以便下次自動記憶
                 const sessionData = JSON.parse(localStorage.getItem('LogOnEnglish_Session') || '{}');
                 if (sessionData.id) {
                     localStorage.setItem(`LogOnEnglish_LastClass_${sessionData.id}`, newClassId);
@@ -152,7 +152,6 @@
             }
         }
 
-        // 🚀 v4.0 全新雲端初始化流程：捨棄 LocalStorage，直接驗證 Supabase Auth
         document.addEventListener("DOMContentLoaded", () => {
             const headerTitle = document.getElementById('dynamic-student-title');
             const switcherContainer = document.getElementById('class-switcher-container');
@@ -165,13 +164,9 @@
                     clearInterval(initInterval);
                     
                     try {
-                        // 1. 取得真實授權 User (拒絕幽靈快取)
                         const { data: { user }, error: authErr } = await window.supabaseClient.auth.getUser();
                         if (authErr || !user) throw new Error("授權無效或已登出");
 
-                        console.log("🚨 [Debug 1] 已驗證學生 ID:", user.id);
-
-                        // 同步抓取最新 profiles 以顯示姓名
                         const { data: profile } = await window.supabaseClient
                             .from('profiles')
                             .select('name')
@@ -182,7 +177,6 @@
                         headerTitle.innerText = `LogOnEnglish | ${displayName} 🚀`;
                         document.title = `${displayName} 的專屬教室 | LogOnEnglish`;
 
-                        // 2. 🌟 關鍵修復：改用 user_id 查詢，且強制掛載軟刪除過濾
                         const { data: enrollData, error: enrollErr } = await window.supabaseClient
                             .from('student_enrollments')
                             .select('class_id')
@@ -197,7 +191,6 @@
                         }
 
                         if (classIds.length > 0) {
-                            // 3. 查詢班級主檔，同樣過濾被刪除的班級
                             const { data: classes, error: classErr } = await window.supabaseClient
                                 .from('classes')
                                 .select('id, name')
@@ -247,7 +240,6 @@
             }, 5000);
         });
 
-        // 🌟 v4.0 規格修復：正確從 profiles 與 JSONB raw_data 中拉取個資
         async function openProfileModal() {
             try {
                 const { data: { user } } = await window.supabaseClient.auth.getUser();
@@ -265,7 +257,6 @@
                 document.getElementById('profile-username').value = profile.name || '';
                 document.getElementById('profile-password').value = '';
                 
-                // 正確解析 JSONB 內的 drive_url
                 const rawData = profile.raw_data || {};
                 document.getElementById('profile-drive').value = rawData.drive_url || rawData.driveLink || '尚未綁定雲端硬碟';
                 
@@ -276,7 +267,6 @@
             }
         }
 
-        // 🌟 v4.0 規格修復：嚴格分流 profiles 更新與 Authentication 密碼更新
         async function saveProfile() {
             const newName = document.getElementById('profile-username').value.trim();
             const newPwd = document.getElementById('profile-password').value.trim();
@@ -294,7 +284,6 @@
             try {
                 const { data: { user } } = await window.supabaseClient.auth.getUser();
                 
-                // 1. 更新名稱至 profiles 表格
                 const { error: profileErr } = await window.supabaseClient
                     .from('profiles')
                     .update({ name: newName })
@@ -302,7 +291,6 @@
                 
                 if (profileErr) throw profileErr;
 
-                // 2. 🔒 如果有填密碼，必須呼叫 auth.updateUser 交由雲端驗證核心處理
                 if (newPwd) {
                     const { error: authErr } = await window.supabaseClient.auth.updateUser({
                         password: newPwd

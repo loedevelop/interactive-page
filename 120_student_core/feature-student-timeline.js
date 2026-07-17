@@ -1,8 +1,8 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & 時間引擎極致防禦版：
- * 1. 徹底消滅 new Date() 與手動 setHours 計算逾期的髒邏輯。
- * 2. 全面委派給 window.UtilsDate.isPastDue()，保證時間判斷標準一致。
+ * 🌟 UX 視覺終極打磨版 & API 解耦版 (v9.0)：
+ * 1. 徹底消滅 new Date()，委派給 UtilsDate 判斷逾期。
+ * 2. 徹底消滅底層 Fetch 邏輯，全面委派給 ApiService.uploadToGAS 負責通訊與錯誤邊界攔截。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -185,7 +185,6 @@ window.FeatureStudentTimeline = (() => {
             });
         }
 
-        // 🌟 修復點：透過 UtilsDate 取得今天，拒絕原生的 new Date()
         const todayStr = DateUtils.getTaiwanTodayString();
         const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
 
@@ -327,7 +326,6 @@ window.FeatureStudentTimeline = (() => {
                     let isLateUpload = false;
                     let allowLateFlag = aRaw.allow_late !== false;
                     
-                    // 🌟 修復點：透過 UtilsDate.isPastDue() 精準判斷逾期，拔除髒 Code
                     if (effectiveBlockDueDate) {
                         isLateUpload = DateUtils.isPastDue(effectiveBlockDueDate);
                     }
@@ -522,18 +520,31 @@ window.FeatureStudentTimeline = (() => {
                 alert(`❌ 進度同步失敗：\n${err.message || err.details}`);
             }
         },
+        
+        // 🌟 解耦重構版：將 API 呼叫徹底移交 ApiService
         handleFileSelect: async (inputElement, assignmentId, taskId, taskTitle, statusId, dateKey, isLate) => {
             const filesArray = Array.from(inputElement.files);
             if (filesArray.length === 0) return;
             const statusEl = document.getElementById(statusId);
             if (!statusEl) return;
 
-            statusEl.textContent = '⏳ 檢查檔案...';
-            statusEl.style.color = '#F59E0B';
+            // UI 狀態輔助閉包 (Clean UX Controller)
+            const resetInput = () => { inputElement.value = ''; };
+            const updateStatus = (msg, color) => {
+                statusEl.textContent = msg;
+                statusEl.style.color = color;
+            };
+
+            updateStatus('⏳ 檢查檔案...', '#F59E0B');
 
             try {
                 const { userId, classId } = await getAuthContext(); 
                 if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
+
+                // 確認底層通訊模組已掛載
+                if (!window.ApiService || !window.ApiService.uploadToGAS) {
+                    throw new Error("系統 API 模組尚未載入完成，請重整網頁。");
+                }
 
                 let targetFolderId = studentDriveUrl;
                 const match = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
@@ -549,10 +560,9 @@ window.FeatureStudentTimeline = (() => {
                 const allImages = filesArray.every(file => file.type.startsWith('image/'));
                 const allAudio = filesArray.every(file => file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|m4a|ogg|aac)$/i));
 
-                const API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec'; 
-
+                // 🎵 情境 A：多檔案音檔上傳 (迴圈批次呼叫 API)
                 if (filesArray.length > 1 && allAudio) {
-                    statusEl.textContent = `⏳ 準備上傳 ${filesArray.length} 個音檔...`;
+                    updateStatus(`⏳ 準備上傳 ${filesArray.length} 個音檔...`, '#F59E0B');
                     for (let i = 0; i < filesArray.length; i++) {
                         const file = filesArray[i];
                         if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB。`);
@@ -561,39 +571,26 @@ window.FeatureStudentTimeline = (() => {
                         const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitle}_${i+1}${lateSuffixStr}${ext}`;
                         const finalMimeType = file.type || 'audio/mpeg';
                         
-                        statusEl.textContent = `🚀 上傳中 (${i+1}/${filesArray.length})...`;
+                        updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
                         const base64Data = (await readFileAsDataURL(file)).split(',')[1];
                         
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-                        const response = await fetch(API_URL, {
-                            method: 'POST', redirect: 'follow', signal: controller.signal,
-                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                            body: JSON.stringify({ fileData: base64Data, fileName: finalFileName, mimeType: finalMimeType, folderId: targetFolderId })
-                        });
-                        clearTimeout(timeoutId);
-
-                        if (!response.ok) throw new Error(`第 ${i+1} 個檔案連線異常`);
-                        const result = JSON.parse(await response.text());
-                        
-                        if (result.status !== 'success') {
-                            throw new Error(result.message || `第 ${i+1} 個檔案上傳失敗`);
-                        }
+                        // ✅ 將底層通訊委派給 API 層 (具備 Timeout 防護)
+                        await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId);
                     }
                     
-                    statusEl.textContent = '✅ 上傳成功';
-                    statusEl.style.color = '#10B981';
+                    updateStatus('✅ 上傳成功', '#10B981');
                     setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true), 500);
-                    inputElement.value = ''; 
+                    resetInput(); 
                     return; 
                 }
 
+                // 📄 情境 B：圖片合併 PDF 或是單一檔案上傳
                 let base64Data = '', finalMimeType = '', finalFileName = '';
 
                 if (filesArray.length > 1) {
                     if (!allImages) throw new Error("多檔案上傳目前僅支援「全圖片轉PDF」或「全音檔」。若為混合格式請分次上傳。");
-                    statusEl.textContent = '⏳ 合併 PDF...';
+                    updateStatus('⏳ 正在將圖片合併為 PDF...', '#F59E0B');
+                    
                     await ensureJsPDFLoaded();
                     const { jsPDF } = window.jspdf;
                     const pdf = new jsPDF(); 
@@ -617,35 +614,23 @@ window.FeatureStudentTimeline = (() => {
                     const ext = file.name.substring(file.name.lastIndexOf('.'));
                     finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitle}${lateSuffixStr}${ext}`;
                     finalMimeType = file.type;
-                    statusEl.textContent = '⏳ 轉換...';
+                    
+                    updateStatus('⏳ 處理檔案中...', '#F59E0B');
                     base64Data = (await readFileAsDataURL(file)).split(',')[1];
                 }
                 
-                statusEl.textContent = '🚀 上傳中...';
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-                const response = await fetch(API_URL, {
-                    method: 'POST', redirect: 'follow', signal: controller.signal,
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ fileData: base64Data, fileName: finalFileName, mimeType: finalMimeType, folderId: targetFolderId })
-                });
-                clearTimeout(timeoutId); 
-
-                if (!response.ok) throw new Error(`連線異常 (${response.status})`);
-                const result = JSON.parse(await response.text());
+                updateStatus('🚀 上傳雲端中...', '#3B82F6');
                 
-                if (result.status === 'success') {
-                    statusEl.textContent = '✅ 上傳成功';
-                    statusEl.style.color = '#10B981';
-                    setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true), 500);
-                } else throw new Error(result.message || '雲端未知錯誤');
+                // ✅ 將底層通訊委派給 API 層
+                await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId);
+
+                updateStatus('✅ 上傳成功', '#10B981');
+                setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true), 500);
 
             } catch (err) {
-                statusEl.textContent = (err.name === 'AbortError') ? '❌ 上傳逾時' : `❌ 失敗: ${err.message}`;
-                statusEl.style.color = '#EF4444';
+                updateStatus(`❌ 失敗: ${err.message}`, '#EF4444');
             } finally {
-                inputElement.value = ''; 
+                resetInput(); 
             }
         },
         openDriveAndCheck: async (assignmentId, taskId) => {

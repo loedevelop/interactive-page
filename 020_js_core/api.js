@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：020_js_core/api.js
- * 🌟 v6.2 白皮書終極版：維持嚴格資料分流，新增 fetchClassStaff 教職員獲取邏輯
- * 描述：網路通訊層核心樞紐。純粹負責與 Supabase 進行安全的資料交換。
+ * 🌟 v6.3 白皮書終極版：維持嚴格資料分流，新增 GAS 檔案上傳微服務封裝
+ * 描述：網路通訊層核心樞紐。純粹負責與 Supabase 及外部 Edge/GAS 進行安全的資料交換。
  */
 
 const ApiService = (() => {
@@ -126,7 +126,7 @@ const ApiService = (() => {
         }
     };
 
-    // 🧑‍🏫 全新加入：專職獲取「教職員/團隊」名單
+    // 🧑‍🏫 專職獲取「教職員/團隊」名單
     const fetchClassStaff = async (classId) => {
         try {
             if (!classId) throw new Error("缺少 classId 參數");
@@ -262,13 +262,50 @@ const ApiService = (() => {
         }
     };
 
+    // ==========================================
+    // 4. 外部微服務整合 (External Services)
+    // ==========================================
+    const uploadToGAS = async (base64Data, fileName, mimeType, folderId) => {
+        const API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 強制 60 秒錯誤邊界防護
+
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ fileData: base64Data, fileName, mimeType, folderId })
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) throw new Error(`連線異常 (HTTP ${response.status})`);
+            const result = JSON.parse(await response.text());
+            
+            if (result.status !== 'success') {
+                throw new Error(result.message || '雲端儲存空間回報未知錯誤');
+            }
+            return result;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error('上傳逾時：檔案可能過大或網路不穩定，請分批上傳或檢查網路連線。');
+            }
+            console.error("[API Error - uploadToGAS]", error);
+            throw error;
+        }
+    };
+
     return { 
         fetchClasses, 
         fetchStudents, 
         fetchClassStaff,
         fetchAssignments, 
         syncProgress,
-        archiveClass
+        archiveClass,
+        uploadToGAS
     };
 })();
 

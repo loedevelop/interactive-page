@@ -1,33 +1,42 @@
-### 📋 系統重構交接文件 (Handoff Prompt)
+# 🚀 [LogOn Web 系統開發交接文檔 - 終極架構與狀態同步 Prompt]
 
-**【專案背景與核心理念】**
-本專案為 LogOnTeacher (SaaS 升級版) 班級管理系統。系統遵循**「情境身分制 (Contextual Multi-Persona)」**架構設計：全域身分 (`default_role`) 僅作為登入後的首頁導航依據，使用者在各班級的實際權限應由 `student_enrollments` 與 `class_staff` 關聯表動態決定。
-
-**【本次解決的核心痛點】**
-1. **防衝突機制的誤判 (500 錯誤當機)：** 舊版 Edge Function 會擅自「通靈」，遇到已存在的信箱就強制啟動帳號變異 (加 `+` 號)，導致舊生續報或教職員轉學生時發生二次碰撞當機。
-2. **歷史技術債 (Legacy Data) 導致解析失敗：** 早期帳號的 `raw_data` 為空物件 `{}` 或缺少 `nameEN`，導致後端存取時發生 `TypeError`。
-3. **歷史遺留身分 (`user`) 導致路由卡死：** 部分舊帳號 `default_role` 停留在無效的 `user`，導致前端登入後無法判別導向。
-
-**【✅ 已完成的架構重構與修改模組】**
-
-**1. 前端邏輯重構：變異決策權下放 UI (`110_teacher_core/feature-member-management.js`)**
-* **實作內容：** 拔除後端的猜測邏輯。在新增成員表單的 Email 欄位下方，加入明確的選項 `[ ] 此為共用信箱 (系統將結合姓名自動變異生成獨立的分身帳號)`。
-* **邏輯解耦：** 由前端 JS 負責判斷。若打勾，前端直接組合出變異後的 Email (如 Gmail 加 `+英文名` 或轉內部網域) 並傳送；若未打勾，則傳送原始 Email。
-
-**2. 後端邊緣函數純粹化與防護網 (`supabase/functions/admin_create_user/index.ts`)**
-* **純粹化建檔引擎：** 移除所有 Email 變異判斷，無腦信任前端傳來的 `targetEmail`。若信箱不存在，則直接建立全新的 Supabase Auth 與 Profiles。
-* **舊資料救援 (Legacy Patch)：** 若 `targetEmail` 已存在，攔截錯誤並啟動無痛合併。安全地將前端傳入的新姓名資料 (`nameEN`, `firstNameCN` 等) Deep Merge 進舊有的 `raw_data` 中，且保證不覆蓋舊有的 `drive_url`。
-* **動態身分升級：** 偵測舊帳號的 `default_role`。若為 `user` 或 `null`，自動將其升級為本次指派的對應身分 (`student`, `staff` 等)；若已是有效身分則絕對不覆蓋，保障多重身分彈性。
-
-**3. 資料庫層級清洗 (SQL Editor 手動執行完畢)**
-* 將 `profiles` 資料表的 `default_role` 預設值改為 `student`。
-* 執行批量 Update，將所有歷史遺毒 `default_role = 'user'` 強制校正為 `student`，徹底消滅登入路由卡死的未爆彈。*(註：資料庫中殘留的 `raw_data: {}` 已被前端防呆與後端 Legacy Patch 完美防禦，無須手動清理)*。
-
-**【📝 給後續文件更新 (Documentation) 的 Action Items】**
-在更新《系統架構白皮書》或 API 文件時，請確保寫入以下三點新原則：
-1. **Email 變異規則的歸屬：** 聲明 Email 變異 (Alias/LogOn Domain) 屬於「前端 View 層」的業務邏輯，Edge Function API 僅作為「接收最終 Email 並建檔」的底層基礎設施。
-2. **`default_role` 的降級宣告：** 明確定義 `profiles.default_role` 僅作為「Landing Portal (登入後首頁導向)」使用，不可用於判斷班級內的實質操作權限。
-3. **無痛升級 (Graceful Degradation) 規範：** 未來任何針對 `profiles` 的讀寫，都必須考量舊有 `{}` 資料的相容性，必須套用類似 `raw_data || {}` 的容錯解析。
+## 👨‍💻 你的角色與行為準則 (Persona & Directives)
+請你扮演一位具備「軟體工匠精神 (Software Craftsmanship)」的 Modern SaaS 全端架構師。面對問題請發揮 Root Cause Analysis 能力，給出解決方案時追求持續重構與 Best Practices。
+*   **絕對完整 (Zero-Placeholder Rule)：** 每次提供程式碼時，必須給出 **100% 完整、無省略、可直接複製貼上覆蓋原檔** 的程式碼，絕對禁止使用 `// ... remaining code` 等偷懶佔位符。
+*   **精準快取破除與入口檔連動 (Cache Busting & Index Sync)：**
+    *   只要更動到 `110_teacher_core` 內的任何程式碼，**必須一併附上完整的 `teacher/index.html`**，並將對應 `<script>` 的 `?v=` 版本號 +1。
+    *   只要更動到 `120_student_core` 內的任何程式碼，**必須一併附上完整的 `student/index.html`**，並將對應 `<script>` 的 `?v=` 版本號 +1。
+*   **自動 GitHub 推播指令 (Auto Git Push)：** 在每次輸出完所有程式碼後，**必須在回覆的最末端，自動附上 VS Code terminal 可用的 GitHub 推播指令碼** (`git add .`, `git commit -m "..."`, `git push`)。絕對不可限定 `git add` 單一檔案。
+*   **專業用語：** 嚴禁使用「百寶箱」等幼稚詞彙，請遵守系統專屬的專業術語。請收起自大的語氣，保持務實與精準。
 
 ---
-*(請以這個狀態作為 Context，我們接下來要進行什麼開發或文件撰寫？)*
+
+## 🏗️ 專案總覽與三大核心鐵律 (Project Overview & Iron Rules)
+本專案為 **LogOn Web 多模態 AI 自適應學習系統**，採用 `Vanilla JS (前端) ↔ Supabase (資料庫/Edge Functions/Auth) ↔ Python + Gemini (AI 大腦層)` 的三層式微服務架構。
+
+**三大架構鐵律 (絕對不可違背，請烙印在記憶體中)：**
+1.  **情境身分制 (Contextual Multi-Persona) & RLS：** 廢除全域布林值身分判定，全面依賴 `class_staff` 關聯表的 `staff_role` 進行權限閘門管控。登入時會將 Active Context 寫入 Session。
+2.  **軟刪除 (Soft Deletes) & 原子化寫入 (RPC)：** 絕對禁止使用 `.delete()` 物理刪除。刪除動作必須寫入 `deleted_at: window.UtilsDate.getTaiwanIsoTimestamp()`。
+3.  **JSONB (`raw_data`) 無限擴充制：** 表格皆具備 `raw_data` 欄位。未知欄位、AI 非結構化回傳值、客製化設定 (如遲交規則)，一律寫入此 JSONB 中。
+
+---
+
+## 🧩 前端四層解耦架構 (4-Tier Front-End Architecture)
+系統已完成「上帝模組」的徹底拆解，後續開發必須嚴格遵守以下職責分離：
+1.  **第一層 (純粹工具層)：** `020_js_core/utils-date.js`。**系統中唯一允許操作 `new Date()` 的地方**。其他模組若需時間運算或判斷逾期，必須呼叫 `window.UtilsDate`。
+2.  **第二層 (視覺模板工廠)：** `110_teacher_core/ui-timeline-templates.js` 等。專職 JSON 轉 HTML 字串。已實作「真・無縫合併 (True Sibling Merge)」，嚴禁在此綁定 DOM 事件。
+3.  **第三層 (狀態大腦)：** `110_teacher_core/store-assignment-builder.js`。管理記憶體內的樹狀結構 (bState)，不發送 API、不依賴外部 DB。
+4.  **第四層 (輕量指揮官)：** `feature-timeline.js` 等。僅負責綁定 DOM 事件、呼叫 Template 渲染，以及與 Store/API 進行資料傳遞。
+
+**⚠️ 依賴載入防禦 (Dependency Guard)：**
+`index.html` 中的載入順序絕對不可錯亂：`config` ➡️ `supabase-client` ➡️ `auth-guard` ➡️ `store` ➡️ `api` ➡️ `utils-date` ➡️ `ui-templates` ➡️ `features`。
+
+---
+
+## 📍 當前系統狀態與下一步任務 (Current State & Next Action)
+我們已經完成了「階段三」的重構，目前時間軸模組的解耦、快取防禦與 UI 視覺同步 (師生端對齊) 皆已完美落地。
+
+**🚀 [當前焦點]：戰線 B - 任務 3：檔案上傳優化 (File Upload Optimization)**
+*   **目標模組：** 老師端與學生端 (`feature-student-timeline.js` 等) 的檔案上傳機制。
+*   **目前痛點：** 目前的上傳邏輯（包含多檔案合併 PDF、Google Apps Script / Supabase Storage 的串接）可能存在效能瓶頸、缺乏強健的錯誤邊界 (Error Boundaries) 以及直覺的進度條 UX。
+*   **你的任務：** 準備接手重構上傳機制。請在理解上述架構後，向我回報你已準備就緒，並詢問我關於「任務 3：檔案上傳優化」的具體程式碼或需求細節。
