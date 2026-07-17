@@ -1,9 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦版 (v12.0) - Root Cause 修復版：
+ * 🌟 UX 視覺終極打磨版 & API 解耦版 (v13.0) - 404 路徑修復版：
  * 1. 徹底消滅 new Date()，委派給 UtilsDate 判斷逾期。
  * 2. 嚴格遵守情境身分制：精準抓取 student_enrollments 的專屬 Folder ID。
  * 3. 嚴格遵守軟刪除鐵律：updateProgress 導入 deleted_at 取代物理 delete()。
+ * 4. [Hotfix] 修復 openDriveAndCheck 相對路徑 404 錯誤，自動補齊 Drive URL 前綴。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -58,7 +59,6 @@ window.FeatureStudentTimeline = (() => {
         try {
             const { userId, classId } = await getAuthContext();
 
-            // 1. 僅取得全域的 Profile Name
             const { data: profileData } = await window.supabaseClient
                 .from('profiles')
                 .select('name')
@@ -67,7 +67,6 @@ window.FeatureStudentTimeline = (() => {
                 
             studentUsername = profileData?.name || '學生';
 
-            // 2. 🌟 核心修復：從 student_enrollments 提取班級專屬隔離狀態
             const { data: enrollData, error: enrollErr } = await window.supabaseClient
                 .from('student_enrollments')
                 .select('raw_data, drive_link, drive_url')
@@ -83,10 +82,8 @@ window.FeatureStudentTimeline = (() => {
                 try { enrollRaw = JSON.parse(enrollRaw); } catch(e) { enrollRaw = {}; }
             }
 
-            // 🌟 雙軌降級機制落地：優先讀取 JSONB 中的新版 drive_folder_id，若無才 Fallback
             studentDriveUrl = enrollRaw.drive_folder_id || enrollData?.drive_link || enrollData?.drive_url || null;
 
-            // 3. 取得班級設定
             const { data: classData } = await window.supabaseClient
                 .from('classes')
                 .select('*')
@@ -94,7 +91,6 @@ window.FeatureStudentTimeline = (() => {
                 .single();
             currentClassConfig = classData || {};
 
-            // 4. 取得作業清單
             const { data: assignData, error: assignErr } = await window.supabaseClient
                 .from('assignments')
                 .select('*')
@@ -105,7 +101,6 @@ window.FeatureStudentTimeline = (() => {
             if (assignErr) throw assignErr;
             assignments = assignData || [];
 
-            // 5. 取得完成狀態 (新增軟刪除防禦)
             const { data: compData, error: compErr } = await window.supabaseClient
                 .from('task_completions')
                 .select('assignment_id, task_id')
@@ -522,7 +517,6 @@ window.FeatureStudentTimeline = (() => {
                 setTimeout(scrollToCurrentWeek, 100);
             }
         },
-        // 🌟 修復違規：全面導入「軟刪除」取代 physical delete
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             try {
                 const { userId, classId } = await getAuthContext();
@@ -545,7 +539,6 @@ window.FeatureStudentTimeline = (() => {
                         payload.raw_data = { drive_file_ids: fileIds };
                     }
 
-                    // 先將該任務的殘留紀錄「軟刪除」，以防約束衝突
                     await window.supabaseClient.from('task_completions')
                         .update({ deleted_at: nowTimestamp })
                         .match({ task_id: taskId, student_id: userId, class_id: classId })
@@ -554,7 +547,6 @@ window.FeatureStudentTimeline = (() => {
                     const { error } = await window.supabaseClient.from('task_completions').insert([payload]);
                     if (error) throw error;
                 } else {
-                    // 取消打勾時，套用軟刪除
                     const { error } = await window.supabaseClient.from('task_completions')
                         .update({ deleted_at: nowTimestamp })
                         .match({ task_id: taskId, student_id: userId, class_id: classId })
@@ -595,7 +587,6 @@ window.FeatureStudentTimeline = (() => {
                     throw new Error("系統 API 模組尚未載入完成，請重整網頁。");
                 }
 
-                // 若 studentDriveUrl 已經是乾淨的 ID（新版架構），這段 regex 會安全略過
                 let targetFolderId = studentDriveUrl;
                 const match = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
                 if (match && match[1]) targetFolderId = match[1];
@@ -680,8 +671,20 @@ window.FeatureStudentTimeline = (() => {
             }
         },
         
+        // 🌟 [Hotfix] 修復點：自動偵測並補齊 Google Drive 網域前綴
         openDriveAndCheck: async () => {
-            window.open(studentDriveUrl || "https://drive.google.com/", '_blank');
+            if (!studentDriveUrl) {
+                window.open("https://drive.google.com/", '_blank');
+                return;
+            }
+            
+            let targetUrl = studentDriveUrl;
+            // 若只有純粹的 ID，補上 https:// 讓瀏覽器解析為絕對路徑
+            if (!targetUrl.startsWith('http')) {
+                targetUrl = `https://drive.google.com/drive/folders/${targetUrl}`;
+            }
+            
+            window.open(targetUrl, '_blank');
         }
     };
 })();
