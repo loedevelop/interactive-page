@@ -1,10 +1,8 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦版 (v10.0)：
+ * 🌟 UX 視覺終極打磨版 & API 解耦版 (v11.0)：
  * 1. 徹底消滅 new Date()，委派給 UtilsDate 判斷逾期。
- * 2. 徹底消滅底層 Fetch 邏輯，全面委派給 ApiService.uploadToGAS。
- * 3. [BugFix] 淨化檔名中的 HTML 標籤，保留日期區間字串。
- * 4. [BugFix] 移除「檢視 Drive」自動打勾的錯誤邏輯，確保進度真實性。
+ * 2. [白皮書任務] 將 File ID 靜默寫入 Supabase JSONB，為背景重命名引擎打底。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -239,11 +237,8 @@ window.FeatureStudentTimeline = (() => {
                 } else {
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                     
-                    // 🌟 修復 1：淨化檔名，強制拔除所有可能來自教師端的 HTML 標籤
                     const pureTaskTitle = (task.title || '未命名任務').replace(/<[^>]*>?/gm, '').trim();
                     const safeTitleForJS = pureTaskTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                    
-                    // 保留 node.title 中的 ~ 符號，只替換不合法的檔名字元
                     const safeNodeTitle = node.title.replace(/[\\/:*?"<>|]/g, '_');
 
                     const uniqueId = `file-input-${course.id}-${task.id}`;
@@ -504,7 +499,8 @@ window.FeatureStudentTimeline = (() => {
                 setTimeout(scrollToCurrentWeek, 100);
             }
         },
-        updateProgress: async (assignmentId, taskId, isChecked) => {
+        // 🌟 擴充 updateProgress 接收 fileIds 並封裝進 JSONB 覆蓋寫入
+        updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             try {
                 const { userId, classId } = await getAuthContext();
                 const compositeKey = `${assignmentId}_${taskId}`;
@@ -513,8 +509,17 @@ window.FeatureStudentTimeline = (() => {
                 renderCourses(); 
                 
                 if (isChecked) {
-                    const { error } = await window.supabaseClient.from('task_completions').insert([{ assignment_id: assignmentId, task_id: taskId, student_id: userId, class_id: classId }]);
-                    if (error && error.code !== '23505') throw error;
+                    const payload = { assignment_id: assignmentId, task_id: taskId, student_id: userId, class_id: classId };
+                    // 若有取得 Google Drive 檔案 ID，則靜默封裝進 JSONB
+                    if (fileIds && fileIds.length > 0) {
+                        payload.raw_data = { drive_file_ids: fileIds };
+                    }
+
+                    // 確保重新上傳時會覆蓋舊的 File IDs
+                    await window.supabaseClient.from('task_completions').delete().match({ task_id: taskId, student_id: userId, class_id: classId });
+                    const { error } = await window.supabaseClient.from('task_completions').insert([payload]);
+                    
+                    if (error) throw error;
                 } else {
                     const { error } = await window.supabaseClient.from('task_completions').delete().match({ task_id: taskId, student_id: userId, class_id: classId });
                     if (error) throw error;
@@ -543,6 +548,8 @@ window.FeatureStudentTimeline = (() => {
 
             updateStatus('⏳ 檢查檔案...', '#F59E0B');
 
+            let uploadedFileIds = []; // 陣列：用來蒐集 GAS 回傳的 檔案 IDs
+
             try {
                 const { userId, classId } = await getAuthContext(); 
                 if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
@@ -556,11 +563,8 @@ window.FeatureStudentTimeline = (() => {
                 if (match && match[1]) targetFolderId = match[1];
 
                 const classPrefix = (classId || '0000').substring(0, 4);
-                
-                // 保證保留「~」號，絕不替換掉
                 const cleanDateKey = dateKey.replace(/[\\/:*?"<>|]/g, '_');
                 const safeDateStr = (cleanDateKey && cleanDateKey !== '未分類日期') ? `${cleanDateKey}_` : '';
-                
                 const lateSuffixStr = isLate ? '_late' : '';
                 
                 const allImages = filesArray.every(file => file.type.startsWith('image/'));
@@ -579,11 +583,14 @@ window.FeatureStudentTimeline = (() => {
                         updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
                         const base64Data = (await readFileAsDataURL(file)).split(',')[1];
                         
-                        await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId);
+                        // 呼叫 API 並將 assignmentId 與 taskId 傳給 GAS 貼標籤
+                        const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
+                        uploadedFileIds.push(result.fileId); // 記錄成功上傳的 ID
                     }
                     
                     updateStatus('✅ 上傳成功', '#10B981');
-                    setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true), 500);
+                    // 將整包 IDs 傳遞給資料庫儲存
+                    setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
                     resetInput(); 
                     return; 
                 }
@@ -624,10 +631,13 @@ window.FeatureStudentTimeline = (() => {
                 
                 updateStatus('🚀 上傳雲端中...', '#3B82F6');
                 
-                await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId);
+                // 呼叫 API 並將 assignmentId 與 taskId 傳給 GAS 貼標籤
+                const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
+                uploadedFileIds.push(result.fileId); // 記錄成功上傳的 ID
 
                 updateStatus('✅ 上傳成功', '#10B981');
-                setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true), 500);
+                // 將 IDs 傳遞給資料庫儲存
+                setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
 
             } catch (err) {
                 updateStatus(`❌ 失敗: ${err.message}`, '#EF4444');
@@ -636,7 +646,6 @@ window.FeatureStudentTimeline = (() => {
             }
         },
         
-        // 🌟 修復 2：移除自動打勾，點擊檢視就僅僅只是開啟新分頁
         openDriveAndCheck: async () => {
             window.open(studentDriveUrl || "https://drive.google.com/", '_blank');
         }

@@ -31,7 +31,6 @@
         .btn-primary:hover { background: #D97706; }
     </style>
 
-    <!-- 🌟 020_js_core: 確保核心與連線套件在 Header 提早解析，並加上版本號 -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="../020_js_core/config.js?v=15"></script>
     <script src="../020_js_core/auth-guard.js?v=15"></script>
@@ -130,13 +129,12 @@
         </div>
     </div>
 
-    <!-- 🌟 020_js_core: 資料庫實例、API 模組與全域日期工具 (必須在 Feature 前載入) -->
     <script type="module" src="../020_js_core/supabase-client.js?v=16"></script>
-    <script src="../020_js_core/api.js?v=16"></script> <!-- ✅ 白皮書新增掛載：外部通訊層 -->
+    <script src="../020_js_core/api.js?v=17"></script> 
     <script src="../020_js_core/utils-date.js?v=3"></script>
 
-    <!-- 🌟 120_student_core: 學生端時間軸渲染大腦 -->
-    <script defer src="../120_student_core/feature-student-timeline.js?v=10"></script> <!-- ✅ 版本號升級至 v9 -->
+    <!-- 🌟 v11 升級：File IDs JSONB 封裝與寫入 -->
+    <script defer src="../120_student_core/feature-student-timeline.js?v=11"></script> 
     
     <script defer>
         function switchClass(newClassId) {

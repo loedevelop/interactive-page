@@ -15,7 +15,6 @@
         <div class="bottom-nav">
             <div class="nav-section-title">全域管理 (Global)</div>
             <div class="class-item" id="nav-global-resources">📚 教學資源 (跨班派發)</div>
-            <!-- ⚙️ 班級主檔管理會由 ui-core.js 動態隱藏 -->
             <div class="class-item" id="nav-manage-classes">⚙️ 班級主檔管理</div>
             <div class="class-item" id="nav-profile">👤 系統帳號設定</div>
         </div>
@@ -28,7 +27,6 @@
                 
                 <div style="display: flex; align-items: center; gap: 15px;">
                     <div style="font-weight: 800; color: #64748B;" id="top-teacher-greeting">Hi, Teacher 👋</div>
-                    <!-- 直接綁定安全登出邏輯 -->
                     <button class="btn btn-danger" style="padding: 5px 12px; font-size: 0.85rem;" onclick="localStorage.clear(); sessionStorage.clear(); if(window.supabaseClient) window.supabaseClient.auth.signOut(); window.location.replace('../index.html?clear=true');">登出系統</button>
                 </div>
             </div>
@@ -37,7 +35,6 @@
                 <button class="tab-btn" data-target="view-progress-report" onclick="if(window.FeatureProgress && window.TeacherUI) window.FeatureProgress.renderProgressReport(window.TeacherUI.getCurrentClassId());">📈 班級進度總表</button>
                 <button class="tab-btn" data-target="view-resources">📁 班級資源</button>
                 <button class="tab-btn" data-target="view-students">👥 班級成員管理</button>
-                <!-- ⚙️ 課程基本資料會由 ui-core.js 動態隱藏 -->
                 <button class="tab-btn" data-target="view-settings">⚙️ 課程基本資料</button>
             </div>
         </div>
@@ -154,7 +151,6 @@
         <div id="view-profile" class="view-section">
             <div class="top-bar"><div class="breadcrumb">👤 系統帳號設定</div></div>
             
-            <!-- 🌟 白皮書升級：移除舊版實體帳號切換選單，改為顯示真實雲端資訊 -->
             <div class="settings-card" style="border: 2px solid var(--primary);">
                 <h3 style="color: var(--primary-dark); margin-top: 0;">👤 當前登入資訊</h3>
                 <div id="profile-info-card" style="margin-top: 15px; padding: 15px; background: #F8FAFC; border-radius: 10px; line-height: 1.8;">
@@ -179,22 +175,19 @@
     <script src="../020_js_core/supabase-client.js?v=15"></script>
     <script src="../020_js_core/auth-guard.js?v=15"></script>
     <script src="../020_js_core/store.js?v=17"></script>  
-    <script src="../020_js_core/api.js?v=16"></script> <!-- ✅ 版本號升級至 v16：同步 GAS 上傳 API 模組 -->
+    <script src="../020_js_core/api.js?v=17"></script> 
     <script src="../020_js_core/utils-date.js?v=4"></script> 
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
     <script src="../110_teacher_core/ui-core.js?v=15"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=1"></script>
-    
-    <!-- 🚨 UI 模板引擎快取強制破除 (套用無縫合併視覺) -->
     <script src="../110_teacher_core/ui-timeline-templates.js?v=6"></script>
-
     <script src="../110_teacher_core/store-assignment-builder.js?v=2"></script> 
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
     <script src="../110_teacher_core/feature-class.js?v=24"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=1"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=55"></script> <!-- ✅ 版本號升級至 v55 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=55"></script> 
     <script src="../110_teacher_core/feature-resource.js?v=16"></script>
     <script src="../110_teacher_core/feature-profile.js?v=15"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=15"></script>
