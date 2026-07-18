@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v22.0)
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.0)
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -46,18 +46,24 @@ window.FeatureStudentTimeline = (() => {
         });
     }
 
+    // 🌟 核心防雷：智慧 URL 修復引擎，保留 ?usp=sharing 參數，防止 404
     function safeFormatUrl(url) {
         if (!url) return '';
         let trimmedUrl = String(url).replace(/['"]/g, '').trim();
         if (trimmedUrl === '') return '';
         
-        if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
-            if (trimmedUrl.length > 20 && !trimmedUrl.includes('/') && !trimmedUrl.includes('.')) {
-                return `https://drive.google.com/drive/folders/${trimmedUrl}`;
-            }
-            return `https://${trimmedUrl}`;
+        // 如果已經是完整的 http 或 https 開頭，直接回傳不亂動
+        if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
+            return trimmedUrl;
         }
-        return trimmedUrl;
+        
+        // 判斷是否為純 Google Drive ID (長度大於 20 且無斜線或點)
+        if (trimmedUrl.length > 20 && !trimmedUrl.includes('/') && !trimmedUrl.includes('.')) {
+            return `https://drive.google.com/drive/folders/${trimmedUrl}`;
+        }
+        
+        // 否則視為一般網域，補上 https://
+        return `https://${trimmedUrl}`;
     }
 
     async function fetchData() {
@@ -426,7 +432,6 @@ window.FeatureStudentTimeline = (() => {
             }
         },
 
-        // 🌟 補齊並轉傳 safeMatUrl 與 safeMatRange 參數給錄音艙
         openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {
             if (window.FeatureStudentAudio) {
                 window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange, async (audioData) => {

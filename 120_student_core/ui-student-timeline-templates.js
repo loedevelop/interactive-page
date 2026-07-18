@@ -67,7 +67,6 @@ window.UIStudentTimelineTemplates = (() => {
                         const safeTitleForJS = pureTaskTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                         const statusId = `upload-status-${course.id}-${task.id}`;
 
-                        // 🌟 精準提取所有音檔任務屬性
                         let originalScript = '';
                         let materialUrl = '';
                         let materialRange = '';
