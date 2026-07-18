@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層：負責將作業 JSON 轉化為 HTML 字串，徹底解決 Timeline 肥大問題。
+ * 🌟 純粹視覺模板層：負責將作業 JSON 轉化為 HTML 字串
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -16,7 +16,6 @@ window.UIStudentTimelineTemplates = (() => {
     }
 
     return {
-        // 渲染整個時間軸的核心
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
             let html = '';
             const reversedNodes = timelineNodes.map((node, index) => ({ node, weekIndex: index + 1 })).reverse();
@@ -27,7 +26,6 @@ window.UIStudentTimelineTemplates = (() => {
                 const isTaskDone = completedTasks.includes(compositeKey);
                 const checked = isTaskDone ? 'checked' : '';
 
-                // 🌟 新增對 audio_record 的圖示支援
                 let iconStr = task.type === 'check' ? '📌' : (task.type === 'link' ? '🔗' : (task.type === 'audio_record' ? '🎙️' : '📁'));
                 let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                 let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', this.checked)" ${checked}>`;
@@ -54,7 +52,6 @@ window.UIStudentTimelineTemplates = (() => {
                         }
                     }
                 } else if (task.type === 'audio_record') {
-                    // 🌟 錄音艙：專屬渲染區塊
                     taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title || '語音錄製任務'}</span>`;
 
                     if (!canUpload) {
@@ -70,16 +67,23 @@ window.UIStudentTimelineTemplates = (() => {
                         const safeTitleForJS = pureTaskTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                         const statusId = `upload-status-${course.id}-${task.id}`;
 
-                        // 提取原稿文字給錄音艙顯示
+                        // 🌟 精準提取所有音檔任務屬性
                         let originalScript = '';
-                        if (task.raw_data && task.raw_data.original_script) {
-                            originalScript = task.raw_data.original_script;
+                        let materialUrl = '';
+                        let materialRange = '';
+                        if (task.raw_data) {
+                            originalScript = task.raw_data.original_script || '';
+                            materialUrl = task.raw_data.material_url || '';
+                            materialRange = task.raw_data.material_range || '';
                         }
+                        
                         const safeScriptForJS = originalScript.replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
+                        const safeUrlForJS = safeFormatUrl(materialUrl).replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                        const safeRangeForJS = materialRange.replace(/'/g, "\\'").replace(/"/g, "&quot;");
 
                         btn = `
                             <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap;">
-                                <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}')" class="btn-action" style="background:#EF4444; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.4);">🎙️ 開啟錄音艙</button>
+                                <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="background:#EF4444; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.4);">🎙️ 開啟錄音艙</button>
                                 <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
                                 <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                             </div>

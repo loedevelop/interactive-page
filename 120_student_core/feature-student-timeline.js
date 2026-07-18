@@ -1,9 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v18.0)
- * 1. [Hotfix] 絕對防禦 Unique Constraint：使用 update 檢查後再 insert。
- * 2. [Hotfix] 徹底解決 404 相對路徑：加入 safeFormatUrl 引擎。
- * 3. [Refactor] HTML 渲染完全移至 UIStudentTimelineTemplates 模組。
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v22.0)
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -49,7 +46,6 @@ window.FeatureStudentTimeline = (() => {
         });
     }
 
-    // 🌟 核心引擎：解決相對路徑錯誤
     function safeFormatUrl(url) {
         if (!url) return '';
         let trimmedUrl = String(url).replace(/['"]/g, '').trim();
@@ -192,7 +188,6 @@ window.FeatureStudentTimeline = (() => {
         const todayStr = DateUtils.getTaiwanTodayString();
         const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
 
-        // 👉 將資料完全交給視覺工廠去渲染 HTML 字串
         const htmlString = window.UIStudentTimelineTemplates.renderTimelineNodes(
             timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl
         );
@@ -264,14 +259,12 @@ window.FeatureStudentTimeline = (() => {
                 renderCourses();
                 setTimeout(scrollToCurrentWeek, 100);
             } else if (viewId === 'resources') {
-                // 👉 開通：觸發專屬資源渲染大腦
                 if (window.FeatureStudentResource && currentClassConfig) {
                     window.FeatureStudentResource.init(currentClassConfig);
                 }
             }
         },
 
-        // 🌟 保留您精準的 Unique Constraint 絕對防禦
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             try {
                 const { userId, classId } = await getAuthContext();
@@ -433,10 +426,10 @@ window.FeatureStudentTimeline = (() => {
             }
         },
 
-        // 🎙️ 錄音艙：精準拋接音檔與寫入 GAS
-        openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS) => {
+        // 🌟 補齊並轉傳 safeMatUrl 與 safeMatRange 參數給錄音艙
+        openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {
             if (window.FeatureStudentAudio) {
-                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, async (audioData) => {
+                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange, async (audioData) => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
                     const statusEl = document.getElementById(statusId);
                     
@@ -456,7 +449,6 @@ window.FeatureStudentTimeline = (() => {
 
                         const classPrefix = (classId || '0000').substring(0, 4);
                         const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
-                        // 統一命名規則：日期_班級_學生姓名_任務標題_錄音檔名.webm
                         const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${audioData.fileName}`;
 
                         const result = await window.ApiService.uploadToGAS(audioData.base64, finalFileName, audioData.mimeType, targetFolderId, assignmentId, taskId);
@@ -465,7 +457,6 @@ window.FeatureStudentTimeline = (() => {
                             statusEl.textContent = '✅ 上傳成功';
                             statusEl.style.color = '#10B981';
                         }
-                        // 上傳完畢自動將任務打勾
                         setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [result.fileId]), 500);
 
                     } catch (err) {

@@ -1,9 +1,14 @@
+/**
+ * 📂 檔案路徑：120_student_core/feature-student-audio.js
+ * 🌟 學生端輕量指揮官：硬體授權、狀態機切換、5 分鐘防護與 Base64 轉換
+ */
+
 window.FeatureStudentAudio = (function() {
     let mediaRecorder = null;
     let audioChunks = [];
     let audioBlob = null;
     let timerInterval = null;
-    const MAX_SECONDS = 300; // 5分鐘硬極限
+    const MAX_SECONDS = 300; 
     let remainingSeconds = MAX_SECONDS;
     
     let el = {};
@@ -43,13 +48,12 @@ window.FeatureStudentAudio = (function() {
 
     function tickTimer() {
         if (remainingSeconds <= 0) {
-            stopRecording(); // 強制煞車，保護記憶體
+            stopRecording(); 
             return;
         }
         remainingSeconds--;
         el.timerDisplay.textContent = formatTime(remainingSeconds);
         
-        // 剩餘 30 秒警告色
         if (remainingSeconds <= 30) {
             el.timerDisplay.style.color = '#ef4444';
         }
@@ -59,7 +63,6 @@ window.FeatureStudentAudio = (function() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
-            // 嘗試取得跨平台支援的 MIME Type
             let mimeType = '';
             const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
             for (let type of types) {
@@ -77,9 +80,8 @@ window.FeatureStudentAudio = (function() {
             };
 
             mediaRecorder.onstop = handleRecordingStop;
-            mediaRecorder.start(200); // 確保斷線不掉檔
+            mediaRecorder.start(200); 
 
-            // UI 狀態機 -> recording
             el.btnStart.style.display = 'none';
             el.btnPause.style.display = 'flex';
             el.btnStop.style.display = 'flex';
@@ -104,7 +106,6 @@ window.FeatureStudentAudio = (function() {
             mediaRecorder.pause();
             clearInterval(timerInterval);
             
-            // UI 狀態機 -> paused
             el.btnPause.style.display = 'none';
             el.btnResume.style.display = 'flex';
             el.statusDot.style.backgroundColor = '#f59e0b';
@@ -118,7 +119,6 @@ window.FeatureStudentAudio = (function() {
             mediaRecorder.resume();
             timerInterval = setInterval(tickTimer, 1000);
             
-            // UI 狀態機 -> recording
             el.btnResume.style.display = 'none';
             el.btnPause.style.display = 'flex';
             el.statusDot.style.backgroundColor = '#ef4444';
@@ -141,7 +141,6 @@ window.FeatureStudentAudio = (function() {
         
         el.audioPlayback.src = URL.createObjectURL(audioBlob);
         
-        // UI 狀態機 -> review
         el.btnPause.style.display = 'none';
         el.btnResume.style.display = 'none';
         el.btnStop.style.display = 'none';
@@ -154,7 +153,7 @@ window.FeatureStudentAudio = (function() {
 
     function resetStudio() {
         if (el.audioPlayback.src) {
-            URL.revokeObjectURL(el.audioPlayback.src); // 釋放舊記憶體防 OOM
+            URL.revokeObjectURL(el.audioPlayback.src); 
         }
         audioChunks = [];
         audioBlob = null;
@@ -174,7 +173,7 @@ window.FeatureStudentAudio = (function() {
     function closeStudio() {
         stopRecording();
         if (timerInterval) clearInterval(timerInterval);
-        if (el.modal) el.modal.remove(); // 徹底摧毀 DOM
+        if (el.modal) el.modal.remove(); 
         onSubmitCallback = null;
     }
 
@@ -190,12 +189,10 @@ window.FeatureStudentAudio = (function() {
                 const base64Data = reader.result.split(',')[1];
                 const ext = audioBlob.type.includes('mp4') ? 'mp4' : 'webm';
                 
-                // [架構鐵律] 唯一允許的 UtilsDate 呼叫，確保時間戳記標準化
                 const timestamp = window.UtilsDate.getTaiwanIsoTimestamp().replace(/[:.]/g, '-');
                 const fileName = `Audio_${timestamp}.${ext}`;
                 
                 if (typeof onSubmitCallback === 'function') {
-                    // 將封裝好的資料回傳，交由 Timeline / API 層處理 GAS 上傳
                     await onSubmitCallback({
                         base64: base64Data,
                         fileName: fileName,
@@ -217,17 +214,12 @@ window.FeatureStudentAudio = (function() {
     }
 
     return {
-        /**
-         * Timeline 外部呼叫點，無縫開啟錄音艙
-         * @param {string} taskTitle 任務標題
-         * @param {string} transcriptText 純文字原稿 (直接從 JSONB 中撈取)
-         * @param {Function} submitCallback 封裝完成後的回傳函式
-         */
-        openStudio: function(taskTitle, transcriptText, submitCallback) {
+        // 🌟 精準掛載四個參數
+        openStudio: function(taskTitle, transcriptText, materialUrl, materialRange, submitCallback) {
             closeStudio(); 
             onSubmitCallback = submitCallback;
             
-            const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(transcriptText, taskTitle);
+            const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(transcriptText, taskTitle, materialUrl, materialRange);
             document.body.insertAdjacentHTML('beforeend', htmlString);
             
             initDOM();

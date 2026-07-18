@@ -1,14 +1,28 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
- * 🌟 學生端錄音艙視覺模板工廠：外框鎖死、文字區獨立捲動、底部控制區極致壓縮
+ * 🌟 學生端錄音艙視覺模板工廠：外框鎖死、文字區獨立捲動、加入 PDF 連結
  */
 
 window.UIAudioTemplates = {
-    getRecordingStudioHTML: function(transcriptText, taskTitle) {
-        // 安全處理跳行，若無文稿則顯示提示
+    // 🌟 接收四個參數，包含教材網址與範圍
+    getRecordingStudioHTML: function(transcriptText, taskTitle, materialUrl, materialRange) {
         const safeText = transcriptText ? String(transcriptText).replace(/\n/g, '<br>') : '<span style="color: #9ca3af; font-style: italic;">（老師未提供文字原稿，請直接錄音）</span>';
         const displayTitle = taskTitle || '未命名錄音作業';
         
+        let materialLinkHtml = '';
+        if (materialUrl) {
+            let rangeText = materialRange ? `<span style="font-size:0.85rem; color:#64748b; margin-left:8px; font-weight:bold;">(指定範圍：${materialRange})</span>` : '';
+            materialLinkHtml = `
+                <div style="margin-bottom: 15px; padding: 10px 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <span style="font-weight: 800; color: #3730a3; font-size: 0.95rem;">📂 參考教材：</span>
+                    <a href="${materialUrl}" target="_blank" style="background: #3b82f6; color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 2px rgba(59,130,246,0.3); transition: 0.2s;" onmouseover="this.style.backgroundColor='#2563eb'" onmouseout="this.style.backgroundColor='#3b82f6'">
+                        📄 開啟教材原檔
+                    </a>
+                    ${rangeText}
+                </div>
+            `;
+        }
+
         return `
         <div id="audio-studio-modal" style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);">
             <!-- 🌟 鎖定外框高度為 85vh，不隨內容膨脹 -->
@@ -31,6 +45,7 @@ window.UIAudioTemplates = {
                             </summary>
                             <!-- 文字區內容直接顯示，由外層 wrapper 負責捲動 -->
                             <div style="padding: 0 20px 20px 20px; font-size: 1.125rem; color: #334155; line-height: 1.8; font-family: serif; border-top: 1px dashed #fef08a; margin-top: 4px; padding-top: 12px;">
+                                ${materialLinkHtml}
                                 ${safeText}
                             </div>
                         </details>
