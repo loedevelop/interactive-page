@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-class-members.js
- * 🌟 v6.5 SaaS 擴充版：優先解析 student_enrollments JSONB 以讀取專屬資料夾 ID
+ * 🌟 v7.1 雙欄位防呆版：修補 drive_url 與 drive_link 雙向同步
  */
 
 window.FeatureClassMembers = (() => {
@@ -11,6 +11,37 @@ window.FeatureClassMembers = (() => {
     }
 
     let currentActiveTab = 'student';
+
+    function safeFormatUrl(url) {
+        if (!url) return '';
+        let trimmedUrl = String(url).replace(/['"]/g, '').trim();
+        if (trimmedUrl === '') return '';
+        
+        if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+            if (trimmedUrl.length > 20 && !trimmedUrl.includes('/') && !trimmedUrl.includes('.')) {
+                return `https://drive.google.com/drive/folders/${trimmedUrl}`;
+            }
+            return `https://${trimmedUrl}`;
+        }
+        return trimmedUrl;
+    }
+
+    // 🌟 萬用剝殼引擎
+    function extractFolderId(url) {
+        if (!url) return '';
+        let trimmed = String(url).trim();
+        let match = trimmed.match(/folders\/([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) return match[1];
+        
+        match = trimmed.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) return match[1];
+
+        match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) return match[1];
+
+        if (!trimmed.startsWith('http') && trimmed.length > 15) return trimmed;
+        return trimmed; 
+    }
 
     function calculateDisplayName(profile, effectiveMode) {
         const rawData = profile.raw_data || {};
@@ -70,12 +101,12 @@ window.FeatureClassMembers = (() => {
         }
     }
 
-    // 🌟 擴充：讀取 student_enrollments.raw_data 以取得 drive_folder_id
     async function fetchStudentsForClass(classId, effectiveMode) {
         try {
+            // 🌟 修補遺漏：同時抓取 drive_link 與 drive_url
             const { data: rawStudents, error } = await window.supabaseClient
                 .from('student_enrollments')
-                .select('user_id, drive_link, raw_data, profiles(*)') 
+                .select('user_id, drive_link, drive_url, raw_data, profiles(*)') 
                 .eq('class_id', classId)
                 .is('deleted_at', null);
 
@@ -86,14 +117,16 @@ window.FeatureClassMembers = (() => {
                 let enrollRaw = s.raw_data || {};
                 if (typeof enrollRaw === 'string') { try { enrollRaw = JSON.parse(enrollRaw); } catch(e){} }
                 
+                // 🌟 修補遺漏：將 s.drive_url 加入判斷鏈
+                const rawDriveVal = enrollRaw.drive_folder_id || s.drive_url || s.drive_link || (p.raw_data ? p.raw_data.drive_url : '') || '';
+
                 return {
                     id: s.user_id,
                     class_id: classId,
                     displayName: calculateDisplayName(p, effectiveMode),
                     email: p.email || '未設定',
                     password: p.password || '系統預設',
-                    // 🌟 優先採用 JSONB 內的 drive_folder_id 
-                    drive_url: enrollRaw.drive_folder_id || s.drive_link || (p.raw_data ? p.raw_data.drive_url : '') || ''
+                    drive_url: safeFormatUrl(rawDriveVal) 
                 };
             });
         } catch (error) {
@@ -208,6 +241,7 @@ window.FeatureClassMembers = (() => {
 
             let studentTbody = classStudents.map((s, idx) => {
                 const safeName = s.displayName.replace(/"/g, '&quot;');
+                
                 return `
                 <tr style="border-bottom: 1px solid #E2E8F0;">
                     <td style="padding: 10px;">${idx + 1}</td>
@@ -221,7 +255,10 @@ window.FeatureClassMembers = (() => {
                         <input type="text" value="${s.password}" class="form-control" readonly title="系統預設密碼" style="width: 100%; background: #F1F5F9; color: #94A3B8; cursor: not-allowed;">
                     </td>
                     <td style="padding: 10px;">
-                        <input type="url" id="std-drive-${s.id}" value="${s.drive_url}" class="form-control" placeholder="https://drive.google.com/..." style="width: 100%;">
+                        <div style="display:flex; gap:5px; align-items:center;">
+                            <input type="url" id="std-drive-${s.id}" value="${s.drive_url}" class="form-control" placeholder="輸入 ID 或完整網址..." style="width: 100%; font-size:0.85rem;">
+                            ${s.drive_url ? `<button class="btn" style="padding: 6px 10px; background: #EEF2FF; color: #4F46E5; border: 1px solid #C7D2FE; border-radius: 4px; cursor: pointer; font-size:0.8rem;" onclick="window.open('${s.drive_url}', '_blank')" title="開啟資料夾">📁</button>` : ''}
+                        </div>
                     </td>
                     <td style="padding: 10px; min-width: 130px; white-space: nowrap;">
                         <button class="btn" style="padding: 6px 10px; font-size: 0.8rem; background: #64748B; color: white; border: none; border-radius: 4px; cursor: pointer;" onclick="window.FeatureClassMembers.openEditModal('${s.id}', '${classId}')" title="編輯詳細姓名資料">✏️</button>
@@ -388,18 +425,18 @@ window.FeatureClassMembers = (() => {
         renderStudentManager,
         switchTab,
         
-        // 🌟 擴充：儲存 Drive URL 時同步寫回 raw_data.drive_folder_id 保持資料雙軌一致
         saveStudent: async (studentId, classId) => {
-            const drive = document.getElementById(`std-drive-${studentId}`).value.trim();
-            const btn = window.event.target;
+            const rawDriveInput = document.getElementById(`std-drive-${studentId}`).value.trim();
+            const cleanFolderId = extractFolderId(rawDriveInput);
+            
+            const btn = window.event ? window.event.target : document.activeElement;
             const originalText = btn.innerHTML;
             btn.innerHTML = '⏳';
             btn.disabled = true;
 
             try {
-                // 1. 同步寫入 profiles
                 const { data: oldProf } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', studentId).maybeSingle();
-                const mergedRawData = { ...(oldProf?.raw_data || {}), drive_url: drive };
+                const mergedRawData = { ...(oldProf?.raw_data || {}), drive_url: cleanFolderId };
 
                 const { error: profileError } = await window.supabaseClient
                     .from('profiles')
@@ -408,21 +445,23 @@ window.FeatureClassMembers = (() => {
 
                 if (profileError) throw profileError;
 
-                // 2. 寫入 student_enrollments 並封裝進 JSONB
                 const { data: enrollData } = await window.supabaseClient.from('student_enrollments').select('raw_data').eq('class_id', classId).eq('user_id', studentId).maybeSingle();
                 let oldEnrollRaw = enrollData?.raw_data || {};
                 if (typeof oldEnrollRaw === 'string') { try { oldEnrollRaw = JSON.parse(oldEnrollRaw); } catch(e){} }
-                const mergedEnrollRaw = { ...oldEnrollRaw, drive_folder_id: drive };
+                const mergedEnrollRaw = { ...oldEnrollRaw, drive_folder_id: cleanFolderId };
 
+                // 🌟 修補遺漏：雙向更新 drive_link 與 drive_url，確保資料表一致性
                 const { error: enrollError } = await window.supabaseClient
                     .from('student_enrollments')
-                    .update({ drive_link: drive, raw_data: mergedEnrollRaw })
+                    .update({ drive_link: cleanFolderId, drive_url: cleanFolderId, raw_data: mergedEnrollRaw })
                     .eq('class_id', classId)
                     .eq('user_id', studentId);
                     
                 if (enrollError) throw enrollError;
 
                 btn.innerHTML = '✅';
+                document.getElementById(`std-drive-${studentId}`).value = safeFormatUrl(cleanFolderId);
+
             } catch (err) {
                 alert('❌ 更新失敗: ' + err.message);
                 btn.innerHTML = originalText;

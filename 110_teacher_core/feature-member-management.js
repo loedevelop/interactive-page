@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-member-management.js
- * 🌟 v6.7 終極解耦版：實作學生加入班級時「自動生成專屬個人資料夾」並綁定 JSONB
+ * 🌟 v7.2 絕對防護版：加入「同班重複建檔攔截」存在性檢查，並維持網址自動剝殼防呆。
  */
 
 export class MemberManager {
@@ -142,7 +142,7 @@ export class MemberManager {
 
                     <div class="form-group" id="studentDriveGroup" style="display: none; margin-top: 15px;">
                         <label>📁 專屬 Drive 連結 <span style="color:#94a3b8; font-size: 0.85em; font-weight: normal;">(選填：若不填寫，系統將自動於班級資料夾中生成)</span></label>
-                        <input type="url" id="memberDriveLink" class="form-control" placeholder="請貼上 Google Drive 連結...">
+                        <input type="url" id="memberDriveLink" class="form-control" placeholder="請貼上 Google Drive 連結或純 ID...">
                     </div>
 
                     <div class="form-group" id="childSelectionGroup" style="display: none; margin-top: 15px; background: #FFFBEB; padding: 15px; border-radius: 8px; border: 1px dashed #FCD34D;">
@@ -287,6 +287,26 @@ export class MemberManager {
         }
     }
 
+    // 🌟 萬用剝殼引擎：解決你提到的手動貼上長網址問題
+    extractFolderId(url) {
+        if (!url) return '';
+        let trimmed = String(url).trim();
+        
+        let match = trimmed.match(/folders\/([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) return match[1];
+        
+        match = trimmed.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) return match[1];
+
+        match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) return match[1];
+
+        if (!trimmed.startsWith('http') && trimmed.length > 15) {
+            return trimmed;
+        }
+        return trimmed; 
+    }
+
     async handleFormSubmit() {
         const btn = document.getElementById('submitMemberBtn');
         const msgBox = document.getElementById('formMessage');
@@ -309,7 +329,11 @@ export class MemberManager {
         const phone = document.getElementById('memberPhone').value.trim();
         const role = document.getElementById('memberRole').value;
         const childUserId = document.getElementById('childUserId').value;
-        const driveLink = document.getElementById('memberDriveLink').value.trim();
+        
+        // 🌟 無論老師貼什麼進來，都會被剝殼成純 ID
+        const rawDriveLink = document.getElementById('memberDriveLink').value.trim();
+        const cleanDriveId = this.extractFolderId(rawDriveLink);
+
         const isShared = document.getElementById('isSharedEmail').checked;
 
         let isMutated = false;
@@ -361,8 +385,8 @@ export class MemberManager {
 
             try {
                 if (role === 'student') {
-                    // 🌟 核心防護：將建立資料夾的職責委託給 assignStudent 處理
-                    await this.assignStudent(targetUserId, driveLink, fallbackName);
+                    // 🌟 傳遞乾淨的 ID 進入指派流程
+                    await this.assignStudent(targetUserId, cleanDriveId, fallbackName);
                 } else if (['co_teacher', 'ta_senior', 'ta_junior'].includes(role)) {
                     await this.assignStaff(targetUserId, role);
                 } else if (role === 'parent') {
@@ -372,7 +396,7 @@ export class MemberManager {
                 if (targetUserId && !isExistingUser) {
                     await this.rollbackOrphanedUser(targetUserId);
                 }
-                throw new Error(`${assignError.message} (系統已自動攔截並復原無效狀態)`);
+                throw new Error(`${assignError.message}`);
             }
 
             msgBox.style.color = '#10B981'; 
@@ -438,61 +462,89 @@ export class MemberManager {
         return data; 
     }
 
-    // 🌟 核心升級：加入班級即刻生成資料夾 (路線二：班級絕對隔離)
-    async assignStudent(userId, driveLink, studentName) {
-        let finalDriveLink = driveLink || null;
+    async assignStudent(userId, driveFolderId, studentName) {
+        let finalDriveId = driveFolderId || null;
         let enrollRawData = {};
 
-        // 情境：老師沒有手動填寫 Google Drive 網址，系統啟動自動生成機制
-        if (!finalDriveLink) {
-            const { data: classData } = await this.supabase
-                .from('classes')
-                .select('raw_data')
-                .eq('id', this.classId)
-                .maybeSingle();
+        // 🌟 絕對防呆機制：先查詢該學生在「本班」是否已經有註冊紀錄與資料夾 ID 了？
+        const { data: existingEnroll } = await this.supabase
+            .from('student_enrollments')
+            .select('drive_link, drive_url, raw_data')
+            .eq('class_id', this.classId)
+            .eq('user_id', userId)
+            .maybeSingle();
 
-            let classRaw = classData?.raw_data || {};
-            if (typeof classRaw === 'string') {
-                try { classRaw = JSON.parse(classRaw); } catch(e){}
-            }
+        let existingRaw = {};
+        if (existingEnroll && existingEnroll.raw_data) {
+            existingRaw = typeof existingEnroll.raw_data === 'string' ? JSON.parse(existingEnroll.raw_data) : existingEnroll.raw_data;
+        }
 
-            const parentFolderId = classRaw.drive_folder_id;
+        // 如果老師新增成員時「沒有」強制手動輸入網址
+        if (!finalDriveId) {
+            const existingFolderId = existingRaw.drive_folder_id || existingEnroll?.drive_url || existingEnroll?.drive_link;
 
-            if (parentFolderId && window.ApiService && typeof window.ApiService.createGASFolder === 'function') {
-                // 產生高辨識度且具備唯一性的檔名 (例: 林家宇_a7b2)
-                const shortId = userId.substring(userId.length - 4);
-                const safeName = (studentName || '未命名學生').replace(/[\\/:*?"<>|]/g, '_').trim();
-                const folderName = `${safeName}_${shortId}`;
+            if (existingFolderId) {
+                // 🛑 防呆攔截：本班已有專屬資料夾，直接沿用舊 ID，不准再 call GAS 建立雙胞胎！
+                finalDriveId = existingFolderId;
+                console.log(`[防呆機制啟動] 學生在本班已有資料夾 (${finalDriveId})，略過雲端建立，避免產生孤兒資料夾。`);
+            } else {
+                // 真的沒有資料夾，才去抓班級母資料夾 ID 並呼叫 GAS
+                const { data: classData } = await this.supabase
+                    .from('classes')
+                    .select('raw_data')
+                    .eq('id', this.classId)
+                    .maybeSingle();
 
-                try {
-                    console.log(`[自動建檔] 準備在班級目錄下建立專屬資料夾: ${folderName}`);
-                    const res = await window.ApiService.createGASFolder(folderName, parentFolderId);
-                    
-                    if (res && res.folderId) {
-                        enrollRawData.drive_folder_id = res.folderId; // 精準寫入 JSONB
+                let classRaw = classData?.raw_data || {};
+                if (typeof classRaw === 'string') {
+                    try { classRaw = JSON.parse(classRaw); } catch(e){}
+                }
+
+                const parentFolderId = classRaw.drive_folder_id;
+
+                if (parentFolderId && window.ApiService && typeof window.ApiService.createGASFolder === 'function') {
+                    const shortId = userId.substring(userId.length - 4);
+                    const safeName = (studentName || '未命名學生').replace(/[\\/:*?"<>|]/g, '_').trim();
+                    const folderName = `${safeName}_${shortId}`;
+
+                    try {
+                        console.log(`[自動建檔] 準備在班級目錄下建立專屬資料夾: ${folderName}`);
+                        const res = await window.ApiService.createGASFolder(folderName, parentFolderId, true);
+                        
+                        if (res && res.folderId) {
+                            enrollRawData.drive_folder_id = res.folderId; 
+                            finalDriveId = res.folderId; 
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ 自動建立學生資料夾失敗:', e);
                     }
-                } catch (e) {
-                    console.warn('⚠️ 自動建立學生資料夾失敗，將保持空值，後續上傳將走公海收件匣降級策略:', e);
                 }
             }
+        } else {
+            // 如果老師有手動輸入，就尊重老師手動貼上的剝殼後 ID
+            enrollRawData.drive_folder_id = finalDriveId;
         }
 
         const payload = {
             class_id: this.classId,
             user_id: userId,
-            drive_link: finalDriveLink,
+            drive_link: finalDriveId,
+            drive_url: finalDriveId, 
             deleted_at: null
         };
 
+        // 合併原本可能存在的 raw_data
         if (Object.keys(enrollRawData).length > 0) {
-            payload.raw_data = enrollRawData;
+            payload.raw_data = { ...existingRaw, ...enrollRawData };
+        } else if (existingEnroll && existingEnroll.raw_data) {
+            payload.raw_data = existingRaw;
         }
 
         const { error } = await this.supabase
             .from('student_enrollments')
             .upsert(payload, { onConflict: 'class_id,user_id' });
             
-        if (error) throw new Error('學生已存在於本班或關聯寫入失敗');
+        if (error) throw new Error('關聯寫入失敗');
     }
 
     async assignStaff(userId, staffRole) {

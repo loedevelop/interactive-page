@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：020_js_core/api.js
- * 🌟 v6.6 白皮書終極版：GAS 支援子資料夾建立 (Nested Folder Support)
+ * 🌟 v6.8 權限精準控制版：GAS 支援子資料夾建立與動態權限 (setSharing)
  */
 
 const ApiService = (() => {
@@ -238,14 +238,15 @@ const ApiService = (() => {
 
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
 
-    // 🌟 擴充：支援 parentFolderId 建立嵌套資料夾
-    const createGASFolder = async (folderName, parentFolderId = null) => {
+    // 🌟 核心擴充修復：新增 requireShare 參數，精準控制是否開放權限
+    const createGASFolder = async (folderName, parentFolderId = null, requireShare = false) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000); 
 
         try {
             const payload = { action: 'create_folder', folderName };
             if (parentFolderId) payload.parentFolderId = parentFolderId;
+            if (requireShare) payload.requireShare = true; 
 
             const response = await fetch(GAS_API_URL, {
                 method: 'POST',

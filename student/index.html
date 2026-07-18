@@ -6,7 +6,7 @@
     <title>學生學習區 | LogOnEnglish</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
-    <link rel="stylesheet" href="../010_css/style.css?v=15">
+    <link rel="stylesheet" href="../010_css/style.css?v=18">
     
     <style>
         body {
@@ -32,8 +32,8 @@
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="../020_js_core/config.js?v=15"></script>
-    <script src="../020_js_core/auth-guard.js?v=15"></script>
+    <script src="../020_js_core/config.js?v=18"></script>
+    <script src="../020_js_core/auth-guard.js?v=18"></script>
 </head>
 <body>
 
@@ -63,10 +63,9 @@
         <div id="course-container"></div>
     </div>
 
+    <!-- 🌟 修改點：移除舊有 card，讓外掛資源模組自由生長 -->
     <div id="view-resources" class="view-content">
-        <div class="card">
-            <div class="resource-grid" id="resource-container"></div>
-        </div>
+        <div id="resource-container"></div>
     </div>
 
     <div id="view-personal" class="view-content">
@@ -129,12 +128,21 @@
         </div>
     </div>
 
-    <script type="module" src="../020_js_core/supabase-client.js?v=16"></script>
-    <script src="../020_js_core/api.js?v=17"></script> 
-    <script src="../020_js_core/utils-date.js?v=3"></script>
+    <!-- ============================================== -->
+    <!-- ⚠️ 解耦版 (v18) 依賴載入防禦區 ⚠️ -->
+    <!-- ============================================== -->
+    <script type="module" src="../020_js_core/supabase-client.js?v=18"></script>
+    <script src="../020_js_core/api.js?v=18"></script> 
+    <script src="../020_js_core/utils-date.js?v=18"></script>
 
-    <!-- 🌟 v15 升級：絕對防禦版 (徹底修復 404 相對路徑與 Unique Constraint 衝突) -->
-    <script defer src="../120_student_core/feature-student-timeline.js?v=15"></script> 
+    <!-- [第三層]：全新視覺模板層 -->
+    <script src="../120_student_core/ui-audio-templates.js?v=18"></script>
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=18"></script>
+
+    <!-- [第四層]：全新特徵指揮層 -->
+    <script defer src="../120_student_core/feature-student-audio.js?v=18"></script>
+    <script defer src="../120_student_core/feature-student-resource.js?v=18"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=18"></script> 
     
     <script defer>
         function switchClass(newClassId) {
