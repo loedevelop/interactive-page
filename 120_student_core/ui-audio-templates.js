@@ -1,6 +1,12 @@
+/**
+ * 📂 檔案路徑：120_student_core/ui-audio-templates.js
+ * 🌟 學生端錄音艙視覺模板工廠：支援原稿收合功能
+ */
+
 window.UIAudioTemplates = {
     getRecordingStudioHTML: function(transcriptText, taskTitle) {
-        const safeText = transcriptText ? transcriptText.replace(/\n/g, '<br>') : '<span style="color: #9ca3af; font-style: italic;">（老師未提供文字原稿，請直接錄音）</span>';
+        // 安全處理跳行，若無文稿則顯示提示
+        const safeText = transcriptText ? String(transcriptText).replace(/\n/g, '<br>') : '<span style="color: #9ca3af; font-style: italic;">（老師未提供文字原稿，請直接錄音）</span>';
         const displayTitle = taskTitle || '未命名錄音作業';
         
         return `
@@ -13,19 +19,23 @@ window.UIAudioTemplates = {
                     <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
                 </div>
 
-                <!-- 雙視窗 Content -->
-                <div style="display: flex; flex: 1; overflow: hidden; flex-wrap: wrap;">
+                <!-- 內容區 (上下佈局，適應收合) -->
+                <div style="display: flex; flex-direction: column; flex: 1; overflow-y: auto; background-color: #f8fafc;">
                     
-                    <!-- 左/上半：文稿區 -->
-                    <div style="flex: 1 1 50%; padding: 24px; overflow-y: auto; border-right: 1px solid #e5e7eb; background-color: #f8fafc; min-width: 320px;">
-                        <div style="background-color: #fefce8; border: 1px solid #fef08a; border-radius: 12px; padding: 24px; min-height: 100%; box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);">
-                            <h3 style="margin-top: 0; font-size: 0.875rem; color: #a16207; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px; font-weight: 700;">📄 朗讀原稿 (Transcript)</h3>
-                            <div style="font-size: 1.125rem; color: #334155; line-height: 1.8; font-family: serif;">${safeText}</div>
-                        </div>
+                    <!-- 🌟 上半：文稿區 (改為可收合設計，預設展開) -->
+                    <div style="padding: 16px 24px; border-bottom: 1px solid #e5e7eb;">
+                        <details style="background-color: #fefce8; border: 1px solid #fef08a; border-radius: 12px; outline: none; transition: 0.3s;" open>
+                            <summary style="padding: 16px; font-size: 1rem; color: #a16207; font-weight: 800; cursor: pointer; user-select: none; outline: none; display: flex; align-items: center; gap: 8px;">
+                                📄 點擊展開/收合：朗讀原稿 (Transcript)
+                            </summary>
+                            <div style="padding: 0 24px 24px 24px; font-size: 1.125rem; color: #334155; line-height: 1.8; font-family: serif; max-height: 35vh; overflow-y: auto; border-top: 1px dashed #fef08a; margin-top: 8px; padding-top: 16px;">
+                                ${safeText}
+                            </div>
+                        </details>
                     </div>
 
-                    <!-- 右/下半：控制區 -->
-                    <div style="flex: 1 1 50%; padding: 32px; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #ffffff; min-width: 320px; position: relative;">
+                    <!-- 下半：控制區 -->
+                    <div style="flex: 1; padding: 32px; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #ffffff; position: relative;">
                         
                         <div style="text-align: center; margin-bottom: 40px; width: 100%;">
                             <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px;">

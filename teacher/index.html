@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>班級管理 | 老師控制台 (SaaS 升級版)</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../010_css/style.css?v=28">
+    <link rel="stylesheet" href="../010_css/style.css?v=30">
 </head>
 <body>
     <div class="sidebar">
@@ -171,30 +171,30 @@
 
     <!-- 🌟 020_js_core: 核心基建層 (載入順序絕對不可錯) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="../020_js_core/config.js?v=28"></script>
-    <script src="../020_js_core/supabase-client.js?v=28"></script>
-    <script src="../020_js_core/auth-guard.js?v=28"></script>
-    <script src="../020_js_core/store.js?v=28"></script>  
-    <script src="../020_js_core/api.js?v=28"></script> 
-    <script src="../020_js_core/utils-date.js?v=28"></script> 
+    <script src="../020_js_core/config.js?v=30"></script>
+    <script src="../020_js_core/supabase-client.js?v=30"></script>
+    <script src="../020_js_core/auth-guard.js?v=30"></script>
+    <script src="../020_js_core/store.js?v=30"></script>  
+    <script src="../020_js_core/api.js?v=30"></script> 
+    <script src="../020_js_core/utils-date.js?v=30"></script> 
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/ui-core.js?v=28"></script>
-    <script src="../110_teacher_core/ui-class-templates.js?v=28"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=28"></script>
-    <script src="../110_teacher_core/store-assignment-builder.js?v=28"></script> 
+    <script src="../110_teacher_core/ui-core.js?v=30"></script>
+    <script src="../110_teacher_core/ui-class-templates.js?v=30"></script>
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=30"></script>
+    <script src="../110_teacher_core/store-assignment-builder.js?v=30"></script> 
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=28"></script>
-    <script src="../110_teacher_core/service-line-notify.js?v=28"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=56"></script> 
-    <script src="../110_teacher_core/feature-resource.js?v=28"></script>
-    <script src="../110_teacher_core/feature-profile.js?v=28"></script>
-    <script src="../110_teacher_core/feature-class-members.js?v=28"></script>
-    <script src="../110_teacher_core/feature-progress.js?v=28"></script>
+    <script src="../110_teacher_core/feature-class.js?v=30"></script>
+    <script src="../110_teacher_core/service-line-notify.js?v=30"></script>
+    <script src="../110_teacher_core/feature-timeline.js?v=58"></script> 
+    <script src="../110_teacher_core/feature-resource.js?v=30"></script>
+    <script src="../110_teacher_core/feature-profile.js?v=30"></script>
+    <script src="../110_teacher_core/feature-class-members.js?v=30"></script>
+    <script src="../110_teacher_core/feature-progress.js?v=30"></script>
 
     <script type="module">
-        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=28'; 
+        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=30'; 
         
         window.RenderMemberManagerForm = function(classId, currentUserRole) {
             // 🌟 將 MemberManager 掛載到 window.currentMemberManager，確保外部能呼叫 openAndSync

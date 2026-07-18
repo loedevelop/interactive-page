@@ -2,14 +2,10 @@
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
  * 🌟 純視覺模板工廠 (UI Templates Factory)
  * 專職字串拼接，將 JSON 轉為 HTML，無狀態、無副作用。
- * ⚠️ 依據指示：僅修改唯讀模式(Read-Only)達成無縫合併，絕對不更動 Builder 編輯器邏輯。
  */
 
 window.TimelineTemplates = (() => {
 
-    // ==========================================
-    // 0. 共用樣式與工具 (保留舊版全部 RTE 設定)
-    // ==========================================
     function getTimelineStyleBlock() {
         return `
             <style>
@@ -23,30 +19,29 @@ window.TimelineTemplates = (() => {
                 [contenteditable]:empty:before { content: attr(data-placeholder); color: #94A3B8; pointer-events: none; display: block; }
                 @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
                 .rt-normalize, .rt-normalize * { font-size: inherit !important; font-family: inherit !important; }
+                details > summary::-webkit-details-marker { display: none; }
             </style>
         `;
     }
 
     function getLevelStyle(depth) {
         const styles = [
-            { border: '#D8B4FE', bg: '#F3E8FF', text: '#581C87' }, // L1: 淺紫色
-            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, // L2
-            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, // L3
-            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }, // L4
-            { border: '#EF4444', bg: '#FEF2F2', text: '#7F1D1D' }  // L5+
+            { border: '#D8B4FE', bg: '#F3E8FF', text: '#581C87' }, 
+            { border: '#3B82F6', bg: '#EFF6FF', text: '#1E3A8A' }, 
+            { border: '#10B981', bg: '#ECFDF5', text: '#064E3B' }, 
+            { border: '#F59E0B', bg: '#FFF7ED', text: '#7C2D12' }, 
+            { border: '#EF4444', bg: '#FEF2F2', text: '#7F1D1D' }  
         ];
         return styles[Math.min(depth, 4)];
     }
 
-    // ==========================================
-    // 1. 唯讀模式 (Read-Only) 渲染 - 🌟 本次修改重點 (無縫合併)
-    // ==========================================
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf) {
-        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : '📁');
+        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : (t.type === 'audio_record' ? '🎙️' : '📁'));
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
         let extraTag = '';
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
+        else if (t.type === 'audio_record') extraTag = '<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>';
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
         let taskTitleDisplay = '';
@@ -97,7 +92,6 @@ window.TimelineTemplates = (() => {
             else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 可遲交</span>`;
         }
         
-        // 🌟 無縫合併核心修改：移除 background, border-radius, margin。改用 padding 與 border-bottom。
         let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
         return `
@@ -153,7 +147,6 @@ window.TimelineTemplates = (() => {
                 `;
                 
                 if (t.subTasks && t.subTasks.length > 0) {
-                    // 🌟 移除內縮 padding，確保子項目能夠與群組容器無縫對齊
                     html += `<div style="display:flex; flex-direction:column;">`;
                     html += renderReadOnlyTree(t.subTasks, groupDueDate, groupPolicy, depth + 1);
                     html += `</div>`;
@@ -168,9 +161,6 @@ window.TimelineTemplates = (() => {
         return html;
     }
 
-    // ==========================================
-    // 2. 編輯模式 (Builder) 渲染 - 🚨 絕對保留舊版不動
-    // ==========================================
     function getArrowButtonsHtml(pathStr, idx, arrLength, depth, hasPrevSiblingGroup) {
         const canUp = idx > 0;
         const canDown = idx < arrLength - 1;
@@ -268,10 +258,10 @@ window.TimelineTemplates = (() => {
                                 <span style="font-size:0.85rem; color:${lvl.text}; font-weight:bold; margin-right:5px; opacity:0.8;">子層作業新增：</span>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
                                 <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
+                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'audio_record')">+ 🎙️ 錄音</button>
                                 
                                 <div style="display:inline-flex; align-items:center; gap:4px;">
                                     <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
-                                    <span title="💡 智慧派發模式：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。" style="cursor:help; background:#E2E8F0; color:#475569; border-radius:50%; width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:bold;">?</span>
                                 </div>
 
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
@@ -288,6 +278,7 @@ window.TimelineTemplates = (() => {
                         <option value="check" ${t.type === 'check' ? 'selected' : ''}>📌 一般</option>
                         <option value="link" ${t.type === 'link' ? 'selected' : ''}>🔗 連結</option>
                         <option value="drive" ${t.type === 'drive' ? 'selected' : ''}>📁 Drive</option>
+                        <option value="audio_record" ${t.type === 'audio_record' ? 'selected' : ''}>🎙️ 語音錄製</option>
                     </select>
                 `;
 
@@ -315,8 +306,40 @@ window.TimelineTemplates = (() => {
                             ${resOptsHtml}
                             ${sameBtn}
                         </div>`;
-                } else if (t.type === 'drive') {
-                    urlInputHtml = '';
+                }
+
+                // 🌟 新增：針對語音任務載入專屬可收合面板
+                let audioInputHtml = '';
+                if (t.type === 'audio_record') {
+                    const raw = t.raw_data || {};
+                    const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
+                    const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;');
+                    const safeRange = (raw.material_range || '').replace(/"/g, '&quot;');
+
+                    audioInputHtml = `
+                        <div style="margin-top:10px; width:100%;">
+                            <details style="background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:10px; outline:none;" open>
+                                <summary style="font-weight:900; color:#4F46E5; cursor:pointer; outline:none; user-select:none;">⚙️ 錄音原稿與擷取範圍設定 (點擊展開/收合)</summary>
+                                <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; padding-top:10px; border-top:1px dashed #A5B4FC;">
+                                    <div>
+                                        <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">1. 學生端顯示文本 (可直接貼上，或由後端抽出後填入)：</label>
+                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:100px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="在此貼上純文字原稿，學生錄音時可同步看稿...">${safeScript}</textarea>
+                                    </div>
+                                    <div style="display:flex; gap:15px; flex-wrap:wrap;">
+                                        <div style="flex:2; min-width:200px;">
+                                            <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">2. 雲端素材來源 (Drive PDF / Excel 網址)：</label>
+                                            <input type="url" id="node-material-url-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="https://drive.google.com/..." value="${safeUrl}">
+                                        </div>
+                                        <div style="flex:1; min-width:140px;">
+                                            <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">3. 指定擷取範圍：</label>
+                                            <input type="text" id="node-material-range-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="例: pp. 3~4 或 #31~49" value="${safeRange}">
+                                        </div>
+                                    </div>
+                                    <div style="font-size:0.8rem; color:#4F46E5; font-weight:bold; margin-top:4px;">💡 未來將透過 Python 出題引擎，根據您設定的「網址」與「範圍」，自動擷取並派發文本。</div>
+                                </div>
+                            </details>
+                        </div>
+                    `;
                 }
 
                 let tLateMode = t.late_mode || 'infinite';
@@ -364,6 +387,7 @@ window.TimelineTemplates = (() => {
                             </div>
                         </div>
                         ${urlInputHtml}
+                        ${audioInputHtml}
                         <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
                             <div id="node-desc-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
                         </div>
@@ -465,9 +489,9 @@ window.TimelineTemplates = (() => {
                     <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">外層作業新增：</span>
                     <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addNode(null, 'check')">+ 📌 一般</button>
                     <button class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
+                    <button class="btn btn-action" style="font-size:1rem; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode(null, 'audio_record')">+ 🎙️ 錄音</button>
                     <div style="display:inline-flex; align-items:center; gap:4px;">
                         <button class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
-                        <span title="💡 智慧派發模式：學生端將自動讀取專屬 Drive 資料夾，無須填寫網址。" style="cursor:help; background:#E2E8F0; color:#475569; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.85rem; font-weight:bold;">?</span>
                     </div>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
@@ -483,9 +507,6 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    // ==========================================
-    // 3. 主時間軸與外層區塊 (保留所有功能性)
-    // ==========================================
     function getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml) {
         let cleanBlockDesc = a.description ? a.description.replace(/<[^>]*>?/gm, '').trim() : '';
         let blockDescHtml = cleanBlockDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:8px;">${a.description}</div>` : '';
@@ -554,9 +575,6 @@ window.TimelineTemplates = (() => {
             </div>`;
     }
 
-    // ==========================================
-    // 4. 防呆對話框 Modals
-    // ==========================================
     function getMoveAssignModalHtml(cleanTitle, targetDate, assignId, classId) {
         return `
             <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
@@ -591,7 +609,6 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    // --- 確保所有使用到的函式均正確拋出 ---
     return {
         getTimelineStyleBlock,
         renderReadOnlyTree,

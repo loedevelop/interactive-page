@@ -40,11 +40,24 @@ window.BuilderStore = (() => {
                 const urlEl = document.getElementById(`node-url-${pathStr}`);
                 const urlTextEl = document.getElementById(`node-url-text-${pathStr}`);
                 const descEl = document.getElementById(`node-desc-${pathStr}`);
+                
                 if (urlEl) t.url = urlEl.value;
                 if (urlTextEl) t.url_text = urlTextEl.value;
                 if (descEl) {
                     let text = descEl.textContent.trim();
                     t.description = (text === '') ? '' : descEl.innerHTML;
+                }
+
+                // 🌟 新增：針對語音錄製任務，捕捉可收合面板內的資料並寫入 raw_data JSONB
+                if (t.type === 'audio_record') {
+                    if (!t.raw_data) t.raw_data = {};
+                    const scriptEl = document.getElementById(`node-script-${pathStr}`);
+                    const matUrlEl = document.getElementById(`node-material-url-${pathStr}`);
+                    const matRangeEl = document.getElementById(`node-material-range-${pathStr}`);
+                    
+                    if (scriptEl) t.raw_data.original_script = scriptEl.value;
+                    if (matUrlEl) t.raw_data.material_url = matUrlEl.value;
+                    if (matRangeEl) t.raw_data.material_range = matRangeEl.value;
                 }
             }
         });
@@ -122,7 +135,6 @@ window.BuilderStore = (() => {
         clear: () => { bState = null; },
         sync: () => syncState(),
         
-        // 🚨 修正核心遺漏：必須把這支遞迴 API 拋出去，否則 UI Template 會全部壞死
         getTaskParentArray: getTaskParentArray,
 
         // --- 節點樹狀操作引擎 ---
@@ -140,6 +152,7 @@ window.BuilderStore = (() => {
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
                 due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
+                raw_data: {}, // 🌟 確保新增節點都有掛載 JSONB 容器
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
         },
@@ -225,7 +238,8 @@ window.BuilderStore = (() => {
             }
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type: 'link', title: res.name, url: res.url, url_text: '', 
-                description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id
+                description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id,
+                raw_data: {}
             });
         },
         copyHistory: (historyAssignment) => {
@@ -252,6 +266,7 @@ window.BuilderStore = (() => {
                 return (tasksList || []).map(t => {
                     const cloned = { ...t, id: `task_${Date.now()}_${Math.random()}` };
                     delete cloned.resource_id;
+                    if (!cloned.raw_data) cloned.raw_data = {};
                     if (cloned.type === 'group' && cloned.subTasks) cloned.subTasks = assignNewIdsRecursive(cloned.subTasks);
                     return cloned;
                 });

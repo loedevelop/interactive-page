@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.7 終極指揮官版：
- * 1. 徹底消滅所有 new Date()，全面依賴 UtilsDate 處理當日與時間戳。
+ * 🌟 v13.9.1 防爆強化版：
+ * 徹底解決 PDF.js 動態掛載可能導致的全域變數遺失與 JS 執行緒崩潰問題。
  */
 
-console.log("🚀 FeatureTimeline v13.7 載入成功！(時間運算徹底解耦)");
+console.log("🚀 FeatureTimeline v13.9.1 載入成功！(防爆 PDF 引擎啟用)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -109,8 +109,6 @@ window.FeatureTimeline = (() => {
             }
 
             const weekStartSetting = raw.week_start_day || 'sunday';
-            
-            // 🌟 修復點：透過 UtilsDate 取得今天，拒絕原生的 new Date()
             const todayStr = DateUtils.getTaiwanTodayString();
             const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
             
@@ -230,7 +228,6 @@ window.FeatureTimeline = (() => {
         container.innerHTML = TPL.getBuilderFormHtml(bState, classResOpts, tasksContainerHtml, historyHtml);
     }
 
-    // --- 公開協調 API (Orchestrator Proxy) ---
     return {
         renderTimeline,
         scrollToCurrentWeek,
@@ -296,6 +293,60 @@ window.FeatureTimeline = (() => {
                     viewContainer.scrollBy({ top: nRect.top - cRect.top - 15, behavior: 'smooth' });
                 }
             }, 300);
+        },
+
+        // 🌟 本次修復核心：絕對安全的 PDF 引擎掛載
+        handlePDFUpload: async (inputEl, pathStr) => {
+            const file = inputEl.files[0];
+            if (!file) return;
+            const textarea = document.getElementById(`node-script-${pathStr}`);
+            if (!textarea) return;
+
+            const originalText = textarea.value;
+            textarea.value = '⏳ 正在解析 PDF 文字，請稍候...';
+
+            try {
+                // 安全判定 PDF.js 變數 (相容多版本 CDN)
+                let pdfjsCore = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+                
+                if (!pdfjsCore) {
+                    await new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js';
+                        script.onload = resolve;
+                        script.onerror = () => reject(new Error('PDF.js 網路載入失敗'));
+                        document.head.appendChild(script);
+                    });
+                    
+                    pdfjsCore = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+                    if (!pdfjsCore) throw new Error('無法取得 PDF.js 核心物件');
+                }
+
+                // 強制套用 Worker，若遭跨域阻擋 PDF.js 會自動降級為 Fake Worker，不影響萃取。
+                pdfjsCore.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsCore.getDocument({ data: arrayBuffer }).promise;
+                let fullText = '';
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    fullText += pageText + '\n\n';
+                }
+
+                textarea.value = fullText.trim();
+                alert('✅ PDF 文字萃取成功！請檢查並手動修飾排版。');
+
+            } catch (error) {
+                console.error("PDF 解析失敗:", error);
+                textarea.value = originalText;
+                alert('❌ PDF 解析失敗: ' + error.message);
+            } finally {
+                inputEl.value = ''; 
+                window.BuilderStore.sync(); 
+            }
         },
 
         addNode: (pathStr, type) => { window.BuilderStore.addNode(pathStr, type); renderBuilderUI(); },
@@ -381,7 +432,6 @@ window.FeatureTimeline = (() => {
             if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
             
             try {
-                // 🌟 修復點：透過 UtilsDate 取得 ISO 時間戳，拒絕原生的 new Date()
                 const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: window.UtilsDate.getTaiwanIsoTimestamp() }).eq('id', historyId).is('deleted_at', null).select(); 
                 if (error) throw error;
                 if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
@@ -399,7 +449,6 @@ window.FeatureTimeline = (() => {
             btn.innerHTML = '⏳'; btn.disabled = true;
 
             try {
-                // 🌟 修復點：透過 UtilsDate 取得 ISO 時間戳
                 const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ deleted_at: window.UtilsDate.getTaiwanIsoTimestamp() }).eq('id', assignId).is('deleted_at', null).select(); 
                 if (error) throw error;
                 if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕請求");
