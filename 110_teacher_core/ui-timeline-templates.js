@@ -1,7 +1,6 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 (UI Templates Factory)
- * 專職字串拼接，將 JSON 轉為 HTML，無狀態、無副作用。
+ * 🌟 純視覺模板工廠：修正 PDF 匯入按鈕遺失，並為 audio 增加資源庫套用功能
  */
 
 window.TimelineTemplates = (() => {
@@ -292,6 +291,7 @@ window.TimelineTemplates = (() => {
                         }
                     }
 
+                    // 🌟 讓外部連結也能直接套用資源庫
                     let resOptsHtml = '';
                     if (classResOpts) {
                         resOptsHtml = `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="window.FeatureTimeline.updateNodeUrl('${pathStr}', this.value)">
@@ -308,7 +308,6 @@ window.TimelineTemplates = (() => {
                         </div>`;
                 }
 
-                // 🌟 新增：針對語音任務載入專屬可收合面板
                 let audioInputHtml = '';
                 if (t.type === 'audio_record') {
                     const raw = t.raw_data || {};
@@ -316,19 +315,34 @@ window.TimelineTemplates = (() => {
                     const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;');
                     const safeRange = (raw.material_range || '').replace(/"/g, '&quot;');
 
+                    // 🌟 讓錄音任務的雲端素材來源也能套用資源庫
+                    let resOptsHtmlForAudio = '';
+                    if (classResOpts) {
+                        resOptsHtmlForAudio = `<select class="form-control" style="width:auto; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" onchange="document.getElementById('node-material-url-${pathStr}').value = this.value; window.BuilderStore.sync();">
+                            <option value="">📚 從資源庫選擇</option>${classResOpts}
+                        </select>`;
+                    }
+
                     audioInputHtml = `
                         <div style="margin-top:10px; width:100%;">
                             <details style="background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:10px; outline:none;" open>
                                 <summary style="font-weight:900; color:#4F46E5; cursor:pointer; outline:none; user-select:none;">⚙️ 錄音原稿與擷取範圍設定 (點擊展開/收合)</summary>
                                 <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; padding-top:10px; border-top:1px dashed #A5B4FC;">
                                     <div>
-                                        <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">1. 學生端顯示文本 (可直接貼上，或由後端抽出後填入)：</label>
+                                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:5px;">
+                                            <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">1. 學生端顯示文本 (可直接貼上，或由後端抽出後填入)：</label>
+                                            <input type="file" id="pdf-upload-${pathStr}" accept="application/pdf" style="display:none;" onchange="window.FeatureTimeline.handlePDFUpload(this, '${pathStr}')">
+                                            <button class="btn-action" style="font-size:0.8rem; background:#4F46E5; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(79, 70, 229, 0.3);" onclick="document.getElementById('pdf-upload-${pathStr}').click()">📄 快速匯入 PDF 取字</button>
+                                        </div>
                                         <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:100px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="在此貼上純文字原稿，學生錄音時可同步看稿...">${safeScript}</textarea>
                                     </div>
                                     <div style="display:flex; gap:15px; flex-wrap:wrap;">
                                         <div style="flex:2; min-width:200px;">
                                             <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">2. 雲端素材來源 (Drive PDF / Excel 網址)：</label>
-                                            <input type="url" id="node-material-url-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="https://drive.google.com/..." value="${safeUrl}">
+                                            <div style="display:flex; gap:8px;">
+                                                <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:1; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="https://drive.google.com/..." value="${safeUrl}">
+                                                ${resOptsHtmlForAudio}
+                                            </div>
                                         </div>
                                         <div style="flex:1; min-width:140px;">
                                             <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">3. 指定擷取範圍：</label>
