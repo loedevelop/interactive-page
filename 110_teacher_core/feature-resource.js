@@ -1,11 +1,16 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-resource.js
- * 🌟 v4.1 終極修復版：解決按鈕裁切、重複寫入與全域派發失效問題
+ * 🌟 v5.0 終極修復版：
+ * 1. 廢除表格改用 Flex Card 防止按鈕被裁切
+ * 2. 實裝修改(Edit)與刪除(Delete)功能
+ * 3. 建立防重複 (Upsert) 檢查機制
+ * 4. 完美修復全域資源在班級端的顯示邏輯
  */
 
 window.FeatureResource = (() => {
     const db = window.TeacherDB;
 
+    // --- 🛡️ 安全跳脫工具 ---
     function escapeHTML(str) {
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -16,6 +21,9 @@ window.FeatureResource = (() => {
         return String(str).replace(/\\/g, '\\\\').replace(/'/g, '\\\'').replace(/"/g, '\\"');
     }
 
+    // ==========================================
+    // 壹、 核心資源獲取與記憶體橋接
+    // ==========================================
     async function fetchResourcesFromDB() {
         try {
             const { data: resData, error: resErr } = await window.supabaseClient
@@ -41,6 +49,9 @@ window.FeatureResource = (() => {
         }
     }
 
+    // ==========================================
+    // 貳、 班級端資源渲染 (Class View)
+    // ==========================================
     async function renderClassResources(classId) {
         await fetchResourcesFromDB(); 
         const container = document.getElementById('class-resource-container');
@@ -48,12 +59,12 @@ window.FeatureResource = (() => {
         
         const safeLibrary = db.resourceLibrary || [];
 
-        // 🌟 防呆：透過 Set 過濾掉重複網址，避免同一個 PDF 出現兩次
+        // 🌟 核心修復：精準抓取「全域資源」+「屬於該班級的專屬資源」，並透過 Set 去除重複網址
         const uniqueResources = [];
         const seenUrls = new Set();
         
         safeLibrary.forEach(r => {
-            if ((r.scope === 'class' && r.target_class_id === classId) || r.scope === 'global') {
+            if (r.scope === 'global' || (r.scope === 'class' && r.target_class_id === classId)) {
                 if (!seenUrls.has(r.url)) {
                     seenUrls.add(r.url);
                     uniqueResources.push(r);
@@ -61,61 +72,65 @@ window.FeatureResource = (() => {
             }
         });
         
-        container.innerHTML = uniqueResources.length ? '' : '<p style="color:#94A3B8; font-weight:800;">本班目前無專屬資源，請從全域派發。</p>';
+        container.innerHTML = uniqueResources.length ? '' : '<p style="color:#94A3B8; font-weight:800; padding:20px;">本班目前無任何資源，請從全域管理派發。</p>';
         
         uniqueResources.forEach(res => {
             const scopeBadge = res.scope === 'global' 
-                ? '<span style="font-size:0.7rem; background:#3B82F6; color:white; padding:2px 6px; border-radius:4px; margin-left:8px;">🌍 全域</span>' 
-                : '';
+                ? '<span style="font-size:0.75rem; background:#3B82F6; color:white; padding:2px 8px; border-radius:12px; margin-left:8px; box-shadow:0 1px 2px rgba(59,130,246,0.3);">🌍 全域資源</span>' 
+                : '<span style="font-size:0.75rem; background:#F59E0B; color:white; padding:2px 8px; border-radius:12px; margin-left:8px; box-shadow:0 1px 2px rgba(245,158,11,0.3);">🏷️ 班級專屬</span>';
                 
             const safeNameHTML = escapeHTML(res.name);
             const safeUrlJS = escapeJS(res.url);
 
             container.innerHTML += `
-                <div class="res-item" style="cursor:pointer; background:white; border:1px solid #E2E8F0; padding:15px; border-radius:8px; text-align:center; transition:0.2s;" onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='#E2E8F0'" onclick="window.open('${safeUrlJS}', '_blank')">
-                    <div style="font-size: 2.5rem;">${res.icon}</div>
-                    <div style="font-weight: 800; margin-top: 10px; color:#1E293B;">${safeNameHTML} ${scopeBadge}</div>
+                <div class="res-item" style="cursor:pointer; background:white; border:1px solid #E2E8F0; padding:20px 15px; border-radius:12px; text-align:center; transition:all 0.2s; box-shadow:0 2px 4px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.transform='translateY(-2px)';" onmouseout="this.style.borderColor='#E2E8F0'; this.style.transform='none';" onclick="window.open('${safeUrlJS}', '_blank')">
+                    <div style="font-size: 3rem; margin-bottom: 10px;">${res.icon}</div>
+                    <div style="font-weight: 900; color:#1E293B; font-size:1.05rem;">${safeNameHTML}</div>
+                    <div style="margin-top: 8px;">${scopeBadge}</div>
                 </div>`;
         });
     }
 
+    // ==========================================
+    // 參、 全域派發中樞渲染 (Global Dashboard)
+    // ==========================================
     async function renderGlobalResourceView() {
         await fetchResourcesFromDB(); 
         const cbContainer = document.getElementById('global-class-checkboxes');
         const activeClasses = (db.classes || []); 
         const safeLibrary = db.resourceLibrary || [];
 
+        // --- 1. 渲染派發勾選區 ---
         if (cbContainer) {
-            cbContainer.innerHTML = '';
-            
             if (activeClasses.length === 0) {
-                cbContainer.innerHTML = '<span style="color:#94A3B8; font-size:0.9rem;">您目前沒有活躍的班級。請先前往「班級主檔管理」建立班級。</span>';
+                cbContainer.innerHTML = '<span style="color:#94A3B8; font-size:0.9rem;">您目前沒有活躍的班級。請先建立班級。</span>';
             } else {
-                // 🌟 新增：全域資源快捷開關
-                let html = `<label style="display:block; margin-bottom:12px; padding:10px 15px; background:#EFF6FF; border:1px solid #93C5FD; border-radius:8px; cursor:pointer; width:fit-content;">
-                    <input type="checkbox" id="res-is-global-cb" style="transform:scale(1.3); margin-right:10px;" onchange="
-                        const cbs = document.querySelectorAll('.target-class-cb');
-                        cbs.forEach(cb => { cb.disabled = this.checked; cb.parentElement.style.opacity = this.checked ? '0.5' : '1'; });
-                    "> 
-                    <span style="font-weight:900; color:#1E3A8A; font-size:1rem;">🌍 設為「全域資源」 (自動套用至所有班級，無須勾選)</span>
-                </label><div style="display:flex; flex-wrap:wrap; gap:10px;">`;
+                let html = `
+                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:15px; padding:12px 15px; background:#EFF6FF; border:1px solid #93C5FD; border-radius:8px; cursor:pointer; width:fit-content; box-shadow:0 1px 3px rgba(59,130,246,0.1);">
+                        <input type="checkbox" id="res-is-global-cb" style="transform:scale(1.3);" onchange="
+                            const cbs = document.querySelectorAll('.target-class-cb');
+                            cbs.forEach(cb => { cb.disabled = this.checked; cb.parentElement.style.opacity = this.checked ? '0.4' : '1'; });
+                        "> 
+                        <span style="font-weight:900; color:#1E3A8A; font-size:1rem;">🌍 設為「全域資源」 (自動套用至所有班級)</span>
+                    </label>
+                    <div style="display:flex; flex-wrap:wrap; gap:10px;">`;
                 
                 activeClasses.forEach(cls => {
                     const safeClsName = escapeHTML(cls.name);
-                    html += `<label class="class-checkbox-card" style="display:inline-flex; align-items:center; gap:8px; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; cursor:pointer; transition:0.2s;"><input type="checkbox" value="${cls.id}" class="target-class-cb" style="transform:scale(1.2);"> <span style="font-weight:800; color:#334155;">${cls.icon} ${safeClsName}</span></label>`;
+                    html += `<label style="display:inline-flex; align-items:center; gap:8px; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; cursor:pointer; transition:0.2s;"><input type="checkbox" value="${cls.id}" class="target-class-cb" style="transform:scale(1.2);"> <span style="font-weight:800; color:#334155;">${cls.icon} ${safeClsName}</span></label>`;
                 });
                 cbContainer.innerHTML = html + '</div>';
             }
         }
         
+        // --- 2. 渲染資源母體庫列表 ---
         const libContainer = document.getElementById('global-resource-library');
         if (libContainer) {
-            libContainer.innerHTML = '';
-
             const uniqueResources = [];
             const urlMap = new Set();
             
             const myClassIds = activeClasses.map(c => c.id);
+            // 抓取屬於老師的資源 (全域的，或派給老師班級的)
             const myResources = safeLibrary.filter(r => r.scope === 'global' || (r.scope === 'class' && myClassIds.includes(r.target_class_id)));
 
             myResources.forEach(r => {
@@ -126,24 +141,11 @@ window.FeatureResource = (() => {
             });
 
             if (uniqueResources.length === 0) {
-                libContainer.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px 0;">您的資源庫目前是空的，請在上方建立新資源並派發。</p>';
+                libContainer.innerHTML = '<p style="color:#94A3B8; font-weight:800; padding: 20px;">您的資源庫目前是空的，請在上方建立新資源。</p>';
                 return;
             }
 
-            // 🌟 修正：為 table 加上 min-width，為 td 加上 white-space: nowrap，保證按鈕絕對不被裁切
-            let tableHTML = `
-                <div style="overflow-x: auto; background: white; border: 1px solid #E2E8F0; border-radius: 8px;">
-                    <table style="width: 100%; min-width: 650px; border-collapse: collapse; text-align: left; font-size: 0.95rem;">
-                        <thead>
-                            <tr style="background: #F8FAFC; color: #64748B; border-bottom: 1px solid #E2E8F0;">
-                                <th style="padding: 12px 15px; width: 60px; text-align: center;">類型</th>
-                                <th style="padding: 12px 15px; width: 30%;">資源名稱</th>
-                                <th style="padding: 12px 15px;">派發狀態</th>
-                                <th style="padding: 12px 15px; width: 150px; text-align: center; white-space: nowrap;">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
+            let html = '<div style="display:flex; flex-direction:column; gap:12px;">';
 
             uniqueResources.forEach(res => {
                 let badgeHTML = '<div style="display: flex; flex-wrap: wrap; gap: 6px;">';
@@ -171,32 +173,32 @@ window.FeatureResource = (() => {
                 const safeUrlJS = escapeJS(res.url);
                 const safeUrlHTML = escapeHTML(res.url);
 
-                tableHTML += `
-                    <tr style="border-bottom: 1px solid #E2E8F0; transition: background 0.2s;" onmouseover="this.style.background='#F8FAFC'" onmouseout="this.style.background='transparent'">
-                        <td style="padding: 12px 15px; font-size: 1.5rem; text-align: center;">${res.icon}</td>
-                        <td style="padding: 12px 15px; font-weight: bold; color: #1E293B;">
-                            <a href="${safeUrlHTML}" target="_blank" style="color: #3B82F6; text-decoration: none;" title="點擊開啟資源">${safeNameHTML} 🔗</a>
-                        </td>
-                        <td style="padding: 12px 15px;">${badgeHTML}</td>
-                        <td style="padding: 12px 15px; text-align: center; white-space: nowrap;">
-                            <div style="display: flex; justify-content: center; gap: 8px;">
-                                <button class="btn" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; padding:6px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureResource.openEditResourceModal('${safeUrlJS}')" title="編輯與重新派發">✏️ 編輯</button>
-                                <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:6px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureResource.deleteResourceGroup('${safeUrlJS}')" title="封存資源">🗑️</button>
+                // 🌟 核心修復：改用 Flex Card 解決右側按鈕被截斷的問題
+                html += `
+                    <div style="background: white; border: 1px solid #E2E8F0; border-radius: 10px; padding: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                        <div style="display: flex; align-items: center; gap: 15px; flex: 1; min-width: 250px;">
+                            <div style="font-size: 2rem; background:#F8FAFC; width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:8px;">${res.icon}</div>
+                            <div>
+                                <a href="${safeUrlHTML}" target="_blank" style="font-size: 1.1rem; font-weight: 900; color: #1E293B; text-decoration: none; display:inline-block; margin-bottom:6px;" title="點擊開啟資源">${safeNameHTML} <span style="font-size:0.9rem; color:#3B82F6;">🔗</span></a>
+                                ${badgeHTML}
                             </div>
-                        </td>
-                    </tr>
+                        </div>
+                        <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                            <button class="btn" style="background:#F8FAFC; color:#475569; border:1px solid #CBD5E1; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:bold; font-size:0.95rem; box-shadow:0 1px 2px rgba(0,0,0,0.05);" onclick="window.FeatureResource.openEditResourceModal('${safeUrlJS}')">✏️ 修改</button>
+                            <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:bold; font-size:0.95rem; box-shadow:0 1px 2px rgba(239,68,68,0.1);" onclick="window.FeatureResource.deleteResourceGroup('${safeUrlJS}')">🗑️ 刪除</button>
+                        </div>
+                    </div>
                 `;
             });
 
-            tableHTML += `
-                        </tbody>
-                    </table>
-                </div>
-            `;
-            libContainer.innerHTML = tableHTML;
+            html += '</div>';
+            libContainer.innerHTML = html;
         }
     }
 
+    // ==========================================
+    // 肆、 修改 (Edit) 彈窗與儲存邏輯
+    // ==========================================
     function openEditResourceModal(resUrl) {
         const safeLibrary = db.resourceLibrary || [];
         const activeClasses = db.classes || [];
@@ -216,24 +218,27 @@ window.FeatureResource = (() => {
 
         overlay = document.createElement('div');
         overlay.id = overlayId;
-        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(3px);';
         
-        let classCheckboxesHTML = `<label style="display:block; margin-bottom:12px; padding:10px 15px; background:#EFF6FF; border:1px solid #93C5FD; border-radius:8px; cursor:pointer;">
-            <input type="checkbox" id="modal-res-is-global" style="transform:scale(1.3); margin-right:10px;" ${isGlobal ? 'checked' : ''} onchange="
-                const cbs = document.querySelectorAll('.modal-target-class-cb');
-                cbs.forEach(cb => { cb.disabled = this.checked; cb.parentElement.style.opacity = this.checked ? '0.5' : '1'; });
-            "> 
-            <span style="font-weight:900; color:#1E3A8A; font-size:1rem;">🌍 設為「全域資源」 (套用至所有班級)</span>
-        </label><div style="display: flex; flex-wrap: wrap; gap: 10px;">`;
+        let classCheckboxesHTML = `
+            <label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:12px 15px; background:#EFF6FF; border:1px solid #93C5FD; border-radius:8px; cursor:pointer;">
+                <input type="checkbox" id="modal-res-is-global" style="transform:scale(1.3);" ${isGlobal ? 'checked' : ''} onchange="
+                    const cbs = document.querySelectorAll('.modal-target-class-cb');
+                    cbs.forEach(cb => { cb.disabled = this.checked; cb.parentElement.style.opacity = this.checked ? '0.4' : '1'; });
+                "> 
+                <span style="font-weight:900; color:#1E3A8A; font-size:1rem;">🌍 設為「全域資源」 (套用至所有班級)</span>
+            </label>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+        `;
         
         if (activeClasses.length === 0) {
-            classCheckboxesHTML += '<span style="color:#EF4444; font-size:0.9rem;">您目前沒有活躍的班級可供派發。</span>';
+            classCheckboxesHTML += '<span style="color:#EF4444; font-size:0.9rem;">您目前沒有活躍的班級。</span>';
         } else {
             activeClasses.forEach(cls => {
                 const isChecked = dispatchedIds.includes(cls.id) ? 'checked' : '';
                 const safeClsName = escapeHTML(cls.name);
                 classCheckboxesHTML += `
-                    <label style="display:inline-flex; align-items:center; gap:8px; padding:8px 12px; background:${isChecked ? '#DBEAFE' : '#F8FAFC'}; border:1px solid ${isChecked ? '#93C5FD' : '#CBD5E1'}; border-radius:6px; cursor:pointer; opacity: ${isGlobal ? '0.5' : '1'};">
+                    <label style="display:inline-flex; align-items:center; gap:8px; padding:8px 12px; background:${isChecked ? '#DBEAFE' : '#F8FAFC'}; border:1px solid ${isChecked ? '#93C5FD' : '#CBD5E1'}; border-radius:6px; cursor:pointer; opacity: ${isGlobal ? '0.4' : '1'}; transition: all 0.2s;">
                         <input type="checkbox" value="${cls.id}" class="modal-target-class-cb" style="transform:scale(1.2);" ${isChecked} ${isGlobal ? 'disabled' : ''}> 
                         <span style="font-weight:800; color:#334155;">${cls.icon} ${safeClsName}</span>
                     </label>
@@ -247,13 +252,13 @@ window.FeatureResource = (() => {
         const safeResUrlJS = escapeJS(resSample.url);
 
         overlay.innerHTML = `
-            <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 600px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto;">
-                <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">✏️ 編輯資源與派發對象</h3>
+            <div style="background: white; padding: 30px; border-radius: 16px; width: 95%; max-width: 650px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); max-height: 90vh; overflow-y: auto;">
+                <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 15px; margin-bottom: 20px; font-size:1.4rem;">✏️ 修改資源與派發設定</h3>
                 
-                <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px;">
                     <div style="flex: 1; min-width: 150px;">
-                        <label style="display:block; font-weight:bold; color:#475569; margin-bottom:5px;">類型</label>
-                        <select id="modal-res-type" class="form-control" style="width: 100%;">
+                        <label style="display:block; font-weight:900; color:#475569; margin-bottom:6px;">類型</label>
+                        <select id="modal-res-type" class="form-control" style="width: 100%; padding:10px; font-size:1rem; border-radius:8px;">
                             <option value="drive_folder" ${resSample.type === 'drive_folder' ? 'selected' : ''}>📁 Drive 資料夾</option>
                             <option value="drive_file" ${resSample.type === 'drive_file' ? 'selected' : ''}>📄 Drive 檔案</option>
                             <option value="youtube_video" ${resSample.type === 'youtube_video' ? 'selected' : ''}>▶️ YouTube</option>
@@ -261,24 +266,24 @@ window.FeatureResource = (() => {
                         </select>
                     </div>
                     <div style="flex: 2; min-width: 200px;">
-                        <label style="display:block; font-weight:bold; color:#475569; margin-bottom:5px;">資源名稱 <span style="color:#EF4444;">*</span></label>
-                        <input type="text" id="modal-res-name" class="form-control" value="${safeResNameHTML}" style="width: 100%;">
+                        <label style="display:block; font-weight:900; color:#475569; margin-bottom:6px;">資源名稱 <span style="color:#EF4444;">*</span></label>
+                        <input type="text" id="modal-res-name" class="form-control" value="${safeResNameHTML}" style="width: 100%; padding:10px; font-size:1rem; border-radius:8px;">
                     </div>
                 </div>
 
                 <div style="margin-bottom: 25px;">
-                    <label style="display:block; font-weight:bold; color:#475569; margin-bottom:5px;">資源網址 <span style="color:#EF4444;">*</span></label>
-                    <input type="url" id="modal-res-url" class="form-control" value="${safeResUrlHTML}" style="width: 100%;">
+                    <label style="display:block; font-weight:900; color:#475569; margin-bottom:6px;">資源網址 <span style="color:#EF4444;">*</span></label>
+                    <input type="url" id="modal-res-url" class="form-control" value="${safeResUrlHTML}" style="width: 100%; padding:10px; font-size:1rem; border-radius:8px;">
                 </div>
 
-                <div style="background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px dashed #CBD5E1; margin-bottom: 25px;">
-                    <label style="display:block; font-weight:bold; color:#3B82F6; margin-bottom:10px;">🎯 派發對象</label>
+                <div style="background: #F8FAFC; padding: 20px; border-radius: 12px; border: 1px dashed #CBD5E1; margin-bottom: 30px;">
+                    <label style="display:block; font-weight:900; color:#3B82F6; margin-bottom:12px; font-size:1.1rem;">🎯 派發目標設定</label>
                     ${classCheckboxesHTML}
                 </div>
 
-                <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
-                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
-                    <button id="btn-save-modal-res" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;" onclick="window.FeatureResource.saveEditedResource('${safeResUrlJS}')">💾 儲存並更新</button>
+                <div style="display: flex; justify-content: flex-end; gap: 12px; border-top: 2px solid #F1F5F9; padding-top: 20px;">
+                    <button class="btn" style="background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 800; font-size:1rem;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
+                    <button id="btn-save-modal-res" class="btn btn-primary" style="padding: 10px 24px; font-weight: 900; font-size:1rem; border-radius:8px; box-shadow:0 4px 6px -1px rgba(245,158,11,0.4);" onclick="window.FeatureResource.saveEditedResource('${safeResUrlJS}')">💾 儲存修改</button>
                 </div>
             </div>
         `;
@@ -334,14 +339,15 @@ window.FeatureResource = (() => {
             }
 
             const { error: insertErr } = await window.supabaseClient.from('resources').insert(insertPayload);
-            if (insertErr) throw new Error("寫入新紀錄失敗: " + insertErr.message);
+            if (insertErr) throw new Error("寫入修改失敗: " + insertErr.message);
 
             document.getElementById('edit-resource-modal').remove();
+            alert('✅ 資源修改成功！');
             await renderGlobalResourceView();
 
         } catch (err) {
             alert('❌ 儲存失敗: ' + err.message);
-            btn.innerHTML = '💾 儲存並更新';
+            btn.innerHTML = '💾 儲存修改';
             btn.disabled = false;
         }
     }
@@ -379,10 +385,10 @@ window.FeatureResource = (() => {
                     const ownerId = user.id;
                     const im = { 'drive_folder':'📁', 'drive_file':'📄', 'youtube_video':'▶️', 'website_link':'🔗' };
 
-                    // 🌟 核心修復：檢查是否已經有同網址的資源，如果有，強迫走 Update 更新流程
+                    // 🌟 核心防雷：檢查是否已經有同網址的資源，如果有，強迫走 Update 更新流程
                     const { data: existing } = await window.supabaseClient.from('resources').select('id').eq('url', url).is('deleted_at', null);
                     if (existing && existing.length > 0) {
-                        if(!confirm('⚠️ 系統偵測到此網址已存在於您的資源庫中。\n點擊「確定」將會更新其名稱與派發設定，避免重複建立。')) {
+                        if(!confirm('⚠️ 系統偵測到此網址已存在於您的資源庫中。\n點擊「確定」將會覆蓋原名稱與派發設定，避免重複建立。')) {
                             btn.innerHTML = originalText; btn.disabled = false;
                             return;
                         }
@@ -427,7 +433,7 @@ window.FeatureResource = (() => {
         openEditResourceModal,
         saveEditedResource,
         deleteResourceGroup: async (resUrl) => {
-            if (!confirm('⚠️ 確定要封存此資源嗎？\n(這將會把該資源從所有已派發的班級中移除)')) return;
+            if (!confirm('⚠️ 確定要刪除此資源嗎？\n(這將會把該資源從所有已派發的班級中移除)')) return;
             try {
                 const { error } = await window.supabaseClient
                     .from('resources')
@@ -436,9 +442,10 @@ window.FeatureResource = (() => {
                     .is('deleted_at', null);
 
                 if (error) throw error;
+                alert('🗑️ 資源已成功刪除！');
                 await renderGlobalResourceView();
             } catch (err) {
-                alert('❌ 封存失敗: ' + err.message);
+                alert('❌ 刪除失敗: ' + err.message);
             }
         }
     };
