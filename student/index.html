@@ -6,8 +6,8 @@
     <title>學生學習區 | LogOnEnglish</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
-    <!-- v31 更新：介面與樣式快取破除 -->
-    <link rel="stylesheet" href="../010_css/style.css?v=31">
+    <!-- v32 更新：破除快取 -->
+    <link rel="stylesheet" href="../010_css/style.css?v=32">
     
     <style>
         body {
@@ -32,7 +32,6 @@
         .btn-primary:hover { background: #D97706; }
     </style>
 
-    <!-- CDN 優先載入，確保底層物件存在 -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -127,29 +126,21 @@
         </div>
     </div>
 
-    <!-- ============================================== -->
-    <!-- ⚠️ 解耦版依賴載入防禦區 (Dependency Guard) ⚠️ -->
     <!-- 順序鐵律：config ➡️ supabase ➡️ auth ➡️ store ➡️ api ➡️ utils-date ➡️ templates ➡️ features -->
-    <!-- ============================================== -->
+    <script src="../020_js_core/config.js?v=32"></script>
+    <script type="module" src="../020_js_core/supabase-client.js?v=32"></script>
+    <script src="../020_js_core/auth-guard.js?v=32"></script>
+    <script src="../020_js_core/store.js?v=32"></script>
     
-    <!-- [第一層]：設定與底層狀態 -->
-    <script src="../020_js_core/config.js?v=31"></script>
-    <script type="module" src="../020_js_core/supabase-client.js?v=31"></script>
-    <script src="../020_js_core/auth-guard.js?v=31"></script>
-    <script src="../020_js_core/store.js?v=31"></script>
-    
-    <!-- [第二層]：純粹工具與 API 層 -->
-    <script src="../020_js_core/api.js?v=31"></script> 
-    <script src="../020_js_core/utils-date.js?v=31"></script>
+    <script src="../020_js_core/api.js?v=32"></script> 
+    <script src="../020_js_core/utils-date.js?v=32"></script>
 
-    <!-- [第三層]：全新視覺模板層 -->
-    <script src="../120_student_core/ui-audio-templates.js?v=31"></script>
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=31"></script>
+    <script src="../120_student_core/ui-audio-templates.js?v=32"></script>
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=32"></script>
 
-    <!-- [第四層]：全新特徵指揮層 (使用 defer 確保 DOM 與依賴就緒後執行) -->
-    <script defer src="../120_student_core/feature-student-audio.js?v=31"></script>
-    <script defer src="../120_student_core/feature-student-resource.js?v=31"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=31"></script> 
+    <script defer src="../120_student_core/feature-student-audio.js?v=32"></script>
+    <script defer src="../120_student_core/feature-student-resource.js?v=32"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=32"></script> 
     
     <script defer>
         function switchClass(newClassId) {
