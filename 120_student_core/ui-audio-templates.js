@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v30 視覺欺騙與滿版優化 (True Fit-to-Width Illusion)：
- * 1. 將 max-width 收斂至 850px，打造直式閱讀艙，迫使 G-Drive 引擎自然撐滿寬度。
- * 2. 精準對齊 G-Drive 預覽器的背景色 (#323639)，達成無縫邊界的視覺體驗。
+ * 🚀 v31 神級 UX 重構 (The Ultimate Fit-to-Width Exploit)：
+ * 1. 徹底合併雙層 Header，將垂直高度還原給 iFrame。
+ * 2. 利用 Google Drive Fit-to-Height 的物理法則，迫使 A4 比例的視窗自然撐滿寬度。
  */
 
 window.UIAudioTemplates = {
@@ -18,6 +18,7 @@ window.UIAudioTemplates = {
         let embedUrl = '';
         let newWindowBtnHtml = '';
         let rangeText = '';
+        let toggleBtnHtml = '';
 
         if (materialUrl && materialUrl.trim() !== '') {
             embedUrl = materialUrl.trim();
@@ -26,13 +27,36 @@ window.UIAudioTemplates = {
             }
 
             if (materialRange) {
-                rangeText = `<span style="font-size:0.85rem; color:#64748b; margin-left:8px; font-weight: normal;">(指定範圍：${escapeHTML(materialRange)})</span>`;
+                // 配合紫底修改字體顏色為微透白，避免深灰字體在深色背景吃色
+                rangeText = `<span style="font-size:0.85rem; color:rgba(255, 255, 255, 0.85); margin-left:8px; font-weight: normal;">(指定範圍：${escapeHTML(materialRange)})</span>`;
             }
             
+            // 按鈕改為白底紫字，完美契合紫色標題列
             newWindowBtnHtml = `
-                <a href="${escapeHTML(materialUrl)}" target="_blank" onclick="event.stopPropagation();" style="background: #3b82f6; color: white; padding: 4px 10px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(59,130,246,0.3);" onmouseover="this.style.backgroundColor='#2563eb'" onmouseout="this.style.backgroundColor='#3b82f6'">
+                <a href="${escapeHTML(materialUrl)}" target="_blank" style="background: #ffffff; color: #4f46e5; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);" onmouseover="this.style.backgroundColor='#f8fafc'" onmouseout="this.style.backgroundColor='#ffffff'">
                     ↗️ 另開視窗
                 </a>
+            `;
+        }
+
+        // 當存在教材或原稿時，才渲染展開/收合按鈕
+        if (hasText || embedUrl) {
+            toggleBtnHtml = `
+                <button onclick="
+                    const container = document.getElementById('audio-modal-container');
+                    const body = document.getElementById('audio-material-body');
+                    if(container.classList.contains('is-collapsed')) {
+                        container.classList.remove('is-collapsed');
+                        body.style.display = 'flex';
+                        this.innerHTML = '🔽 收合教材';
+                    } else {
+                        container.classList.add('is-collapsed');
+                        body.style.display = 'none';
+                        this.innerHTML = '📄 展開教材';
+                    }
+                " style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: bold; transition: 0.2s; white-space: nowrap;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                    🔽 收合教材
+                </button>
             `;
         }
 
@@ -54,28 +78,7 @@ window.UIAudioTemplates = {
         if (hasText || embedUrl) {
             upperSectionHtml = `
                 <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: #323639;">
-                    <!-- 點擊收合的共用標題列 -->
-                    <div onclick="
-                        const container = document.getElementById('audio-modal-container');
-                        const body = document.getElementById('audio-material-body');
-                        if(container.classList.contains('is-collapsed')) {
-                            container.classList.remove('is-collapsed');
-                            body.style.display = 'flex';
-                            this.style.borderBottom = '1px solid #1e293b';
-                        } else {
-                            container.classList.add('is-collapsed');
-                            body.style.display = 'none';
-                            this.style.borderBottom = 'none';
-                        }
-                    " style="padding: 12px 24px; font-size: 0.95rem; color: #f8fafc; font-weight: 800; cursor: pointer; background: #1e293b; border-bottom: 1px solid #0f172a; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; user-select: none; transition: background 0.2s;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='#1e293b'">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 1.1rem;">📄</span>
-                            <span>點擊展開/收合：朗讀原稿與參考教材</span>
-                            ${rangeText}
-                        </div>
-                        ${newWindowBtnHtml}
-                    </div>
-                    <!-- 內部組合內容區 -->
+                    <!-- 內部組合內容區 (不再有獨立的 Header) -->
                     <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%; background: #323639;">
                         ${bodyHtml}
                     </div>
@@ -125,13 +128,23 @@ window.UIAudioTemplates = {
             <!-- 🌟 核心重構：鎖定 max-width: 850px，強制塑造直式閱讀艙，讓 Google Drive 自動啟動 Fit to Width -->
             <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 16px; width: 95%; max-width: 850px; height: 95vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
                 
-                <!-- 頂部 Header -->
-                <div style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;">
-                    <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em;">🎙️ 錄音艙：${displayTitle}</h2>
-                    <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
+                <!-- 🌟 v31 頂部終極合併版 (The Unified Header) -->
+                <div style="background-color: #4f46e5; color: #ffffff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;">
+                    <!-- 左側：標題與展開收合控制 -->
+                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap;">🎙️ 錄音艙：${displayTitle}</h2>
+                        ${toggleBtnHtml}
+                        ${rangeText}
+                    </div>
+                    
+                    <!-- 右側：功能鍵與關閉 -->
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        ${newWindowBtnHtml}
+                        <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
+                    </div>
                 </div>
 
-                <!-- 上半：教材區 (精準的直式比例 + G-Drive 深灰底色) -->
+                <!-- 上半：教材區 (不再自帶 Header，完全釋放垂直空間) -->
                 ${upperSectionHtml}
 
                 <!-- 下半：雙模式 Dock 控制區 -->
