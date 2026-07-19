@@ -1,6 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-audio.js
  * 🌟 學生端輕量指揮官：硬體授權、狀態機切換、5 分鐘防護與 Base64 轉換
+ * 🔄 v25 沉浸式錄音艙更新版：完美配合 Dock 響應式佈局切換
  */
 
 window.FeatureStudentAudio = (function() {
@@ -141,6 +142,7 @@ window.FeatureStudentAudio = (function() {
         
         el.audioPlayback.src = URL.createObjectURL(audioBlob);
         
+        el.btnStart.style.display = 'none';
         el.btnPause.style.display = 'none';
         el.btnResume.style.display = 'none';
         el.btnStop.style.display = 'none';
@@ -209,12 +211,11 @@ window.FeatureStudentAudio = (function() {
             console.error('[FeatureStudentAudio] 繳交封裝失敗:', error);
             alert('系統處理錯誤，請稍後再試。');
             el.btnSubmit.disabled = false;
-            el.btnSubmit.innerHTML = '🚀 一鍵繳交';
+            el.btnSubmit.innerHTML = '🚀 繳交';
         }
     }
 
     return {
-        // 🌟 精準掛載四個參數
         openStudio: function(taskTitle, transcriptText, materialUrl, materialRange, submitCallback) {
             closeStudio(); 
             onSubmitCallback = submitCallback;
