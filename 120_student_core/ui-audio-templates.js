@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v29 Pop-up 滿版精準修正版 (Edge-to-Edge PDF)：
- * 1. 恢復優雅的 Pop-up 懸浮視窗設計 (保留圓角、陰影與外層邊界)。
- * 2. 徹底拔除內容區的 padding，讓 PDF 預覽 iFrame 達到 100% 視窗內滿版寬度。
+ * 🚀 v30 視覺欺騙與滿版優化 (True Fit-to-Width Illusion)：
+ * 1. 將 max-width 收斂至 850px，打造直式閱讀艙，迫使 G-Drive 引擎自然撐滿寬度。
+ * 2. 精準對齊 G-Drive 預覽器的背景色 (#323639)，達成無縫邊界的視覺體驗。
  */
 
 window.UIAudioTemplates = {
@@ -36,13 +36,13 @@ window.UIAudioTemplates = {
             `;
         }
 
-        // 🌟 拔除 padding，讓 iFrame 直接撐滿 100%
+        // 🌟 拔除 padding 並注入 #323639 背景，讓 PDF 100% 無縫融入
         let bodyHtml = '';
         if (hasText) {
-            bodyHtml += `<div style="padding: 16px 24px; font-size: 1.05rem; color: #334155; line-height: 1.6; max-height: 150px; overflow-y: auto; background: #ffffff; ${embedUrl ? 'border-bottom: 1px dashed #cbd5e1; flex-shrink: 0;' : 'flex: 1;'}">${safeText}</div>`;
+            bodyHtml += `<div style="padding: 16px 24px; font-size: 1.05rem; color: #334155; line-height: 1.6; max-height: 150px; overflow-y: auto; background: #ffffff; ${embedUrl ? 'border-bottom: 1px solid #1e293b; flex-shrink: 0;' : 'flex: 1;'}">${safeText}</div>`;
         }
         if (embedUrl) {
-            bodyHtml += `<iframe src="${embedUrl}" style="width: 100%; height: 100%; flex: 1; border: none; display: block; background: #f1f5f9;" allow="autoplay"></iframe>`;
+            bodyHtml += `<iframe src="${embedUrl}" style="width: 100%; height: 100%; flex: 1; border: none; display: block; background: #323639;" allow="autoplay"></iframe>`;
         }
         if (!hasText && !embedUrl) {
             bodyHtml += `<div style="padding: 20px; color: #9ca3af; font-style: italic; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; background: #ffffff;">（老師未提供任何教材或原稿，請直接錄音）</div>`;
@@ -53,7 +53,7 @@ window.UIAudioTemplates = {
 
         if (hasText || embedUrl) {
             upperSectionHtml = `
-                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: #f8fafc;">
+                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: #323639;">
                     <!-- 點擊收合的共用標題列 -->
                     <div onclick="
                         const container = document.getElementById('audio-modal-container');
@@ -61,13 +61,13 @@ window.UIAudioTemplates = {
                         if(container.classList.contains('is-collapsed')) {
                             container.classList.remove('is-collapsed');
                             body.style.display = 'flex';
-                            this.style.borderBottom = '1px solid #e2e8f0';
+                            this.style.borderBottom = '1px solid #1e293b';
                         } else {
                             container.classList.add('is-collapsed');
                             body.style.display = 'none';
                             this.style.borderBottom = 'none';
                         }
-                    " style="padding: 12px 24px; font-size: 0.95rem; color: #1e293b; font-weight: 800; cursor: pointer; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; user-select: none; transition: background 0.2s;" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='#f8fafc'">
+                    " style="padding: 12px 24px; font-size: 0.95rem; color: #f8fafc; font-weight: 800; cursor: pointer; background: #1e293b; border-bottom: 1px solid #0f172a; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; user-select: none; transition: background 0.2s;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='#1e293b'">
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="font-size: 1.1rem;">📄</span>
                             <span>點擊展開/收合：朗讀原稿與參考教材</span>
@@ -75,8 +75,8 @@ window.UIAudioTemplates = {
                         </div>
                         ${newWindowBtnHtml}
                     </div>
-                    <!-- 內部組合內容區 (無邊界限制，讓 PDF 完全滿版) -->
-                    <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%;">
+                    <!-- 內部組合內容區 -->
+                    <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%; background: #323639;">
                         ${bodyHtml}
                     </div>
                 </div>
@@ -121,10 +121,9 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
         </style>
 
-        <!-- 回復半透明遮罩背景 -->
         <div id="audio-studio-modal" style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);">
-            <!-- 回復 Pop-up 圓角與寬度設計，保持優雅質感 -->
-            <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 16px; width: 95%; max-width: 1200px; height: 95vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+            <!-- 🌟 核心重構：鎖定 max-width: 850px，強制塑造直式閱讀艙，讓 Google Drive 自動啟動 Fit to Width -->
+            <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 16px; width: 95%; max-width: 850px; height: 95vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
                 
                 <!-- 頂部 Header -->
                 <div style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;">
@@ -132,7 +131,7 @@ window.UIAudioTemplates = {
                     <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
                 </div>
 
-                <!-- 上半：教材區 (邊緣到邊緣 Edge-to-Edge 滿版設計) -->
+                <!-- 上半：教材區 (精準的直式比例 + G-Drive 深灰底色) -->
                 ${upperSectionHtml}
 
                 <!-- 下半：雙模式 Dock 控制區 -->
