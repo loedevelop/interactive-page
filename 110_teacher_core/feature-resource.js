@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-resource.js
- * 🌟 v6.0 終極排版與邏輯修復版：
- * 1. 完美實作「雙欄派發排版」 (對齊 UI 截圖)
- * 2. 徹底修復全域/班級 Scope 切換的儲存 Bug (導入 UtilsDate 軟刪除)
- * 3. 實作「各班級獨立新增資源」功能
+ * 🌟 v6.1 視覺與防呆終極強化版：
+ * 1. 徹底廢除舊版寬度寫死的 Table，改用全響應式 Flexbox 列表，解決 Edit/Delete 按鈕在小螢幕被隱藏的 UI 災難。
+ * 2. 全面套用 Map 引擎進行 URL 去重，保障全域/班級資源優先級不衝突。
+ * 3. 班級獨立資源卡片補回「編輯/刪除」功能。
  */
 
 window.FeatureResource = (() => {
@@ -22,8 +22,8 @@ window.FeatureResource = (() => {
     // --- 共用 UI 元件：雙欄派發排版生成器 ---
     function buildDispatchLayout(isGlobal, activeClasses, dispatchedIds, checkboxId, targetCbClass, labelId) {
         let html = `
-            <div style="display: flex; gap: 20px; align-items: stretch; margin-top: 10px;">
-                <div style="flex: 0 0 220px; display: flex;">
+            <div style="display: flex; gap: 20px; align-items: stretch; margin-top: 10px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 220px; max-width: 300px; display: flex;">
                     <label id="${labelId}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width: 100%; background:${isGlobal ? '#EFF6FF' : '#F8FAFC'}; border:2px solid ${isGlobal ? '#3B82F6' : '#E2E8F0'}; border-radius:12px; cursor:pointer; padding:20px; text-align:center; transition:0.2s;">
                         <input type="checkbox" id="${checkboxId}" style="transform:scale(1.5); margin-bottom:15px;" ${isGlobal ? 'checked' : ''} onchange="
                             const cbs = document.querySelectorAll('.${targetCbClass}');
@@ -39,7 +39,7 @@ window.FeatureResource = (() => {
                         <span style="font-weight:900; color:#1E3A8A; font-size:1.1rem; line-height:1.4;">🌍 設為「全域資源」<br><span style="font-size:0.9rem; margin-top: 5px; display: block;">(自動套用至所有班級)</span></span>
                     </label>
                 </div>
-                <div style="flex: 1; display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; padding: 5px;">
+                <div style="flex: 2; min-width: 250px; display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start; padding: 5px;">
         `;
         
         if (activeClasses.length === 0) {
@@ -97,21 +97,25 @@ window.FeatureResource = (() => {
         if (!container) return;
         
         const safeLibrary = db.resourceLibrary || [];
-        const uniqueResources = [];
-        const seenUrls = new Set();
         
+        // 🌟 導入嚴謹的 Map 去重
+        const resMap = new Map();
         safeLibrary.forEach(r => {
             if (r.scope === 'global' || (r.scope === 'class' && r.target_class_id === classId)) {
-                if (!seenUrls.has(r.url)) {
-                    seenUrls.add(r.url);
-                    uniqueResources.push(r);
+                const key = r.url && r.url.trim() !== '' ? r.url.trim() : r.id;
+                if (!resMap.has(key)) {
+                    resMap.set(key, r);
+                } else {
+                    const existing = resMap.get(key);
+                    if (existing.scope === 'class' && r.scope === 'global') resMap.set(key, r);
                 }
             }
         });
+        
+        const uniqueResources = Array.from(resMap.values());
 
-        // 🌟 新增：專屬本班的新增按鈕
         let html = `
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
                 <h3 style="margin:0; color:#1E293B;">📂 班級資源庫</h3>
                 <button class="btn btn-primary" style="font-size:0.95rem; font-weight:800; padding:8px 16px;" onclick="window.FeatureResource.openAddClassResourceModal('${classId}')">➕ 新增本班專屬資源</button>
             </div>
@@ -129,11 +133,20 @@ window.FeatureResource = (() => {
                 const safeNameHTML = escapeHTML(res.name);
                 const safeUrlJS = escapeJS(res.url);
 
+                // 🌟 修復：在卡片右上角補回編輯/刪除按鈕
                 html += `
-                    <div class="res-item" style="cursor:pointer; background:white; border:1px solid #E2E8F0; padding:20px 15px; border-radius:12px; text-align:center; transition:all 0.2s; box-shadow:0 2px 4px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.transform='translateY(-2px)';" onmouseout="this.style.borderColor='#E2E8F0'; this.style.transform='none';" onclick="window.open('${safeUrlJS}', '_blank')">
-                        <div style="font-size: 3rem; margin-bottom: 10px;">${res.icon}</div>
-                        <div style="font-weight: 900; color:#1E293B; font-size:1.05rem;">${safeNameHTML}</div>
-                        <div style="margin-top: 8px;">${scopeBadge}</div>
+                    <div class="res-item" style="position:relative; cursor:pointer; background:white; border:1px solid #E2E8F0; padding:20px 15px; border-radius:12px; text-align:center; transition:all 0.2s; box-shadow:0 2px 4px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.transform='translateY(-2px)';" onmouseout="this.style.borderColor='#E2E8F0'; this.style.transform='none';">
+                        
+                        <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 5px;">
+                            <button class="btn-icon" style="background:#F1F5F9; border:1px solid #CBD5E1; padding:4px 6px; border-radius:4px; cursor:pointer;" onclick="event.stopPropagation(); window.FeatureResource.openEditResourceModal('${safeUrlJS}')" title="編輯資源">✏️</button>
+                            <button class="btn-icon" style="background:#FEF2F2; border:1px solid #FECACA; padding:4px 6px; border-radius:4px; cursor:pointer;" onclick="event.stopPropagation(); window.FeatureResource.deleteResourceGroup('${safeUrlJS}')" title="刪除資源">🗑️</button>
+                        </div>
+
+                        <div onclick="window.open('${safeUrlJS}', '_blank')">
+                            <div style="font-size: 3rem; margin-bottom: 10px;">${res.icon}</div>
+                            <div style="font-weight: 900; color:#1E293B; font-size:1.05rem;">${safeNameHTML}</div>
+                            <div style="margin-top: 8px;">${scopeBadge}</div>
+                        </div>
                     </div>`;
             });
         }
@@ -151,23 +164,30 @@ window.FeatureResource = (() => {
         const safeLibrary = db.resourceLibrary || [];
 
         if (cbContainer) {
-            // 🌟 套用完美的雙欄排版
             cbContainer.innerHTML = buildDispatchLayout(false, activeClasses, [], 'res-is-global-cb', 'target-class-cb', 'global-cb-label');
         }
         
         const libContainer = document.getElementById('global-resource-library');
         if (libContainer) {
-            const uniqueResources = [];
-            const urlMap = new Set();
-            
             const myClassIds = activeClasses.map(c => c.id);
             const myResources = safeLibrary.filter(r => r.scope === 'global' || (r.scope === 'class' && myClassIds.includes(r.target_class_id)));
 
+            // 🌟 核心防呆：使用 Map 精準合併，絕不誤殺
+            const resMap = new Map();
             myResources.forEach(r => {
-                if(!urlMap.has(r.url)) {
-                    urlMap.add(r.url);
-                    uniqueResources.push(r);
+                const key = r.url && r.url.trim() !== '' ? r.url.trim() : r.id;
+                if (!resMap.has(key)) {
+                    resMap.set(key, r);
+                } else {
+                    const existing = resMap.get(key);
+                    if (existing.scope === 'class' && r.scope === 'global') resMap.set(key, r);
                 }
+            });
+
+            const uniqueResources = Array.from(resMap.values()).sort((a, b) => {
+                if (a.scope === 'global' && b.scope === 'class') return -1;
+                if (a.scope === 'class' && b.scope === 'global') return 1;
+                return 0;
             });
 
             if (uniqueResources.length === 0) {
@@ -175,22 +195,11 @@ window.FeatureResource = (() => {
                 return;
             }
 
-            let tableHTML = `
-                <div style="overflow-x: auto; background: white; border: 1px solid #E2E8F0; border-radius: 8px;">
-                    <table style="width: 100%; min-width: 700px; border-collapse: collapse; text-align: left; font-size: 0.95rem;">
-                        <thead>
-                            <tr style="background: #F8FAFC; color: #64748B; border-bottom: 1px solid #E2E8F0;">
-                                <th style="padding: 12px 15px; width: 60px; text-align: center;">類型</th>
-                                <th style="padding: 12px 15px; width: 30%;">資源名稱</th>
-                                <th style="padding: 12px 15px;">派發狀態</th>
-                                <th style="padding: 12px 15px; width: 160px; text-align: center; white-space: nowrap;">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
+            // 🌟 終極重構：廢除 Table 佈局，改用 Flexbox 卡片列表，確保小螢幕按鈕不被隱藏
+            let listHTML = `<div style="display: flex; flex-direction: column; gap: 12px;">`;
 
             uniqueResources.forEach(res => {
-                let badgeHTML = '<div style="display: flex; flex-wrap: wrap; gap: 6px;">';
+                let badgeHTML = '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">';
                 
                 if (res.scope === 'global') {
                     badgeHTML += `<span style="background: #DBEAFE; color: #1D4ED8; font-size: 0.8rem; padding: 4px 10px; border-radius: 12px; font-weight: bold; border: 1px solid #93C5FD;">🌍 全域共用</span>`;
@@ -215,36 +224,38 @@ window.FeatureResource = (() => {
                 const safeUrlJS = escapeJS(res.url);
                 const safeUrlHTML = escapeHTML(res.url);
 
-                tableHTML += `
-                    <tr style="border-bottom: 1px solid #E2E8F0; transition: background 0.2s;" onmouseover="this.style.background='#F8FAFC'" onmouseout="this.style.background='transparent'">
-                        <td style="padding: 12px 15px; font-size: 1.5rem; text-align: center;">${res.icon}</td>
-                        <td style="padding: 12px 15px; font-weight: bold; color: #1E293B;">
-                            <a href="${safeUrlHTML}" target="_blank" style="color: #3B82F6; text-decoration: none;" title="點擊開啟資源">${safeNameHTML} 🔗</a>
-                        </td>
-                        <td style="padding: 12px 15px;">${badgeHTML}</td>
-                        <td style="padding: 12px 15px; text-align: center; white-space: nowrap;">
-                            <div style="display: flex; justify-content: center; gap: 8px;">
-                                <button class="btn" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; padding:6px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureResource.openEditResourceModal('${safeUrlJS}')" title="編輯與重新派發">✏️ 編輯</button>
-                                <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:6px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureResource.deleteResourceGroup('${safeUrlJS}')" title="刪除資源">🗑️</button>
+                listHTML += `
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 15px; padding: 15px; background: white; border: 1px solid #E2E8F0; border-radius: 10px; transition: box-shadow 0.2s;" onmouseover="this.style.boxShadow='0 4px 6px -1px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+                        <div style="display: flex; align-items: center; gap: 15px; flex: 1; min-width: 250px;">
+                            <div style="font-size: 2rem; background: #F8FAFC; min-width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid #E2E8F0;">${res.icon}</div>
+                            <div>
+                                <a href="${safeUrlHTML}" target="_blank" style="font-weight: 900; color: #1E293B; font-size: 1.15rem; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#3B82F6'" onmouseout="this.style.color='#1E293B'">${safeNameHTML} <span style="font-size: 0.9rem; color: #94A3B8;">🔗</span></a>
+                                ${badgeHTML}
                             </div>
-                        </td>
-                    </tr>
+                        </div>
+                        <div style="display: flex; gap: 8px; flex-shrink: 0; align-items: center;">
+                            <button class="btn" style="background:#F8FAFC; color:#475569; border:1px solid #CBD5E1; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight: bold; box-shadow: 0 1px 2px rgba(0,0,0,0.05);" onclick="window.FeatureResource.openEditResourceModal('${safeUrlJS}')" title="編輯與重新派發">✏️ 編輯</button>
+                            <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:8px 12px; border-radius:8px; cursor:pointer; font-weight: bold; box-shadow: 0 1px 2px rgba(0,0,0,0.05);" onclick="window.FeatureResource.deleteResourceGroup('${safeUrlJS}')" title="刪除資源">🗑️</button>
+                        </div>
+                    </div>
                 `;
             });
 
-            tableHTML += `</tbody></table></div>`;
-            libContainer.innerHTML = tableHTML;
+            listHTML += `</div>`;
+            libContainer.innerHTML = listHTML;
         }
     }
 
     // ==========================================
-    // 肆、 編輯/新增 彈窗與儲存邏輯 (徹底修復儲存 Bug)
+    // 肆、 編輯/新增 彈窗與儲存邏輯
     // ==========================================
     function openEditResourceModal(resUrl) {
         const safeLibrary = db.resourceLibrary || [];
         const activeClasses = db.classes || [];
         
-        const resSample = safeLibrary.find(r => r.url === resUrl);
+        // 確保精準抓到正確的樣本 (優先抓取 Global)
+        let resSample = safeLibrary.find(r => r.url === resUrl && r.scope === 'global');
+        if (!resSample) resSample = safeLibrary.find(r => r.url === resUrl);
         if (!resSample) return;
 
         const isGlobal = resSample.scope === 'global';
@@ -256,7 +267,7 @@ window.FeatureResource = (() => {
 
         overlay = document.createElement('div');
         overlay.id = overlayId;
-        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(3px);';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(3px); padding: 15px; box-sizing: border-box;';
         
         const classCheckboxesHTML = buildDispatchLayout(isGlobal, activeClasses, dispatchedIds, 'modal-res-is-global', 'modal-target-class-cb', 'modal-global-cb-label');
         const safeResNameHTML = escapeHTML(resSample.name);
@@ -264,7 +275,7 @@ window.FeatureResource = (() => {
         const safeResUrlJS = escapeJS(resSample.url);
 
         overlay.innerHTML = `
-            <div style="background: white; padding: 30px; border-radius: 16px; width: 95%; max-width: 750px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); max-height: 90vh; overflow-y: auto;">
+            <div style="background: white; padding: 30px; border-radius: 16px; width: 100%; max-width: 750px; box-shadow: 0 20px 40px rgba(0,0,0,0.3); max-height: 90vh; overflow-y: auto;">
                 <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 15px; margin-bottom: 20px; font-size:1.4rem;">✏️ 修改資源與派發設定</h3>
                 
                 <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px;">
@@ -323,7 +334,6 @@ window.FeatureResource = (() => {
             if (authErr || !user) throw new Error("授權狀態遺失");
             const ownerId = user.id;
 
-            // 🌟 核心修復：強制使用系統指定的時間引擎，保證軟刪除必定成功
             const nowTs = window.UtilsDate.getTaiwanIsoTimestamp();
             const { error: delErr } = await window.supabaseClient
                 .from('resources')
@@ -345,7 +355,11 @@ window.FeatureResource = (() => {
 
             document.getElementById('edit-resource-modal').remove();
             alert('✅ 資源修改成功！');
+            
+            // 同步刷新畫面
             await renderGlobalResourceView();
+            const currentClassId = window.TeacherUI ? window.TeacherUI.getCurrentClassId() : null;
+            if (currentClassId) await renderClassResources(currentClassId);
 
         } catch (err) {
             alert('❌ 儲存失敗: ' + err.message);
@@ -354,7 +368,6 @@ window.FeatureResource = (() => {
         }
     }
 
-    // 🌟 新增：班級專屬的新增資源彈窗
     function openAddClassResourceModal(classId) {
         const overlayId = 'add-class-resource-modal';
         let overlay = document.getElementById(overlayId);
@@ -362,13 +375,13 @@ window.FeatureResource = (() => {
 
         overlay = document.createElement('div');
         overlay.id = overlayId;
-        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(3px);';
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(3px); padding: 15px; box-sizing: border-box;';
 
         overlay.innerHTML = `
-            <div style="background: white; padding: 30px; border-radius: 16px; width: 90%; max-width: 500px; box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
+            <div style="background: white; padding: 30px; border-radius: 16px; width: 100%; max-width: 500px; box-shadow: 0 20px 40px rgba(0,0,0,0.3);">
                 <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 15px; margin-bottom: 20px; font-size:1.4rem;">➕ 新增本班專屬資源</h3>
-                <div style="display: flex; gap: 15px; margin-bottom: 20px;">
-                    <div style="width: 150px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 20px;">
+                    <div style="flex: 1; min-width: 120px;">
                         <label style="display:block; font-weight:900; color:#475569; margin-bottom:6px;">類型</label>
                         <select id="add-class-res-type" class="form-control" style="width: 100%; padding:10px; font-size:1rem; border-radius:8px;">
                             <option value="drive_folder">📁 Drive 資料夾</option>
@@ -377,7 +390,7 @@ window.FeatureResource = (() => {
                             <option value="website_link">🔗 一般網頁</option>
                         </select>
                     </div>
-                    <div style="flex: 1;">
+                    <div style="flex: 2; min-width: 200px;">
                         <label style="display:block; font-weight:900; color:#475569; margin-bottom:6px;">資源名稱 <span style="color:#EF4444;">*</span></label>
                         <input type="text" id="add-class-res-name" class="form-control" style="width: 100%; padding:10px; font-size:1rem; border-radius:8px;">
                     </div>
@@ -515,6 +528,10 @@ window.FeatureResource = (() => {
                 if (error) throw error;
                 alert('🗑️ 資源已成功刪除！');
                 await renderGlobalResourceView();
+                
+                // 確保班級視圖也能同步更新
+                const currentClassId = window.TeacherUI ? window.TeacherUI.getCurrentClassId() : null;
+                if (currentClassId) await renderClassResources(currentClassId);
             } catch (err) { alert('❌ 刪除失敗: ' + err.message); }
         }
     };

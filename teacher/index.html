@@ -179,16 +179,16 @@
     <script src="../020_js_core/utils-date.js?v=31"></script> 
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/ui-core.js?v=31"></script>
+    <script src="../110_teacher_core/ui-core.js?v=32"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=31"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=34"></script>
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=36"></script>
     <script src="../110_teacher_core/store-assignment-builder.js?v=31"></script> 
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
     <script src="../110_teacher_core/feature-class.js?v=31"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=31"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=60"></script> 
-    <script src="../110_teacher_core/feature-resource.js?v=33"></script>
+    <script src="../110_teacher_core/feature-timeline.js?v=61"></script> 
+    <script src="../110_teacher_core/feature-resource.js?v=34"></script>
     <script src="../110_teacher_core/feature-profile.js?v=31"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=31"></script>
     <script src="../110_teacher_core/feature-progress.js?v=31"></script>
@@ -197,7 +197,6 @@
         import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=30'; 
         
         window.RenderMemberManagerForm = function(classId, currentUserRole) {
-            // 🌟 將 MemberManager 掛載到 window.currentMemberManager，確保外部能呼叫 openAndSync
             window.currentMemberManager = new MemberManager('unified-member-management-container', classId, currentUserRole);
         };
         

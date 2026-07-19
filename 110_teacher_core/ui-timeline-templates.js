@@ -1,6 +1,7 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠：修正 PDF 匯入按鈕遺失，並全面將 audio / link 的資源庫綁定改為 data-url 精準取值
+ * 🌟 純視覺模板工廠 v13.9.3：
+ * 徹底拔除 data-url DOM 污染，全面回歸透過 Feature 呼叫 applyResourceUrl() 進行乾淨的狀態更新。
  */
 
 window.TimelineTemplates = (() => {
@@ -196,7 +197,7 @@ window.TimelineTemplates = (() => {
                     subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此群組作業尚無內容)</div>`;
                 }
 
-                // 🌟 群組/根節點直接匯入 Task，仍依賴 this.value 取 UUID
+                // 🌟 群組/根節點直接匯入 Task，仍依賴 this.value 傳遞 ID 給 Feature
                 let addResourceHtml = classResOpts ? `
                     <select class="form-control" style="width:auto; padding:4px 10px; font-size:0.9rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink('${pathStr}', this.value); this.value=''; }">
                         <option value="" disabled selected>+ 📚 班級與全域資源</option>
@@ -292,11 +293,11 @@ window.TimelineTemplates = (() => {
                         }
                     }
 
-                    // 🌟 修復點三：單一連結任務的網址替換，強制提取 data-url 真實網址
+                    // 🌟 修正點：呼叫專屬輔助函式 applyResourceUrl
                     let resOptsHtml = '';
                     if (classResOpts) {
-                        resOptsHtml = `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="const opt = this.options[this.selectedIndex]; const u = opt.hasAttribute('data-url') ? opt.getAttribute('data-url') : ''; window.FeatureTimeline.updateNodeUrl('${pathStr}', u);">
-                            <option value="">📚 手動套用資源庫</option>${classResOpts}
+                        resOptsHtml = `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value);">
+                            <option value="" disabled selected>📚 手動套用資源庫</option>${classResOpts}
                         </select>`;
                     }
 
@@ -316,11 +317,11 @@ window.TimelineTemplates = (() => {
                     const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;');
                     const safeRange = (raw.material_range || '').replace(/"/g, '&quot;');
 
-                    // 🌟 修復點四：錄音任務的雲端素材來源，強制提取 data-url 真實網址
+                    // 🌟 修正點：呼叫專屬輔助函式 applyResourceUrl，並傳入 targetInputId
                     let resOptsHtmlForAudio = '';
                     if (classResOpts) {
-                        resOptsHtmlForAudio = `<select class="form-control" style="width:auto; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" onchange="const opt = this.options[this.selectedIndex]; const u = opt.hasAttribute('data-url') ? opt.getAttribute('data-url') : ''; document.getElementById('node-material-url-${pathStr}').value = u; window.BuilderStore.sync();">
-                            <option value="">📚 從資源庫選擇</option>${classResOpts}
+                        resOptsHtmlForAudio = `<select class="form-control" style="width:auto; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-material-url-${pathStr}');">
+                            <option value="" disabled selected>📚 從資源庫選擇</option>${classResOpts}
                         </select>`;
                     }
 
@@ -449,7 +450,6 @@ window.TimelineTemplates = (() => {
             </div>
         `;
 
-        // 🌟 最外層 Add Resource 依然維持 this.value (取 ID 給 addResourceTaskAsLink 使用)
         let addResourceHtml = classResOpts ? `
             <select class="form-control" style="width:auto; padding:6px 12px; font-size:1rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(null, this.value); this.value=''; }">
                 <option value="" disabled selected>+ 📚 班級與全域資源</option>

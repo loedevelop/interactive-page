@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.9.2 資源網址精準綁定版：
- * 徹底解決下拉選單取到 UUID 導致學生端 404 錯誤，並加入以 URL 為基準的資源去重引擎。
+ * 🌟 v13.9.3 終極修復版：
+ * 重構精準 Map 去重引擎 (解決全域資源被誤殺的問題)，並導入記憶體網址挖礦輔助函式 (applyResourceUrl)。
  */
 
-console.log("🚀 FeatureTimeline v13.9.2 載入成功！(防爆 PDF 引擎啟用 + 資源去重綁定修復)");
+console.log("🚀 FeatureTimeline v13.9.3 載入成功！(精準資源去重引擎 + 記憶體網址擷取)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -215,21 +215,34 @@ window.FeatureTimeline = (() => {
         const allResList = (db && db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
         
         if (allResList.length > 0) {
-            // 🌟 修復點一：利用 Map 依據網址(URL)去重，優先保留全域資源
+            // 🌟 核心修復：嚴謹的 Map 去重邏輯，絕不誤殺無辜資源
             const resMap = new Map();
             allResList.forEach(r => {
-                const key = r.url || r.id; // 以 URL 為主，若無則用 ID 防呆
-                if (!resMap.has(key) || r.scope === 'global') {
+                const hasUrl = r.url && r.url.trim() !== '';
+                const key = hasUrl ? r.url.trim() : r.id; // 無 URL 時依賴 ID 防呆，確保每一筆獨立存活
+                
+                if (!resMap.has(key)) {
                     resMap.set(key, r);
+                } else if (hasUrl) {
+                    // 若網址發生碰撞，僅在「既有為班級資源，新來為全域資源」時才進行優雅覆寫
+                    const existing = resMap.get(key);
+                    if (existing.scope === 'class' && r.scope === 'global') {
+                        resMap.set(key, r);
+                    }
                 }
             });
 
-            const uniqueResList = Array.from(resMap.values());
+            // 排序：讓全域資源 (🌍) 統一排在最前面，增進 UI 體驗
+            const uniqueResList = Array.from(resMap.values()).sort((a, b) => {
+                if (a.scope === 'global' && b.scope === 'class') return -1;
+                if (a.scope === 'class' && b.scope === 'global') return 1;
+                return 0;
+            });
 
+            // 拔除 DOM 污染，回歸單純的 ID 傳遞
             classResOpts = uniqueResList.map(r => {
                 const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
-                // 🌟 修復點二：寫入 data-url 供單一 Task 抓取真實網址，value 保留 ID 供群組產生完整 Task
-                return `<option value="${r.id}" data-url="${r.url || ''}">${r.icon} ${r.name} (${scopeIcon})</option>`;
+                return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
             }).join('');
         }
 
@@ -308,6 +321,28 @@ window.FeatureTimeline = (() => {
             }, 300);
         },
 
+        // 🌟 專屬輔助函式：從記憶體挖出真實 URL 並寫入對應的任務節點，取代 DOM 取值
+        applyResourceUrl: (pathStr, resId, targetInputId = null) => {
+            if (!resId || !db || !db.resourceLibrary) return;
+            const res = db.resourceLibrary.find(r => r.id === resId);
+            if (!res) return;
+            
+            const realUrl = res.url || ''; // 若為舊版無 URL 則給空字串，防止寫入 UUID
+            
+            if (targetInputId) {
+                // 用於錄音任務 (Audio) 等擁有獨立輸入框的節點
+                const el = document.getElementById(targetInputId);
+                if (el) {
+                    el.value = realUrl;
+                    window.BuilderStore.sync(); 
+                }
+            } else if (pathStr) {
+                // 用於連結任務 (Link) 透過 Store 更新大腦狀態
+                window.BuilderStore.updateNodeUrl(pathStr, realUrl);
+                renderBuilderUI();
+            }
+        },
+
         // 🌟 絕對安全的 PDF 引擎掛載
         handlePDFUpload: async (inputEl, pathStr) => {
             const file = inputEl.files[0];
@@ -319,9 +354,7 @@ window.FeatureTimeline = (() => {
             textarea.value = '⏳ 正在解析 PDF 文字，請稍候...';
 
             try {
-                // 安全判定 PDF.js 變數 (相容多版本 CDN)
                 let pdfjsCore = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
-                
                 if (!pdfjsCore) {
                     await new Promise((resolve, reject) => {
                         const script = document.createElement('script');
@@ -335,7 +368,6 @@ window.FeatureTimeline = (() => {
                     if (!pdfjsCore) throw new Error('無法取得 PDF.js 核心物件');
                 }
 
-                // 強制套用 Worker，若遭跨域阻擋 PDF.js 會自動降級為 Fake Worker，不影響萃取。
                 pdfjsCore.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
                 const arrayBuffer = await file.arrayBuffer();
