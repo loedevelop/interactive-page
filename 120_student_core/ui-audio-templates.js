@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v36 行動端響應修復版 (Mobile Responsive & vh Fix)：
- * 1. 修復手機版 Dock 消失問題：拔除固定 80px 高度，改為 height: auto 並允許 flex-wrap。
- * 2. 加入 @media 手機斷點，在窄螢幕下自動將功能區轉為垂直堆疊 (Column)，並避開 iOS 底部橫條。
- * 3. 修復 vh 陷阱：將 98vh 改為 96% 搭配 max-height: -webkit-fill-available，防止底部被瀏覽器 UI 遮擋。
+ * 🚀 v39 空間極致釋放版 (The Mini-Dock Update)：
+ * 1. 撤銷手機端隱藏 iframe 的愚蠢設計，直球對決。
+ * 2. 針對手機端 (max-width: 768px) 導入 Mini-Dock 橫向極簡佈局。
+ * 3. 透過極大化 iframe 垂直高度，降低 Google Drive 行動版黑框對文字的遮擋效應。
  */
 
 window.UIAudioTemplates = {
@@ -20,7 +20,6 @@ window.UIAudioTemplates = {
         let newWindowBtnHtml = '';
         let rangeText = '';
         let toggleBtnHtml = '';
-        let zoomHintHtml = '';
 
         if (materialUrl && materialUrl.trim() !== '') {
             embedUrl = materialUrl.trim();
@@ -29,19 +28,13 @@ window.UIAudioTemplates = {
             }
 
             if (materialRange) {
-                rangeText = `<span style="font-size:0.85rem; color:rgba(255, 255, 255, 0.85); margin-left:8px; font-weight: normal;">(指定範圍：${escapeHTML(materialRange)})</span>`;
+                rangeText = `<span style="font-size:0.85rem; color:rgba(255, 255, 255, 0.85); margin-left:8px; font-weight: normal; white-space: nowrap; flex-shrink: 0;">(指定範圍：${escapeHTML(materialRange)})</span>`;
             }
             
             newWindowBtnHtml = `
-                <a href="${escapeHTML(materialUrl)}" target="_blank" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
+                <a href="${escapeHTML(materialUrl)}" target="_blank" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
                     ↗️ 另開視窗
                 </a>
-            `;
-
-            zoomHintHtml = `
-                <div class="gdrive-zoom-hint">
-                    💡 覺得字太小？請將滑鼠移至文件上方，點擊內建的 ➕ 放大閱讀
-                </div>
             `;
         }
 
@@ -53,14 +46,14 @@ window.UIAudioTemplates = {
                     if(container.classList.contains('is-collapsed')) {
                         container.classList.remove('is-collapsed');
                         body.style.display = 'flex';
-                        this.innerHTML = '🔽 收合教材';
+                        this.innerHTML = '🔽 收合';
                     } else {
                         container.classList.add('is-collapsed');
                         body.style.display = 'none';
-                        this.innerHTML = '📄 展開教材';
+                        this.innerHTML = '📄 展開';
                     }
-                " style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: bold; transition: 0.2s; white-space: nowrap;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
-                    🔽 收合教材
+                " style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: bold; transition: 0.2s; white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+                    🔽 收合
                 </button>
             `;
         }
@@ -69,14 +62,16 @@ window.UIAudioTemplates = {
         if (hasText) {
             bodyHtml += `<div style="padding: 16px 24px; font-size: 1.05rem; color: #334155; line-height: 1.6; max-height: 150px; overflow-y: auto; background: #ffffff; ${embedUrl ? 'border-bottom: 1px solid #1e293b; flex-shrink: 0;' : 'flex: 1;'}">${safeText}</div>`;
         }
+        
         if (embedUrl) {
+            // v39: 撤銷隱藏機制，恢復純粹的 iframe 滿版渲染
             bodyHtml += `
                 <div style="width: 100%; height: 100%; flex: 1; position: relative; background: #323639;">
-                    ${zoomHintHtml}
                     <iframe src="${embedUrl}" style="width: 100%; height: 100%; border: none; display: block; background: #323639;" allow="autoplay"></iframe>
                 </div>
             `;
         }
+        
         if (!hasText && !embedUrl) {
             bodyHtml += `<div style="padding: 20px; color: #9ca3af; font-style: italic; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; background: #ffffff;">（老師未提供任何教材或原稿，請直接錄音）</div>`;
         }
@@ -105,39 +100,14 @@ window.UIAudioTemplates = {
             .ctrl-btn { border: none; color: #ffffff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; border-radius: 50%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
             .ctrl-btn:hover { transform: scale(1.05); }
 
-            @keyframes hintFadeOut {
-                0% { opacity: 0; transform: translate(-50%, -15px); }
-                10% { opacity: 1; transform: translate(-50%, 0); }
-                80% { opacity: 1; transform: translate(-50%, 0); }
-                100% { opacity: 0; transform: translate(-50%, -15px); visibility: hidden; }
-            }
-            .gdrive-zoom-hint {
-                position: absolute;
-                top: 25px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(15, 23, 42, 0.85);
-                color: #ffffff;
-                padding: 10px 20px;
-                border-radius: 30px;
-                font-weight: 800;
-                font-size: 0.95rem;
-                z-index: 100;
-                pointer-events: none;
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-                border: 1px solid rgba(255,255,255,0.1);
-                white-space: nowrap;
-                animation: hintFadeOut 6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-            }
-
-            /* === 🚀 核心修復：彈性高度與 flex-wrap === */
+            /* === 閱讀模式 (Expanded Dock Mode - 桌面版) === */
             #audio-modal-container:not(.is-collapsed) .audio-upper { flex: 1; }
             #audio-modal-container:not(.is-collapsed) .audio-dock { 
                 min-height: 80px; 
                 height: auto; 
                 flex-shrink: 0; 
                 flex-direction: row; 
-                flex-wrap: wrap; /* 允許空間不足時自然換行 */
+                flex-wrap: wrap; 
                 justify-content: space-between; 
                 padding: 12px 24px; 
                 border-top: 1px solid #e2e8f0; 
@@ -165,7 +135,7 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .timer-text { font-size: 6.5rem; line-height: 1; color: #1e293b;}
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
 
-            /* === 📱 行動端專屬 RWD 響應式斷點 === */
+            /* === 📱 行動端專屬 RWD (The Mini-Dock Update) === */
             @media (max-width: 768px) {
                 #audio-modal-container { 
                     width: 100% !important; 
@@ -173,43 +143,65 @@ window.UIAudioTemplates = {
                     max-height: 100% !important; 
                     border-radius: 0 !important; 
                 }
+                
+                /* 放寬 Header 限制，確保小螢幕按鈕不會超出畫面 */
+                .audio-header-wrap { flex-wrap: wrap !important; padding: 8px 12px !important; gap: 8px !important; justify-content: space-between !important; }
+                .audio-header-wrap > div { flex-wrap: wrap !important; overflow: visible !important; }
+                .audio-header-title { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; font-size: 1rem !important; }
+
+                /* v39 核心：強制底部 Dock 成為單排極致纖薄版，不准折行，為 iframe 偷高度 */
                 #audio-modal-container:not(.is-collapsed) .audio-dock {
-                    flex-direction: column; 
-                    align-items: center; 
-                    padding-bottom: 25px; /* 避開 iOS 底部控制條 */
+                    flex-direction: row !important; 
+                    flex-wrap: nowrap !important;
+                    align-items: center !important; 
+                    justify-content: space-between !important;
+                    padding: 8px 10px !important; 
+                    min-height: 55px !important;
+                    overflow-x: auto !important; /* 允許橫向微調滑動 */
+                    gap: 10px !important;
                 }
+                
                 #audio-modal-container:not(.is-collapsed) .dock-left,
                 #audio-modal-container:not(.is-collapsed) .dock-center,
                 #audio-modal-container:not(.is-collapsed) .dock-right {
-                    justify-content: center;
-                    width: 100%;
+                    flex: 0 0 auto !important;
+                    width: auto !important;
+                    justify-content: center !important;
                 }
-                #audio-preview-section {
-                    flex-direction: column;
-                    width: 100%;
-                }
-                #audio-playback { width: 100%; }
+
+                /* 縮小手機版元件字體與按鈕，換取空間 */
+                #audio-modal-container:not(.is-collapsed) .status-badge { display: none !important; } /* 隱藏「準備就緒」文字，保留更多空間 */
+                #audio-modal-container:not(.is-collapsed) .status-divider { display: none !important; }
+                #audio-modal-container:not(.is-collapsed) .timer-text { font-size: 1.4rem !important; }
+                #audio-modal-container:not(.is-collapsed) .ctrl-btn { width: 45px !important; height: 45px !important; font-size: 1.4rem !important; }
                 
-                /* 手機版標題列稍微縮小，避免佔用過多空間 */
-                .audio-header-wrap { padding: 10px 15px !important; }
+                /* 右側重錄與繳交按鈕橫向緊湊排列 */
+                #audio-preview-section {
+                    flex-direction: row !important;
+                    gap: 6px !important;
+                    width: auto !important;
+                }
+                #audio-playback { height: 35px !important; min-width: 120px !important; max-width: 180px !important; }
+                #btn-audio-retry, #btn-audio-submit { padding: 6px 12px !important; font-size: 0.85rem !important; }
             }
         </style>
 
         <div id="audio-studio-modal" style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);">
-            <!-- 🚀 核心修復：使用 96% 與 -webkit-fill-available 避免被手機底部導航列吃掉 -->
             <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 12px; width: 98%; max-width: 100%; height: 96%; max-height: -webkit-fill-available; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
                 
-                <div class="audio-header-wrap" style="background-color: #4f46e5; color: #ffffff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;">
-                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                        <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap;">🎙️ 錄音艙：${displayTitle}</h2>
-                        ${toggleBtnHtml}
+                <div class="audio-header-wrap" style="background-color: #4f46e5; color: #ffffff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: nowrap; gap: 15px; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10; overflow: hidden;">
+                    
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow: hidden; flex: 1;">
+                        <h2 class="audio-header-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;">🎙️ ${displayTitle}</h2>
                         ${rangeText}
                     </div>
                     
-                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex-shrink: 0;">
+                        ${toggleBtnHtml}
                         ${newWindowBtnHtml}
-                        <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
+                        <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s; padding: 0 0 0 8px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
                     </div>
+
                 </div>
 
                 ${upperSectionHtml}
@@ -235,8 +227,10 @@ window.UIAudioTemplates = {
                     <div class="dock-right">
                         <div id="audio-preview-section" style="display: none; align-items: center; gap: 15px; width: 100%; max-width: 450px;">
                             <audio id="audio-playback" controls style="height: 40px; flex: 1; outline: none; min-width: 150px; background: white; border-radius: 8px;"></audio>
-                            <button id="btn-audio-retry" style="padding: 8px 16px; background-color: #ffffff; color: #475569; border: 1px solid #cbd5e1; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.95rem; white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: 0.2s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='#ffffff'">🔄 重錄</button>
-                            <button id="btn-audio-submit" style="padding: 8px 20px; background-color: #10b981; color: #ffffff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.95rem; white-space: nowrap; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4); transition: 0.2s;" onmouseover="this.style.backgroundColor='#059669'" onmouseout="this.style.backgroundColor='#10b981'">🚀 繳交</button>
+                            <div style="display: flex; gap: 10px;">
+                                <button id="btn-audio-retry" style="padding: 8px 16px; background-color: #ffffff; color: #475569; border: 1px solid #cbd5e1; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.95rem; white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: 0.2s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='#ffffff'">🔄 重錄</button>
+                                <button id="btn-audio-submit" style="padding: 8px 20px; background-color: #10b981; color: #ffffff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.95rem; white-space: nowrap; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4); transition: 0.2s;" onmouseover="this.style.backgroundColor='#059669'" onmouseout="this.style.backgroundColor='#10b981'">🚀 繳交</button>
+                            </div>
                         </div>
                     </div>
 
