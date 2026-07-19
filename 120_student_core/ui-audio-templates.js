@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v32 響應式解放與沉浸式暗房 (Fluid Width & Dark Room)：
- * 1. 拔除 850px 鎖死限制，將 max-width 解放至 1200px。
- * 2. 依賴 #323639 背景色融合，將 Google Drive 兩側空白轉化為無縫沉浸區。
+ * 🚀 v33 滿版解放版 (Maximum Readability Update)：
+ * 1. 徹底砸爛 max-width 限制，擴展至 98% 寬度與 98vh 高度。
+ * 2. 賦予學生最大的水平物理空間，確保使用 G-Drive 放大功能時，能獲得最舒適的大字體閱讀體驗。
  */
 
 window.UIAudioTemplates = {
@@ -22,6 +22,7 @@ window.UIAudioTemplates = {
 
         if (materialUrl && materialUrl.trim() !== '') {
             embedUrl = materialUrl.trim();
+            // 轉換為預覽連結
             if (embedUrl.includes('drive.google.com') && embedUrl.includes('/view')) {
                 embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
             }
@@ -62,7 +63,6 @@ window.UIAudioTemplates = {
             bodyHtml += `<div style="padding: 16px 24px; font-size: 1.05rem; color: #334155; line-height: 1.6; max-height: 150px; overflow-y: auto; background: #ffffff; ${embedUrl ? 'border-bottom: 1px solid #1e293b; flex-shrink: 0;' : 'flex: 1;'}">${safeText}</div>`;
         }
         if (embedUrl) {
-            // iframe 保持 100% 寬高，利用外層的 #323639 進行視覺融合
             bodyHtml += `<iframe src="${embedUrl}" style="width: 100%; height: 100%; flex: 1; border: none; display: block; background: #323639;" allow="autoplay"></iframe>`;
         }
         if (!hasText && !embedUrl) {
@@ -86,13 +86,14 @@ window.UIAudioTemplates = {
 
         return `
         <style>
-            #audio-modal-container { display: flex; flex-direction: column; overflow: hidden; }
+            #audio-modal-container { display: flex; flex-direction: column; overflow: hidden; transition: all 0.3s ease; }
             .audio-dock { display: flex; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); background-color: #ffffff; }
             .dock-left, .dock-center, .dock-right { display: flex; align-items: center; transition: all 0.4s ease; }
             .timer-text { font-family: monospace; font-weight: 700; transition: all 0.4s ease; color: #0f172a; }
             .ctrl-btn { border: none; color: #ffffff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; border-radius: 50%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
             .ctrl-btn:hover { transform: scale(1.05); }
 
+            /* === 閱讀模式 (Expanded Dock Mode) === */
             #audio-modal-container:not(.is-collapsed) .audio-upper { flex: 1; }
             #audio-modal-container:not(.is-collapsed) .audio-dock { height: 80px; flex-shrink: 0; flex-direction: row; justify-content: space-between; padding: 0 24px; border-top: 1px solid #e2e8f0; }
             #audio-modal-container:not(.is-collapsed) .dock-left { flex: 1; flex-direction: row; justify-content: flex-start; gap: 15px; }
@@ -104,6 +105,8 @@ window.UIAudioTemplates = {
             #audio-modal-container:not(.is-collapsed) .timer-text { font-size: 2.2rem; line-height: 1; }
             #audio-modal-container:not(.is-collapsed) .ctrl-btn { width: 55px; height: 55px; font-size: 1.8rem; }
 
+            /* === 錄音室模式 (Collapsed Studio Mode) === */
+            #audio-modal-container.is-collapsed { width: 95% !important; max-width: 650px !important; height: auto !important; }
             #audio-modal-container.is-collapsed .audio-upper { flex: 0 0 auto; padding-bottom: 0; }
             #audio-modal-container.is-collapsed .audio-dock { flex: 1; height: auto; flex-direction: column; justify-content: center; align-items: center; padding: 40px; background-color: #f8fafc; border-top: none; }
             #audio-modal-container.is-collapsed .dock-left { flex: 0 0 auto; flex-direction: column; justify-content: center; gap: 20px; margin-bottom: 40px; }
@@ -117,8 +120,8 @@ window.UIAudioTemplates = {
         </style>
 
         <div id="audio-studio-modal" style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);">
-            <!-- 🌟 重構：拔除 850px 限制，解放最大寬度至 1200px，回歸真正的 SaaS 響應式佈局 -->
-            <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 16px; width: 95%; max-width: 1200px; height: 95vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+            <!-- 🌟 核心重構：徹底拔除 max-width，寬高直逼 98% 滿版，賦予學生最大化的 G-Drive 放大閱讀空間 -->
+            <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 12px; width: 98%; max-width: 100%; height: 98vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
                 
                 <div style="background-color: #4f46e5; color: #ffffff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;">
                     <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
