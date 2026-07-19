@@ -1,10 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v27 雙模式終極沉浸版 (Dual-Mode Studio)：
- * 1. 結合「閱讀模式 (Dock)」與「錄音室模式 (Full Screen)」。
- * 2. 點擊收合時，控制面板將自動接管螢幕，按鈕與計時器放大並完美置中。
- * 3. 智慧判定：若無教材，直接預設進入全螢幕「錄音室模式」。
+ * 🚀 v28 極致滿版全螢幕版 (True Full-Screen Studio)：
+ * 1. 徹底解除 max-width 封印，將 Modal 升級為 100vw/100vh 全滿版工作區。
+ * 2. 榨乾螢幕邊緣空間，確保 PDF / 教材獲得最大的顯示寬度。
  */
 
 window.UIAudioTemplates = {
@@ -42,7 +41,8 @@ window.UIAudioTemplates = {
             bodyHtml += `<div style="padding: 16px; font-size: 1.05rem; color: #334155; line-height: 1.6; max-height: 150px; overflow-y: auto; ${embedUrl ? 'border-bottom: 1px dashed #cbd5e1; flex-shrink: 0;' : 'flex: 1;'}">${safeText}</div>`;
         }
         if (embedUrl) {
-            bodyHtml += `<iframe src="${embedUrl}" style="width: 100%; height: 100%; flex: 1; border: none; background: #f1f5f9;" allow="autoplay"></iframe>`;
+            // 讓 iframe 佔滿 100% 寬度與高度
+            bodyHtml += `<iframe src="${embedUrl}" style="width: 100%; height: 100%; flex: 1; border: none; background: #f1f5f9; display: block;" allow="autoplay"></iframe>`;
         }
 
         let upperSectionHtml = '';
@@ -50,7 +50,7 @@ window.UIAudioTemplates = {
 
         if (hasText || embedUrl) {
             upperSectionHtml = `
-                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; padding: 15px 24px; transition: all 0.4s ease;">
+                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; padding: 10px 15px; transition: all 0.4s ease;">
                     <div style="display: flex; flex-direction: column; flex: 1; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden;">
                         <!-- 點擊收合的共用標題列 -->
                         <div onclick="
@@ -74,7 +74,7 @@ window.UIAudioTemplates = {
                             ${newWindowBtnHtml}
                         </div>
                         <!-- 內部組合內容區 -->
-                        <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+                        <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%;">
                             ${bodyHtml}
                         </div>
                     </div>
@@ -120,12 +120,12 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
         </style>
 
-        <div id="audio-studio-modal" style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);">
-            <!-- 主容器：狀態掛載點 -->
-            <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #ffffff; border-radius: 16px; width: 95%; max-width: 1200px; height: 95vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+        <div id="audio-studio-modal" style="position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background-color: #0f172a;">
+            <!-- 🌟 升級為 100vw / 100vh 絕對滿版，移除 border-radius 與 width 限制 -->
+            <div id="audio-modal-container" class="${defaultCollapsed}" style="background-color: #f8fafc; width: 100%; max-width: 100%; height: 100vh; display: flex; flex-direction: column; overflow: hidden;">
                 
                 <!-- 頂部 Header -->
-                <div style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+                <div style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10;">
                     <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em;">🎙️ 錄音艙：${displayTitle}</h2>
                     <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
                 </div>
