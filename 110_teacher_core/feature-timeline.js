@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.9.1 防爆強化版：
- * 徹底解決 PDF.js 動態掛載可能導致的全域變數遺失與 JS 執行緒崩潰問題。
+ * 🌟 v13.9.2 資源網址精準綁定版：
+ * 徹底解決下拉選單取到 UUID 導致學生端 404 錯誤，並加入以 URL 為基準的資源去重引擎。
  */
 
-console.log("🚀 FeatureTimeline v13.9.1 載入成功！(防爆 PDF 引擎啟用)");
+console.log("🚀 FeatureTimeline v13.9.2 載入成功！(防爆 PDF 引擎啟用 + 資源去重綁定修復)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -212,11 +212,24 @@ window.FeatureTimeline = (() => {
         if (!container) return;
 
         let classResOpts = '';
-        const classResList = (db && db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
-        if (classResList.length > 0) {
-            classResOpts = classResList.map(r => {
+        const allResList = (db && db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
+        
+        if (allResList.length > 0) {
+            // 🌟 修復點一：利用 Map 依據網址(URL)去重，優先保留全域資源
+            const resMap = new Map();
+            allResList.forEach(r => {
+                const key = r.url || r.id; // 以 URL 為主，若無則用 ID 防呆
+                if (!resMap.has(key) || r.scope === 'global') {
+                    resMap.set(key, r);
+                }
+            });
+
+            const uniqueResList = Array.from(resMap.values());
+
+            classResOpts = uniqueResList.map(r => {
                 const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
-                return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
+                // 🌟 修復點二：寫入 data-url 供單一 Task 抓取真實網址，value 保留 ID 供群組產生完整 Task
+                return `<option value="${r.id}" data-url="${r.url || ''}">${r.icon} ${r.name} (${scopeIcon})</option>`;
             }).join('');
         }
 
@@ -295,7 +308,7 @@ window.FeatureTimeline = (() => {
             }, 300);
         },
 
-        // 🌟 本次修復核心：絕對安全的 PDF 引擎掛載
+        // 🌟 絕對安全的 PDF 引擎掛載
         handlePDFUpload: async (inputEl, pathStr) => {
             const file = inputEl.files[0];
             if (!file) return;
