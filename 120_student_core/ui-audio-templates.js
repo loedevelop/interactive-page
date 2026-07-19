@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v40 真・懸浮面板更新 (The True Floating Dock Update)：
- * 1. 徹底解決手機端「網頁放大導致按鈕跑出畫面」的痛點。
- * 2. 採用絕對定位 (position: absolute) 配合毛玻璃，讓工具列真正「懸浮」於螢幕底端，不再受排版推擠。
- * 3. 搭配 index.html 的 viewport 鎖定，讓學生的雙指縮放只對 iframe 文件起作用，不干擾外部 UI。
+ * 🚀 v41 終極 Visual Viewport 反追蹤引擎 (The Anti-Scaling Update)：
+ * 1. 在不封鎖原生縮放的前提下，完美解決「手機放大 PDF 導致 UI 跑出螢幕」的問題。
+ * 2. 透過內嵌 JavaScript 動態監聽 VisualViewport API，當偵測到使用者進行 Pinch-to-Zoom 時，
+ *    立即針對底部的浮動錄音列進行「反向縮放 (Inverse Scale)」，並動態計算座標將其釘死在視覺邊界。
  */
 
 window.UIAudioTemplates = {
@@ -92,7 +92,6 @@ window.UIAudioTemplates = {
 
         return `
         <style>
-            /* 基礎設定 */
             #audio-modal-container { display: flex; flex-direction: column; overflow: hidden; transition: all 0.3s ease; position: relative; }
             .audio-dock { display: flex; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); background-color: #ffffff; }
             .dock-left, .dock-center, .dock-right { display: flex; align-items: center; transition: all 0.4s ease; }
@@ -100,7 +99,7 @@ window.UIAudioTemplates = {
             .ctrl-btn { border: none; color: #ffffff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; border-radius: 50%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
             .ctrl-btn:hover { transform: scale(1.05); }
 
-            /* === 閱讀模式 (Expanded Dock Mode - 桌面版原汁原味) === */
+            /* === 桌面版原貌 === */
             #audio-modal-container:not(.is-collapsed) .audio-upper { flex: 1; }
             #audio-modal-container:not(.is-collapsed) .audio-dock { 
                 min-height: 80px; 
@@ -122,7 +121,7 @@ window.UIAudioTemplates = {
             #audio-modal-container:not(.is-collapsed) .timer-text { font-size: 2.2rem; line-height: 1; }
             #audio-modal-container:not(.is-collapsed) .ctrl-btn { width: 55px; height: 55px; font-size: 1.8rem; }
 
-            /* === 錄音室模式 (Collapsed Studio Mode) === */
+            /* === 錄音室模式 (無教材) === */
             #audio-modal-container.is-collapsed { width: 95% !important; max-width: 650px !important; height: auto !important; }
             #audio-modal-container.is-collapsed .audio-upper { flex: 0 0 auto; padding-bottom: 0; }
             #audio-modal-container.is-collapsed .audio-dock { flex: 1; height: auto; flex-direction: column; justify-content: center; align-items: center; padding: 40px; background-color: #f8fafc; border-top: none; position: static !important; width: 100% !important; transform: none !important;}
@@ -135,7 +134,7 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .timer-text { font-size: 6.5rem; line-height: 1; color: #1e293b;}
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
 
-            /* === 📱 行動端專屬 RWD (v40 真・懸浮面板) === */
+            /* === 📱 行動端佈局設計 (基礎，後續由 JS 引擎接管動態座標) === */
             @media (max-width: 768px) {
                 #audio-modal-container { 
                     width: 100% !important; 
@@ -148,14 +147,13 @@ window.UIAudioTemplates = {
                 .audio-header-wrap > div { flex-wrap: wrap !important; overflow: visible !important; }
                 .audio-header-title { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; font-size: 1rem !important; }
 
-                /* 讓 iframe 區塊徹底佔滿螢幕，不受底部工具列排版擠壓 */
                 #audio-modal-container:not(.is-collapsed) .audio-upper {
                     flex: 1 !important;
                     height: 100% !important;
-                    padding-bottom: 75px !important; /* 預留底部透明空間以免字被懸浮面板擋住 */
+                    padding-bottom: 75px !important; 
                 }
 
-                /* v40 核心：這才是真正的「懸浮」面板！絕對定位，永遠釘在視窗底部 */
+                /* 基礎懸浮設計，縮放時由下方注入的 JS 動態覆寫 transform 與 top/left */
                 #audio-modal-container:not(.is-collapsed) .audio-dock {
                     position: absolute !important;
                     bottom: max(15px, env(safe-area-inset-bottom)) !important;
@@ -165,7 +163,7 @@ window.UIAudioTemplates = {
                     border-radius: 20px !important;
                     background: rgba(255, 255, 255, 0.92) !important;
                     backdrop-filter: blur(12px) !important;
-                    -webkit-backdrop-filter: blur(12px) !important; /* iOS 支援 */
+                    -webkit-backdrop-filter: blur(12px) !important; 
                     box-shadow: 0 10px 30px rgba(0,0,0,0.3) !important;
                     border: 1px solid rgba(255,255,255,0.4) !important;
                     z-index: 99999 !important;
@@ -175,6 +173,7 @@ window.UIAudioTemplates = {
                     justify-content: space-between !important;
                     padding: 8px 12px !important;
                     min-height: 60px !important;
+                    transform-origin: bottom center !important; /* 為 JS 逆向縮放準備 */
                 }
                 
                 #audio-modal-container:not(.is-collapsed) .dock-left,
@@ -185,7 +184,6 @@ window.UIAudioTemplates = {
                     justify-content: center !important;
                 }
 
-                /* 隱藏非必要文字，極致壓縮空間 */
                 #audio-modal-container:not(.is-collapsed) .status-badge { display: none !important; } 
                 #audio-modal-container:not(.is-collapsed) .status-divider { display: none !important; }
                 #audio-modal-container:not(.is-collapsed) .timer-text { font-size: 1.4rem !important; }
@@ -252,6 +250,66 @@ window.UIAudioTemplates = {
                 </div>
             </div>
         </div>
+
+        <!-- 🚀 v41 核心：Visual Viewport 數學反追蹤引擎 -->
+        <script>
+            (function() {
+                const dock = document.getElementById('audio-dock-section');
+                
+                if (window.visualViewport && dock) {
+                    const adjustDockForZoom = () => {
+                        // 僅在手機版佈局下啟動引擎
+                        if (window.innerWidth > 768) {
+                            dock.style.transform = '';
+                            dock.style.top = '';
+                            dock.style.left = '';
+                            dock.style.position = '';
+                            dock.style.bottom = '';
+                            return;
+                        }
+
+                        const vv = window.visualViewport;
+                        
+                        // 當偵測到使用者進行 Pinch-to-Zoom 放大時 (Scale > 1)
+                        if (vv.scale > 1.01) {
+                            // 1. 逆向縮放：將工具列等比例縮小，確保在放大的螢幕中維持「視覺原大小」
+                            const inverseScale = 1 / vv.scale;
+                            
+                            // 2. 切換為 Layout Viewport 固定定位
+                            dock.style.position = 'fixed';
+                            
+                            // 3. 數學重算 Y 軸：Visual Viewport 的底部絕對座標
+                            const dockHeight = dock.offsetHeight;
+                            // 公式: VisualTop偏移量 + Visual總高度 - (縮小後的工具列高度) - 邊距
+                            const topPosition = vv.offsetTop + vv.height - (dockHeight * inverseScale) - (15 * inverseScale);
+                            
+                            // 4. 數學重算 X 軸：Visual Viewport 的中心點
+                            const leftPosition = vv.offsetLeft + (vv.width / 2);
+                            
+                            // 5. 暴力覆寫 CSS，將其釘死在視野內
+                            dock.style.bottom = 'auto'; // 取消底層設定
+                            dock.style.top = topPosition + 'px';
+                            dock.style.left = leftPosition + 'px';
+                            dock.style.transform = \`translate(-50%, 0) scale(\${inverseScale})\`;
+                        } else {
+                            // 恢復為預設未縮放狀態
+                            dock.style.position = 'absolute';
+                            dock.style.top = 'auto';
+                            dock.style.bottom = '15px';
+                            dock.style.left = '50%';
+                            dock.style.transform = 'translateX(-50%)';
+                        }
+                    };
+
+                    // 綁定極高頻率的縮放與滑動事件
+                    window.visualViewport.addEventListener('resize', adjustDockForZoom);
+                    window.visualViewport.addEventListener('scroll', adjustDockForZoom);
+                    
+                    // 初始化啟動
+                    setTimeout(adjustDockForZoom, 150);
+                }
+            })();
+        </script>
         `;
     }
 };

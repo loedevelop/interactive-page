@@ -2,13 +2,13 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <!-- v40 核心：加入 maximum-scale=1.0, user-scalable=no 鎖定母網頁縮放，強迫手勢進入 iframe -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- v41 核心：解除縮放封印，允許原生 zoom 以便讓 Google Drive 能夠放大 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>學生學習區 | LogOnEnglish</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
-    <!-- v40 更新：同步破除快取 -->
-    <link rel="stylesheet" href="../010_css/style.css?v=40">
+    <!-- v41 更新：同步破除快取 -->
+    <link rel="stylesheet" href="../010_css/style.css?v=41">
     
     <style>
         body {
@@ -18,8 +18,7 @@
             max-width: 900px;
             margin: 0 auto;
             padding: 10px;
-            /* 防止雙擊放大 */
-            touch-action: manipulation;
+            /* v41 移除 touch-action 限制，完全釋放手勢控制 */
         }
 
         .header-actions { display: flex; gap: 10px; align-items: center; }
@@ -130,20 +129,20 @@
     </div>
 
     <!-- 順序鐵律：config ➡️ supabase ➡️ auth ➡️ store ➡️ api ➡️ utils-date ➡️ templates ➡️ features -->
-    <script src="../020_js_core/config.js?v=40"></script>
-    <script type="module" src="../020_js_core/supabase-client.js?v=40"></script>
-    <script src="../020_js_core/auth-guard.js?v=40"></script>
-    <script src="../020_js_core/store.js?v=40"></script>
+    <script src="../020_js_core/config.js?v=41"></script>
+    <script type="module" src="../020_js_core/supabase-client.js?v=41"></script>
+    <script src="../020_js_core/auth-guard.js?v=41"></script>
+    <script src="../020_js_core/store.js?v=41"></script>
     
-    <script src="../020_js_core/api.js?v=40"></script> 
-    <script src="../020_js_core/utils-date.js?v=40"></script>
+    <script src="../020_js_core/api.js?v=41"></script> 
+    <script src="../020_js_core/utils-date.js?v=41"></script>
 
-    <script src="../120_student_core/ui-audio-templates.js?v=40"></script>
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=40"></script>
+    <script src="../120_student_core/ui-audio-templates.js?v=41"></script>
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=41"></script>
 
-    <script defer src="../120_student_core/feature-student-audio.js?v=40"></script>
-    <script defer src="../120_student_core/feature-student-resource.js?v=40"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=40"></script> 
+    <script defer src="../120_student_core/feature-student-audio.js?v=41"></script>
+    <script defer src="../120_student_core/feature-student-resource.js?v=41"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=41"></script> 
     
     <script defer>
         function switchClass(newClassId) {
