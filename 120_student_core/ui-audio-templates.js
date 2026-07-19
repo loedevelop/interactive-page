@@ -1,10 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v39 空間極致釋放版 (The Mini-Dock Update)：
- * 1. 撤銷手機端隱藏 iframe 的愚蠢設計，直球對決。
- * 2. 針對手機端 (max-width: 768px) 導入 Mini-Dock 橫向極簡佈局。
- * 3. 透過極大化 iframe 垂直高度，降低 Google Drive 行動版黑框對文字的遮擋效應。
+ * 🚀 v40 真・懸浮面板更新 (The True Floating Dock Update)：
+ * 1. 徹底解決手機端「網頁放大導致按鈕跑出畫面」的痛點。
+ * 2. 採用絕對定位 (position: absolute) 配合毛玻璃，讓工具列真正「懸浮」於螢幕底端，不再受排版推擠。
+ * 3. 搭配 index.html 的 viewport 鎖定，讓學生的雙指縮放只對 iframe 文件起作用，不干擾外部 UI。
  */
 
 window.UIAudioTemplates = {
@@ -64,7 +64,6 @@ window.UIAudioTemplates = {
         }
         
         if (embedUrl) {
-            // v39: 撤銷隱藏機制，恢復純粹的 iframe 滿版渲染
             bodyHtml += `
                 <div style="width: 100%; height: 100%; flex: 1; position: relative; background: #323639;">
                     <iframe src="${embedUrl}" style="width: 100%; height: 100%; border: none; display: block; background: #323639;" allow="autoplay"></iframe>
@@ -81,7 +80,7 @@ window.UIAudioTemplates = {
 
         if (hasText || embedUrl) {
             upperSectionHtml = `
-                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: #323639;">
+                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: #323639; position: relative;">
                     <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%; background: #323639;">
                         ${bodyHtml}
                     </div>
@@ -93,14 +92,15 @@ window.UIAudioTemplates = {
 
         return `
         <style>
-            #audio-modal-container { display: flex; flex-direction: column; overflow: hidden; transition: all 0.3s ease; }
+            /* 基礎設定 */
+            #audio-modal-container { display: flex; flex-direction: column; overflow: hidden; transition: all 0.3s ease; position: relative; }
             .audio-dock { display: flex; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); background-color: #ffffff; }
             .dock-left, .dock-center, .dock-right { display: flex; align-items: center; transition: all 0.4s ease; }
             .timer-text { font-family: monospace; font-weight: 700; transition: all 0.4s ease; color: #0f172a; }
             .ctrl-btn { border: none; color: #ffffff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; border-radius: 50%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
             .ctrl-btn:hover { transform: scale(1.05); }
 
-            /* === 閱讀模式 (Expanded Dock Mode - 桌面版) === */
+            /* === 閱讀模式 (Expanded Dock Mode - 桌面版原汁原味) === */
             #audio-modal-container:not(.is-collapsed) .audio-upper { flex: 1; }
             #audio-modal-container:not(.is-collapsed) .audio-dock { 
                 min-height: 80px; 
@@ -125,7 +125,7 @@ window.UIAudioTemplates = {
             /* === 錄音室模式 (Collapsed Studio Mode) === */
             #audio-modal-container.is-collapsed { width: 95% !important; max-width: 650px !important; height: auto !important; }
             #audio-modal-container.is-collapsed .audio-upper { flex: 0 0 auto; padding-bottom: 0; }
-            #audio-modal-container.is-collapsed .audio-dock { flex: 1; height: auto; flex-direction: column; justify-content: center; align-items: center; padding: 40px; background-color: #f8fafc; border-top: none; }
+            #audio-modal-container.is-collapsed .audio-dock { flex: 1; height: auto; flex-direction: column; justify-content: center; align-items: center; padding: 40px; background-color: #f8fafc; border-top: none; position: static !important; width: 100% !important; transform: none !important;}
             #audio-modal-container.is-collapsed .dock-left { flex: 0 0 auto; flex-direction: column; justify-content: center; gap: 20px; margin-bottom: 40px; }
             #audio-modal-container.is-collapsed .dock-center { flex: 0 0 auto; flex-direction: row; justify-content: center; gap: 30px; margin-bottom: 50px; }
             #audio-modal-container.is-collapsed .dock-right { flex: 0 0 auto; flex-direction: row; justify-content: center; width: 100%; max-width: 450px; }
@@ -135,7 +135,7 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .timer-text { font-size: 6.5rem; line-height: 1; color: #1e293b;}
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
 
-            /* === 📱 行動端專屬 RWD (The Mini-Dock Update) === */
+            /* === 📱 行動端專屬 RWD (v40 真・懸浮面板) === */
             @media (max-width: 768px) {
                 #audio-modal-container { 
                     width: 100% !important; 
@@ -144,21 +144,37 @@ window.UIAudioTemplates = {
                     border-radius: 0 !important; 
                 }
                 
-                /* 放寬 Header 限制，確保小螢幕按鈕不會超出畫面 */
                 .audio-header-wrap { flex-wrap: wrap !important; padding: 8px 12px !important; gap: 8px !important; justify-content: space-between !important; }
                 .audio-header-wrap > div { flex-wrap: wrap !important; overflow: visible !important; }
                 .audio-header-title { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; font-size: 1rem !important; }
 
-                /* v39 核心：強制底部 Dock 成為單排極致纖薄版，不准折行，為 iframe 偷高度 */
+                /* 讓 iframe 區塊徹底佔滿螢幕，不受底部工具列排版擠壓 */
+                #audio-modal-container:not(.is-collapsed) .audio-upper {
+                    flex: 1 !important;
+                    height: 100% !important;
+                    padding-bottom: 75px !important; /* 預留底部透明空間以免字被懸浮面板擋住 */
+                }
+
+                /* v40 核心：這才是真正的「懸浮」面板！絕對定位，永遠釘在視窗底部 */
                 #audio-modal-container:not(.is-collapsed) .audio-dock {
-                    flex-direction: row !important; 
+                    position: absolute !important;
+                    bottom: max(15px, env(safe-area-inset-bottom)) !important;
+                    left: 50% !important;
+                    transform: translateX(-50%) !important;
+                    width: 92% !important;
+                    border-radius: 20px !important;
+                    background: rgba(255, 255, 255, 0.92) !important;
+                    backdrop-filter: blur(12px) !important;
+                    -webkit-backdrop-filter: blur(12px) !important; /* iOS 支援 */
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.3) !important;
+                    border: 1px solid rgba(255,255,255,0.4) !important;
+                    z-index: 99999 !important;
+                    flex-direction: row !important;
                     flex-wrap: nowrap !important;
-                    align-items: center !important; 
+                    align-items: center !important;
                     justify-content: space-between !important;
-                    padding: 8px 10px !important; 
-                    min-height: 55px !important;
-                    overflow-x: auto !important; /* 允許橫向微調滑動 */
-                    gap: 10px !important;
+                    padding: 8px 12px !important;
+                    min-height: 60px !important;
                 }
                 
                 #audio-modal-container:not(.is-collapsed) .dock-left,
@@ -169,19 +185,18 @@ window.UIAudioTemplates = {
                     justify-content: center !important;
                 }
 
-                /* 縮小手機版元件字體與按鈕，換取空間 */
-                #audio-modal-container:not(.is-collapsed) .status-badge { display: none !important; } /* 隱藏「準備就緒」文字，保留更多空間 */
+                /* 隱藏非必要文字，極致壓縮空間 */
+                #audio-modal-container:not(.is-collapsed) .status-badge { display: none !important; } 
                 #audio-modal-container:not(.is-collapsed) .status-divider { display: none !important; }
                 #audio-modal-container:not(.is-collapsed) .timer-text { font-size: 1.4rem !important; }
                 #audio-modal-container:not(.is-collapsed) .ctrl-btn { width: 45px !important; height: 45px !important; font-size: 1.4rem !important; }
                 
-                /* 右側重錄與繳交按鈕橫向緊湊排列 */
                 #audio-preview-section {
                     flex-direction: row !important;
                     gap: 6px !important;
                     width: auto !important;
                 }
-                #audio-playback { height: 35px !important; min-width: 120px !important; max-width: 180px !important; }
+                #audio-playback { height: 35px !important; min-width: 120px !important; max-width: 160px !important; }
                 #btn-audio-retry, #btn-audio-submit { padding: 6px 12px !important; font-size: 0.85rem !important; }
             }
         </style>
