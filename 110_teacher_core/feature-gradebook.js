@@ -1,6 +1,7 @@
 /**
  * 📂 110_teacher_core/feature-gradebook.js
  * 🎯 職責：老師端批改中樞的輕量指揮官 (Tier 4 Orchestrator)
+ * 🚀 修正：補上遺失的 DOM 掛載點防呆機制與 Store 存在性驗證
  */
 window.FeatureGradebook = (function() {
     'use strict';
@@ -14,20 +15,35 @@ window.FeatureGradebook = (function() {
     let _currentRole = 'primary_teacher';
     let _currentClassId = null;
 
-    /**
-     * 🌟 智慧載入：自動抓取當前班級，並呼叫 API 渲染矩陣
-     */
+    // 🌟 核心防禦：確保 DOM 節點存在，否則自動生成 (避免 innerHTML 拋錯)
+    function ensureMountPoints() {
+        if (!document.querySelector(SELECTORS.sidebarMount)) {
+            document.body.insertAdjacentHTML('beforeend', '<div id="grading-sidebar-mount-point"></div>');
+        }
+        if (!document.querySelector(SELECTORS.popoverMount)) {
+            document.body.insertAdjacentHTML('beforeend', '<div id="grading-popover-mount-point"></div>');
+        }
+    }
+
     function loadDataForCurrentClass() {
+        ensureMountPoints();
+
+        // 🚨 防呆：如果 Store 還沒掛載，立刻警告，避免整個 JS 靜默崩潰！
+        if (!window.GradebookStore) {
+            console.error("嚴重錯誤：遺失 GradebookStore (Tier 3) 狀態機大腦，請確認已掛載 store-gradebook.js");
+            const container = document.querySelector(SELECTORS.matrixContainer);
+            if (container) container.innerHTML = `<div class="p-8 text-center text-red-500 font-bold bg-red-50 border border-red-200 rounded-xl">系統嚴重錯誤：缺少 store-gradebook.js，請檢查 index.html 的載入順序。</div>`;
+            return;
+        }
+
         let classId = null;
         let role = 'primary_teacher';
 
-        // 優先嘗試從全域 UI 模組獲取
         if (window.TeacherUI) {
             if (typeof window.TeacherUI.getCurrentClassId === 'function') classId = window.TeacherUI.getCurrentClassId();
             if (typeof window.TeacherUI.getCurrentUserRole === 'function') role = window.TeacherUI.getCurrentUserRole() || 'primary_teacher';
         }
         
-        // 備案：從 localStorage 獲取
         if (!classId) classId = localStorage.getItem('lastClassId');
 
         if (classId) {
@@ -51,7 +67,6 @@ window.FeatureGradebook = (function() {
         container.innerHTML = `<div class="p-10 text-center text-blue-600 animate-pulse font-bold bg-white rounded-xl shadow-sm border border-gray-200">📡 正在從資料庫拉取成績單矩陣與作業數據...</div>`;
 
         try {
-            // 🌟 這裡接收到的 assignments 其實是剛剛 API 扁平化後的真實錄音任務！
             const { matrixData, assignments } = await window.GradebookAPI.fetchMatrixData(classId);
             window.GradebookStore.initMatrix(matrixData, assignments);
             renderMatrixUI();
@@ -62,13 +77,17 @@ window.FeatureGradebook = (function() {
     }
 
     function renderMatrixUI() {
+        if (!window.GradebookStore) return;
         const state = window.GradebookStore.getMatrixState();
         const html = window.GradebookTemplates.renderMatrix(state.matrixData, state.assignments);
-        document.querySelector(SELECTORS.matrixContainer).innerHTML = html;
+        const container = document.querySelector(SELECTORS.matrixContainer);
+        if (container) container.innerHTML = html;
     }
 
     function reRenderSidebarContentOnly() {
-        document.querySelector(SELECTORS.popoverMount).innerHTML = ''; 
+        const popoverEl = document.querySelector(SELECTORS.popoverMount);
+        if (popoverEl) popoverEl.innerHTML = ''; 
+
         const mount = document.querySelector(SELECTORS.sidebarMount);
         if (!mount) return;
 
@@ -77,8 +96,12 @@ window.FeatureGradebook = (function() {
         
         const panel = mount.querySelector('#grading-sidebar-panel');
         const overlay = mount.querySelector('#grading-sidebar-overlay');
-        if (panel) panel.classList.remove('translate-x-full');
-        if (overlay) overlay.classList.remove('hidden');
+        
+        // Ensure DOM has processed the new HTML before animating
+        setTimeout(() => {
+            if (panel) panel.classList.remove('translate-x-full');
+            if (overlay) overlay.classList.remove('hidden');
+        }, 10);
     }
 
     function closeSidebar() {
@@ -91,16 +114,16 @@ window.FeatureGradebook = (function() {
         if (panel) panel.classList.add('translate-x-full');
         if (overlay) overlay.classList.add('hidden');
 
-        document.querySelector(SELECTORS.popoverMount).innerHTML = '';
+        const popoverEl = document.querySelector(SELECTORS.popoverMount);
+        if (popoverEl) popoverEl.innerHTML = '';
+
         setTimeout(() => { mount.innerHTML = ''; }, 300);
     }
 
-    // =========================================================
-    // 🌟 跨模組事件綁定 (Capture Phase：無視舊代碼的攔截)
-    // =========================================================
+    // 跨模組事件攔截
     document.addEventListener('click', (e) => {
         const tabBtn = e.target.closest('.tab-btn[data-target="view-gradebook"]');
-        const classItemBtn = e.target.closest('.class-item'); // 左側班級列表
+        const classItemBtn = e.target.closest('.class-item');
         
         if (tabBtn) {
             setTimeout(() => { loadDataForCurrentClass(); }, 50); 
@@ -113,15 +136,20 @@ window.FeatureGradebook = (function() {
                 if (gradebookView && gradebookView.classList.contains('active')) {
                     loadDataForCurrentClass();
                 }
-            }, 100); // 延遲確保舊系統已將 localStorage 更新
+            }, 100); 
             return;
         }
     }, true);
 
+    // Initial load handler (如果進入頁面就停在成績簿 Tab)
+    document.addEventListener('DOMContentLoaded', () => {
+        const gradebookView = document.getElementById('view-gradebook');
+        if (gradebookView && !gradebookView.classList.contains('hidden')) {
+            setTimeout(() => { loadDataForCurrentClass(); }, 300);
+        }
+    });
 
-    // =========================================================
-    // 介面互動委派 (DOM Event Delegation)
-    // =========================================================
+    // 介面互動委派
     document.addEventListener('click', async (e) => {
         const openBtn = e.target.closest('[data-action="open-grading"]');
         if (openBtn) {
@@ -131,7 +159,6 @@ window.FeatureGradebook = (function() {
             const state = window.GradebookStore.getMatrixState();
             const row = state.matrixData.find(r => String(r.student_id) === String(stuId));
             if (row && row.submissions) {
-                // 原本的 Object.values 防禦邏輯剛好完美應付改為 task_id 字典的狀況
                 const submission = row.submissions[subId] || Object.values(row.submissions).find(s => String(s.id) === String(subId));
                 if (submission) {
                     window.GradebookStore.setActiveSubmission(submission, row.defect_bank);
@@ -158,7 +185,8 @@ window.FeatureGradebook = (function() {
                     wordEl.getAttribute('data-time'), wordEl.getAttribute('data-issue'), 
                     type === 'manual', posX, posY
                 );
-                document.querySelector(SELECTORS.popoverMount).innerHTML = html;
+                const popover = document.querySelector(SELECTORS.popoverMount);
+                if (popover) popover.innerHTML = html;
             } else {
                 const selection = window.getSelection();
                 if (selection.toString().length === 0) {
@@ -178,7 +206,9 @@ window.FeatureGradebook = (function() {
         }
 
         if (e.target.closest('[data-action="close-popover"]')) {
-            document.querySelector(SELECTORS.popoverMount).innerHTML = ''; return;
+            const popover = document.querySelector(SELECTORS.popoverMount);
+            if (popover) popover.innerHTML = ''; 
+            return;
         }
 
         const playStuBtn = e.target.closest('[data-action="play-student"]');

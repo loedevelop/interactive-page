@@ -1,13 +1,21 @@
 /**
  * 📂 110_teacher_core/api-gradebook.js
  * 🎯 職責：老師端批改中樞的 API 網路通訊層 (Tier 4 Network)
- * 🚀 修正：實作 JSON 樹狀展開與扁平化 (Data Flattening)，徹底解決維度混淆 Bug
+ * 🚀 修正：實作超強健 JSON 解析與欄位兼容，不再因資料格式導致白畫面
  */
 window.GradebookAPI = (function() {
     'use strict';
 
     const TABLE_NAME = 'task_completions'; 
-    const RELATION_COLUMN = 'task_id'; // 🎯 核心修正：精準對齊內層錄音子任務 ID
+    const RELATION_COLUMN = 'task_id';
+
+    function parseJSONB(data) {
+        if (!data) return {};
+        if (typeof data === 'string') {
+            try { return JSON.parse(data); } catch(e) { return {}; }
+        }
+        return data;
+    }
 
     async function fetchMatrixData(classId) {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
@@ -16,45 +24,49 @@ window.GradebookAPI = (function() {
         // 1. 取得該班級所有選課學生
         const { data: enrollments, error: stuErr } = await db
             .from('student_enrollments')
-            .select(`user_id, profiles (name, raw_data)`)
+            .select(`*, profiles (name, raw_data)`)
             .eq('class_id', classId)
             .is('deleted_at', null);
 
         if (stuErr) throw new Error('無法讀取學生名單: ' + stuErr.message);
 
-        // 2. 取得外層作業資料夾 (必須拉取 raw_data 以解析內部 tasks)
+        // 2. 取得外層作業資料夾 (🌟 修正: 讀取所有欄位以防 tasks 為獨立欄位)
         const { data: rawAssignments, error: assignErr } = await db
             .from('assignments')
-            .select('id, title, due_date, raw_data')
+            .select('*')
             .eq('class_id', classId)
             .is('deleted_at', null)
             .order('created_at', { ascending: true });
 
         if (assignErr) throw new Error('無法讀取作業清單: ' + assignErr.message);
 
-        // 🌟 3. 核心重構：資料扁平化 (Flattening) & 遞迴展開 (Tree Traversal)
+        // 3. 資料扁平化 (Flattening) & 防禦性 JSON 解析
         const flatAudioTasks = [];
         
         rawAssignments.forEach(assign => {
-            const tasksList = assign.raw_data?.tasks || [];
+            const raw = parseJSONB(assign.raw_data);
+            
+            // 防禦：相容 tasks 在獨立欄位或 raw_data 中的情況
+            let tasksList = assign.tasks || raw.tasks || [];
+            if (typeof tasksList === 'string') {
+                try { tasksList = JSON.parse(tasksList); } catch (e) { tasksList = []; }
+            }
             
             function traverse(tasks) {
                 if (!Array.isArray(tasks)) return;
                 
                 tasks.forEach(t => {
-                    if (t.type === 'audio_record') {
-                        // 萃取出具體的錄音任務
+                    if (t.type === 'audio_record' || t.type === 'recording' || t.type === 'audio') {
                         flatAudioTasks.push({
-                            id: t.id, // 這是內部的真實 task_id (例如 task_1720000_123)
+                            id: t.id || t.task_id, 
                             title: t.title || '未命名錄音',
-                            assignment_id: assign.id, // 保留外層作業 ID 備用
-                            assignment_title: assign.title, // 組合標題以便 UI 雙層辨識外層容器
+                            assignment_id: assign.id,
+                            assignment_title: assign.title || assign.name,
                             due_date: t.due_date || assign.due_date
                         });
                     }
-                    // 遇到巢狀群組 (group)，遞迴往下展開尋找 subTasks
-                    if (t.type === 'group' && Array.isArray(t.subTasks)) {
-                        traverse(t.subTasks); 
+                    if ((t.type === 'group' || t.type === 'folder') && (Array.isArray(t.subTasks) || Array.isArray(t.tasks))) {
+                        traverse(t.subTasks || t.tasks); 
                     }
                 });
             }
@@ -62,34 +74,36 @@ window.GradebookAPI = (function() {
         });
 
         // 4. 用「內部真實任務 ID」取得繳交紀錄
-        const taskIds = flatAudioTasks.map(t => t.id);
+        const taskIds = flatAudioTasks.map(t => t.id).filter(Boolean);
         let completions = [];
 
         if (taskIds.length > 0) {
-            const { data: subs, error: subErr } = await db
-                .from(TABLE_NAME) 
-                .select('*')
-                .in(RELATION_COLUMN, taskIds) // 🌟 拿 task_id 去 IN 查詢
-                .is('deleted_at', null);
-
-            if (subErr) {
-                console.warn(`無法從 ${TABLE_NAME} 讀取繳交紀錄`, subErr);
-                throw new Error('無法讀取繳交紀錄: ' + subErr.message);
-            } else {
-                completions = subs || [];
+            // 切片以防止 in 查詢超過 URL 長度上限
+            const chunkSize = 200;
+            for (let i = 0; i < taskIds.length; i += chunkSize) {
+                const chunk = taskIds.slice(i, i + chunkSize);
+                try {
+                    const res = await db.from(TABLE_NAME).select('*').in(RELATION_COLUMN, chunk).is('deleted_at', null);
+                    if (res.error) throw res.error;
+                    if (res.data) completions = completions.concat(res.data);
+                } catch (err) {
+                    console.warn(`無法從 ${TABLE_NAME} 讀取繳交紀錄`, err);
+                }
             }
         }
 
-        // 5. 重組矩陣 (將成績精準映射至 task_id)
+        // 5. 重組矩陣
         const matrixData = enrollments.map(en => {
-            const studentId = en.user_id;
-            const profile = Array.isArray(en.profiles) ? en.profiles[0] : en.profiles;
-            const studentName = profile?.name || '未知學生';
-            const defectBank = profile?.raw_data?.defect_vocab || {};
+            const studentId = en.user_id || en.student_id || en.id;
+            const profile = Array.isArray(en.profiles) ? en.profiles[0] : (en.profiles || {});
+            const studentName = profile.name || '未知學生';
+            
+            const pRaw = parseJSONB(profile.raw_data);
+            const defectBank = pRaw.defect_vocab || {};
 
             const stuSubs = {};
-            completions.filter(s => s.user_id === studentId).forEach(s => {
-                stuSubs[s[RELATION_COLUMN]] = s; // 這裡以 task_id 作為 key 存入 dictionary
+            completions.filter(s => String(s.user_id || s.student_id) === String(studentId)).forEach(s => {
+                stuSubs[s[RELATION_COLUMN]] = s; 
             });
 
             return {
@@ -100,7 +114,6 @@ window.GradebookAPI = (function() {
             };
         });
 
-        // 🌟 巧妙設計：將扁平化後的 flatAudioTasks 取名為 assignments 回傳，實現無痛嫁接 Store
         return { matrixData, assignments: flatAudioTasks };
     }
 
@@ -108,7 +121,6 @@ window.GradebookAPI = (function() {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
         const db = window.supabaseClient;
 
-        // 原子化更新 1：更新 task_completions
         const updateSubPromise = db
             .from(TABLE_NAME) 
             .update({ 
@@ -117,7 +129,6 @@ window.GradebookAPI = (function() {
             })
             .eq('id', payload.submission_id);
 
-        // 原子化更新 2：更新學生的歷史缺陷字集 (寫入 profile)
         const { data: profile, error: profErr } = await db
             .from('profiles')
             .select('raw_data')
@@ -125,9 +136,10 @@ window.GradebookAPI = (function() {
             .single();
 
         if (profErr) throw new Error('無法取得學生個人資料以更新缺陷庫');
-
+        
+        const pRaw = parseJSONB(profile.raw_data);
         const newProfileRaw = {
-            ...(profile.raw_data || {}),
+            ...pRaw,
             defect_vocab: payload.defect_bank_to_patch
         };
 

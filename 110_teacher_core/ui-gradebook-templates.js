@@ -1,29 +1,31 @@
 /**
  * 📂 110_teacher_core/ui-gradebook-templates.js
  * 🎯 職責：老師端批改中樞的純視覺模板工廠 (Tier 2)
- * ⚠️ 鐵律：僅接收 JSON，回傳 HTML 字串。絕對禁止綁定 DOM 事件。
  */
 window.GradebookTemplates = (function() {
     'use strict';
 
-    // XSS 防禦
     function escapeHtml(unsafe) {
         if (unsafe === null || unsafe === undefined) return '';
         return unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
 
-    /**
-     * 模組 A: 產出成績單二維矩陣
-     */
+    function parseJSONB(data) {
+        if (!data) return {};
+        if (typeof data === 'string') {
+            try { return JSON.parse(data); } catch(e) { return {}; }
+        }
+        return data;
+    }
+
     function renderMatrix(matrixData, assignments) {
         if (!matrixData || matrixData.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">目前無學生資料</div>`;
-        if (!assignments || assignments.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">目前無錄音作業資料</div>`;
+        if (!assignments || assignments.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">該班級目前無錄音作業</div>`;
 
         let thead = `<tr class="bg-gray-50 text-gray-700 text-sm border-b border-gray-200"><th class="p-4 text-left font-black sticky left-0 z-10 bg-gray-50 border-r border-gray-200">學生姓名</th>`;
         
-        // 🌟 雙層表頭渲染：顯示「外層區塊名稱 (小字)」+「真實錄音任務名稱 (大字)」
         assignments.forEach(a => {
-            thead += `<th class="p-4 text-center font-bold min-w-[140px]">
+            thead += `<th class="p-4 text-center font-bold min-w-[140px] align-top">
                         <div class="text-[10px] text-gray-400 font-bold mb-1 truncate max-w-[140px] mx-auto uppercase tracking-wide" title="${escapeHtml(a.assignment_title)}">📂 ${escapeHtml(a.assignment_title)}</div>
                         <div class="text-sm text-gray-800">${escapeHtml(a.title)}</div>
                       </th>`;
@@ -36,17 +38,17 @@ window.GradebookTemplates = (function() {
             tbody += `<td class="p-4 font-bold text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-blue-50 border-r border-gray-200">${escapeHtml(row.student_name)}</td>`;
             
             assignments.forEach(a => {
-                // 🚀 a.id 現在是內層的 task_id，可以完美匹配 row.submissions 的鍵值
                 const sub = row.submissions ? row.submissions[a.id] : null;
                 if (!sub) {
                     tbody += `<td class="p-4 text-center text-gray-300 font-bold">-</td>`;
                 } else {
-                    const override = sub.raw_data?.teacher_override;
-                    const aiScore = sub.raw_data?.ai_evaluation?.pronunciation_score;
-                    const finalScore = override?.final_score ?? aiScore ?? '待批';
-                    const isGraded = !!override?.overridden_at;
+                    const raw = parseJSONB(sub.raw_data);
+                    const override = raw.teacher_override || {};
+                    const aiScore = raw.ai_evaluation?.pronunciation_score;
+                    const finalScore = override.final_score ?? aiScore ?? '待批';
+                    const isGraded = finalScore !== '待批' && override.overridden_at;
                     
-                    const scoreClass = isGraded ? (finalScore < 60 ? 'text-red-700 bg-red-100 border-red-200' : 'text-green-700 bg-green-100 border-green-200') : 'text-yellow-700 bg-yellow-100 border-yellow-200 animate-pulse';
+                    const scoreClass = isGraded ? (Number(finalScore) < 60 ? 'text-red-700 bg-red-100 border-red-200' : 'text-green-700 bg-green-100 border-green-200') : 'text-yellow-700 bg-yellow-100 border-yellow-200 animate-pulse';
 
                     tbody += `<td class="p-4 text-center">
                                 <button data-action="open-grading" data-submission-id="${escapeHtml(sub.id)}" data-student-id="${escapeHtml(row.student_id)}" class="px-5 py-1.5 rounded-full font-black transition-transform hover:scale-110 shadow-sm border cursor-pointer ${scoreClass} hover:brightness-95">
@@ -66,16 +68,11 @@ window.GradebookTemplates = (function() {
                 </div>`;
     }
 
-    /**
-     * 內部模組: 產出互動式批改文稿
-     */
     function renderInteractiveTranscript(textContent, aiErrors, intonationIssues, draft, defectBank) {
         if (!textContent) return `<div class="text-gray-400 italic p-4 text-center border-2 border-dashed border-gray-200 rounded-lg">無指定文稿內容</div>`;
 
-        const manualDefects = draft.manual_defects_added || [];
-        const removedDefects = draft.ai_defects_removed || [];
-
-        // 保留標點符號與換行進行切割
+        const manualDefects = draft?.manual_defects_added || [];
+        const removedDefects = draft?.ai_defects_removed || [];
         const tokens = textContent.split(/([a-zA-Z']+)/);
         let html = `<div class="leading-relaxed text-2xl text-gray-800 font-serif break-words" style="line-height: 2;">`;
 
@@ -108,16 +105,14 @@ window.GradebookTemplates = (function() {
                     iconHtml = `<span class="absolute -top-3 -right-2 text-[14px]" title="歷史缺陷，本次已修正！">📈</span>`;
                 }
             }
-
             html += `<span class="${classes}" ${attributes}>${escapeHtml(token)}${iconHtml}</span>`;
         });
         html += `</div>`;
 
-        // 藍色波浪線 (語調連音)
         if (intonationIssues && intonationIssues.length > 0) {
             html += `<div class="mt-8 p-4 bg-blue-50 rounded-xl border border-blue-200">
                         <h4 class="text-sm font-bold text-blue-800 mb-3 flex items-center m-0">
-                            <span class="mr-2">〰️</span> 語調與連音建議 (Intonation & Liaison)
+                            <span class="mr-2">〰️</span> 語調與連音建議
                         </h4>
                         <div class="space-y-4">`;
             intonationIssues.forEach(issue => {
@@ -131,16 +126,14 @@ window.GradebookTemplates = (function() {
         return html;
     }
 
-    /**
-     * 模組 C: 產出右側滑出批改艙面板主體
-     */
     function renderSidebar(context, currentRole) {
         if (!context || !context.submission) return '';
 
         const sub = context.submission;
-        const aiData = sub.raw_data?.ai_evaluation || {};
-        const draft = context.draft;
-        const textContent = sub.raw_data?.assignment_text || "";
+        const raw = parseJSONB(sub.raw_data);
+        const aiData = raw.ai_evaluation || {};
+        const draft = context.draft || {};
+        const textContent = raw.assignment_text || "";
         const isTaJunior = currentRole === 'ta_junior';
 
         return `
@@ -162,7 +155,7 @@ window.GradebookTemplates = (function() {
 
                 <div class="sticky top-[-24px] bg-white/95 backdrop-blur z-20 p-4 rounded-xl shadow-sm border border-gray-200 -mx-2">
                     <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">🎧 學生原始錄音</div>
-                    <audio id="student-audio" src="${escapeHtml(sub.audio_url || '')}" controls class="w-full h-12 outline-none rounded-full"></audio>
+                    <audio id="student-audio" src="${escapeHtml(sub.audio_url || raw.audio_url || '')}" controls class="w-full h-12 outline-none rounded-full"></audio>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
@@ -209,9 +202,6 @@ window.GradebookTemplates = (function() {
         `;
     }
 
-    /**
-     * 模組 D: 產出點擊紅字後的「KK音標與雙向播放」氣泡 (Popover)
-     */
     function renderWordPopover(word, kkStandard, kkStudent, startTime, issueType, isManualType, posX, posY) {
         return `
             <div id="active-word-popover" class="fixed z-[10000] bg-white border border-gray-200 shadow-2xl rounded-2xl p-5 w-72 transform -translate-x-1/2 mt-3 transition-opacity"
