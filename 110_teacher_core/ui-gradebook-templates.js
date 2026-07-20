@@ -1,25 +1,25 @@
 /**
- * 110_teacher_core/ui-gradebook-templates.js
- * 職責：老師端批改中樞的純視覺模板工廠 (Tier 2)
- * 鐵律：僅接收 JSON，回傳 HTML 字串。絕對禁止綁定 DOM 事件。
+ * 📂 110_teacher_core/ui-gradebook-templates.js
+ * 🎯 職責：老師端批改中樞的純視覺模板工廠 (Tier 2)
+ * ⚠️ 鐵律：僅接收 JSON，回傳 HTML 字串。絕對禁止綁定 DOM 事件。
  */
 window.GradebookTemplates = (function() {
     'use strict';
 
-    // XSS 防禦字串處理
+    // XSS 防禦
     function escapeHtml(unsafe) {
         if (unsafe === null || unsafe === undefined) return '';
         return unsafe.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
 
     /**
-     * 模組 A: 產出成績單二維矩陣 (Gradebook Matrix)
+     * 模組 A: 產出成績單二維矩陣
      */
     function renderMatrix(matrixData, assignments) {
-        if (!matrixData || matrixData.length === 0) return `<div class="p-8 text-center text-gray-500 bg-white rounded-xl shadow-sm border border-gray-200">目前無學生資料</div>`;
-        if (!assignments || assignments.length === 0) return `<div class="p-8 text-center text-gray-500 bg-white rounded-xl shadow-sm border border-gray-200">目前無作業資料</div>`;
+        if (!matrixData || matrixData.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">目前無學生資料</div>`;
+        if (!assignments || assignments.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">目前無錄音作業資料</div>`;
 
-        let thead = `<tr class="bg-gray-50 text-gray-700 text-sm border-b"><th class="p-4 text-left font-bold sticky left-0 z-10 bg-gray-50">學生姓名</th>`;
+        let thead = `<tr class="bg-gray-50 text-gray-700 text-sm border-b border-gray-200"><th class="p-4 text-left font-black sticky left-0 z-10 bg-gray-50 border-r border-gray-200">學生姓名</th>`;
         assignments.forEach(a => {
             thead += `<th class="p-4 text-center font-bold min-w-[120px]">${escapeHtml(a.title)}</th>`;
         });
@@ -27,22 +27,25 @@ window.GradebookTemplates = (function() {
 
         let tbody = '';
         matrixData.forEach(row => {
-            tbody += `<tr class="hover:bg-blue-50 border-b transition-colors group">`;
-            tbody += `<td class="p-4 font-bold text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-blue-50 border-r">${escapeHtml(row.student_name)}</td>`;
+            tbody += `<tr class="hover:bg-blue-50 border-b border-gray-100 transition-colors group">`;
+            tbody += `<td class="p-4 font-bold text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-blue-50 border-r border-gray-200">${escapeHtml(row.student_name)}</td>`;
             
             assignments.forEach(a => {
-                const sub = row.submissions[a.id];
+                const sub = row.submissions ? row.submissions[a.id] : null;
                 if (!sub) {
-                    tbody += `<td class="p-4 text-center text-gray-300">-</td>`;
+                    tbody += `<td class="p-4 text-center text-gray-300 font-bold">-</td>`;
                 } else {
-                    const finalScore = sub.raw_data?.teacher_override?.final_score ?? sub.raw_data?.ai_evaluation?.pronunciation_score ?? '批改';
-                    const isGraded = !!sub.raw_data?.teacher_override?.overridden_at;
-                    const scoreClass = isGraded ? (finalScore < 60 ? 'text-red-600' : 'text-green-600') : 'text-blue-600';
-                    const bgClass = isGraded ? 'bg-transparent' : 'bg-yellow-100 animate-pulse';
+                    const override = sub.raw_data?.teacher_override;
+                    const aiScore = sub.raw_data?.ai_evaluation?.pronunciation_score;
+                    const finalScore = override?.final_score ?? aiScore ?? '待批';
+                    const isGraded = !!override?.overridden_at;
+                    
+                    const scoreClass = isGraded ? (finalScore < 60 ? 'text-red-700 bg-red-100 border-red-200' : 'text-green-700 bg-green-100 border-green-200') : 'text-yellow-700 bg-yellow-100 border-yellow-200 animate-pulse';
 
-                    tbody += `<td class="p-4 text-center cursor-pointer font-bold transition-transform hover:scale-110" 
-                                  data-action="open-grading" data-submission-id="${escapeHtml(sub.id)}" data-student-id="${escapeHtml(row.student_id)}">
-                                <span class="px-3 py-1 rounded-full ${scoreClass} ${bgClass}">${escapeHtml(finalScore)}</span>
+                    tbody += `<td class="p-4 text-center">
+                                <button data-action="open-grading" data-submission-id="${escapeHtml(sub.id)}" data-student-id="${escapeHtml(row.student_id)}" class="px-5 py-1.5 rounded-full font-black transition-transform hover:scale-110 shadow-sm border cursor-pointer ${scoreClass} hover:brightness-95">
+                                    ${escapeHtml(finalScore)}
+                                </button>
                               </td>`;
                 }
             });
@@ -50,7 +53,7 @@ window.GradebookTemplates = (function() {
         });
 
         return `<div class="overflow-x-auto bg-white rounded-xl shadow-sm border border-gray-200">
-                    <table class="w-full whitespace-nowrap text-sm">
+                    <table class="w-full whitespace-nowrap text-sm border-collapse">
                         <thead>${thead}</thead>
                         <tbody>${tbody}</tbody>
                     </table>
@@ -58,7 +61,7 @@ window.GradebookTemplates = (function() {
     }
 
     /**
-     * 模組 B: 產出互動式批改文稿 (Interactive Transcript)
+     * 內部模組: 產出互動式批改文稿
      */
     function renderInteractiveTranscript(textContent, aiErrors, intonationIssues, draft, defectBank) {
         if (!textContent) return `<div class="text-gray-400 italic p-4 text-center border-2 border-dashed border-gray-200 rounded-lg">無指定文稿內容</div>`;
@@ -66,41 +69,37 @@ window.GradebookTemplates = (function() {
         const manualDefects = draft.manual_defects_added || [];
         const removedDefects = draft.ai_defects_removed || [];
 
-        // 利用正則切分單字，保留標點符號與空格，確保組裝時完全對齊原稿
-        const tokens = textContent.split(/([a-zA-Z]+)/);
-        let html = `<div class="leading-relaxed text-xl text-gray-800 font-serif break-words">`;
+        // 保留標點符號與換行進行切割
+        const tokens = textContent.split(/([a-zA-Z']+)/);
+        let html = `<div class="leading-relaxed text-2xl text-gray-800 font-serif break-words" style="line-height: 2;">`;
 
         tokens.forEach(token => {
-            if (!/^[a-zA-Z]+$/.test(token)) {
-                html += escapeHtml(token);
+            if (!/^[a-zA-Z']+$/.test(token)) {
+                html += escapeHtml(token).replace(/\n/g, '<br>');
                 return;
             }
 
-            const cleanWord = token.toLowerCase();
-            const aiErrorData = (aiErrors || []).find(e => e.word.toLowerCase() === cleanWord);
+            const cleanWord = token.toLowerCase().replace(/[^a-z']/g, '');
+            const aiErrorData = (aiErrors || []).find(e => (e.word || "").toLowerCase().replace(/[^a-z']/g, '') === cleanWord);
             const isAiDefect = !!aiErrorData && !removedDefects.includes(cleanWord);
             const isManualDefect = manualDefects.includes(cleanWord);
             const isHistoryDefect = defectBank && defectBank[cleanWord] > 0;
 
-            let classes = "inline-block px-1 mx-[1px] rounded transition-colors cursor-pointer ";
+            let classes = "inline-block px-1 mx-[1px] rounded transition-colors cursor-pointer relative ";
             let attributes = `data-word="${escapeHtml(cleanWord)}" data-action="word-click" `;
             let iconHtml = "";
 
             if (isAiDefect) {
-                // AI 抓出的錯誤 (紅字)
-                classes += "bg-red-100 text-red-700 border-b-2 border-red-500 hover:bg-red-200 font-bold ";
+                classes += "bg-red-100 text-red-700 border-b-4 border-red-500 hover:bg-red-200 font-bold ";
                 attributes += `data-kk-std="${escapeHtml(aiErrorData.kk_standard || '')}" data-kk-stu="${escapeHtml(aiErrorData.kk_student || '')}" data-time="${aiErrorData.start_time || 0}" data-issue="${escapeHtml(aiErrorData.issue_type || '發音需加強')}" data-type="ai"`;
             } else if (isManualDefect) {
-                // 老師手動補刀標記 (橘色虛線)
-                classes += "bg-orange-100 text-orange-700 border-b-2 border-orange-500 border-dashed hover:bg-orange-200 font-bold ";
+                classes += "bg-orange-100 text-orange-700 border-b-4 border-orange-500 border-dashed hover:bg-orange-200 font-bold ";
                 attributes += `data-type="manual" data-time="0"`;
             } else {
-                // 正常單字
                 classes += "hover:bg-gray-200 ";
                 if (isHistoryDefect) {
-                    // 【歷史進步標記】：曾錯過，但這次沒錯！
-                    classes += "text-green-600 font-bold border-b-2 border-green-400 ";
-                    iconHtml = `<span class="text-[10px] ml-1 align-top" title="歷史缺陷，本次已修正！">📈</span>`;
+                    classes += "text-green-700 font-bold border-b-4 border-green-500 ";
+                    iconHtml = `<span class="absolute -top-3 -right-2 text-[14px]" title="歷史缺陷，本次已修正！">📈</span>`;
                 }
             }
 
@@ -108,28 +107,26 @@ window.GradebookTemplates = (function() {
         });
         html += `</div>`;
 
-        // 渲染語調/連音錯誤 (藍色波浪線)
+        // 藍色波浪線 (語調連音)
         if (intonationIssues && intonationIssues.length > 0) {
-            html += `<div class="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-200">
-                        <h4 class="text-sm font-bold text-blue-800 mb-3 flex items-center">
-                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> 
-                            語調與連音建議 (Intonation & Liaison)
+            html += `<div class="mt-8 p-4 bg-blue-50 rounded-xl border border-blue-200">
+                        <h4 class="text-sm font-bold text-blue-800 mb-3 flex items-center m-0">
+                            <span class="mr-2">〰️</span> 語調與連音建議 (Intonation & Liaison)
                         </h4>
-                        <div class="space-y-3">`;
+                        <div class="space-y-4">`;
             intonationIssues.forEach(issue => {
-                html += `<div class="cursor-pointer group block" data-action="intonation-click" data-time="${issue.start_time}">
-                            <span class="text-lg text-gray-800 underline decoration-blue-500 decoration-wavy decoration-2 group-hover:bg-blue-100 transition-colors rounded px-1">${escapeHtml(issue.phrase)}</span>
-                            <div class="text-sm text-blue-600 mt-1 pl-1 font-medium">👉 ${escapeHtml(issue.suggestion)}</div>
+                html += `<div class="cursor-pointer group block bg-white p-3 rounded-lg shadow-sm border border-blue-100 hover:border-blue-300 transition-colors" data-action="intonation-click" data-time="${issue.start_time || 0}">
+                            <span class="text-lg text-gray-800 underline decoration-blue-500 decoration-wavy decoration-2 group-hover:bg-blue-50 transition-colors rounded px-1">${escapeHtml(issue.phrase)}</span>
+                            <div class="text-sm text-blue-600 mt-2 pl-2 font-medium border-l-4 border-blue-400">👉 ${escapeHtml(issue.suggestion)}</div>
                          </div>`;
             });
             html += `</div></div>`;
         }
-
         return html;
     }
 
     /**
-     * 模組 C: 產出右側滑出批改艙面板主體 (Off-canvas Sidebar)
+     * 模組 C: 產出右側滑出批改艙面板主體
      */
     function renderSidebar(context, currentRole) {
         if (!context || !context.submission) return '';
@@ -141,126 +138,115 @@ window.GradebookTemplates = (function() {
         const isTaJunior = currentRole === 'ta_junior';
 
         return `
-        <div id="grading-sidebar-panel" class="fixed right-0 top-0 h-screen bg-gray-50 shadow-2xl w-[600px] border-l border-gray-200 flex flex-col z-50 transform translate-x-full transition-transform duration-300">
+        <!-- Overlay -->
+        <div id="grading-sidebar-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-60 z-[9998] transition-opacity backdrop-blur-sm" data-action="close-sidebar"></div>
+        
+        <!-- Sidebar Panel -->
+        <div id="grading-sidebar-panel" class="fixed right-0 top-0 h-screen bg-gray-50 shadow-[0_0_40px_rgba(0,0,0,0.2)] w-full max-w-[650px] border-l border-gray-200 flex flex-col z-[9999] transform translate-x-full transition-transform duration-300">
             
-            <!-- Header -->
-            <div class="px-6 py-4 bg-white border-b flex justify-between items-center shadow-sm shrink-0">
-                <h3 class="text-xl font-black text-gray-800 flex items-center gap-2">
+            <div class="px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center shadow-sm shrink-0">
+                <h3 class="text-xl font-black text-gray-800 flex items-center gap-2 m-0">
                     <span class="text-blue-600">🎙️ 語音教練</span> 批改艙
                 </h3>
-                <button data-action="close-sidebar" class="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full w-8 h-8 flex items-center justify-center transition font-bold text-xl">&times;</button>
+                <button data-action="close-sidebar" class="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full w-10 h-10 flex items-center justify-center transition font-bold text-2xl border-0 bg-transparent cursor-pointer">&times;</button>
             </div>
 
-            <!-- Scrollable Body -->
-            <div class="flex-1 overflow-y-auto p-6 space-y-6 pb-32">
-                <!-- 隱藏的 Google TTS 播放器 (掛載快取音軌用) -->
+            <div class="flex-1 overflow-y-auto p-6 space-y-6 pb-48">
                 <audio id="google-tts-audio" class="hidden"></audio>
 
-                <!-- 學生錄音播放器 -->
-                <div class="sticky top-0 bg-white/90 backdrop-blur z-20 p-4 rounded-xl shadow-sm border border-gray-200">
+                <div class="sticky top-[-24px] bg-white/95 backdrop-blur z-20 p-4 rounded-xl shadow-sm border border-gray-200 -mx-2">
                     <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">🎧 學生原始錄音</div>
-                    <audio id="student-audio" src="${escapeHtml(sub.audio_url || '')}" controls class="w-full h-10 outline-none rounded-full"></audio>
+                    <audio id="student-audio" src="${escapeHtml(sub.audio_url || '')}" controls class="w-full h-12 outline-none rounded-full"></audio>
                 </div>
 
-                <!-- AI 分數儀表板 -->
                 <div class="grid grid-cols-2 gap-4">
                     <div class="bg-white p-5 rounded-xl border border-gray-200 text-center shadow-sm">
                         <div class="text-xs text-gray-500 font-bold uppercase tracking-wide">發音準確度</div>
-                        <div class="text-4xl font-black text-blue-600 mt-1">${escapeHtml(aiData.pronunciation_score || '--')}</div>
+                        <div class="text-5xl font-black text-blue-600 mt-2">${escapeHtml(aiData.pronunciation_score || '--')}</div>
                     </div>
                     <div class="bg-white p-5 rounded-xl border border-gray-200 text-center shadow-sm">
                         <div class="text-xs text-gray-500 font-bold uppercase tracking-wide">流暢度</div>
-                        <div class="text-4xl font-black text-blue-600 mt-1">${escapeHtml(aiData.fluency_score || '--')}</div>
+                        <div class="text-5xl font-black text-blue-600 mt-2">${escapeHtml(aiData.fluency_score || '--')}</div>
                     </div>
                 </div>
 
-                <!-- 互動式文稿 -->
                 <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    <div class="flex justify-between items-end mb-4 border-b pb-2">
-                        <div class="text-sm font-bold text-gray-700">文稿對齊分析 (Text-Aligned)</div>
-                        <div class="text-[10px] bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold">💡 點擊紅字聽對比 / 反白黑字可新增標記</div>
+                    <div class="flex justify-between items-end mb-6 border-b border-gray-100 pb-3">
+                        <div class="text-base font-black text-gray-700 m-0">文稿對齊分析 (Text-Aligned)</div>
+                        <div class="text-[11px] bg-blue-100 text-blue-800 px-3 py-1.5 rounded font-bold shadow-sm">💡 點擊紅字聽對比 / 反白黑字可新增標記</div>
                     </div>
                     ${renderInteractiveTranscript(textContent, aiData.word_errors, aiData.intonation_issues, draft, context.defectBank)}
                 </div>
             </div>
 
-            <!-- Footer (教師手動覆寫區，固定於底部) -->
-            <div class="absolute bottom-0 left-0 right-0 p-6 bg-white border-t border-gray-200 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] z-30">
-                <h4 class="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">👨‍🏫 教師決策覆寫 (Manual Override)</h4>
+            <div class="absolute bottom-0 left-0 right-0 p-6 bg-white border-t border-gray-200 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.1)] z-30">
+                <h4 class="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2 mt-0">👨‍🏫 教師決策覆寫 (Manual Override)</h4>
                 
-                ${isTaJunior ? `<div class="text-xs text-red-600 mb-3 font-bold bg-red-50 border border-red-200 p-2 rounded">⚠️ 一般助教權限：僅供檢視與標記發音，無法發布成績。</div>` : ''}
+                ${isTaJunior ? `<div class="text-xs text-red-600 mb-3 font-bold bg-red-50 border border-red-200 p-3 rounded-lg text-center">⚠️ 一般助教權限：僅供檢視與標記發音，無法發布成績。</div>` : ''}
 
                 <div class="flex gap-4 mb-4">
                     <div class="w-1/4">
                         <label class="block text-xs font-bold text-gray-500 mb-1">最終總分</label>
-                        <input type="number" id="input-draft-score" ${isTaJunior ? 'disabled' : ''} class="w-full p-2 border border-gray-300 rounded-lg font-black text-2xl text-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none transition text-center" value="${escapeHtml(draft.final_score !== null ? draft.final_score : '')}">
+                        <input type="number" id="input-draft-score" ${isTaJunior ? 'disabled' : ''} class="w-full p-2 border border-gray-300 rounded-xl font-black text-3xl text-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none transition text-center shadow-inner" value="${escapeHtml(draft.final_score !== null ? draft.final_score : '')}">
                     </div>
                     <div class="w-3/4">
                         <label class="block text-xs font-bold text-gray-500 mb-1">暖心評語</label>
-                        <textarea id="input-draft-feedback" ${isTaJunior ? 'disabled' : ''} rows="2" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm transition" placeholder="給予發音建議或鼓勵...">${escapeHtml(draft.manual_feedback)}</textarea>
+                        <textarea id="input-draft-feedback" ${isTaJunior ? 'disabled' : ''} rows="2" class="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm transition shadow-inner resize-none" placeholder="給予發音建議或鼓勵...">${escapeHtml(draft.manual_feedback)}</textarea>
                     </div>
                 </div>
 
-                <button data-action="save-publish" ${isTaJunior ? 'disabled' : ''} class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-[0.98]">
+                <button data-action="save-publish" ${isTaJunior ? 'disabled' : ''} class="w-full bg-blue-600 text-white font-black py-4 rounded-xl hover:bg-blue-700 shadow-lg hover:shadow-xl transition disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-[0.98] border-0 cursor-pointer text-lg flex justify-center items-center gap-2">
                     🚀 發布正式成績並更新缺陷庫
                 </button>
             </div>
         </div>
-        
-        <!-- 遮罩 -->
-        <div id="grading-sidebar-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-50 z-40 hidden transition-opacity backdrop-blur-sm" data-action="close-sidebar"></div>
         `;
     }
 
     /**
      * 模組 D: 產出點擊紅字後的「KK音標與雙向播放」氣泡 (Popover)
      */
-    function renderWordPopover(word, kkStandard, kkStudent, startTime, issueType, isManualType) {
+    function renderWordPopover(word, kkStandard, kkStudent, startTime, issueType, isManualType, posX, posY) {
         return `
-            <div class="absolute z-50 bg-white border border-gray-200 shadow-2xl rounded-xl p-4 w-72 transform -translate-x-1/2 mt-2 shadow-[0_20px_25px_-5px_rgba(0,0,0,0.1)]">
-                <div class="absolute top-[-6px] left-1/2 transform -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45"></div>
+            <div id="active-word-popover" class="fixed z-[10000] bg-white border border-gray-200 shadow-2xl rounded-2xl p-5 w-72 transform -translate-x-1/2 mt-3 transition-opacity"
+                 style="top: ${posY}px; left: ${posX}px;">
+                <div class="absolute top-[-8px] left-1/2 transform -translate-x-1/2 w-4 h-4 bg-white border-l border-t border-gray-200 rotate-45"></div>
                 
-                <div class="flex justify-between items-center mb-3 pb-2 border-b relative z-10">
-                    <span class="font-black text-xl text-gray-800 capitalize">${escapeHtml(word)}</span>
-                    <button data-action="close-popover" class="text-gray-400 hover:text-red-500 font-bold text-lg leading-none">&times;</button>
+                <div class="flex justify-between items-center mb-4 pb-3 border-b border-gray-100 relative z-10">
+                    <span class="font-black text-2xl text-gray-800 capitalize tracking-tight m-0">${escapeHtml(word)}</span>
+                    <button data-action="close-popover" class="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full w-8 h-8 flex items-center justify-center transition font-bold text-xl border-0 bg-transparent cursor-pointer">&times;</button>
                 </div>
 
-                <div class="text-xs bg-gray-50 p-2 rounded border border-gray-100 mb-3 relative z-10">
-                    <span class="font-bold text-gray-500">AI 診斷：</span><span class="text-gray-700 font-medium">${escapeHtml(issueType || '手動標記')}</span>
+                <div class="text-sm bg-gray-50 p-3 rounded-lg border border-gray-100 mb-4 relative z-10 shadow-inner">
+                    <span class="font-bold text-gray-500">AI 診斷：</span><span class="text-gray-800 font-bold ml-1">${escapeHtml(issueType || '手動標記')}</span>
                 </div>
                 
-                <div class="space-y-2 mb-3 relative z-10">
-                    <!-- Google TTS -->
-                    <div class="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-100">
+                <div class="space-y-3 mb-5 relative z-10">
+                    <div class="flex justify-between items-center bg-blue-50 p-3 rounded-xl border border-blue-100 shadow-sm">
                         <div>
-                            <span class="block text-[10px] font-bold text-blue-600 mb-0.5 uppercase">標準美式音</span>
-                            <span class="font-mono text-gray-800 font-bold">${escapeHtml(kkStandard || '[N/A]')}</span>
+                            <span class="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-wider">標準美式音</span>
+                            <span class="font-mono text-gray-900 font-bold text-lg">${escapeHtml(kkStandard || '[N/A]')}</span>
                         </div>
-                        <button data-action="play-tts" data-word="${escapeHtml(word)}" class="bg-blue-500 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-blue-600 shadow-sm transition">🔊</button>
+                        <button data-action="play-tts" data-word="${escapeHtml(word)}" class="bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-blue-600 shadow transition border-0 cursor-pointer text-lg">🔊</button>
                     </div>
-                    <!-- Student Audio -->
-                    <div class="flex justify-between items-center bg-red-50 p-2 rounded-lg border border-red-100">
+                    <div class="flex justify-between items-center bg-red-50 p-3 rounded-xl border border-red-100 shadow-sm">
                         <div>
-                            <span class="block text-[10px] font-bold text-red-600 mb-0.5 uppercase">學生實際音</span>
-                            <span class="font-mono text-gray-800 font-bold">${escapeHtml(kkStudent || '[N/A]')}</span>
+                            <span class="block text-[10px] font-black text-red-600 mb-1 uppercase tracking-wider">學生實際音</span>
+                            <span class="font-mono text-gray-900 font-bold text-lg">${escapeHtml(kkStudent || '[N/A]')}</span>
                         </div>
-                        <button data-action="play-student" data-time="${startTime}" class="bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-red-600 shadow-sm transition">🎧</button>
+                        <button data-action="play-student" data-time="${startTime}" class="bg-red-500 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-red-600 shadow transition border-0 cursor-pointer text-lg">🎧</button>
                     </div>
                 </div>
                 
-                <div class="pt-2 text-center relative z-10">
+                <div class="pt-1 text-center relative z-10">
                     ${isManualType 
-                        ? `<button data-action="remove-manual" data-word="${escapeHtml(word)}" class="w-full text-xs font-bold py-2 border border-gray-300 text-gray-600 rounded hover:bg-gray-100 transition">取消手動標記</button>`
-                        : `<button data-action="remove-ai" data-word="${escapeHtml(word)}" class="w-full text-xs font-bold py-2 border border-red-200 text-red-500 rounded hover:bg-red-50 transition">🗑️ 移除標記 (防誤判)</button>`
+                        ? `<button data-action="remove-manual" data-word="${escapeHtml(word)}" class="w-full text-sm font-bold py-3 border-2 border-gray-200 text-gray-600 rounded-xl hover:bg-gray-100 transition cursor-pointer bg-white">取消手動標記</button>`
+                        : `<button data-action="remove-ai" data-word="${escapeHtml(word)}" class="w-full text-sm font-bold py-3 border-2 border-red-200 text-red-600 rounded-xl hover:bg-red-50 transition cursor-pointer bg-white">🗑️ 移除標記 (防誤判)</button>`
                     }
                 </div>
             </div>
         `;
     }
 
-    return {
-        renderMatrix,
-        renderSidebar,
-        renderWordPopover
-    };
+    return { renderMatrix, renderSidebar, renderWordPopover };
 })();

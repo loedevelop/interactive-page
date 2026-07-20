@@ -54,10 +54,12 @@ window.BuilderStore = (() => {
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
                     const matUrlEl = document.getElementById(`node-material-url-${pathStr}`);
                     const matRangeEl = document.getElementById(`node-material-range-${pathStr}`);
+                    const useAiEl = document.getElementById(`node-use-ai-${pathStr}`); // 🔴 捕捉 AI 開關
                     
                     if (scriptEl) t.raw_data.original_script = scriptEl.value;
                     if (matUrlEl) t.raw_data.material_url = matUrlEl.value;
                     if (matRangeEl) t.raw_data.material_range = matRangeEl.value;
+                    if (useAiEl) t.raw_data.use_ai_grading = useAiEl.checked;
                 }
             }
         });
@@ -152,7 +154,8 @@ window.BuilderStore = (() => {
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
                 due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
-                raw_data: {}, // 🌟 確保新增節點都有掛載 JSONB 容器
+                // 🌟 新增節點時，若為錄音作業則預設開啟 AI
+                raw_data: type === 'audio_record' ? { use_ai_grading: true } : {}, 
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
         },
@@ -211,6 +214,12 @@ window.BuilderStore = (() => {
             let task = parentArr[arr[arr.length - 1]];
             task.type = newType;
             if (newType === 'link' && !task.url) { task.url = ''; task.url_text = ''; }
+            
+            // 🌟 防呆：若切換為錄音作業且未設定 AI 屬性，預設為開啟
+            if (newType === 'audio_record') {
+                if (!task.raw_data) task.raw_data = {};
+                if (task.raw_data.use_ai_grading === undefined) task.raw_data.use_ai_grading = true;
+            }
         },
         updateNodeUrl: (pathStr, val) => {
             syncState();
@@ -267,6 +276,11 @@ window.BuilderStore = (() => {
                     const cloned = { ...t, id: `task_${Date.now()}_${Math.random()}` };
                     delete cloned.resource_id;
                     if (!cloned.raw_data) cloned.raw_data = {};
+                    
+                    // 🌟 複製歷史作業時，若為錄音且尚未設定 AI，預設補齊為 true
+                    if (cloned.type === 'audio_record' && cloned.raw_data.use_ai_grading === undefined) {
+                        cloned.raw_data.use_ai_grading = true;
+                    }
                     if (cloned.type === 'group' && cloned.subTasks) cloned.subTasks = assignNewIdsRecursive(cloned.subTasks);
                     return cloned;
                 });

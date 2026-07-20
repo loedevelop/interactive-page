@@ -1,35 +1,40 @@
 /**
- * 110_teacher_core/store-gradebook.js
- * 職責：老師端批改中樞的狀態大腦 (Tier 3)
- * 鐵律：絕對禁止操作 DOM、絕對禁止呼叫 API。只負責維護記憶體狀態與產出乾淨 DTO。
+ * 📂 110_teacher_core/store-gradebook.js
+ * 🎯 職責：老師端批改中樞的狀態大腦 (Tier 3)
+ * ⚠️ 鐵律：絕對禁止操作 DOM、絕對禁止呼叫 API。只負責維護記憶體狀態與產出乾淨 DTO Payload。
  */
 window.GradebookStore = (function() {
     'use strict';
 
     // 內部封閉狀態 (Single Source of Truth)
     let state = {
-        matrixData: [], // 成績單矩陣資料 (已包含學生與作業的關聯)
+        matrixData: [],         // 成績單矩陣資料
+        assignments: [],        // 該班作業清單
         activeSubmission: null, // 當前正在側邊欄批改的單筆作業物件
-        defectWordBank: {}, // 該生歷史缺陷字集 (從 profiles raw_data 提取) { "apple": 2, "park": 1 }
+        defectWordBank: {},     // 該生歷史缺陷字集 (從 profiles raw_data 提取) { "apple": 2, "park": 1 }
         
         // 老師暫存的修改 (Draft)
         draftOverride: {
             final_score: null,
             manual_feedback: "",
             manual_defects_added: [], // 老師手動標記的漏抓單字 (補刀)
-            ai_defects_removed: [] // 老師標記為誤判的單字 (防誤判)
+            ai_defects_removed: []    // 老師標記為誤判的單字 (防誤判)
         }
     };
 
     /**
-     * 初始化成績單矩陣
+     * 載入成績單矩陣與作業欄位
      */
-    function initMatrix(data) {
-        state.matrixData = Array.isArray(data) ? data : [];
+    function initMatrix(matrixData, assignments) {
+        state.matrixData = Array.isArray(matrixData) ? matrixData : [];
+        state.assignments = Array.isArray(assignments) ? assignments : [];
     }
 
-    function getMatrixData() {
-        return state.matrixData;
+    function getMatrixState() {
+        return {
+            matrixData: state.matrixData,
+            assignments: state.assignments
+        };
     }
 
     /**
@@ -41,8 +46,9 @@ window.GradebookStore = (function() {
         state.defectWordBank = JSON.parse(JSON.stringify(studentDefectBank));
         
         // 載入歷史覆寫紀錄，若無則預設帶入 AI 總分
-        const override = state.activeSubmission.raw_data?.teacher_override || {};
-        const aiScore = state.activeSubmission.raw_data?.ai_evaluation?.pronunciation_score || null;
+        const rawData = state.activeSubmission.raw_data || {};
+        const override = rawData.teacher_override || {};
+        const aiScore = rawData.ai_evaluation?.pronunciation_score || null;
 
         state.draftOverride = {
             final_score: override.final_score !== undefined ? override.final_score : aiScore,
@@ -56,7 +62,11 @@ window.GradebookStore = (function() {
      * 更新老師手動評分草稿
      */
     function updateDraftScore(score) {
-        state.draftOverride.final_score = (score !== "" && score !== null) ? Number(score) : null;
+        if (score === "" || score === null) {
+            state.draftOverride.final_score = null;
+        } else {
+            state.draftOverride.final_score = Number(score);
+        }
     }
 
     /**
@@ -70,7 +80,7 @@ window.GradebookStore = (function() {
      * 老師手動標記/取消標記 AI 漏抓的錯誤單字 (補刀機制)
      */
     function toggleManualDefect(word) {
-        const cleanWord = word.toLowerCase().replace(/[^a-z]/g, '');
+        const cleanWord = word.toLowerCase().replace(/[^a-z']/g, '');
         if (!cleanWord) return;
 
         const idx = state.draftOverride.manual_defects_added.indexOf(cleanWord);
@@ -88,7 +98,7 @@ window.GradebookStore = (function() {
      * 老師手動移除 AI 抓錯 (防誤判)
      */
     function toggleAiDefectRemoval(word) {
-        const cleanWord = word.toLowerCase().replace(/[^a-z]/g, '');
+        const cleanWord = word.toLowerCase().replace(/[^a-z']/g, '');
         if (!cleanWord) return;
 
         const idx = state.draftOverride.ai_defects_removed.indexOf(cleanWord);
@@ -96,6 +106,9 @@ window.GradebookStore = (function() {
             state.draftOverride.ai_defects_removed.splice(idx, 1); // 再次點擊取消移除
         } else {
             state.draftOverride.ai_defects_removed.push(cleanWord);
+            // 若該字先前被標為手動補刀，則移除補刀
+            const manIdx = state.draftOverride.manual_defects_added.indexOf(cleanWord);
+            if (manIdx > -1) state.draftOverride.manual_defects_added.splice(manIdx, 1);
         }
     }
 
@@ -112,10 +125,12 @@ window.GradebookStore = (function() {
 
     /**
      * 產出即將寫入資料庫的 DTO Payload (準備給 Feature / API 執行 RPC 原子化寫入)
-     * @param {string} currentTimestamp - 由 utils-date 傳入的台灣時間
      */
-    function generateSavePayload(currentTimestamp) {
+    function generateSavePayload() {
         if (!state.activeSubmission) return null;
+
+        // 🌟 完美銜接您的 utils-date，取得台灣時區 ISO Timestamp
+        const currentTimestamp = window.UtilsDate.getTaiwanIsoTimestamp();
 
         const baseRawData = state.activeSubmission.raw_data || {};
         const aiEval = baseRawData.ai_evaluation || {};
@@ -135,20 +150,22 @@ window.GradebookStore = (function() {
         
         // 納入 AI 抓出的錯誤 (且未被老師標記為誤判的)
         aiErrors.forEach(err => {
-            const w = err.word.toLowerCase().replace(/[^a-z]/g, '');
-            if (!state.draftOverride.ai_defects_removed.includes(w)) {
+            const w = (err.word || "").toLowerCase().replace(/[^a-z']/g, '');
+            if (w && !state.draftOverride.ai_defects_removed.includes(w)) {
                 updatedDefectBank[w] = (updatedDefectBank[w] || 0) + 1;
             }
         });
         
         // 納入老師手動補刀的錯誤
         state.draftOverride.manual_defects_added.forEach(w => {
-            updatedDefectBank[w] = (updatedDefectBank[w] || 0) + 1;
+            if (w) updatedDefectBank[w] = (updatedDefectBank[w] || 0) + 1;
         });
 
         return {
             submission_id: state.activeSubmission.id,
-            user_id: state.activeSubmission.user_id, // 寫回 profile 時需要
+            user_id: state.activeSubmission.user_id,
+            class_id: state.activeSubmission.class_id,
+            assignment_id: state.activeSubmission.assignment_id,
             score_to_update: state.draftOverride.final_score,
             raw_data_to_patch: finalRawData,
             defect_bank_to_patch: updatedDefectBank
@@ -157,7 +174,7 @@ window.GradebookStore = (function() {
 
     return {
         initMatrix,
-        getMatrixData,
+        getMatrixState,
         setActiveSubmission,
         updateDraftScore,
         updateDraftFeedback,

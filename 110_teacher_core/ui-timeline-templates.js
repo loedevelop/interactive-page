@@ -1,7 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v13.9.3：
+ * 🌟 純視覺模板工廠 v13.9.4：
  * 徹底拔除 data-url DOM 污染，全面回歸透過 Feature 呼叫 applyResourceUrl() 進行乾淨的狀態更新。
+ * 新增：於錄音作業 (audio_record) 支援「啟用 AI 輔助批改」功能開關與唯讀標籤。
  */
 
 window.TimelineTemplates = (() => {
@@ -41,7 +42,11 @@ window.TimelineTemplates = (() => {
         
         let extraTag = '';
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
-        else if (t.type === 'audio_record') extraTag = '<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>';
+        else if (t.type === 'audio_record') {
+            const useAi = t.raw_data?.use_ai_grading !== false;
+            const aiBadge = useAi ? `<span style="font-size:0.8rem; background:#DBEAFE; color:#1D4ED8; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">✨ AI 批改</span>` : `<span style="font-size:0.8rem; background:#F1F5F9; color:#64748B; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">👨‍🏫 手工批改</span>`;
+            extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}`;
+        }
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
         let taskTitleDisplay = '';
@@ -313,6 +318,7 @@ window.TimelineTemplates = (() => {
                 let audioInputHtml = '';
                 if (t.type === 'audio_record') {
                     const raw = t.raw_data || {};
+                    const useAi = raw.use_ai_grading !== false; // 預設為 true
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;');
                     const safeRange = (raw.material_range || '').replace(/"/g, '&quot;');
@@ -327,6 +333,25 @@ window.TimelineTemplates = (() => {
 
                     audioInputHtml = `
                         <div style="margin-top:10px; width:100%;">
+                            <!-- 🌟 新增：AI 開關 -->
+                            <div style="margin-bottom: 12px; background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-weight: 900; color: #4338CA; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
+                                        ✨ 啟用 AI 語音輔助批改
+                                    </div>
+                                    <div style="font-size: 0.8rem; color: #6366F1; margin-top: 4px; font-weight: bold;">
+                                        開啟後，學生繳交錄音時將自動發送至後端進行發音與語調糾錯分析。
+                                    </div>
+                                </div>
+                                <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
+                                    <span id="label-use-ai-${pathStr}" style="font-size: 0.9rem; font-weight: 800; color: ${useAi ? '#4338CA' : '#94A3B8'};">
+                                        ${useAi ? '✅ 已啟用' : '❌ 已停用'}
+                                    </span>
+                                    <input type="checkbox" id="node-use-ai-${pathStr}" style="transform: scale(1.5); cursor: pointer; accent-color: #4F46E5;" ${useAi ? 'checked' : ''} 
+                                           onchange="document.getElementById('label-use-ai-${pathStr}').innerHTML = this.checked ? '✅ 已啟用' : '❌ 已停用'; document.getElementById('label-use-ai-${pathStr}').style.color = this.checked ? '#4338CA' : '#94A3B8';">
+                                </label>
+                            </div>
+
                             <details style="background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:10px; outline:none;" open>
                                 <summary style="font-weight:900; color:#4F46E5; cursor:pointer; outline:none; user-select:none;">⚙️ 錄音原稿與擷取範圍設定 (點擊展開/收合)</summary>
                                 <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; padding-top:10px; border-top:1px dashed #A5B4FC;">

@@ -5,7 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>班級管理 | 老師控制台 (SaaS 升級版)</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../010_css/style.css?v=30">
+    <link rel="stylesheet" href="../010_css/style.css?v=34">
+    
+    <!-- 🌟 安全注入 Tailwind CSS (關閉 preflight 以防止破壞原 010_css 樣式) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            corePlugins: {
+                preflight: false,
+            }
+        }
+    </script>
 </head>
 <body>
     <div class="sidebar">
@@ -33,6 +43,10 @@
             <div class="tabs">
                 <button class="tab-btn active" data-target="view-progress">📅 課程進度</button>
                 <button class="tab-btn" data-target="view-progress-report" onclick="if(window.FeatureProgress && window.TeacherUI) window.FeatureProgress.renderProgressReport(window.TeacherUI.getCurrentClassId());">📈 班級進度總表</button>
+                
+                <!-- 🌟 新增：批改與成績簿分頁 -->
+                <button class="tab-btn" data-target="view-gradebook" style="background-color: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;">🎙️ 批改與成績矩陣</button>
+
                 <button class="tab-btn" data-target="view-resources">📁 班級資源</button>
                 <button class="tab-btn" data-target="view-students">👥 班級成員管理</button>
                 <button class="tab-btn" data-target="view-settings">⚙️ 課程基本資料</button>
@@ -43,6 +57,16 @@
         
         <div id="view-progress-report" class="view-section">
             <div id="progress-report-container"></div>
+        </div>
+
+        <!-- 🌟 新增：批改與成績簿 內容區塊 -->
+        <div id="view-gradebook" class="view-section">
+            <div class="top-bar" style="margin-bottom: 20px;">
+                <div class="breadcrumb">🎙️ 語音教練與成績矩陣</div>
+            </div>
+            <div id="gradebook-matrix-container" class="settings-card" style="padding: 20px; overflow-x: auto;">
+                <div style="text-align:center; color:#94A3B8; font-weight:800; padding: 40px;">請點擊左側班級載入成績矩陣...</div>
+            </div>
         </div>
 
         <div id="view-resources" class="view-section"><div class="resource-grid" id="class-resource-container"></div></div>
@@ -169,32 +193,44 @@
         </div>
     </div>
 
-    <!-- 🌟 020_js_core: 核心基建層 (載入順序絕對不可錯) -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="../020_js_core/config.js?v=31"></script>
-    <script src="../020_js_core/supabase-client.js?v=31"></script>
-    <script src="../020_js_core/auth-guard.js?v=31"></script>
-    <script src="../020_js_core/store.js?v=31"></script>  
-    <script src="../020_js_core/api.js?v=31"></script> 
-    <script src="../020_js_core/utils-date.js?v=31"></script> 
+    <!-- 🌟 Gradebook 專屬掛載點 (Off-canvas & Popover) -->
+    <div id="grading-sidebar-mount-point"></div>
+    <div id="grading-popover-mount-point"></div>
 
-    <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/ui-core.js?v=32"></script>
-    <script src="../110_teacher_core/ui-class-templates.js?v=31"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=36"></script>
-    <script src="../110_teacher_core/store-assignment-builder.js?v=31"></script> 
+    <!-- 🌟 020_js_core: 核心基建層 (所有版本號推進) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="../020_js_core/config.js?v=34"></script>
+    <script src="../020_js_core/supabase-client.js?v=34"></script>
+    <script src="../020_js_core/auth-guard.js?v=34"></script>
+    <script src="../020_js_core/store.js?v=34"></script>  
+    <script src="../020_js_core/api.js?v=34"></script> 
+    <script src="../020_js_core/utils-date.js?v=34"></script> 
+
+    <!-- 🌟 110_teacher_core: UI 核心控制與模板 (版本已對齊更新) -->
+    <script src="../110_teacher_core/ui-core.js?v=34"></script>
+    <script src="../110_teacher_core/ui-class-templates.js?v=34"></script>
+    
+    <!-- ⚠️ 本次核心更新：加入 AI 勾選框與狀態儲存 -->
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=39"></script>
+    <script src="../110_teacher_core/store-assignment-builder.js?v=34"></script> 
+
+    <!-- 🚀 任務 4&5：老師端批改中樞完整依賴鏈 (4-Tier) -->
+    <script src="../110_teacher_core/store-gradebook.js?v=3"></script>
+    <script src="../110_teacher_core/api-gradebook.js?v=3"></script>
+    <script src="../110_teacher_core/ui-gradebook-templates.js?v=3"></script>
+    <script src="../110_teacher_core/feature-gradebook.js?v=3"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=31"></script>
-    <script src="../110_teacher_core/service-line-notify.js?v=31"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=61"></script> 
-    <script src="../110_teacher_core/feature-resource.js?v=34"></script>
-    <script src="../110_teacher_core/feature-profile.js?v=31"></script>
-    <script src="../110_teacher_core/feature-class-members.js?v=31"></script>
-    <script src="../110_teacher_core/feature-progress.js?v=31"></script>
+    <script src="../110_teacher_core/feature-class.js?v=34"></script>
+    <script src="../110_teacher_core/service-line-notify.js?v=34"></script>
+    <script src="../110_teacher_core/feature-timeline.js?v=63"></script> 
+    <script src="../110_teacher_core/feature-resource.js?v=36"></script>
+    <script src="../110_teacher_core/feature-profile.js?v=34"></script>
+    <script src="../110_teacher_core/feature-class-members.js?v=34"></script>
+    <script src="../110_teacher_core/feature-progress.js?v=34"></script>
 
     <script type="module">
-        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=30'; 
+        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=32'; 
         
         window.RenderMemberManagerForm = function(classId, currentUserRole) {
             window.currentMemberManager = new MemberManager('unified-member-management-container', classId, currentUserRole);
