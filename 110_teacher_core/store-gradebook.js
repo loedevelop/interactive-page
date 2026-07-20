@@ -8,10 +8,10 @@ window.GradebookStore = (function() {
     let _state = {
         matrixData: [],
         assignments: [],
-        activeContext: null // { submission, taskMeta, draft, defectBank, role }
+        activeContext: null // { submission, taskMeta, role, draft, defectBank }
     };
 
-    // ⚡ 評語模句庫 (未來可與後端 API 對接為私人詞庫)
+    // ⚡ 評語模句庫
     const COMMENT_BANK = [
         "發音非常清晰！", "注意母音飽滿度", "連音不夠自然", "語調抓得很好", "重音位置需微調"
     ];
@@ -37,7 +37,7 @@ window.GradebookStore = (function() {
         const override = raw.teacher_override || {};
         const aiEval = raw.ai_evaluation || {};
 
-        // 優先順序：教師分數 > 助教分數 > 舊版定案分數 > AI分數
+        // 分數採用嚴格優先順序：教師 > 助教 > 舊版定案 > AI
         let currentScore = aiEval.pronunciation_score || null;
         if (override.final_score !== undefined) currentScore = override.final_score;
         if (override.ta_score !== undefined) currentScore = override.ta_score;
@@ -96,32 +96,32 @@ window.GradebookStore = (function() {
         const newRawData = parseJSONB(sub.raw_data);
         const override = newRawData.teacher_override || {};
 
-        // 🛡️ 階層覆寫邏輯
+        // 🛡️ 階層覆寫邏輯防護 (Role-Based Overrides)
         if (role === 'primary_teacher' || role === 'admin') {
             override.teacher_score = ctx.draft.current_score;
-            override.locked_by_role = role;
+            override.locked_by_role = 'primary_teacher';
         } else if (role === 'ta_senior') {
             if (override.locked_by_role === 'primary_teacher' || override.locked_by_role === 'admin') {
                 throw new Error("🔒 此成績已由教師定案，助教無法覆寫。");
             }
             override.ta_score = ctx.draft.current_score;
-            override.locked_by_role = role;
+            override.locked_by_role = 'ta_senior';
         } else if (role === 'ta_junior') {
             throw new Error("一般助教無發布成績權限。");
         }
 
+        override.final_score = ctx.draft.current_score; // 為了向下兼容保留
         override.manual_feedback = ctx.draft.feedback;
         override.manual_defects_added = ctx.draft.manual_defects_added;
         override.ai_defects_removed = ctx.draft.ai_defects_removed;
         override.overridden_at = new Date().toISOString();
 
-        // 軌跡留痕
         if (!newRawData.override_history) newRawData.override_history = [];
         newRawData.override_history.push({ role: role, timestamp: override.overridden_at, score: ctx.draft.current_score });
         
         newRawData.teacher_override = override;
 
-        // 結算缺陷字集
+        // 結算缺陷字庫
         const newDefectBank = JSON.parse(JSON.stringify(ctx.defectBank || {}));
         ctx.draft.manual_defects_added.forEach(w => { newDefectBank[w] = (newDefectBank[w] || 0) + 1; });
         const aiErrors = newRawData.ai_evaluation?.word_errors || [];
@@ -133,7 +133,7 @@ window.GradebookStore = (function() {
         return {
             submission_id: sub.id,
             user_id: sub.student_id || sub.user_id,
-            score_to_update: override.teacher_score ?? override.ta_score ?? override.final_score ?? newRawData.ai_evaluation?.pronunciation_score,
+            score_to_update: ctx.draft.current_score,
             raw_data_to_patch: newRawData,
             defect_bank_to_patch: newDefectBank
         };
