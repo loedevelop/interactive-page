@@ -22,11 +22,13 @@ window.FeatureGradebook = (function() {
         let classId = null;
         let role = 'primary_teacher';
 
+        // 優先嘗試從全域 UI 模組獲取
         if (window.TeacherUI) {
             if (typeof window.TeacherUI.getCurrentClassId === 'function') classId = window.TeacherUI.getCurrentClassId();
             if (typeof window.TeacherUI.getCurrentUserRole === 'function') role = window.TeacherUI.getCurrentUserRole() || 'primary_teacher';
         }
         
+        // 備案：從 localStorage 獲取
         if (!classId) classId = localStorage.getItem('lastClassId');
 
         if (classId) {
@@ -111,7 +113,7 @@ window.FeatureGradebook = (function() {
                 if (gradebookView && gradebookView.classList.contains('active')) {
                     loadDataForCurrentClass();
                 }
-            }, 100); 
+            }, 100); // 延遲確保舊系統已將 localStorage 更新
             return;
         }
     }, true);
