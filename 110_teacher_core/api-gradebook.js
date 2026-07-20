@@ -1,19 +1,20 @@
 /**
  * 📂 110_teacher_core/api-gradebook.js
  * 🎯 職責：老師端批改中樞的 API 網路通訊層 (Tier 4 Network)
- * ⚠️ 鐵律：絕對禁止操作 DOM。只負責回傳 Promise 資料。
+ * 🚀 修正：對齊實際資料表名稱 `task_completions`
  */
 window.GradebookAPI = (function() {
     'use strict';
 
-    /**
-     * 獲取該班所有資料 (學生名單 + 作業 + 繳交紀錄)，重組為矩陣格式
-     */
+    // 🌟 這裡已經為您改成正確的資料庫表名！
+    const TABLE_NAME = 'task_completions'; 
+    const RELATION_COLUMN = 'assignment_id'; // ⚠️ 若稍後報錯找不到 assignment_id，請把這裡改成 'task_id'
+
     async function fetchMatrixData(classId) {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
         const db = window.supabaseClient;
 
-        // 1. 取得該班級所有選課學生 (JOIN profiles 取得名字與歷史缺陷字集)
+        // 1. 取得該班級所有選課學生
         const { data: enrollments, error: stuErr } = await db
             .from('student_enrollments')
             .select(`user_id, profiles (name, raw_data)`)
@@ -22,7 +23,7 @@ window.GradebookAPI = (function() {
 
         if (stuErr) throw new Error('無法讀取學生名單: ' + stuErr.message);
 
-        // 2. 取得該班級的錄音作業 (假設未指定 type，我們撈取該班所有作業以策安全)
+        // 2. 取得該班級的錄音作業
         const { data: assignments, error: assignErr } = await db
             .from('assignments')
             .select('id, title, due_date')
@@ -33,32 +34,34 @@ window.GradebookAPI = (function() {
         if (assignErr) throw new Error('無法讀取作業清單: ' + assignErr.message);
 
         const assignmentIds = assignments.map(a => a.id);
-        let submissions = [];
+        let completions = [];
 
-        // 3. 取得這些作業的繳交紀錄 
-        // ⚠️ [架構師提醒]: 若您的繳交紀錄表叫做 assignment_submissions，請在此處修改表名
+        // 3. 取得繳交紀錄 (從正確的 task_completions 抓取)
         if (assignmentIds.length > 0) {
             const { data: subs, error: subErr } = await db
-                .from('submissions') 
+                .from(TABLE_NAME) 
                 .select('*')
-                .in('assignment_id', assignmentIds)
+                .in(RELATION_COLUMN, assignmentIds)
                 .is('deleted_at', null);
 
-            if (subErr) throw new Error('無法讀取繳交紀錄: ' + subErr.message);
-            submissions = subs || [];
+            if (subErr) {
+                console.warn(`無法從 ${TABLE_NAME} 讀取繳交紀錄`, subErr);
+                throw new Error('無法讀取繳交紀錄: ' + subErr.message);
+            } else {
+                completions = subs || [];
+            }
         }
 
-        // 4. 將資料重組為 Store 期待的二維矩陣格式 (Data Shaping)
+        // 4. 重組矩陣
         const matrixData = enrollments.map(en => {
             const studentId = en.user_id;
-            // 處理 Supabase Join 可能回傳陣列的防呆
             const profile = Array.isArray(en.profiles) ? en.profiles[0] : en.profiles;
             const studentName = profile?.name || '未知學生';
             const defectBank = profile?.raw_data?.defect_vocab || {};
 
             const stuSubs = {};
-            submissions.filter(s => s.user_id === studentId).forEach(s => {
-                stuSubs[s.assignment_id] = s;
+            completions.filter(s => s.user_id === studentId).forEach(s => {
+                stuSubs[s[RELATION_COLUMN]] = s;
             });
 
             return {
@@ -72,16 +75,13 @@ window.GradebookAPI = (function() {
         return { matrixData, assignments };
     }
 
-    /**
-     * 儲存批改結果 (雙軌原子化寫入：同時更新成績與學生的歷史缺陷字集)
-     */
     async function publishGrade(payload) {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
         const db = window.supabaseClient;
 
-        // 原子化更新 1：更新繳交紀錄的 raw_data 與分數
+        // 原子化更新 1：更新 task_completions
         const updateSubPromise = db
-            .from('submissions') // ⚠️ [架構師提醒]: 表名若不同請配合修改
+            .from(TABLE_NAME) 
             .update({ 
                 raw_data: payload.raw_data_to_patch,
                 score: payload.score_to_update 
@@ -107,7 +107,6 @@ window.GradebookAPI = (function() {
             .update({ raw_data: newProfileRaw })
             .eq('id', payload.user_id);
 
-        // 平行執行雙軌寫入
         const [subResult, profResult] = await Promise.all([updateSubPromise, updateProfPromise]);
         
         if (subResult.error) throw new Error('成績更新失敗: ' + subResult.error.message);
@@ -116,8 +115,5 @@ window.GradebookAPI = (function() {
         return true;
     }
 
-    return {
-        fetchMatrixData,
-        publishGrade
-    };
+    return { fetchMatrixData, publishGrade };
 })();

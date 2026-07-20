@@ -7,7 +7,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../010_css/style.css?v=34">
     
-    <!-- 🌟 安全注入 Tailwind CSS (關閉 preflight 以防止破壞原 010_css 樣式) -->
+    <!-- 🌟 安全注入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -44,7 +44,7 @@
                 <button class="tab-btn active" data-target="view-progress">📅 課程進度</button>
                 <button class="tab-btn" data-target="view-progress-report" onclick="if(window.FeatureProgress && window.TeacherUI) window.FeatureProgress.renderProgressReport(window.TeacherUI.getCurrentClassId());">📈 班級進度總表</button>
                 
-                <!-- 🌟 新增：批改與成績簿分頁 -->
+                <!-- 🌟 批改與成績簿分頁 -->
                 <button class="tab-btn" data-target="view-gradebook" style="background-color: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;">🎙️ 批改與成績矩陣</button>
 
                 <button class="tab-btn" data-target="view-resources">📁 班級資源</button>
@@ -59,7 +59,7 @@
             <div id="progress-report-container"></div>
         </div>
 
-        <!-- 🌟 新增：批改與成績簿 內容區塊 -->
+        <!-- 🌟 批改與成績簿 內容區塊 -->
         <div id="view-gradebook" class="view-section">
             <div class="top-bar" style="margin-bottom: 20px;">
                 <div class="breadcrumb">🎙️ 語音教練與成績矩陣</div>
@@ -209,16 +209,14 @@
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
     <script src="../110_teacher_core/ui-core.js?v=34"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=34"></script>
-    
-    <!-- ⚠️ 包含 AI 勾選框的出題大腦 -->
     <script src="../110_teacher_core/ui-timeline-templates.js?v=39"></script>
     <script src="../110_teacher_core/store-assignment-builder.js?v=35"></script> 
 
     <!-- 🚀 任務 4&5：老師端批改中樞完整依賴鏈 (4-Tier) -->
-    <script src="../110_teacher_core/store-gradebook.js?v=6"></script>
-    <script src="../110_teacher_core/api-gradebook.js?v=6"></script>
-    <script src="../110_teacher_core/ui-gradebook-templates.js?v=6"></script>
-    <script src="../110_teacher_core/feature-gradebook.js?v=6"></script> <!-- 🌟 包含最新攔截機制的指揮官 -->
+    <script src="../110_teacher_core/store-gradebook.js?v=8"></script>
+    <script src="../110_teacher_core/api-gradebook.js?v=9"></script> <!-- ⚠️ 修正表名為 task_completions -->
+    <script src="../110_teacher_core/ui-gradebook-templates.js?v=8"></script>
+    <script src="../110_teacher_core/feature-gradebook.js?v=8"></script> <!-- 🌟 Capture 捕獲機制 -->
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
     <script src="../110_teacher_core/feature-class.js?v=34"></script>
