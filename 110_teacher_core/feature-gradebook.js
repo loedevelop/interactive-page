@@ -1,7 +1,6 @@
 /**
  * 📂 110_teacher_core/feature-gradebook.js
  * 🎯 職責：老師端批改中樞的輕量指揮官 (Tier 4 Orchestrator)
- * 🚀 修正：導入 Capture 捕獲機制，徹底解決左側班級切換無反應的問題！
  */
 window.FeatureGradebook = (function() {
     'use strict';
@@ -52,6 +51,7 @@ window.FeatureGradebook = (function() {
         container.innerHTML = `<div class="p-10 text-center text-blue-600 animate-pulse font-bold bg-white rounded-xl shadow-sm border border-gray-200">📡 正在從資料庫拉取成績單矩陣與作業數據...</div>`;
 
         try {
+            // 🌟 這裡接收到的 assignments 其實是剛剛 API 扁平化後的真實錄音任務！
             const { matrixData, assignments } = await window.GradebookAPI.fetchMatrixData(classId);
             window.GradebookStore.initMatrix(matrixData, assignments);
             renderMatrixUI();
@@ -131,6 +131,7 @@ window.FeatureGradebook = (function() {
             const state = window.GradebookStore.getMatrixState();
             const row = state.matrixData.find(r => String(r.student_id) === String(stuId));
             if (row && row.submissions) {
+                // 原本的 Object.values 防禦邏輯剛好完美應付改為 task_id 字典的狀況
                 const submission = row.submissions[subId] || Object.values(row.submissions).find(s => String(s.id) === String(subId));
                 if (submission) {
                     window.GradebookStore.setActiveSubmission(submission, row.defect_bank);

@@ -1,14 +1,13 @@
 /**
  * 📂 110_teacher_core/api-gradebook.js
  * 🎯 職責：老師端批改中樞的 API 網路通訊層 (Tier 4 Network)
- * 🚀 修正：對齊實際資料表名稱 `task_completions`
+ * 🚀 修正：實作 JSON 樹狀展開與扁平化 (Data Flattening)，徹底解決維度混淆 Bug
  */
 window.GradebookAPI = (function() {
     'use strict';
 
-    // 🌟 已修正為您的真實資料表名稱
     const TABLE_NAME = 'task_completions'; 
-    const RELATION_COLUMN = 'assignment_id'; // ⚠️ 若稍後報錯找不到 assignment_id，請把這裡改成 'task_id'
+    const RELATION_COLUMN = 'task_id'; // 🎯 核心修正：精準對齊內層錄音子任務 ID
 
     async function fetchMatrixData(classId) {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
@@ -23,25 +22,54 @@ window.GradebookAPI = (function() {
 
         if (stuErr) throw new Error('無法讀取學生名單: ' + stuErr.message);
 
-        // 2. 取得該班級的錄音作業
-        const { data: assignments, error: assignErr } = await db
+        // 2. 取得外層作業資料夾 (必須拉取 raw_data 以解析內部 tasks)
+        const { data: rawAssignments, error: assignErr } = await db
             .from('assignments')
-            .select('id, title, due_date')
+            .select('id, title, due_date, raw_data')
             .eq('class_id', classId)
             .is('deleted_at', null)
             .order('created_at', { ascending: true });
 
         if (assignErr) throw new Error('無法讀取作業清單: ' + assignErr.message);
 
-        const assignmentIds = assignments.map(a => a.id);
+        // 🌟 3. 核心重構：資料扁平化 (Flattening) & 遞迴展開 (Tree Traversal)
+        const flatAudioTasks = [];
+        
+        rawAssignments.forEach(assign => {
+            const tasksList = assign.raw_data?.tasks || [];
+            
+            function traverse(tasks) {
+                if (!Array.isArray(tasks)) return;
+                
+                tasks.forEach(t => {
+                    if (t.type === 'audio_record') {
+                        // 萃取出具體的錄音任務
+                        flatAudioTasks.push({
+                            id: t.id, // 這是內部的真實 task_id (例如 task_1720000_123)
+                            title: t.title || '未命名錄音',
+                            assignment_id: assign.id, // 保留外層作業 ID 備用
+                            assignment_title: assign.title, // 組合標題以便 UI 雙層辨識外層容器
+                            due_date: t.due_date || assign.due_date
+                        });
+                    }
+                    // 遇到巢狀群組 (group)，遞迴往下展開尋找 subTasks
+                    if (t.type === 'group' && Array.isArray(t.subTasks)) {
+                        traverse(t.subTasks); 
+                    }
+                });
+            }
+            traverse(tasksList);
+        });
+
+        // 4. 用「內部真實任務 ID」取得繳交紀錄
+        const taskIds = flatAudioTasks.map(t => t.id);
         let completions = [];
 
-        // 3. 取得繳交紀錄 (從正確的 task_completions 抓取)
-        if (assignmentIds.length > 0) {
+        if (taskIds.length > 0) {
             const { data: subs, error: subErr } = await db
                 .from(TABLE_NAME) 
                 .select('*')
-                .in(RELATION_COLUMN, assignmentIds)
+                .in(RELATION_COLUMN, taskIds) // 🌟 拿 task_id 去 IN 查詢
                 .is('deleted_at', null);
 
             if (subErr) {
@@ -52,7 +80,7 @@ window.GradebookAPI = (function() {
             }
         }
 
-        // 4. 重組矩陣
+        // 5. 重組矩陣 (將成績精準映射至 task_id)
         const matrixData = enrollments.map(en => {
             const studentId = en.user_id;
             const profile = Array.isArray(en.profiles) ? en.profiles[0] : en.profiles;
@@ -61,7 +89,7 @@ window.GradebookAPI = (function() {
 
             const stuSubs = {};
             completions.filter(s => s.user_id === studentId).forEach(s => {
-                stuSubs[s[RELATION_COLUMN]] = s;
+                stuSubs[s[RELATION_COLUMN]] = s; // 這裡以 task_id 作為 key 存入 dictionary
             });
 
             return {
@@ -72,7 +100,8 @@ window.GradebookAPI = (function() {
             };
         });
 
-        return { matrixData, assignments };
+        // 🌟 巧妙設計：將扁平化後的 flatAudioTasks 取名為 assignments 回傳，實現無痛嫁接 Store
+        return { matrixData, assignments: flatAudioTasks };
     }
 
     async function publishGrade(payload) {

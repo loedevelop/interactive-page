@@ -20,8 +20,13 @@ window.GradebookTemplates = (function() {
         if (!assignments || assignments.length === 0) return `<div class="p-8 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">目前無錄音作業資料</div>`;
 
         let thead = `<tr class="bg-gray-50 text-gray-700 text-sm border-b border-gray-200"><th class="p-4 text-left font-black sticky left-0 z-10 bg-gray-50 border-r border-gray-200">學生姓名</th>`;
+        
+        // 🌟 雙層表頭渲染：顯示「外層區塊名稱 (小字)」+「真實錄音任務名稱 (大字)」
         assignments.forEach(a => {
-            thead += `<th class="p-4 text-center font-bold min-w-[120px]">${escapeHtml(a.title)}</th>`;
+            thead += `<th class="p-4 text-center font-bold min-w-[140px]">
+                        <div class="text-[10px] text-gray-400 font-bold mb-1 truncate max-w-[140px] mx-auto uppercase tracking-wide" title="${escapeHtml(a.assignment_title)}">📂 ${escapeHtml(a.assignment_title)}</div>
+                        <div class="text-sm text-gray-800">${escapeHtml(a.title)}</div>
+                      </th>`;
         });
         thead += `</tr>`;
 
@@ -31,6 +36,7 @@ window.GradebookTemplates = (function() {
             tbody += `<td class="p-4 font-bold text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-blue-50 border-r border-gray-200">${escapeHtml(row.student_name)}</td>`;
             
             assignments.forEach(a => {
+                // 🚀 a.id 現在是內層的 task_id，可以完美匹配 row.submissions 的鍵值
                 const sub = row.submissions ? row.submissions[a.id] : null;
                 if (!sub) {
                     tbody += `<td class="p-4 text-center text-gray-300 font-bold">-</td>`;

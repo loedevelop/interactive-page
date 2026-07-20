@@ -49,3 +49,41 @@
    * 關於介面的排版策略（例如：您傾向使用右側滑出的 Off-canvas Sidebar 還是全螢幕的 Modal 沉浸式艙體？）
    * 關於 AI 輔助批改（Gemini Native Audio）的顯示方式，以及教師手動覆寫成績的欄位需求。
 3. 等待我的進一步指示，不要急著寫程式碼。
+
+
+
+
+
+
+# 🚀 [LogOn Web 系統開發交接文檔 - 教師端批改中樞 (Gradebook) 邏輯重構與 Debug]
+
+## 👨‍💻 你的角色與行為準則
+請扮演一位具備軟體工匠精神的全端架構師。
+* **絕對完整 (Zero-Placeholder)：** 提供的程式碼必須是 100% 完整可執行的，禁止偷懶。
+* **精準快取破除：** 若修改前端檔案，必須提醒更新 `index.html` 的 `?v=` 版本號。
+
+## 🏗️ 專案總覽與底層鐵律
+* **架構：** Vanilla JS ↔ Supabase ↔ AI大腦。
+* **四層解耦：** `utils` (工具) ➡️ `ui-templates` (純視覺字串工廠) ➡️ `store` (記憶體狀態) ➡️ `feature / api` (事件綁定與網路)。
+* **JSONB (`raw_data`) 雙軌制：** 擴充欄位、AI 草稿 (`ai_evaluation`)、教師覆寫 (`teacher_override`) 皆寫入 `raw_data` JSONB 中。
+* **軟刪除 (Soft Delete)：** 讀取必須加上 `.is('deleted_at', null)`。
+
+## 📍 目前開發進度與嚴重 Bug (The Granularity Bug)
+我們剛建置好「批改與成績矩陣 (Gradebook)」的 UI 骨架（含互動式批改艙），但目前**資料顆粒度 (Data Granularity) 對接嚴重錯誤**。
+
+**【錯誤現象】：**
+1. 矩陣的 X 軸欄位名稱非常奇怪（如：`Homework -`、`test` 等外層區塊名稱），沒有顯示具體的錄音作業名稱。
+2. 表格全空（全部顯示 `-`），完全抓不到學生的繳交紀錄，導致批改面板無法開啟。
+
+**【根本原因 (Root Cause)】：**
+在我們的資料庫設計中：
+1. **`assignments` 表格**：代表的是「外層排程區塊 (Block)」。它內部包含一個 JSON 樹狀結構（可能是 `tasks` 欄位或 `raw_data.tasks`），裡面存放了多個子任務。
+2. **錄音任務 (Audio Record Task)**：是包在 `assignments` 裡的子任務，其特徵為 `type === 'audio_record'`，有自己獨立的內部字串 `id` (例如 `task_1720000_123`) 與真正的 `title`。
+3. **`task_completions` 表格**：記錄學生的繳交與成績。它是綁定**「內層的 `task_id`」**，而不是外層的 `assignment_id`！
+4. **當前錯誤代碼**：目前的 `api-gradebook.js` 直接拿 `assignments` 當作 X 軸，並用 `assignment_id` 去查 `task_completions`，導致完全抓錯維度，永遠匹配不到資料！
+
+## 🎯 接手後的第一步任務 (Action Items)
+為了打破僵局，請你主動引導我（使用者）進行以下修復流程，**在釐清前請勿盲目給出程式碼**：
+1. **釐清資料庫結構：** 請詢問我 `assignments` 表格中的子任務陣列 (tasks) 具體是存在哪個欄位裡？（是獨立的 `tasks` JSON 欄位，還是包在 `raw_data` 中？）
+2. **釐清關聯欄位：** 請詢問我 `task_completions` 表格中，記錄任務 ID 的欄位名稱是什麼？（是 `task_id` 嗎？）
+3. **重構預告：** 告訴我下一步你會重寫 `api-gradebook.js`，實作「展開並遞迴過濾 JSON 樹狀結構，將 `audio_record` 任務單獨抽出來作為一維 X 軸」的邏輯，並同步修正 API 查詢。
