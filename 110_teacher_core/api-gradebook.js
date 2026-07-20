@@ -6,7 +6,7 @@
 window.GradebookAPI = (function() {
     'use strict';
 
-    // 🌟 這裡已經為您改成正確的資料庫表名！
+    // 🌟 已修正為您的真實資料表名稱
     const TABLE_NAME = 'task_completions'; 
     const RELATION_COLUMN = 'assignment_id'; // ⚠️ 若稍後報錯找不到 assignment_id，請把這裡改成 'task_id'
 

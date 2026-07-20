@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>班級管理 | 老師控制台 (SaaS 升級版)</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../010_css/style.css?v=34">
+    <link rel="stylesheet" href="../010_css/style.css?v=35">
     
     <!-- 🌟 安全注入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -199,36 +199,36 @@
 
     <!-- 🌟 020_js_core: 核心基建層 -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="../020_js_core/config.js?v=34"></script>
-    <script src="../020_js_core/supabase-client.js?v=34"></script>
-    <script src="../020_js_core/auth-guard.js?v=34"></script>
-    <script src="../020_js_core/store.js?v=34"></script>  
-    <script src="../020_js_core/api.js?v=34"></script> 
-    <script src="../020_js_core/utils-date.js?v=34"></script> 
+    <script src="../020_js_core/config.js?v=35"></script>
+    <script src="../020_js_core/supabase-client.js?v=35"></script>
+    <script src="../020_js_core/auth-guard.js?v=35"></script>
+    <script src="../020_js_core/store.js?v=35"></script>  
+    <script src="../020_js_core/api.js?v=35"></script> 
+    <script src="../020_js_core/utils-date.js?v=35"></script> 
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/ui-core.js?v=34"></script>
-    <script src="../110_teacher_core/ui-class-templates.js?v=34"></script>
+    <script src="../110_teacher_core/ui-core.js?v=35"></script>
+    <script src="../110_teacher_core/ui-class-templates.js?v=35"></script>
     <script src="../110_teacher_core/ui-timeline-templates.js?v=39"></script>
     <script src="../110_teacher_core/store-assignment-builder.js?v=35"></script> 
 
-    <!-- 🚀 任務 4&5：老師端批改中樞完整依賴鏈 (4-Tier) -->
-    <script src="../110_teacher_core/store-gradebook.js?v=8"></script>
-    <script src="../110_teacher_core/api-gradebook.js?v=9"></script> <!-- ⚠️ 修正表名為 task_completions -->
-    <script src="../110_teacher_core/ui-gradebook-templates.js?v=8"></script>
-    <script src="../110_teacher_core/feature-gradebook.js?v=8"></script> <!-- 🌟 Capture 捕獲機制 -->
+    <!-- 🚀 任務 4&5：老師端批改中樞 (⚠️ 確保版本號為 v10，強制讀取最新 API) -->
+    <script src="../110_teacher_core/store-gradebook.js?v=10"></script>
+    <script src="../110_teacher_core/api-gradebook.js?v=10"></script> 
+    <script src="../110_teacher_core/ui-gradebook-templates.js?v=10"></script>
+    <script src="../110_teacher_core/feature-gradebook.js?v=10"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=34"></script>
-    <script src="../110_teacher_core/service-line-notify.js?v=34"></script>
+    <script src="../110_teacher_core/feature-class.js?v=35"></script>
+    <script src="../110_teacher_core/service-line-notify.js?v=35"></script>
     <script src="../110_teacher_core/feature-timeline.js?v=64"></script> 
     <script src="../110_teacher_core/feature-resource.js?v=36"></script>
-    <script src="../110_teacher_core/feature-profile.js?v=34"></script>
-    <script src="../110_teacher_core/feature-class-members.js?v=34"></script>
-    <script src="../110_teacher_core/feature-progress.js?v=34"></script>
+    <script src="../110_teacher_core/feature-profile.js?v=35"></script>
+    <script src="../110_teacher_core/feature-class-members.js?v=35"></script>
+    <script src="../110_teacher_core/feature-progress.js?v=35"></script>
 
     <script type="module">
-        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=32'; 
+        import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=35'; 
         
         window.RenderMemberManagerForm = function(classId, currentUserRole) {
             window.currentMemberManager = new MemberManager('unified-member-management-container', classId, currentUserRole);
