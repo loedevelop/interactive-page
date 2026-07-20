@@ -1,7 +1,6 @@
 /**
  * 📂 110_teacher_core/feature-gradebook.js
  * 🎯 職責：老師端批改中樞的輕量指揮官 (Tier 4 Orchestrator)
- * 🚀 修正：補上遺失的 DOM 掛載點防呆機制與 Store 存在性驗證
  */
 window.FeatureGradebook = (function() {
     'use strict';
@@ -13,155 +12,86 @@ window.FeatureGradebook = (function() {
     };
 
     let _currentRole = 'primary_teacher';
-    let _currentClassId = null;
 
-    // 🌟 核心防禦：確保 DOM 節點存在，否則自動生成 (避免 innerHTML 拋錯)
     function ensureMountPoints() {
-        if (!document.querySelector(SELECTORS.sidebarMount)) {
-            document.body.insertAdjacentHTML('beforeend', '<div id="grading-sidebar-mount-point"></div>');
-        }
-        if (!document.querySelector(SELECTORS.popoverMount)) {
-            document.body.insertAdjacentHTML('beforeend', '<div id="grading-popover-mount-point"></div>');
-        }
+        if (!document.querySelector(SELECTORS.sidebarMount)) document.body.insertAdjacentHTML('beforeend', '<div id="grading-sidebar-mount-point"></div>');
+        if (!document.querySelector(SELECTORS.popoverMount)) document.body.insertAdjacentHTML('beforeend', '<div id="grading-popover-mount-point"></div>');
     }
 
     function loadDataForCurrentClass() {
         ensureMountPoints();
+        if (!window.GradebookStore) return;
 
-        // 🚨 防呆：如果 Store 還沒掛載，立刻警告，避免整個 JS 靜默崩潰！
-        if (!window.GradebookStore) {
-            console.error("嚴重錯誤：遺失 GradebookStore (Tier 3) 狀態機大腦，請確認已掛載 store-gradebook.js");
-            const container = document.querySelector(SELECTORS.matrixContainer);
-            if (container) container.innerHTML = `<div class="p-8 text-center text-red-500 font-bold bg-red-50 border border-red-200 rounded-xl">系統嚴重錯誤：缺少 store-gradebook.js，請檢查 index.html 的載入順序。</div>`;
-            return;
-        }
-
-        let classId = null;
-        let role = 'primary_teacher';
-
-        if (window.TeacherUI) {
-            if (typeof window.TeacherUI.getCurrentClassId === 'function') classId = window.TeacherUI.getCurrentClassId();
-            if (typeof window.TeacherUI.getCurrentUserRole === 'function') role = window.TeacherUI.getCurrentUserRole() || 'primary_teacher';
-        }
+        let classId = window.TeacherUI?.getCurrentClassId() || localStorage.getItem('lastClassId');
+        _currentRole = window.TeacherUI?.getCurrentUserRole() || 'primary_teacher';
         
-        if (!classId) classId = localStorage.getItem('lastClassId');
-
-        if (classId) {
-            initMatrixView(classId, role);
-        } else {
-            const container = document.querySelector(SELECTORS.matrixContainer);
-            if (container) {
-                container.innerHTML = `<div class="p-10 text-center text-gray-500 font-bold bg-white rounded-xl shadow-sm border border-gray-200">請先從左側選擇一個班級</div>`;
-            }
-        }
+        if (classId) initMatrixView(classId);
     }
 
-    async function initMatrixView(classId, userRole) {
-        if (!classId) return;
-        _currentClassId = classId;
-        _currentRole = userRole || 'primary_teacher';
-        
+    async function initMatrixView(classId) {
         const container = document.querySelector(SELECTORS.matrixContainer);
         if (!container) return;
-
-        container.innerHTML = `<div class="p-10 text-center text-blue-600 animate-pulse font-bold bg-white rounded-xl shadow-sm border border-gray-200">📡 正在從資料庫拉取成績單矩陣與作業數據...</div>`;
+        container.innerHTML = `<div class="p-10 text-center text-blue-600 font-bold bg-white rounded-xl shadow-sm border border-gray-200 animate-pulse">📡 正在解析維度與拉取成績單...</div>`;
 
         try {
             const { matrixData, assignments } = await window.GradebookAPI.fetchMatrixData(classId);
             window.GradebookStore.initMatrix(matrixData, assignments);
-            renderMatrixUI();
+            container.innerHTML = window.GradebookTemplates.renderMatrix(matrixData, assignments);
         } catch (err) {
-            console.error('[Gradebook Error]', err);
-            container.innerHTML = `<div class="p-8 text-center text-red-500 font-bold bg-red-50 rounded-xl shadow-sm border border-red-200">❌ 載入失敗：${err.message}</div>`;
+            container.innerHTML = `<div class="p-8 text-center text-red-500 font-bold bg-red-50 rounded-xl border border-red-200">❌ ${err.message}</div>`;
         }
     }
 
-    function renderMatrixUI() {
-        if (!window.GradebookStore) return;
-        const state = window.GradebookStore.getMatrixState();
-        const html = window.GradebookTemplates.renderMatrix(state.matrixData, state.assignments);
-        const container = document.querySelector(SELECTORS.matrixContainer);
-        if (container) container.innerHTML = html;
-    }
-
     function reRenderSidebarContentOnly() {
-        const popoverEl = document.querySelector(SELECTORS.popoverMount);
-        if (popoverEl) popoverEl.innerHTML = ''; 
-
+        document.querySelector(SELECTORS.popoverMount).innerHTML = ''; 
         const mount = document.querySelector(SELECTORS.sidebarMount);
         if (!mount) return;
 
         const context = window.GradebookStore.getActiveContext();
-        mount.innerHTML = window.GradebookTemplates.renderSidebar(context, _currentRole);
+        const bank = window.GradebookStore.getCommentBank();
+        mount.innerHTML = window.GradebookTemplates.renderSidebar(context, bank);
         
-        const panel = mount.querySelector('#grading-sidebar-panel');
-        const overlay = mount.querySelector('#grading-sidebar-overlay');
-        
-        // Ensure DOM has processed the new HTML before animating
         setTimeout(() => {
-            if (panel) panel.classList.remove('translate-x-full');
-            if (overlay) overlay.classList.remove('hidden');
+            mount.querySelector('#grading-sidebar-panel')?.classList.remove('translate-x-full');
+            mount.querySelector('#grading-sidebar-overlay')?.classList.remove('hidden');
         }, 10);
     }
 
     function closeSidebar() {
         const mount = document.querySelector(SELECTORS.sidebarMount);
         if (!mount) return;
-
-        const panel = mount.querySelector('#grading-sidebar-panel');
-        const overlay = mount.querySelector('#grading-sidebar-overlay');
-        
-        if (panel) panel.classList.add('translate-x-full');
-        if (overlay) overlay.classList.add('hidden');
-
-        const popoverEl = document.querySelector(SELECTORS.popoverMount);
-        if (popoverEl) popoverEl.innerHTML = '';
-
+        mount.querySelector('#grading-sidebar-panel')?.classList.add('translate-x-full');
+        mount.querySelector('#grading-sidebar-overlay')?.classList.add('hidden');
+        document.querySelector(SELECTORS.popoverMount).innerHTML = '';
         setTimeout(() => { mount.innerHTML = ''; }, 300);
     }
 
-    // 跨模組事件攔截
-    document.addEventListener('click', (e) => {
-        const tabBtn = e.target.closest('.tab-btn[data-target="view-gradebook"]');
-        const classItemBtn = e.target.closest('.class-item');
-        
-        if (tabBtn) {
-            setTimeout(() => { loadDataForCurrentClass(); }, 50); 
-            return;
-        }
-
-        if (classItemBtn) {
+    // 🌟 全域事件委派 (Event Delegation)
+    document.addEventListener('click', async (e) => {
+        // 切換班級重新載入
+        if (e.target.closest('.tab-btn[data-target="view-gradebook"]') || e.target.closest('.class-item')) {
             setTimeout(() => {
-                const gradebookView = document.getElementById('view-gradebook');
-                if (gradebookView && gradebookView.classList.contains('active')) {
-                    loadDataForCurrentClass();
-                }
+                const gb = document.getElementById('view-gradebook');
+                if (gb && gb.classList.contains('active')) loadDataForCurrentClass();
             }, 100); 
             return;
         }
-    }, true);
 
-    // Initial load handler (如果進入頁面就停在成績簿 Tab)
-    document.addEventListener('DOMContentLoaded', () => {
-        const gradebookView = document.getElementById('view-gradebook');
-        if (gradebookView && !gradebookView.classList.contains('hidden')) {
-            setTimeout(() => { loadDataForCurrentClass(); }, 300);
-        }
-    });
-
-    // 介面互動委派
-    document.addEventListener('click', async (e) => {
+        // 打開批改艙 (精準傳入 meta)
         const openBtn = e.target.closest('[data-action="open-grading"]');
         if (openBtn) {
             const subId = openBtn.getAttribute('data-submission-id');
             const stuId = openBtn.getAttribute('data-student-id');
+            const taskId = openBtn.getAttribute('data-task-id');
             
             const state = window.GradebookStore.getMatrixState();
             const row = state.matrixData.find(r => String(r.student_id) === String(stuId));
+            const meta = state.assignments.find(a => String(a.id) === String(taskId));
+
             if (row && row.submissions) {
                 const submission = row.submissions[subId] || Object.values(row.submissions).find(s => String(s.id) === String(subId));
                 if (submission) {
-                    window.GradebookStore.setActiveSubmission(submission, row.defect_bank);
+                    window.GradebookStore.setActiveSubmission(submission, meta, row.defect_bank, _currentRole);
                     reRenderSidebarContentOnly();
                 }
             }
@@ -170,6 +100,15 @@ window.FeatureGradebook = (function() {
 
         if (e.target.closest('[data-action="close-sidebar"]')) { closeSidebar(); return; }
 
+        // 🚫 Click Outside: 點擊彈窗外部自動關閉
+        const popover = document.querySelector(SELECTORS.popoverMount);
+        if (popover && popover.innerHTML !== '') {
+            const isInside = e.target.closest('[data-popover-content="true"]');
+            const isWord = e.target.closest('[data-action="word-click"]');
+            if (!isInside && !isWord) popover.innerHTML = '';
+        }
+
+        // 點擊紅黑字彈出 Popover
         const wordEl = e.target.closest('[data-action="word-click"]');
         if (wordEl) {
             const word = wordEl.getAttribute('data-word');
@@ -177,66 +116,51 @@ window.FeatureGradebook = (function() {
             
             if (type === 'ai' || type === 'manual') {
                 const rect = wordEl.getBoundingClientRect();
+                // 📍 座標計算：定錨於單字的正上方 (rect.top)
                 const posX = rect.left + (rect.width / 2);
-                const posY = rect.bottom;
+                const posY = rect.top; 
                 
                 const html = window.GradebookTemplates.renderWordPopover(
                     word, wordEl.getAttribute('data-kk-std'), wordEl.getAttribute('data-kk-stu'), 
-                    wordEl.getAttribute('data-time'), wordEl.getAttribute('data-issue'), 
-                    type === 'manual', posX, posY
+                    wordEl.getAttribute('data-issue'), type === 'manual', posX, posY
                 );
-                const popover = document.querySelector(SELECTORS.popoverMount);
-                if (popover) popover.innerHTML = html;
+                document.querySelector(SELECTORS.popoverMount).innerHTML = html;
             } else {
-                const selection = window.getSelection();
-                if (selection.toString().length === 0) {
-                    window.GradebookStore.toggleManualDefect(word);
-                    reRenderSidebarContentOnly();
-                }
+                // 黑字：直接新增手動標記
+                window.GradebookStore.toggleManualDefect(word);
+                reRenderSidebarContentOnly();
             }
             return;
         }
 
-        const intonation = e.target.closest('[data-action="intonation-click"]');
-        if (intonation) {
-            const time = parseFloat(intonation.getAttribute('data-time') || 0);
-            const audio = document.getElementById('student-audio');
-            if (audio) { audio.currentTime = time; audio.play(); }
+        // ⚡ 詞庫無縫穿插游標位置
+        const appendBtn = e.target.closest('[data-action="append-template"]');
+        if (appendBtn) {
+            e.preventDefault();
+            const text = appendBtn.getAttribute('data-text');
+            const textarea = document.getElementById('input-draft-feedback');
+            if (textarea) {
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                const val = textarea.value;
+                // 若游標前方有字且不是空白，自動補空白防沾黏
+                const prefix = (start === 0 || val.charAt(start - 1) === '\n' || val.charAt(start - 1) === ' ') ? '' : ' ';
+                const insertStr = prefix + text;
+                
+                textarea.value = val.substring(0, start) + insertStr + val.substring(end);
+                textarea.focus();
+                textarea.selectionStart = textarea.selectionEnd = start + insertStr.length;
+                window.GradebookStore.updateDraftFeedback(textarea.value);
+            }
             return;
         }
 
-        if (e.target.closest('[data-action="close-popover"]')) {
-            const popover = document.querySelector(SELECTORS.popoverMount);
-            if (popover) popover.innerHTML = ''; 
-            return;
-        }
-
-        const playStuBtn = e.target.closest('[data-action="play-student"]');
-        if (playStuBtn) {
-            const time = parseFloat(playStuBtn.getAttribute('data-time') || 0);
-            const audio = document.getElementById('student-audio');
-            if (audio) { audio.currentTime = time > 0.5 ? time - 0.5 : 0; audio.play(); }
-            return;
-        }
-
-        const playTtsBtn = e.target.closest('[data-action="play-tts"]');
-        if (playTtsBtn) {
-            const word = playTtsBtn.getAttribute('data-word');
-            const utterance = new SpeechSynthesisUtterance(word);
-            utterance.lang = 'en-US'; utterance.rate = 0.85;
-            window.speechSynthesis.speak(utterance);
-            return;
-        }
-
-        const removeAiBtn = e.target.closest('[data-action="remove-ai"]');
-        if (removeAiBtn) {
-            window.GradebookStore.toggleAiDefectRemoval(removeAiBtn.getAttribute('data-word'));
+        if (e.target.closest('[data-action="remove-ai"]')) {
+            window.GradebookStore.toggleAiDefectRemoval(e.target.closest('button').getAttribute('data-word'));
             reRenderSidebarContentOnly(); return;
         }
-
-        const removeManBtn = e.target.closest('[data-action="remove-manual"]');
-        if (removeManBtn) {
-            window.GradebookStore.toggleManualDefect(removeManBtn.getAttribute('data-word'));
+        if (e.target.closest('[data-action="remove-manual"]')) {
+            window.GradebookStore.toggleManualDefect(e.target.closest('button').getAttribute('data-word'));
             reRenderSidebarContentOnly(); return;
         }
 
@@ -251,35 +175,18 @@ window.FeatureGradebook = (function() {
             if (scoreInput) window.GradebookStore.updateDraftScore(scoreInput.value);
             if (feedbackInput) window.GradebookStore.updateDraftFeedback(feedbackInput.value);
 
-            const payload = window.GradebookStore.generateSavePayload();
-            if (!payload) return;
-
             try {
+                const payload = window.GradebookStore.generateSavePayload();
+                if (!payload) throw new Error("無效的資料載荷");
+                
                 await window.GradebookAPI.publishGrade(payload);
-                alert("🎉 批改已成功發布，學生歷史病歷已更新！");
                 closeSidebar();
-                loadDataForCurrentClass(); // 刷新矩陣
+                loadDataForCurrentClass(); 
             } catch (err) {
                 alert('❌ 儲存失敗：' + err.message);
                 saveBtn.disabled = false;
                 saveBtn.innerHTML = originalText;
             }
-            return;
-        }
-    });
-
-    document.addEventListener('mouseup', () => {
-        const sidebarPanel = document.getElementById('grading-sidebar-panel');
-        if (!sidebarPanel || sidebarPanel.classList.contains('translate-x-full')) return;
-
-        const selection = window.getSelection();
-        const text = selection.toString().trim();
-        if (text && text.length > 0 && text.length < 20 && /^[a-zA-Z']+$/.test(text)) {
-            if (confirm(`是否將 [ ${text} ] 手動標記為發音錯誤？`)) {
-                window.GradebookStore.toggleManualDefect(text);
-                reRenderSidebarContentOnly();
-            }
-            selection.removeAllRanges();
         }
     });
 
