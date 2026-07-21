@@ -1,18 +1,15 @@
 /**
  * 📂 110_teacher_core/api-gradebook.js
- * 🎯 職責：老師端批改中樞的 API 網路通訊層 (Tier 4 Network)
+ * 🎯 職責：老師端批改中樞的 API 網路通訊層
  */
 window.GradebookAPI = (function() {
     'use strict';
-
     const TABLE_NAME = 'task_completions'; 
     const RELATION_COLUMN = 'task_id';
 
     function parseJSONB(data) {
         if (!data) return {};
-        if (typeof data === 'string') {
-            try { return JSON.parse(data); } catch(e) { return {}; }
-        }
+        if (typeof data === 'string') { try { return JSON.parse(data); } catch(e) { return {}; } }
         return data;
     }
 
@@ -20,65 +17,63 @@ window.GradebookAPI = (function() {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
         const db = window.supabaseClient;
 
-        // 1. 取得該班級所有選課學生
-        const { data: enrollments, error: stuErr } = await db
-            .from('student_enrollments')
-            .select(`*, profiles (name, raw_data)`)
-            .eq('class_id', classId)
-            .is('deleted_at', null);
-
+        const { data: enrollments, error: stuErr } = await db.from('student_enrollments').select(`*, profiles (name, raw_data)`).eq('class_id', classId).is('deleted_at', null);
         if (stuErr) throw new Error('無法讀取學生名單: ' + stuErr.message);
 
-        // 2. 取得外層作業資料夾 (讀取 tasks 欄位展開)
-        const { data: rawAssignments, error: assignErr } = await db
-            .from('assignments')
-            .select('*')
-            .eq('class_id', classId)
-            .is('deleted_at', null)
-            .order('created_at', { ascending: true });
-
+        const { data: rawAssignments, error: assignErr } = await db.from('assignments').select('*').eq('class_id', classId).is('deleted_at', null).order('created_at', { ascending: true });
         if (assignErr) throw new Error('無法讀取作業清單: ' + assignErr.message);
 
-        // 3. 資料扁平化 (Flattening) & 防禦性 JSON 解析
         const flatAudioTasks = [];
         
         rawAssignments.forEach(assign => {
             const raw = parseJSONB(assign.raw_data);
             
-            // 🛡️ 防禦：相容 tasks 在獨立欄位或 raw_data 中的情況
-            let tasksList = assign.tasks || raw.tasks || [];
-            if (typeof tasksList === 'string') {
-                try { tasksList = JSON.parse(tasksList); } catch (e) { tasksList = []; }
-            }
-            
-            function traverse(tasks) {
-                if (!Array.isArray(tasks)) return;
-                
-                tasks.forEach(t => {
-                    if (t.type === 'audio_record' || t.type === 'recording' || t.type === 'audio') {
-                        flatAudioTasks.push({
-                            id: String(t.id || t.task_id), // 強制轉字串，對齊 DB
-                            title: t.title || '未命名錄音',
-                            assignment_id: assign.id,
-                            assignment_title: assign.title || assign.name,
-                            due_date: t.due_date || assign.due_date,
-                            textContent: t.textContent || t.text || '' // 保存標準文稿供 UI 比對
-                        });
+            // 🌟 第 6 點：遞迴紀錄完整的 Breadcrumb 路徑
+            function deepSearch(node, currentPath) {
+                if (!node) return;
+                if (Array.isArray(node)) {
+                    node.forEach(child => deepSearch(child, currentPath));
+                    return;
+                }
+                if (typeof node === 'object') {
+                    const typeStr = String(node.type || '').toLowerCase();
+                    const nodeTitle = node.title || node.name || '未命名';
+                    
+                    let nextPath = currentPath;
+                    if (typeStr === 'group' || typeStr === 'folder') {
+                        nextPath = currentPath ? `${currentPath} > ${nodeTitle}` : nodeTitle;
                     }
-                    if ((t.type === 'group' || t.type === 'folder') && (Array.isArray(t.subTasks) || Array.isArray(t.tasks))) {
-                        traverse(t.subTasks || t.tasks); 
+
+                    if (typeStr === 'audio_record' || typeStr.includes('audio') || typeStr.includes('record') || typeStr.includes('speaking')) {
+                        const taskId = node.id || node.task_id;
+                        if (taskId && !flatAudioTasks.find(t => String(t.id) === String(taskId))) {
+                            flatAudioTasks.push({
+                                id: taskId, 
+                                title: nodeTitle,
+                                assignment_id: assign.id,
+                                // 🌟 組合包含外層名稱的詳細路徑
+                                assignment_title: nextPath ? `${assign.title || assign.name} > ${nextPath}` : (assign.title || assign.name),
+                                due_date: node.due_date || assign.due_date
+                            });
+                        }
                     }
-                });
+                    
+                    Object.keys(node).forEach(key => {
+                        if (Array.isArray(node[key])) deepSearch(node[key], nextPath);
+                        else if (typeof node[key] === 'object') deepSearch(node[key], nextPath);
+                    });
+                }
             }
-            traverse(tasksList);
+            deepSearch(raw, '');
+            let outerTasks = assign.tasks;
+            if (typeof outerTasks === 'string') { try { outerTasks = JSON.parse(outerTasks); } catch(e) {} }
+            deepSearch(outerTasks, '');
         });
 
-        // 4. 用「內部真實任務 ID」取得繳交紀錄
         const taskIds = flatAudioTasks.map(t => t.id).filter(Boolean);
         let completions = [];
 
         if (taskIds.length > 0) {
-            // 切片以防止 in 查詢超過 URL 長度上限
             const chunkSize = 200;
             for (let i = 0; i < taskIds.length; i += chunkSize) {
                 const chunk = taskIds.slice(i, i + chunkSize);
@@ -86,32 +81,21 @@ window.GradebookAPI = (function() {
                     const res = await db.from(TABLE_NAME).select('*').in(RELATION_COLUMN, chunk).is('deleted_at', null);
                     if (res.error) throw res.error;
                     if (res.data) completions = completions.concat(res.data);
-                } catch (err) {
-                    console.warn(`無法從 ${TABLE_NAME} 讀取繳交紀錄`, err);
-                }
+                } catch (err) { console.warn(`無法從 ${TABLE_NAME} 讀取紀錄`, err); }
             }
         }
 
-        // 5. 重組矩陣
         const matrixData = enrollments.map(en => {
-            const studentId = String(en.user_id || en.student_id || en.id);
+            const studentId = en.user_id || en.student_id || en.id;
             const profile = Array.isArray(en.profiles) ? en.profiles[0] : (en.profiles || {});
             const studentName = profile.name || '未知學生';
-            
             const pRaw = parseJSONB(profile.raw_data);
             const defectBank = pRaw.defect_vocab || {};
 
             const stuSubs = {};
-            completions.filter(s => String(s.user_id || s.student_id) === studentId).forEach(s => {
-                stuSubs[String(s[RELATION_COLUMN])] = s; 
-            });
+            completions.filter(s => String(s.user_id || s.student_id) === String(studentId)).forEach(s => { stuSubs[s[RELATION_COLUMN]] = s; });
 
-            return {
-                student_id: studentId,
-                student_name: studentName,
-                defect_bank: defectBank,
-                submissions: stuSubs
-            };
+            return { student_id: studentId, student_name: studentName, defect_bank: defectBank, submissions: stuSubs };
         });
 
         return { matrixData, assignments: flatAudioTasks };
@@ -121,35 +105,15 @@ window.GradebookAPI = (function() {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
         const db = window.supabaseClient;
 
-        const updateSubPromise = db
-            .from(TABLE_NAME) 
-            .update({ 
-                raw_data: payload.raw_data_to_patch,
-                score: payload.score_to_update 
-            })
-            .eq('id', payload.submission_id);
-
-        const { data: profile, error: profErr } = await db
-            .from('profiles')
-            .select('raw_data')
-            .eq('id', payload.user_id)
-            .single();
-
-        if (profErr) throw new Error('無法取得學生個人資料以更新缺陷庫');
+        const updateSubPromise = db.from(TABLE_NAME).update({ raw_data: payload.raw_data_to_patch, score: payload.score_to_update }).eq('id', payload.submission_id);
+        const { data: profile, error: profErr } = await db.from('profiles').select('raw_data').eq('id', payload.user_id).single();
+        if (profErr) throw new Error('無法取得學生資料');
         
         const pRaw = parseJSONB(profile.raw_data);
-        const newProfileRaw = {
-            ...pRaw,
-            defect_vocab: payload.defect_bank_to_patch
-        };
-
-        const updateProfPromise = db
-            .from('profiles')
-            .update({ raw_data: newProfileRaw })
-            .eq('id', payload.user_id);
+        const newProfileRaw = { ...pRaw, defect_vocab: payload.defect_bank_to_patch };
+        const updateProfPromise = db.from('profiles').update({ raw_data: newProfileRaw }).eq('id', payload.user_id);
 
         const [subResult, profResult] = await Promise.all([updateSubPromise, updateProfPromise]);
-        
         if (subResult.error) throw new Error('成績更新失敗: ' + subResult.error.message);
         if (profResult.error) throw new Error('缺陷字集更新失敗: ' + profResult.error.message);
 
