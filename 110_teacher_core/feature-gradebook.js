@@ -1,6 +1,6 @@
 /**
  * 📂 110_teacher_core/feature-gradebook.js
- * 🎯 職責：老師端批改中樞的輕量指揮官
+ * 🎯 職責：老師端批改中樞的輕量指揮官 (v22: 新增 Click-Outside 氣泡關閉機制)
  */
 window.FeatureGradebook = (function() {
     'use strict';
@@ -19,7 +19,6 @@ window.FeatureGradebook = (function() {
         if (!document.querySelector(SELECTORS.popoverMount)) document.body.insertAdjacentHTML('beforeend', '<div id="grading-popover-mount-point"></div>');
     }
 
-    // 🌟 第 1 點：實作拖曳引擎
     function makePopoverDraggable() {
         const popover = document.getElementById('active-word-popover');
         const handle = popover ? popover.querySelector('.popover-drag-handle') : null;
@@ -32,7 +31,6 @@ window.FeatureGradebook = (function() {
             startX = e.clientX;
             startY = e.clientY;
             
-            // 拔除 Tailwind transform 以純 left/top 接管絕對定位
             const rect = popover.getBoundingClientRect();
             popover.style.transform = 'none';
             popover.style.left = rect.left + 'px';
@@ -40,7 +38,7 @@ window.FeatureGradebook = (function() {
             initX = rect.left;
             initY = rect.top;
             
-            document.body.style.userSelect = 'none'; // 防止拖曳時選到字
+            document.body.style.userSelect = 'none'; 
         });
 
         document.addEventListener('mousemove', (e) => {
@@ -124,6 +122,7 @@ window.FeatureGradebook = (function() {
         setTimeout(() => { mount.innerHTML = ''; }, 300);
     }
 
+    // Tab 切換
     document.addEventListener('click', (e) => {
         const tabBtn = e.target.closest('.tab-btn[data-target="view-gradebook"]');
         const classItemBtn = e.target.closest('.class-item');
@@ -142,7 +141,21 @@ window.FeatureGradebook = (function() {
         if (gradebookView && !gradebookView.classList.contains('hidden')) setTimeout(() => { loadDataForCurrentClass(); }, 300);
     });
 
+    // 核心事件處理
     document.addEventListener('click', async (e) => {
+        
+        // 🌟 關鍵修復：Click-Outside 自動關閉 Popover 氣泡
+        const popoverMount = document.querySelector(SELECTORS.popoverMount);
+        if (popoverMount && popoverMount.innerHTML.trim() !== '') {
+            const isInsidePopover = e.target.closest('#active-word-popover');
+            const isWordClick = e.target.closest('[data-action="word-click"]');
+            
+            // 若點擊不在氣泡內，且點擊的不是單字，則清空氣泡
+            if (!isInsidePopover && !isWordClick) {
+                popoverMount.innerHTML = '';
+            }
+        }
+
         const openBtn = e.target.closest('[data-action="open-grading"]');
         if (openBtn) {
             const subId = openBtn.getAttribute('data-submission-id');
@@ -166,15 +179,13 @@ window.FeatureGradebook = (function() {
             if (type === 'ai' || type === 'manual') {
                 const rect = wordEl.getBoundingClientRect();
                 
-                // 🌟 第 1 點：智慧定位邊界偵測
-                const popoverHeight = 280; 
+                const popoverHeight = 180; 
                 let posX = rect.left + (rect.width / 2);
-                let posY = rect.bottom + 10;
+                let posY = rect.bottom + 8;
                 let isTop = false;
 
-                // 如果下方空間不足，則在單字上方展開
                 if (window.innerHeight - rect.bottom < popoverHeight && rect.top > popoverHeight) {
-                    posY = rect.top - 10;
+                    posY = rect.top - 8;
                     isTop = true;
                 }
                 
@@ -184,10 +195,9 @@ window.FeatureGradebook = (function() {
                     type === 'manual', posX, posY, isTop
                 );
                 
-                const popoverMount = document.querySelector(SELECTORS.popoverMount);
                 if (popoverMount) {
                     popoverMount.innerHTML = html;
-                    makePopoverDraggable(); // 啟動拖曳引擎
+                    makePopoverDraggable(); 
                 }
             } else {
                 const selection = window.getSelection();
@@ -208,8 +218,7 @@ window.FeatureGradebook = (function() {
         }
 
         if (e.target.closest('[data-action="close-popover"]')) {
-            const popover = document.querySelector(SELECTORS.popoverMount);
-            if (popover) popover.innerHTML = ''; 
+            if (popoverMount) popoverMount.innerHTML = ''; 
             return;
         }
 
@@ -240,7 +249,7 @@ window.FeatureGradebook = (function() {
         if (saveBtn) {
             saveBtn.disabled = true;
             const originalText = saveBtn.innerHTML;
-            saveBtn.innerHTML = '🔄 寫入成績與歷史軌跡中...';
+            saveBtn.innerHTML = '🔄 寫入中...';
             
             const scoreInput = document.getElementById('input-draft-score');
             const feedbackInput = document.getElementById('input-draft-feedback');
@@ -252,9 +261,15 @@ window.FeatureGradebook = (function() {
 
             try {
                 await window.GradebookAPI.publishGrade(payload);
-                alert("🎉 批改已成功發布，學生歷史病歷已更新！");
-                closeSidebar();
-                loadDataForCurrentClass(); 
+                const saveIcon = saveBtn.innerHTML;
+                saveBtn.innerHTML = '✅ 已發布';
+                saveBtn.classList.replace('bg-blue-600', 'bg-green-600');
+                saveBtn.classList.replace('hover:bg-blue-700', 'hover:bg-green-700');
+                
+                setTimeout(() => {
+                    closeSidebar();
+                    loadDataForCurrentClass(); 
+                }, 800);
             } catch (err) {
                 alert('❌ 儲存失敗：' + err.message);
                 saveBtn.disabled = false;
@@ -271,7 +286,10 @@ window.FeatureGradebook = (function() {
         const selection = window.getSelection();
         const text = selection.toString().trim();
         if (text && text.length > 0 && text.length < 20 && /^[a-zA-Z']+$/.test(text)) {
-            if (confirm(`是否將 [ ${text} ] 手動標記為發音錯誤？`)) {
+            const context = window.GradebookStore.getActiveContext();
+            const isAlreadyDefect = context && context.draft.manual_defects_added.includes(text.toLowerCase());
+            
+            if (!isAlreadyDefect && confirm(`是否將 [ ${text} ] 手動標記為發音錯誤？`)) {
                 window.GradebookStore.toggleManualDefect(text);
                 reRenderSidebarContentOnly();
             }
