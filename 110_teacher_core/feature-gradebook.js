@@ -1,6 +1,6 @@
 /**
  * 📂 110_teacher_core/feature-gradebook.js
- * 🎯 職責：老師端批改中樞的輕量指揮官 (v22: 新增 Click-Outside 氣泡關閉機制)
+ * 🎯 職責：老師端批改中樞的輕量指揮官 (v23: 新增採用 AI 評語一鍵寫入機制)
  */
 window.FeatureGradebook = (function() {
     'use strict';
@@ -30,15 +30,13 @@ window.FeatureGradebook = (function() {
             isDragging = true;
             startX = e.clientX;
             startY = e.clientY;
-            
             const rect = popover.getBoundingClientRect();
             popover.style.transform = 'none';
             popover.style.left = rect.left + 'px';
             popover.style.top = rect.top + 'px';
             initX = rect.left;
             initY = rect.top;
-            
-            document.body.style.userSelect = 'none'; 
+            document.body.style.userSelect = 'none';
         });
 
         document.addEventListener('mousemove', (e) => {
@@ -48,8 +46,8 @@ window.FeatureGradebook = (function() {
             popover.style.top = (initY + e.clientY - startY) + 'px';
         });
 
-        document.addEventListener('mouseup', () => { 
-            isDragging = false; 
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
             document.body.style.userSelect = '';
         });
     }
@@ -57,7 +55,6 @@ window.FeatureGradebook = (function() {
     function loadDataForCurrentClass() {
         ensureMountPoints();
         if (!window.GradebookStore) return;
-        
         let classId = null;
         if (window.TeacherUI) {
             if (typeof window.TeacherUI.getCurrentClassId === 'function') classId = window.TeacherUI.getCurrentClassId();
@@ -97,14 +94,13 @@ window.FeatureGradebook = (function() {
 
     function reRenderSidebarContentOnly() {
         const popoverEl = document.querySelector(SELECTORS.popoverMount);
-        if (popoverEl) popoverEl.innerHTML = ''; 
+        if (popoverEl) popoverEl.innerHTML = '';
 
         const mount = document.querySelector(SELECTORS.sidebarMount);
         if (!mount) return;
 
         const context = window.GradebookStore.getActiveContext();
         mount.innerHTML = window.GradebookTemplates.renderSidebar(context, _currentRole);
-        
         const panel = mount.querySelector('#grading-sidebar-panel');
         const overlay = mount.querySelector('#grading-sidebar-overlay');
         setTimeout(() => { if (panel) panel.classList.remove('translate-x-full'); if (overlay) overlay.classList.remove('hidden'); }, 10);
@@ -131,7 +127,7 @@ window.FeatureGradebook = (function() {
             setTimeout(() => {
                 const gradebookView = document.getElementById('view-gradebook');
                 if (gradebookView && gradebookView.classList.contains('active')) loadDataForCurrentClass();
-            }, 100); 
+            }, 100);
             return;
         }
     }, true);
@@ -143,13 +139,11 @@ window.FeatureGradebook = (function() {
 
     // 核心事件處理
     document.addEventListener('click', async (e) => {
-        
         // 🌟 關鍵修復：Click-Outside 自動關閉 Popover 氣泡
         const popoverMount = document.querySelector(SELECTORS.popoverMount);
         if (popoverMount && popoverMount.innerHTML.trim() !== '') {
             const isInsidePopover = e.target.closest('#active-word-popover');
             const isWordClick = e.target.closest('[data-action="word-click"]');
-            
             // 若點擊不在氣泡內，且點擊的不是單字，則清空氣泡
             if (!isInsidePopover && !isWordClick) {
                 popoverMount.innerHTML = '';
@@ -171,15 +165,27 @@ window.FeatureGradebook = (function() {
 
         if (e.target.closest('[data-action="close-sidebar"]')) { closeSidebar(); return; }
 
+        // 🌟 新增：一鍵採用 AI 評語
+        const applyAiBtn = e.target.closest('[data-action="apply-ai-feedback"]');
+        if (applyAiBtn) {
+            const aiFeedback = applyAiBtn.getAttribute('data-feedback');
+            const feedbackInput = document.getElementById('input-draft-feedback');
+            if (feedbackInput && aiFeedback) {
+                feedbackInput.value = aiFeedback;
+                if (window.GradebookStore && window.GradebookStore.updateDraftFeedback) {
+                    window.GradebookStore.updateDraftFeedback(aiFeedback);
+                }
+            }
+            return;
+        }
+
         const wordEl = e.target.closest('[data-action="word-click"]');
         if (wordEl) {
             const word = wordEl.getAttribute('data-word');
             const type = wordEl.getAttribute('data-type');
-            
             if (type === 'ai' || type === 'manual') {
                 const rect = wordEl.getBoundingClientRect();
-                
-                const popoverHeight = 180; 
+                const popoverHeight = 180;
                 let posX = rect.left + (rect.width / 2);
                 let posY = rect.bottom + 8;
                 let isTop = false;
@@ -188,16 +194,14 @@ window.FeatureGradebook = (function() {
                     posY = rect.top - 8;
                     isTop = true;
                 }
-                
                 const html = window.GradebookTemplates.renderWordPopover(
-                    word, wordEl.getAttribute('data-kk-std'), wordEl.getAttribute('data-kk-stu'), 
-                    wordEl.getAttribute('data-time'), wordEl.getAttribute('data-issue'), 
+                    word, wordEl.getAttribute('data-kk-std'), wordEl.getAttribute('data-kk-stu'),
+                    wordEl.getAttribute('data-time'), wordEl.getAttribute('data-issue'),
                     type === 'manual', posX, posY, isTop
                 );
-                
                 if (popoverMount) {
                     popoverMount.innerHTML = html;
-                    makePopoverDraggable(); 
+                    makePopoverDraggable();
                 }
             } else {
                 const selection = window.getSelection();
@@ -218,7 +222,7 @@ window.FeatureGradebook = (function() {
         }
 
         if (e.target.closest('[data-action="close-popover"]')) {
-            if (popoverMount) popoverMount.innerHTML = ''; 
+            if (popoverMount) popoverMount.innerHTML = '';
             return;
         }
 
@@ -250,7 +254,6 @@ window.FeatureGradebook = (function() {
             saveBtn.disabled = true;
             const originalText = saveBtn.innerHTML;
             saveBtn.innerHTML = '🔄 寫入中...';
-            
             const scoreInput = document.getElementById('input-draft-score');
             const feedbackInput = document.getElementById('input-draft-feedback');
             if (scoreInput) window.GradebookStore.updateDraftScore(scoreInput.value);
@@ -265,10 +268,9 @@ window.FeatureGradebook = (function() {
                 saveBtn.innerHTML = '✅ 已發布';
                 saveBtn.classList.replace('bg-blue-600', 'bg-green-600');
                 saveBtn.classList.replace('hover:bg-blue-700', 'hover:bg-green-700');
-                
                 setTimeout(() => {
                     closeSidebar();
-                    loadDataForCurrentClass(); 
+                    loadDataForCurrentClass();
                 }, 800);
             } catch (err) {
                 alert('❌ 儲存失敗：' + err.message);
@@ -288,7 +290,6 @@ window.FeatureGradebook = (function() {
         if (text && text.length > 0 && text.length < 20 && /^[a-zA-Z']+$/.test(text)) {
             const context = window.GradebookStore.getActiveContext();
             const isAlreadyDefect = context && context.draft.manual_defects_added.includes(text.toLowerCase());
-            
             if (!isAlreadyDefect && confirm(`是否將 [ ${text} ] 手動標記為發音錯誤？`)) {
                 window.GradebookStore.toggleManualDefect(text);
                 reRenderSidebarContentOnly();

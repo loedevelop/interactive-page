@@ -1,6 +1,6 @@
 /**
  * 📂 110_teacher_core/ui-gradebook-templates.js
- * 🎯 職責：老師端批改中樞的純視覺模板工廠 (極限空間壓縮版)
+ * 🎯 職責：老師端批改中樞的純視覺模板工廠 (極限空間壓縮版 + AI 評語擴充)
  */
 window.GradebookTemplates = (function() {
     'use strict';
@@ -187,6 +187,41 @@ window.GradebookTemplates = (function() {
             </div>`;
         }
 
+        // 🌟 新增：AI 綜合分析與文法建議區塊 (依照 JSONB 動態渲染)
+        let aiFeedbackHtml = '';
+        if (aiData.comprehensive_feedback || (aiData.grammar_corrections && aiData.grammar_corrections.length > 0)) {
+            aiFeedbackHtml = `
+            <div class="mb-4 bg-indigo-50/80 rounded-xl border border-indigo-100 p-3 shadow-sm relative">
+                <h4 class="text-[12px] font-black text-indigo-800 mb-2 flex items-center gap-1 m-0">
+                    <span>✨</span> AI 綜合分析與建議
+                </h4>`;
+
+            if (aiData.comprehensive_feedback) {
+                aiFeedbackHtml += `<p class="text-[11.5px] text-indigo-900 leading-relaxed mb-2 font-medium">${escapeHtml(aiData.comprehensive_feedback)}</p>`;
+            }
+
+            if (aiData.grammar_corrections && aiData.grammar_corrections.length > 0) {
+                aiFeedbackHtml += `<div class="mt-2 space-y-1.5">
+                    <div class="text-[10px] font-bold text-indigo-700 mb-1">📝 文法與用詞建議：</div>
+                    ${aiData.grammar_corrections.map(gc => `
+                        <div class="bg-white p-2 rounded-lg border border-indigo-100 text-[11px] shadow-sm">
+                            <div class="text-red-500 line-through decoration-red-500/40 mb-0.5">${escapeHtml(gc.original)}</div>
+                            <div class="text-green-700 font-bold mb-1">${escapeHtml(gc.corrected)}</div>
+                            ${gc.explanation ? `<div class="text-gray-500 text-[10px] leading-tight border-t border-gray-50 pt-1 mt-1">${escapeHtml(gc.explanation)}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>`;
+            }
+
+            aiFeedbackHtml += `
+                <div class="mt-2.5 flex justify-end">
+                    <button data-action="apply-ai-feedback" data-feedback="${escapeHtml(aiData.comprehensive_feedback || '')}" class="text-[10px] bg-white hover:bg-indigo-600 text-indigo-700 hover:text-white px-2.5 py-1 rounded-md font-bold transition-colors shadow-sm border border-indigo-200 cursor-pointer flex items-center gap-1">
+                        ⬇️ 採用 AI 評語
+                    </button>
+                </div>
+            </div>`;
+        }
+
         return `
         <div id="grading-sidebar-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-60 z-[9998] transition-opacity backdrop-blur-sm" data-action="close-sidebar"></div>
         <div id="grading-sidebar-panel" class="fixed right-0 top-0 h-screen bg-gray-50 shadow-[0_0_40px_rgba(0,0,0,0.2)] w-full max-w-[95vw] border-l border-gray-200 flex flex-col z-[9999] transform translate-x-full transition-transform duration-300" style="width: 850px; resize: horizontal; overflow-x: hidden; direction: rtl;">
@@ -211,8 +246,10 @@ window.GradebookTemplates = (function() {
                     <button data-action="close-sidebar" class="text-gray-400 hover:text-red-500 rounded w-6 h-6 flex items-center justify-center transition font-bold text-lg border-0 bg-transparent cursor-pointer leading-none">&times;</button>
                 </div>
 
-                <!-- 🌟 文稿區 (移除所有無意義白邊與大標題) -->
-                <div class="flex-1 overflow-y-auto px-4 py-2 pb-[180px] bg-white">
+                <!-- 🌟 文稿區 (包含 AI 分析建議) -->
+                <div class="flex-1 overflow-y-auto px-4 py-3 pb-[180px] bg-white">
+                    ${aiFeedbackHtml}
+                    
                     <audio id="google-tts-audio" class="hidden"></audio>
                     
                     <div class="flex justify-between items-end mb-2 border-b border-gray-100 pb-1 pt-1">
