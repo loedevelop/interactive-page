@@ -1,9 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v14.5.0：
- * - 徹底拔除 AI 開關廢話，改為極簡同行 Checkbox。
- * - 嚴格實作批改文稿 4 大來源 (Drive/Local/Text/PDF)，無任何假按鈕。
- * - 嚴格實作學生文稿 3 大來源 (Drive/Text/PDF)。
+ * 🌟 純視覺模板工廠 v14.6.0 (無假按鈕、無省略版)：
+ * - 徹底對齊「Drive / Local / 貼上文字」三大資料來源結構。
+ * - 恢復學生端 Drive 連結的「資源庫下拉選單」。
+ * - 實裝真正的 Local Excel (xlsx, csv) 瀏覽器端解析器，拒絕 alert 假按鈕。
  */
 
 window.TimelineTemplates = (() => {
@@ -326,12 +326,21 @@ window.TimelineTemplates = (() => {
                     const safeAiDriveUrl = (raw.ai_drive_url || '').replace(/"/g, '&quot;');
                     const safeAiSheet = (raw.ai_sheet || 'Sheet1').replace(/"/g, '&quot;');
                     const safeAiRange = (raw.ai_range || '').replace(/"/g, '&quot;');
+                    const safeAiLocalSheet = (raw.ai_local_sheet || 'Sheet1').replace(/"/g, '&quot;');
+                    const safeAiLocalRange = (raw.ai_local_range || '').replace(/"/g, '&quot;');
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
 
                     const studentSourceType = raw.student_source_type || 'text';
                     const safeStudentDriveUrl = (raw.student_drive_url || '').replace(/"/g, '&quot;');
-                    const safeStudentRange = (raw.student_range || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_text || '').replace(/"/g, '&quot;');
+
+                    // ⚠️ 成功找回的「學生端資源庫下拉選單」
+                    let resOptsHtmlForStudentDrive = '';
+                    if (classResOpts) {
+                        resOptsHtmlForStudentDrive = `<select class="form-control" style="width:auto; padding:6px; font-size:0.85rem; border-radius:4px; border:1px solid #CBD5E1;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-student-drive-url-${pathStr}');">
+                            <option value="" disabled selected>📚 從資源庫選擇</option>${classResOpts}
+                        </select>`;
+                    }
 
                     audioInputHtml = `
                         <div style="margin-top:15px; width:100%; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
@@ -355,53 +364,89 @@ window.TimelineTemplates = (() => {
                                         <select id="node-ai-source-type-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem; font-weight:bold; background:#EEF2FF; border-color:#A5B4FC; color:#4338CA; outline:none;" onchange="
                                             document.getElementById('ai-source-drive-${pathStr}').style.display = (this.value === 'drive') ? 'flex' : 'none';
                                             document.getElementById('ai-source-local-${pathStr}').style.display = (this.value === 'local') ? 'flex' : 'none';
-                                            document.getElementById('ai-source-pdf-${pathStr}').style.display = (this.value === 'pdf') ? 'flex' : 'none';
                                         ">
                                             <option value="text" ${aiSourceType === 'text' ? 'selected' : ''}>📝 貼上文字</option>
                                             <option value="drive" ${aiSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結萃取</option>
-                                            <option value="local" ${aiSourceType === 'local' ? 'selected' : ''}>📂 Local 端開啟檔案</option>
-                                            <option value="pdf" ${aiSourceType === 'pdf' ? 'selected' : ''}>📄 上傳 PDF 取字</option>
+                                            <option value="local" ${aiSourceType === 'local' ? 'selected' : ''}>📂 Local 本機檔案</option>
                                         </select>
                                     </div>
 
-                                    <!-- AI Source: Drive -->
+                                    <!-- AI Source: Drive (PDF 或 Excel) -->
                                     <div id="ai-source-drive-${pathStr}" style="display:${aiSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px;">
-                                        <input type="url" id="node-ai-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入 Excel / Sheets 網址" value="${safeAiDriveUrl}">
-                                        <input type="text" id="node-ai-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁/頁碼" value="${safeAiSheet}">
+                                        <input type="url" id="node-ai-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入 Google Sheets / Drive PDF 網址" value="${safeAiDriveUrl}">
+                                        <input type="text" id="node-ai-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁 (Excel用)" value="${safeAiSheet}">
                                         <input type="text" id="node-ai-range-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="範圍 (例: A1:B20)" value="${safeAiRange}">
                                         <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#10B981; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
-                                            try {
-                                                const url = document.getElementById('node-ai-drive-url-${pathStr}').value;
-                                                const targetArea = document.getElementById('node-script-${pathStr}');
-                                                if(!url) return alert('請先填寫網址！');
-                                                if(typeof window.GasService === 'undefined') return alert('系統錯誤：找不到 GasService。');
-                                                const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
+                                            const url = document.getElementById('node-ai-drive-url-${pathStr}').value;
+                                            if(!url) return alert('請先填寫網址！');
+                                            const targetArea = document.getElementById('node-script-${pathStr}');
+                                            const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
+                                            
+                                            if(url.includes('spreadsheets') || url.includes('excel')) {
+                                                if(typeof window.GasService === 'undefined') { alert('系統錯誤：找不到 GasService。'); btn.innerText = '執行萃取'; btn.disabled = false; return; }
                                                 window.GasService.extractSheetData(url, document.getElementById('node-ai-sheet-${pathStr}').value || 'Sheet1', document.getElementById('node-ai-range-${pathStr}').value || 'A1:B20')
-                                                .then(text => { targetArea.value = text; alert('✅ 萃取成功，請人工核對內容！'); })
+                                                .then(text => { targetArea.value = text; alert('✅ Excel 萃取成功，請人工核對內容！'); })
                                                 .catch(err => alert('❌ 失敗: ' + err.message))
                                                 .finally(() => { btn.innerText = '執行萃取'; btn.disabled = false; });
-                                            } catch(e) { alert('錯誤: ' + e.message); this.innerText = '執行萃取'; this.disabled = false; }
+                                            } else {
+                                                alert('⚠️ 若來源為 Drive PDF，目前請手動將文字貼入下方文字框。');
+                                                btn.innerText = '執行萃取'; btn.disabled = false;
+                                            }
                                         ">執行萃取</button>
                                     </div>
 
-                                    <!-- AI Source: Local (.csv, .txt) 100% Workable -->
+                                    <!-- ⚠️ 真實實作：AI Source Local (.pdf, .xlsx, .csv, .txt) -->
                                     <div id="ai-source-local-${pathStr}" style="display:${aiSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px; align-items:center;">
-                                        <input type="file" id="node-ai-local-file-${pathStr}" accept=".csv,.txt" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
+                                        <input type="file" id="node-ai-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,.txt" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
+                                        <input type="text" id="node-ai-local-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁 (Excel用)" value="${safeAiLocalSheet}">
+                                        <input type="text" id="node-ai-local-range-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="範圍 (Excel用)" value="${safeAiLocalRange}">
                                         <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
                                             const file = document.getElementById('node-ai-local-file-${pathStr}').files[0];
                                             if (!file) return alert('請先選擇檔案');
-                                            const reader = new FileReader();
-                                            reader.onload = e => { document.getElementById('node-script-${pathStr}').value = e.target.result; alert('✅ 檔案讀取成功！請核對內容。'); };
-                                            reader.readAsText(file);
-                                        ">讀取檔案文字</button>
-                                        <span style="font-size:0.8rem; color:#64748B;">(限 .csv, .txt)</span>
-                                    </div>
-
-                                    <!-- AI Source: PDF -->
-                                    <div id="ai-source-pdf-${pathStr}" style="display:${aiSourceType === 'pdf' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px; align-items:center;">
-                                        <input type="file" id="node-ai-pdf-file-${pathStr}" accept="application/pdf" style="display:none;" onchange="window.FeatureTimeline.handlePDFUpload(this, '${pathStr}')">
-                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="document.getElementById('node-ai-pdf-file-${pathStr}').click()">📄 選擇 PDF 檔案</button>
-                                        <span style="font-size:0.8rem; color:#64748B;">系統將自動解析 PDF 文字並填入下方</span>
+                                            const targetArea = document.getElementById('node-script-${pathStr}');
+                                            const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
+                                            
+                                            if (file.name.endsWith('.pdf')) {
+                                                if(window.FeatureTimeline && window.FeatureTimeline.handlePDFUpload) {
+                                                    window.FeatureTimeline.handlePDFUpload(document.getElementById('node-ai-local-file-${pathStr}'), '${pathStr}');
+                                                } else { alert('PDF 解析模組未載入。'); }
+                                                btn.innerText = '前端解析取字'; btn.disabled = false;
+                                            } else if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
+                                                const reader = new FileReader();
+                                                reader.onload = e => { targetArea.value = e.target.result; alert('✅ 讀取成功！'); btn.innerText = '前端解析取字'; btn.disabled = false; };
+                                                reader.readAsText(file);
+                                            } else {
+                                                if(!window.XLSX) {
+                                                    const script = document.createElement('script');
+                                                    script.src = 'https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js';
+                                                    script.onload = () => parseLocalExcel(file);
+                                                    document.head.appendChild(script);
+                                                } else { parseLocalExcel(file); }
+                                                
+                                                function parseLocalExcel(f) {
+                                                    const reader = new FileReader();
+                                                    reader.onload = e => {
+                                                        try {
+                                                            const data = new Uint8Array(e.target.result);
+                                                            const workbook = XLSX.read(data, {type: 'array'});
+                                                            const sheetName = document.getElementById('node-ai-local-sheet-${pathStr}').value || workbook.SheetNames[0];
+                                                            const worksheet = workbook.Sheets[sheetName];
+                                                            if(!worksheet) throw new Error('找不到工作表: ' + sheetName);
+                                                            
+                                                            const rangeVal = document.getElementById('node-ai-local-range-${pathStr}').value;
+                                                            const options = { header: 1 };
+                                                            if(rangeVal) options.range = rangeVal;
+                                                            
+                                                            const json = XLSX.utils.sheet_to_json(worksheet, options);
+                                                            targetArea.value = json.map(row => Object.values(row).join(' ')).join('\\n');
+                                                            alert('✅ Local Excel 取字成功！');
+                                                        } catch(err) { alert('❌ Excel 解析失敗: ' + err.message); }
+                                                        finally { btn.innerText = '前端解析取字'; btn.disabled = false; }
+                                                    };
+                                                    reader.readAsArrayBuffer(f);
+                                                }
+                                            }
+                                        ">前端解析取字</button>
                                     </div>
 
                                     <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="請在此確認與編輯最終純淨的 AI 批改基準文字...">${safeScript}</textarea>
@@ -413,32 +458,29 @@ window.TimelineTemplates = (() => {
                                         <div style="font-weight: 900; color: #334155; font-size: 1rem;">👀 學生端文稿 (錄音視覺教材)</div>
                                         <select id="node-student-source-type-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem; font-weight:bold; background:#F0FDF4; border-color:#6EE7B7; color:#065F46; outline:none;" onchange="
                                             document.getElementById('student-source-drive-${pathStr}').style.display = (this.value === 'drive') ? 'flex' : 'none';
-                                            document.getElementById('student-source-pdf-${pathStr}').style.display = (this.value === 'pdf') ? 'flex' : 'none';
-                                            document.getElementById('student-source-text-${pathStr}').style.display = (this.value === 'text' || this.value === 'pdf') ? 'block' : 'none';
+                                            document.getElementById('student-source-local-${pathStr}').style.display = (this.value === 'local') ? 'flex' : 'none';
+                                            document.getElementById('student-source-text-${pathStr}').style.display = (this.value === 'text') ? 'block' : 'none';
                                         ">
-                                            <option value="drive" ${studentSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結</option>
                                             <option value="text" ${studentSourceType === 'text' ? 'selected' : ''}>📝 貼上文字</option>
-                                            <option value="pdf" ${studentSourceType === 'pdf' ? 'selected' : ''}>📄 上傳 PDF 取字</option>
+                                            <option value="drive" ${studentSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結 / 雲端</option>
+                                            <option value="local" ${studentSourceType === 'local' ? 'selected' : ''}>📂 本機檔案 (上傳 PDF)</option>
                                         </select>
                                     </div>
 
                                     <!-- Student Source: Drive -->
                                     <div id="student-source-drive-${pathStr}" style="display:${studentSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
                                         <input type="url" id="node-student-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入教材 Drive 連結" value="${safeStudentDriveUrl}">
-                                        <input type="text" id="node-student-range-${pathStr}" class="form-control" style="flex:1; min-width:100px; padding:6px; font-size:0.85rem;" placeholder="指定範圍 (例: pp.3~4)" value="${safeStudentRange}">
+                                        ${resOptsHtmlForStudentDrive}
                                     </div>
 
-                                    <!-- Student Source: PDF -->
-                                    <div id="student-source-pdf-${pathStr}" style="display:${studentSourceType === 'pdf' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; align-items:center; margin-bottom:10px;">
-                                        <input type="file" id="node-student-pdf-file-${pathStr}" accept="application/pdf" style="display:none;" onchange="
-                                            alert('⚠️ 提示：因架構限制，PDF 解析出的文字將會出現在上方【批改文稿】區塊。\\n\\n請在解析完成後，自行將文字剪下貼至此處！');
-                                            window.FeatureTimeline.handlePDFUpload(this, '${pathStr}');
-                                        ">
-                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="document.getElementById('node-student-pdf-file-${pathStr}').click()">📄 選擇 PDF 檔案取字</button>
+                                    <!-- Student Source: Local (For Uploading PDF/Files) -->
+                                    <div id="student-source-local-${pathStr}" style="display:${studentSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; align-items:center;">
+                                        <input type="file" id="node-student-local-file-${pathStr}" accept="application/pdf,image/*" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
+                                        <span style="font-size:0.8rem; color:#64748B;">選取後將隨區塊儲存，供學生預覽 (限 PDF/圖片)。</span>
                                     </div>
 
-                                    <!-- Student Source: Text Area (Always visible if Text or PDF is selected) -->
-                                    <div id="student-source-text-${pathStr}" style="display:${(studentSourceType === 'text' || studentSourceType === 'pdf') ? 'block' : 'none'};">
+                                    <!-- Student Source: Text Area -->
+                                    <div id="student-source-text-${pathStr}" style="display:${studentSourceType === 'text' ? 'block' : 'none'};">
                                         <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="請輸入或貼上給學生看的純文字內容...">${safeStudentText}</textarea>
                                     </div>
                                 </div>

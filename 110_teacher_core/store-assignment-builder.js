@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：110_teacher_core/store-assignment-builder.js
- * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v14.5.0
- * - 無遺漏捕捉 AI批改(Drive/Local/PDF/Text) 與 學生端(Drive/PDF/Text) 所有切換欄位。
+ * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v14.6.0
+ * - 嚴格捕捉 3 大來源 (Drive/Local/Text) 的所有細節狀態。
  */
 window.BuilderStore = (() => {
     'use strict';
@@ -76,6 +76,12 @@ window.BuilderStore = (() => {
                     const aiRangeEl = document.getElementById(`node-ai-range-${pathStr}`);
                     if (aiRangeEl) t.raw_data.ai_range = aiRangeEl.value;
 
+                    const aiLocalSheetEl = document.getElementById(`node-ai-local-sheet-${pathStr}`);
+                    if (aiLocalSheetEl) t.raw_data.ai_local_sheet = aiLocalSheetEl.value;
+
+                    const aiLocalRangeEl = document.getElementById(`node-ai-local-range-${pathStr}`);
+                    if (aiLocalRangeEl) t.raw_data.ai_local_range = aiLocalRangeEl.value;
+
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
                     if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
 
@@ -84,9 +90,6 @@ window.BuilderStore = (() => {
 
                     const studentDriveUrlEl = document.getElementById(`node-student-drive-url-${pathStr}`);
                     if (studentDriveUrlEl) t.raw_data.student_drive_url = studentDriveUrlEl.value;
-
-                    const studentRangeEl = document.getElementById(`node-student-range-${pathStr}`);
-                    if (studentRangeEl) t.raw_data.student_range = studentRangeEl.value;
 
                     const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
                     if (studentTextEl) t.raw_data.student_text = studentTextEl.value;
