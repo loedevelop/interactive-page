@@ -1,6 +1,6 @@
 /**
  * 📂 檔案：110_teacher_core/api-gas-service.js
- * 🌟 職責：與 Google Apps Script (GAS) 中繼站通訊，專職處理 Excel/Sheets 解析與檔案上傳。
+ * 🌟 職責：與 Google Apps Script (GAS) 中繼站通訊，專職處理 Excel/Sheets 解析、資料夾建立、歷史轉移與檔案上傳。
  * ⚠️ 依賴：無。掛載於全域 window.GasService
  */
 
@@ -22,11 +22,7 @@ window.GasService = (function() {
     },
 
     /**
-     * 🚀 核心功能：呼叫 GAS 萃取 Excel / Google Sheets 指定範圍的文字
-     * @param {string} driveUrl - Google Drive 或 Sheets 的網址
-     * @param {string} sheetName - 活頁簿名稱 (例如：'GEPT-2')
-     * @param {string} range - 萃取範圍 (例如：'A1:B20')
-     * @returns {Promise<string>} - 萃取後且合併完畢的純淨字串
+     * 🚀 核心功能 1：呼叫 GAS 萃取 Excel / Google Sheets 指定範圍的文字
      */
     async extractSheetData(driveUrl, sheetName = 'Sheet1', range = 'A1:B20') {
       try {
@@ -42,19 +38,14 @@ window.GasService = (function() {
           range: range
         };
 
-        // 發送 POST 請求至 GAS 中繼站
         const response = await fetch(GAS_WEB_APP_URL, {
           method: 'POST',
-          // 註解：GAS 處理跨域請求時，採用 text/plain 作為預設 payload 最穩定
-          headers: {
-            'Content-Type': 'text/plain', 
-          },
+          headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify(payload)
         });
 
         const result = await response.json();
         
-        // 攔截並拋出 GAS 內部回傳的業務邏輯錯誤
         if (result.status !== 'success') {
           throw new Error(result.message || 'GAS 伺服器解析失敗，請確認檔案權限與活頁簿名稱。');
         }
@@ -63,22 +54,89 @@ window.GasService = (function() {
 
       } catch (error) {
         console.error('[GasService] Excel 萃取發生嚴重錯誤:', error);
-        throw error; // 將錯誤往上拋，交由 UI 層的 Try-Catch 攔截並渲染防禦彈窗
+        throw error;
       }
     },
 
     /**
-     * 🚀 擴充功能：呼叫 GAS 上傳學生端 Local 檔案 (防 CORS 封鎖版)
-     * @param {string} base64 - 檔案的 Base64 編碼字串 (不含 mime type 開頭)
-     * @param {string} fileName - 檔案名稱
-     * @param {string} mimeType - 檔案的 MIME Type
-     * @param {string} folderId - 欲存入的 Google Drive 資料夾 ID
-     * @param {string} assignId - 紀錄用的作業 ID (可選)
-     * @param {string} taskId - 紀錄用的任務 ID (可選)
-     * @param {string} subFolderName - 強制收納的子資料夾名稱
-     * @returns {Promise<string>} - 回傳上傳成功後的 Drive File URL
+     * 📂 核心功能 2：呼叫 GAS 建立資料夾
+     * (對接 Code.gs 的 create_folder 路由)
      */
-    async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '', subFolderName = '_material') {
+    async createFolder(folderName, parentFolderId = null, requireShare = false) {
+      try {
+        const payload = {
+          action: 'create_folder',
+          folderName: folderName,
+          parentFolderId: parentFolderId,
+          requireShare: requireShare
+        };
+
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'GAS 伺服器建立資料夾失敗');
+        }
+
+        return {
+          folderId: result.folderId,
+          folderUrl: result.folderUrl
+        };
+
+      } catch (error) {
+        console.error('[GasService] 建立資料夾發生錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 🔄 核心功能 3：呼叫 GAS 進行學生歷史資料夾轉移
+     * (對接 Code.gs 的 migrate_student_data 路由)
+     */
+    async migrateStudentData(parentFolderId, studentName, studentShortId, oldFolderId) {
+      try {
+        const payload = {
+          action: 'migrate_student_data',
+          parentFolderId: parentFolderId,
+          studentName: studentName,
+          studentShortId: studentShortId,
+          oldFolderId: oldFolderId
+        };
+
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'GAS 伺服器資料夾轉移失敗');
+        }
+
+        return {
+          folderId: result.folderId,
+          folderUrl: result.folderUrl,
+          movedCount: result.movedCount
+        };
+
+      } catch (error) {
+        console.error('[GasService] 轉移學生資料夾發生錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 🚀 擴充功能 4：呼叫 GAS 上傳學生端 Local 檔案 (強制收納 01_Materials)
+     * (對接 Code.gs 的 upload_file 路由)
+     */
+    async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '', subFolderName = '01_Materials') {
       try {
         const payload = {
           action: 'upload_file',
@@ -86,24 +144,19 @@ window.GasService = (function() {
           fileName: fileName,
           mimeType: mimeType,
           folderId: folderId,
-          subFolderName: subFolderName, // 打包送給 GAS
+          subFolderName: subFolderName,
           assignmentId: assignId,
           taskId: taskId
         };
 
-        // 發送 POST 請求至 GAS 中繼站
         const response = await fetch(GAS_WEB_APP_URL, { 
           method: 'POST', 
-          // 必須維持 text/plain 鐵律以繞過 CORS Preflight
-          headers: { 
-            'Content-Type': 'text/plain' 
-          }, 
+          headers: { 'Content-Type': 'text/plain' }, 
           body: JSON.stringify(payload) 
         });
         
         const result = await response.json();
         
-        // 攔截並拋出 GAS 內部回傳的業務邏輯錯誤
         if (result.status !== 'success') {
           throw new Error(result.message || 'GAS 伺服器上傳失敗');
         }
@@ -112,7 +165,7 @@ window.GasService = (function() {
 
       } catch (error) {
         console.error('[GasService] 檔案上傳發生嚴重錯誤:', error);
-        throw error; // 將錯誤往上拋，交由 feature-timeline 攔截
+        throw error;
       }
     }
   };

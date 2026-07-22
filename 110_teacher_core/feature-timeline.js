@@ -1,11 +1,11 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v68 集中收納防護版：
- * 1. 確保學生端上傳的教材絕對存入 _material 子資料夾。
+ * 🌟 v69 方案 A 收納版：
+ * 1. 確保學生端上傳的教材絕對存入 01_Materials 子資料夾。
  * 2. 貫徹鐵律：學生的教材 PDF 絕對只做 Base64 轉換，不做任何文字解析。
  */
 
-console.log("🚀 FeatureTimeline v68 載入成功！(強制收納 _material 與無解析上傳鐵律)");
+console.log("🚀 FeatureTimeline v69 載入成功！(強制收納 01_Materials 與無解析上傳鐵律)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -368,7 +368,7 @@ window.FeatureTimeline = (() => {
             reader.readAsDataURL(file);
         },
 
-        // 給 AI 批改基準 (original_script) 使用的 PDF 解析工具 (與學生端無關)
+        // 這是給 AI 批改基準 (original_script) 使用的，跟學生畫面的 PDF 完全無關
         handlePDFUpload: async (inputEl, pathStr) => {
             const file = inputEl.files[0];
             if (!file) return;
@@ -473,7 +473,7 @@ window.FeatureTimeline = (() => {
                                     throw new Error('系統錯誤：找不到 GasService 模組或函數');
                                 }
 
-                                // 🌟 呼叫 API 並強制指定寫入 _material 資料夾
+                                // 🌟 方案 A 實作：強制指定傳入 01_Materials
                                 const fileUrl = await window.GasService.uploadStudentLocalFile(
                                     raw.student_local_b64,
                                     raw.student_local_filename,
@@ -481,7 +481,7 @@ window.FeatureTimeline = (() => {
                                     targetFolderId,
                                     bState.editId || '',
                                     t.id,
-                                    '_material'
+                                    '01_Materials'
                                 );
 
                                 // 🚀 上傳成功，轉化為 Drive 模式存檔
