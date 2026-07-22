@@ -1,10 +1,11 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v13.9.3 終極修復版：
- * 重構精準 Map 去重引擎 (解決全域資源被誤殺的問題)，並導入記憶體網址挖礦輔助函式 (applyResourceUrl)。
+ * 🌟 v66 終極自動上雲防護版：
+ * 導入 handleStudentLocalFileChange 與 saveBlock 攔截器。
+ * 老師選取 Local 檔案，存檔時會自動呼叫 GAS 上傳至雲端，神不知鬼不覺轉為 Drive 網址！
  */
 
-console.log("🚀 FeatureTimeline v13.9.3 載入成功！(精準資源去重引擎 + 記憶體網址擷取)");
+console.log("🚀 FeatureTimeline v66 載入成功！(支援學生端 Local 檔案自動上雲)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -215,16 +216,14 @@ window.FeatureTimeline = (() => {
         const allResList = (db && db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
         
         if (allResList.length > 0) {
-            // 🌟 核心修復：嚴謹的 Map 去重邏輯，絕不誤殺無辜資源
             const resMap = new Map();
             allResList.forEach(r => {
                 const hasUrl = r.url && r.url.trim() !== '';
-                const key = hasUrl ? r.url.trim() : r.id; // 無 URL 時依賴 ID 防呆，確保每一筆獨立存活
+                const key = hasUrl ? r.url.trim() : r.id; 
                 
                 if (!resMap.has(key)) {
                     resMap.set(key, r);
                 } else if (hasUrl) {
-                    // 若網址發生碰撞，僅在「既有為班級資源，新來為全域資源」時才進行優雅覆寫
                     const existing = resMap.get(key);
                     if (existing.scope === 'class' && r.scope === 'global') {
                         resMap.set(key, r);
@@ -232,14 +231,12 @@ window.FeatureTimeline = (() => {
                 }
             });
 
-            // 排序：讓全域資源 (🌍) 統一排在最前面，增進 UI 體驗
             const uniqueResList = Array.from(resMap.values()).sort((a, b) => {
                 if (a.scope === 'global' && b.scope === 'class') return -1;
                 if (a.scope === 'class' && b.scope === 'global') return 1;
                 return 0;
             });
 
-            // 拔除 DOM 污染，回歸單純的 ID 傳遞
             classResOpts = uniqueResList.map(r => {
                 const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
                 return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
@@ -321,29 +318,56 @@ window.FeatureTimeline = (() => {
             }, 300);
         },
 
-        // 🌟 專屬輔助函式：從記憶體挖出真實 URL 並寫入對應的任務節點，取代 DOM 取值
         applyResourceUrl: (pathStr, resId, targetInputId = null) => {
             if (!resId || !db || !db.resourceLibrary) return;
             const res = db.resourceLibrary.find(r => r.id === resId);
             if (!res) return;
             
-            const realUrl = res.url || ''; // 若為舊版無 URL 則給空字串，防止寫入 UUID
+            const realUrl = res.url || ''; 
             
             if (targetInputId) {
-                // 用於錄音任務 (Audio) 等擁有獨立輸入框的節點
                 const el = document.getElementById(targetInputId);
                 if (el) {
                     el.value = realUrl;
                     window.BuilderStore.sync(); 
                 }
             } else if (pathStr) {
-                // 用於連結任務 (Link) 透過 Store 更新大腦狀態
                 window.BuilderStore.updateNodeUrl(pathStr, realUrl);
                 renderBuilderUI();
             }
         },
 
-        // 🌟 絕對安全的 PDF 引擎掛載
+        // 🌟 處理學生教材區的 Local 檔案讀取轉碼 (Base64)
+        handleStudentLocalFileChange: (inputEl, pathStr) => {
+            const file = inputEl.files[0];
+            if (!file) {
+                document.getElementById(`node-student-local-b64-${pathStr}`).value = '';
+                document.getElementById(`node-student-local-mime-${pathStr}`).value = '';
+                document.getElementById(`node-student-local-filename-${pathStr}`).value = '';
+                return;
+            }
+            if (file.size > 15 * 1024 * 1024) { 
+                alert('⚠️ 檔案過大，請選擇 15MB 以下的檔案以確保上傳順暢。');
+                inputEl.value = '';
+                return;
+            }
+            
+            const containerId = window.BuilderStore.getState().containerId;
+            const btn = document.getElementById(`btn-save-block-${containerId}`);
+            if(btn) { btn.disabled = true; btn.innerHTML = '⏳ 讀取檔案中...'; }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64 = e.target.result.split(',')[1];
+                document.getElementById(`node-student-local-b64-${pathStr}`).value = base64;
+                document.getElementById(`node-student-local-mime-${pathStr}`).value = file.type;
+                document.getElementById(`node-student-local-filename-${pathStr}`).value = file.name;
+                window.BuilderStore.sync();
+                if(btn) { btn.disabled = false; btn.innerHTML = `💾 ${window.BuilderStore.getState().editId ? '儲存修改' : '完成並儲存區塊'}`; }
+            };
+            reader.readAsDataURL(file);
+        },
+
         handlePDFUpload: async (inputEl, pathStr) => {
             const file = inputEl.files[0];
             if (!file) return;
@@ -421,27 +445,82 @@ window.FeatureTimeline = (() => {
             if (!titleText) return alert('⚠️ 請填寫大區塊標題！');
             if (!db.assignments) db.assignments = [];
             
-            let mergedRawData = bState.raw_data || {};
-            if (typeof mergedRawData === 'string') { try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; } }
-            
-            let mode = bState.late_mode || 'infinite';
-            let allowLate = (mode === 'infinite' || mode === 'custom');
-            let grace = (mode === 'custom') ? (parseInt(bState.late_grace) || 0) : 0;
-            let penalty = (mode !== 'no_late') ? (parseInt(bState.late_penalty) || 0) : 0;
-
-            mergedRawData.late_policy = { allow_late: allowLate, grace_period_hours: grace, penalty_percentage: penalty };
-            delete mergedRawData.allow_late; delete mergedRawData.late_policy.is_inherited; 
-            
-            const payload = {
-                class_id: bState.classId, target_date: window.UtilsDate.normalizeDateString(bState.target_date), title: bState.title, description: bState.description,
-                due_date: bState.due_date || null, is_published: bState.is_published, tasks: [...bState.tasks], raw_data: mergedRawData
-            };
-
             const originalText = btnEl.innerHTML;
-            btnEl.innerHTML = '⏳ 儲存至雲端...'; btnEl.disabled = true;
-            let savedId = bState.editId;
+            btnEl.innerHTML = '⏳ 處理中...'; btnEl.disabled = true;
 
             try {
+                // 🌟 雲端上傳攔截器：掃描並上傳所有 Student Local File 到 GAS
+                const processTasksForUpload = async (tasks) => {
+                    for (let t of tasks) {
+                        if (t.type === 'group' && t.subTasks) {
+                            await processTasksForUpload(t.subTasks);
+                        } else if (t.type === 'audio_record' && t.raw_data) {
+                            const raw = t.raw_data;
+                            if (raw.student_source_type === 'local' && raw.student_local_b64) {
+                                btnEl.innerHTML = `⏳ 上傳教材: ${raw.student_local_filename}...`;
+                                
+                                const cls = window.TeacherDB.classes.find(c => c.id === bState.classId);
+                                let clsRaw = {};
+                                if (cls && cls.raw_data) {
+                                    try { clsRaw = typeof cls.raw_data === 'string' ? JSON.parse(cls.raw_data) : cls.raw_data; } catch(e){}
+                                }
+                                const targetFolderId = clsRaw.drive_folder_id || clsRaw.class_folder_id || '';
+
+                                const payload = {
+                                    action: 'upload_file',
+                                    fileData: raw.student_local_b64,
+                                    fileName: raw.student_local_filename,
+                                    mimeType: raw.student_local_mime,
+                                    folderId: targetFolderId // 若空，GAS 會幫我們放去根目錄
+                                };
+
+                                const gasUrl = window.Config?.GAS_URL || window.LogOnConfig?.GAS_URL;
+                                if (!gasUrl) throw new Error('系統設定遺失：找不到 GAS_URL 網址');
+
+                                const res = await fetch(gasUrl, { method: 'POST', body: JSON.stringify(payload) });
+                                const json = await res.json();
+
+                                if (json.status === 'success') {
+                                    // 🚀 上傳成功，神不知鬼不覺轉化為 Drive 模式存檔
+                                    raw.student_source_type = 'drive';
+                                    raw.student_drive_url = json.fileUrl;
+                                    raw.student_drive_desc = raw.student_local_desc; // 繼承範圍說明
+                                    
+                                    // 清理 Base64 垃圾，避免存庫爆掉
+                                    delete raw.student_local_b64;
+                                    delete raw.student_local_mime;
+                                    delete raw.student_local_filename;
+                                    delete raw.student_local_desc;
+                                } else {
+                                    throw new Error(json.message || 'GAS 拒絕上傳');
+                                }
+                            }
+                        }
+                    }
+                };
+
+                await processTasksForUpload(bState.tasks);
+                btnEl.innerHTML = '⏳ 儲存至雲端...';
+
+                // --- 原有 Supabase 儲存邏輯 ---
+                let mergedRawData = bState.raw_data || {};
+                if (typeof mergedRawData === 'string') { try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; } }
+                
+                let mode = bState.late_mode || 'infinite';
+                let allowLate = (mode === 'infinite' || mode === 'custom');
+                let grace = (mode === 'custom') ? (parseInt(bState.late_grace) || 0) : 0;
+                let penalty = (mode !== 'no_late') ? (parseInt(bState.late_penalty) || 0) : 0;
+
+                mergedRawData.late_policy = { allow_late: allowLate, grace_period_hours: grace, penalty_percentage: penalty };
+                delete mergedRawData.allow_late; delete mergedRawData.late_policy.is_inherited; 
+                
+                const payload = {
+                    class_id: bState.classId, target_date: window.UtilsDate.normalizeDateString(bState.target_date), title: bState.title, description: bState.description,
+                    due_date: bState.due_date || null, is_published: bState.is_published, tasks: [...bState.tasks], raw_data: mergedRawData
+                };
+
+                let savedId = bState.editId;
+
                 if (bState.editId) {
                     const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update(payload).eq('id', bState.editId).is('deleted_at', null).select(); 
                     if (error) throw new Error(error.message);

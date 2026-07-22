@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：110_teacher_core/store-assignment-builder.js
- * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v14.6.0
- * - 嚴格捕捉 3 大來源 (Drive/Local/Text) 的所有細節狀態。
+ * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v45
+ * - 嚴格捕捉 3 大來源 (Drive/Local/Text) 的所有細節狀態，並支援學生端本地檔案 Base64。
  */
 window.BuilderStore = (() => {
     'use strict';
@@ -90,6 +90,21 @@ window.BuilderStore = (() => {
 
                     const studentDriveUrlEl = document.getElementById(`node-student-drive-url-${pathStr}`);
                     if (studentDriveUrlEl) t.raw_data.student_drive_url = studentDriveUrlEl.value;
+                    
+                    const studentDriveDescEl = document.getElementById(`node-student-drive-desc-${pathStr}`);
+                    if (studentDriveDescEl) t.raw_data.student_drive_desc = studentDriveDescEl.value;
+
+                    const studentLocalDescEl = document.getElementById(`node-student-local-desc-${pathStr}`);
+                    if (studentLocalDescEl) t.raw_data.student_local_desc = studentLocalDescEl.value;
+
+                    const studentLocalB64El = document.getElementById(`node-student-local-b64-${pathStr}`);
+                    if (studentLocalB64El) t.raw_data.student_local_b64 = studentLocalB64El.value;
+
+                    const studentLocalMimeEl = document.getElementById(`node-student-local-mime-${pathStr}`);
+                    if (studentLocalMimeEl) t.raw_data.student_local_mime = studentLocalMimeEl.value;
+
+                    const studentLocalFilenameEl = document.getElementById(`node-student-local-filename-${pathStr}`);
+                    if (studentLocalFilenameEl) t.raw_data.student_local_filename = studentLocalFilenameEl.value;
 
                     const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
                     if (studentTextEl) t.raw_data.student_text = studentTextEl.value;

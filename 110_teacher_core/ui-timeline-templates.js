@@ -1,8 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v14.7.0：
+ * 🌟 純視覺模板工廠 v48：
  * - 實裝真實的前端 Excel (.xlsx, .xls) 解析，結合 SheetJS，支援指定活頁與範圍。
- * - 徹底對齊「Drive / Local / 貼上文字」三大資料來源結構。
+ * - 徹底對齊「Drive / Local / 貼上文字」三大資料來源結構，並擴充學生教材的「範圍/說明」欄位。
  */
 
 window.TimelineTemplates = (() => {
@@ -331,7 +331,14 @@ window.TimelineTemplates = (() => {
 
                     const studentSourceType = raw.student_source_type || 'text';
                     const safeStudentDriveUrl = (raw.student_drive_url || '').replace(/"/g, '&quot;');
+                    const safeStudentDriveDesc = (raw.student_drive_desc || '').replace(/"/g, '&quot;');
+                    const safeStudentLocalDesc = (raw.student_local_desc || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_text || '').replace(/"/g, '&quot;');
+                    
+                    // Base64 快取防呆 (切換頁面時不遺失)
+                    const safeStudentLocalB64 = raw.student_local_b64 || '';
+                    const safeStudentLocalMime = raw.student_local_mime || '';
+                    const safeStudentLocalFilename = (raw.student_local_filename || '').replace(/"/g, '&quot;');
 
                     let resOptsHtmlForStudentDrive = '';
                     if (classResOpts) {
@@ -387,13 +394,13 @@ window.TimelineTemplates = (() => {
                                                 .catch(err => alert('❌ 失敗: ' + err.message))
                                                 .finally(() => { btn.innerText = '執行萃取'; btn.disabled = false; });
                                             } else {
-                                                alert('⚠️ 若來源為 Drive PDF，目前請手動將文字貼入下方文字框。');
+                                                alert('⚠️ 若來源為 Drive PDF，受限於權限，請手動將文字貼入下方文字框。');
                                                 btn.innerText = '執行萃取'; btn.disabled = false;
                                             }
                                         ">執行萃取</button>
                                     </div>
 
-                                    <!-- ⚠️ 真實實作：AI Source Local (.pdf, .xlsx, .xls, .csv, .txt) -->
+                                    <!-- 真實實作：AI Source Local (.pdf, .xlsx, .xls, .csv, .txt) -->
                                     <div id="ai-source-local-${pathStr}" style="display:${aiSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px; align-items:center;">
                                         <input type="file" id="node-ai-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,.txt" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
                                         <input type="text" id="node-ai-local-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁 (Excel用)" value="${safeAiLocalSheet}">
@@ -460,20 +467,26 @@ window.TimelineTemplates = (() => {
                                         ">
                                             <option value="text" ${studentSourceType === 'text' ? 'selected' : ''}>📝 貼上文字</option>
                                             <option value="drive" ${studentSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結 / 雲端</option>
-                                            <option value="local" ${studentSourceType === 'local' ? 'selected' : ''}>📂 本機檔案 (上傳 PDF)</option>
+                                            <option value="local" ${studentSourceType === 'local' ? 'selected' : ''}>📂 本機檔案 (上傳 PDF/Excel)</option>
                                         </select>
                                     </div>
 
                                     <!-- Student Source: Drive -->
-                                    <div id="student-source-drive-${pathStr}" style="display:${studentSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
+                                    <div id="student-source-drive-${pathStr}" style="display:${studentSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px;">
                                         <input type="url" id="node-student-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入教材 Drive 連結" value="${safeStudentDriveUrl}">
+                                        <input type="text" id="node-student-drive-desc-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="範圍/說明 (選填)" value="${safeStudentDriveDesc}">
                                         ${resOptsHtmlForStudentDrive}
                                     </div>
 
-                                    <!-- Student Source: Local (For Uploading PDF/Files) -->
-                                    <div id="student-source-local-${pathStr}" style="display:${studentSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; align-items:center;">
-                                        <input type="file" id="node-student-local-file-${pathStr}" accept="application/pdf,image/*" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
-                                        <span style="font-size:0.8rem; color:#64748B;">選取後將隨區塊儲存，供學生預覽 (限 PDF/圖片)。</span>
+                                    <!-- Student Source: Local (For Uploading Files) -->
+                                    <div id="student-source-local-${pathStr}" style="display:${studentSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; align-items:center; margin-bottom:10px;">
+                                        <input type="file" id="node-student-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,image/*" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;" onchange="window.FeatureTimeline.handleStudentLocalFileChange(this, '${pathStr}')">
+                                        <input type="text" id="node-student-local-desc-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="範圍/說明 (選填)" value="${safeStudentLocalDesc}">
+                                        <span style="font-size:0.8rem; color:#64748B; width:100%;">📌 提示：選取後將於儲存時自動上傳至雲端，並轉為 Drive 網址供學生讀取 (支援 PDF/Excel/圖片)。</span>
+                                        <!-- 隱藏 Base64 暫存區 -->
+                                        <input type="hidden" id="node-student-local-b64-${pathStr}" value="${safeStudentLocalB64}">
+                                        <input type="hidden" id="node-student-local-mime-${pathStr}" value="${safeStudentLocalMime}">
+                                        <input type="hidden" id="node-student-local-filename-${pathStr}" value="${safeStudentLocalFilename}">
                                     </div>
 
                                     <!-- Student Source: Text Area -->
