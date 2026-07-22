@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-audio.js
  * 🌟 學生端輕量指揮官：硬體授權、狀態機切換、5 分鐘防護與 Base64 轉換
- * 🔄 v25 沉浸式錄音艙更新版：完美配合 Dock 響應式佈局切換
+ * 🔄 v42 沉浸式錄音艙更新版：完美配合 Dock 響應式佈局切換
  */
 
 window.FeatureStudentAudio = (function() {

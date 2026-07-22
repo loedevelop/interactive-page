@@ -1,10 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v41 終極 Visual Viewport 反追蹤引擎 (The Anti-Scaling Update)：
- * 1. 在不封鎖原生縮放的前提下，完美解決「手機放大 PDF 導致 UI 跑出螢幕」的問題。
- * 2. 透過內嵌 JavaScript 動態監聽 VisualViewport API，當偵測到使用者進行 Pinch-to-Zoom 時，
- *    立即針對底部的浮動錄音列進行「反向縮放 (Inverse Scale)」，並動態計算座標將其釘死在視覺邊界。
+ * 🚀 v42 終極沉浸式文字模式 (No More Black Void) & Visual Viewport 反追蹤：
+ * 1. 【修復】當只有純文字時，移除死板的 max-height 與黑色背景，讓文字霸佔整個視覺區塊。
+ * 2. 【防護】在不封鎖原生縮放的前提下，完美解決「手機放大 PDF 導致 UI 跑出螢幕」的問題。
  */
 
 window.UIAudioTemplates = {
@@ -60,7 +59,12 @@ window.UIAudioTemplates = {
 
         let bodyHtml = '';
         if (hasText) {
-            bodyHtml += `<div style="padding: 16px 24px; font-size: 1.05rem; color: #334155; line-height: 1.6; max-height: 150px; overflow-y: auto; background: #ffffff; ${embedUrl ? 'border-bottom: 1px solid #1e293b; flex-shrink: 0;' : 'flex: 1;'}">${safeText}</div>`;
+            // 🌟 核心修復：如果沒有 PDF 網址，拔除高度限制並設為 flex: 1
+            const textFlexStyle = embedUrl 
+                ? 'max-height: 30vh; border-bottom: 1px solid #1e293b; flex-shrink: 0; padding: 16px 24px; font-size: 1.05rem;' 
+                : 'flex: 1; max-height: none; height: 100%; padding: 24px 32px; font-size: 1.15rem;';
+
+            bodyHtml += `<div style="color: #334155; line-height: 1.6; overflow-y: auto; background: #ffffff; ${textFlexStyle}">${safeText}</div>`;
         }
         
         if (embedUrl) {
@@ -79,9 +83,11 @@ window.UIAudioTemplates = {
         let defaultCollapsed = '';
 
         if (hasText || embedUrl) {
+            // 🌟 核心修復：動態判斷背景色，沒有 PDF 時全面改為白底，消滅黑色黑洞
+            const upperBgColor = embedUrl ? '#323639' : '#ffffff';
             upperSectionHtml = `
-                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: #323639; position: relative;">
-                    <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%; background: #323639;">
+                <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: ${upperBgColor}; position: relative;">
+                    <div id="audio-material-body" style="display: flex; flex-direction: column; flex: 1; overflow: hidden; width: 100%; background: ${upperBgColor};">
                         ${bodyHtml}
                     </div>
                 </div>
@@ -251,7 +257,7 @@ window.UIAudioTemplates = {
             </div>
         </div>
 
-        <!-- 🚀 v41 核心：Visual Viewport 數學反追蹤引擎 -->
+        <!-- 🚀 v42 核心：Visual Viewport 數學反追蹤引擎 -->
         <script>
             (function() {
                 const dock = document.getElementById('audio-dock-section');

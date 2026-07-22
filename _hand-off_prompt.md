@@ -49,3 +49,103 @@
    * **API 伺服器語言與框架：** 請詢問我上一層資料夾的 API 伺服器是用什麼語言寫的？（例如：Node.js + Express，還是 Python + FastAPI / Flask？）
    * **Google Drive 授權：** 請確認我是否了解如何申請 GCP 的 Google Service Account JSON 憑證，並將其放入伺服器中？
 3. 進入 Standby 狀態，等待我回答後端的語言環境後，再開始產出對應的後端程式碼。
+
+
+
+
+
+
+
+
+🚀 系統開發交接規格書 (Handoff Prompt)
+專案: LogOnEnglish SaaS 老師控制台 - 錄音作業 (Audio Record) 編輯器模組
+當前狀態: 需重構 UI 介面選項與底層 JSONB 狀態綁定，徹底對齊「Drive/Local 雙軌支援 PDF & Excel」邏輯，並新增 AI 雙重評分機制。
+
+🎯 核心需求 1：AI 雙重評分與回饋機制 (Backend / Prompting 預備)
+當學生繳交錄音檔後，AI 批改引擎必須同時輸出以下兩種評分與說明：
+
+扣分制評分 (Rule-based Deduction): 依據原先設定的嚴格扣分標準（例如發音錯誤扣幾分、遺漏字扣幾分）進行計算。
+
+AI 總體給分 (Holistic AI Score): AI 基於語調、流暢度、文法綜合評估出的獨立分數。
+
+詳細回饋 (Reasoning Feedback): AI 必須強制輸出「給分原因」與「具體扣分原因」的文字說明。
+(註：前端介面需保留對應的開關 use_ai_grading 與 use_ai_grammar，後端 Prompt 需依此規則改寫。)
+
+🎯 核心需求 2：批改文稿區塊 (AI 評分基準 / The Golden Anchor)
+此區塊的用途是產生 100% 純淨的文字 (original_script) 供 AI 比對。
+UI 需提供一個下拉選單 (Source Type)，包含以下三個選項：
+
+選項 A：貼上文字 (Text)
+
+UI 呈現： 僅顯示純文字輸入框 (Textarea)。
+
+選項 B：Drive 連結萃取 (Drive)
+
+邏輯： 必須同時相容 PDF 與 Excel 網址。
+
+UI 呈現：
+
+欄位 1：Drive 網址輸入框 (URL)。
+
+欄位 2：工作表/活頁 (Sheet) - 若為 Excel 則填寫，PDF 則忽略。
+
+欄位 3：指定範圍 (Range) - Excel 填 A1:B20，PDF 填 pp.3~4。
+
+按鈕：[執行萃取] (呼叫 GAS API，回傳文字至 Textarea)。
+
+選項 C：Local 本機檔案 (Local)
+
+邏輯： 必須同時支援上傳 PDF (.pdf) 與 Excel (.xlsx, .csv)。
+
+UI 呈現：
+
+欄位 1：選擇檔案按鈕 (File Input)。
+
+欄位 2：工作表/活頁 (Sheet) - 若上傳 Excel 則填寫。
+
+欄位 3：指定範圍 (Range) - 若上傳 Excel 則填寫。
+
+按鈕：[執行萃取] (前端利用 PDF.js 或 SheetJS 進行本地解析，回傳文字至 Textarea)。
+
+🎯 核心需求 3：學生端文稿區塊 (錄音視覺教材)
+此區塊的用途是提供學生在錄音時觀看的畫面。
+UI 需提供一個下拉選單 (Source Type)，包含以下三個選項（文字標籤需與截圖完全一致）：
+
+選項 A：貼上文字
+
+UI 呈現： 僅顯示純文字輸入框 (Textarea)。
+
+選項 B：Drive 連結 / 雲端
+
+邏輯： 必須同時支援 PDF 與 Excel。
+
+UI 呈現：
+
+欄位 1：Drive 網址輸入框 (URL)。
+
+欄位 2：指定範圍/說明 (Range/Description)。
+
+下拉選單：[📚 從資源庫選擇] (連動班級/全域資源)。
+
+選項 C：Local 本機檔案
+
+邏輯： 必須同時支援 PDF 與 Excel。
+
+UI 呈現：
+
+欄位 1：選擇檔案按鈕 (File Input)。
+
+欄位 2：指定範圍/說明 (Range/Description)。
+
+(註：此區塊的檔案最終需透過後端機制上傳至雲端並轉為視覺 URL 供學生讀取)。
+
+🎯 核心需求 4：資料結構綁定 (Store Layer)
+store-assignment-builder.js 必須嚴格同步上述所有欄位至 bState.tasks[x].raw_data 的 JSONB 結構中，不允許任何欄位遺漏。必須涵蓋：
+
+AI 開關狀態 (use_ai_grading, use_ai_grammar)
+
+AI 來源狀態 (ai_source_type, ai_drive_url, ai_sheet, ai_range, ai_local_file_name...)
+
+最終純淨文稿 (original_script - 需經過無情淨化引擎清洗)
+
+學生來源狀態 (student_source_type, student_drive_url, student_range, student_text...)
