@@ -1,9 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v14.6.0 (無假按鈕、無省略版)：
+ * 🌟 純視覺模板工廠 v14.7.0：
+ * - 實裝真實的前端 Excel (.xlsx, .xls) 解析，結合 SheetJS，支援指定活頁與範圍。
  * - 徹底對齊「Drive / Local / 貼上文字」三大資料來源結構。
- * - 恢復學生端 Drive 連結的「資源庫下拉選單」。
- * - 實裝真正的 Local Excel (xlsx, csv) 瀏覽器端解析器，拒絕 alert 假按鈕。
  */
 
 window.TimelineTemplates = (() => {
@@ -334,7 +333,6 @@ window.TimelineTemplates = (() => {
                     const safeStudentDriveUrl = (raw.student_drive_url || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_text || '').replace(/"/g, '&quot;');
 
-                    // ⚠️ 成功找回的「學生端資源庫下拉選單」
                     let resOptsHtmlForStudentDrive = '';
                     if (classResOpts) {
                         resOptsHtmlForStudentDrive = `<select class="form-control" style="width:auto; padding:6px; font-size:0.85rem; border-radius:4px; border:1px solid #CBD5E1;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-student-drive-url-${pathStr}');">
@@ -367,7 +365,7 @@ window.TimelineTemplates = (() => {
                                         ">
                                             <option value="text" ${aiSourceType === 'text' ? 'selected' : ''}>📝 貼上文字</option>
                                             <option value="drive" ${aiSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結萃取</option>
-                                            <option value="local" ${aiSourceType === 'local' ? 'selected' : ''}>📂 Local 本機檔案</option>
+                                            <option value="local" ${aiSourceType === 'local' ? 'selected' : ''}>📂 Local 端開啟檔案</option>
                                         </select>
                                     </div>
 
@@ -395,7 +393,7 @@ window.TimelineTemplates = (() => {
                                         ">執行萃取</button>
                                     </div>
 
-                                    <!-- ⚠️ 真實實作：AI Source Local (.pdf, .xlsx, .csv, .txt) -->
+                                    <!-- ⚠️ 真實實作：AI Source Local (.pdf, .xlsx, .xls, .csv, .txt) -->
                                     <div id="ai-source-local-${pathStr}" style="display:${aiSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px; align-items:center;">
                                         <input type="file" id="node-ai-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,.txt" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
                                         <input type="text" id="node-ai-local-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁 (Excel用)" value="${safeAiLocalSheet}">
@@ -415,36 +413,35 @@ window.TimelineTemplates = (() => {
                                                 const reader = new FileReader();
                                                 reader.onload = e => { targetArea.value = e.target.result; alert('✅ 讀取成功！'); btn.innerText = '前端解析取字'; btn.disabled = false; };
                                                 reader.readAsText(file);
-                                            } else {
-                                                if(!window.XLSX) {
-                                                    const script = document.createElement('script');
-                                                    script.src = 'https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js';
-                                                    script.onload = () => parseLocalExcel(file);
-                                                    document.head.appendChild(script);
-                                                } else { parseLocalExcel(file); }
-                                                
-                                                function parseLocalExcel(f) {
-                                                    const reader = new FileReader();
-                                                    reader.onload = e => {
-                                                        try {
-                                                            const data = new Uint8Array(e.target.result);
-                                                            const workbook = XLSX.read(data, {type: 'array'});
-                                                            const sheetName = document.getElementById('node-ai-local-sheet-${pathStr}').value || workbook.SheetNames[0];
-                                                            const worksheet = workbook.Sheets[sheetName];
-                                                            if(!worksheet) throw new Error('找不到工作表: ' + sheetName);
-                                                            
-                                                            const rangeVal = document.getElementById('node-ai-local-range-${pathStr}').value;
-                                                            const options = { header: 1 };
-                                                            if(rangeVal) options.range = rangeVal;
-                                                            
-                                                            const json = XLSX.utils.sheet_to_json(worksheet, options);
-                                                            targetArea.value = json.map(row => Object.values(row).join(' ')).join('\\n');
-                                                            alert('✅ Local Excel 取字成功！');
-                                                        } catch(err) { alert('❌ Excel 解析失敗: ' + err.message); }
-                                                        finally { btn.innerText = '前端解析取字'; btn.disabled = false; }
-                                                    };
-                                                    reader.readAsArrayBuffer(f);
+                                            } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                                                if(typeof XLSX === 'undefined') {
+                                                    alert('❌ 找不到 Excel 解析模組 (SheetJS)，請確認 index.html 是否有正確載入。');
+                                                    btn.innerText = '前端解析取字'; btn.disabled = false;
+                                                    return;
                                                 }
+                                                const reader = new FileReader();
+                                                reader.onload = e => {
+                                                    try {
+                                                        const data = new Uint8Array(e.target.result);
+                                                        const workbook = XLSX.read(data, {type: 'array'});
+                                                        const sheetName = document.getElementById('node-ai-local-sheet-${pathStr}').value || workbook.SheetNames[0];
+                                                        const worksheet = workbook.Sheets[sheetName];
+                                                        if(!worksheet) throw new Error('找不到工作表: ' + sheetName);
+                                                        
+                                                        const rangeVal = document.getElementById('node-ai-local-range-${pathStr}').value;
+                                                        const options = { header: 1 };
+                                                        if(rangeVal) options.range = rangeVal;
+                                                        
+                                                        const json = XLSX.utils.sheet_to_json(worksheet, options);
+                                                        targetArea.value = json.map(row => Object.values(row).join(' ')).join('\\n');
+                                                        alert('✅ Local Excel 取字成功！');
+                                                    } catch(err) { alert('❌ Excel 解析失敗: ' + err.message); }
+                                                    finally { btn.innerText = '前端解析取字'; btn.disabled = false; }
+                                                };
+                                                reader.readAsArrayBuffer(file);
+                                            } else {
+                                                alert('不支援的檔案格式。');
+                                                btn.innerText = '前端解析取字'; btn.disabled = false;
                                             }
                                         ">前端解析取字</button>
                                     </div>
