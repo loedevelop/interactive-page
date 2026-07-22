@@ -1,11 +1,11 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v67 終極自動上雲防護版：
- * 導入 handleStudentLocalFileChange 與 saveBlock 攔截器。
- * 老師選取 Local 檔案，存檔時會自動呼叫 GAS 上傳至雲端，神不知鬼不覺轉為 Drive 網址！
+ * 🌟 v68 集中收納防護版：
+ * 1. 確保學生端上傳的教材絕對存入 _material 子資料夾。
+ * 2. 貫徹鐵律：學生的教材 PDF 絕對只做 Base64 轉換，不做任何文字解析。
  */
 
-console.log("🚀 FeatureTimeline v67 載入成功！(支援學生端 Local 檔案自動上雲)");
+console.log("🚀 FeatureTimeline v68 載入成功！(強制收納 _material 與無解析上傳鐵律)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -337,6 +337,7 @@ window.FeatureTimeline = (() => {
             }
         },
 
+        // 🌟 鐵律實作：學生教材專用，純 Base64 轉換，絕不呼叫 PDF 解析！
         handleStudentLocalFileChange: (inputEl, pathStr) => {
             const file = inputEl.files[0];
             if (!file) {
@@ -367,6 +368,7 @@ window.FeatureTimeline = (() => {
             reader.readAsDataURL(file);
         },
 
+        // 給 AI 批改基準 (original_script) 使用的 PDF 解析工具 (與學生端無關)
         handlePDFUpload: async (inputEl, pathStr) => {
             const file = inputEl.files[0];
             if (!file) return;
@@ -471,13 +473,15 @@ window.FeatureTimeline = (() => {
                                     throw new Error('系統錯誤：找不到 GasService 模組或函數');
                                 }
 
+                                // 🌟 呼叫 API 並強制指定寫入 _material 資料夾
                                 const fileUrl = await window.GasService.uploadStudentLocalFile(
                                     raw.student_local_b64,
                                     raw.student_local_filename,
                                     raw.student_local_mime,
                                     targetFolderId,
                                     bState.editId || '',
-                                    t.id
+                                    t.id,
+                                    '_material'
                                 );
 
                                 // 🚀 上傳成功，轉化為 Drive 模式存檔

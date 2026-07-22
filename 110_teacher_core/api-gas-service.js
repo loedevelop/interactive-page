@@ -75,9 +75,10 @@ window.GasService = (function() {
      * @param {string} folderId - 欲存入的 Google Drive 資料夾 ID
      * @param {string} assignId - 紀錄用的作業 ID (可選)
      * @param {string} taskId - 紀錄用的任務 ID (可選)
+     * @param {string} subFolderName - 強制收納的子資料夾名稱
      * @returns {Promise<string>} - 回傳上傳成功後的 Drive File URL
      */
-    async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '') {
+    async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '', subFolderName = '_material') {
       try {
         const payload = {
           action: 'upload_file',
@@ -85,6 +86,7 @@ window.GasService = (function() {
           fileName: fileName,
           mimeType: mimeType,
           folderId: folderId,
+          subFolderName: subFolderName, // 打包送給 GAS
           assignmentId: assignId,
           taskId: taskId
         };
