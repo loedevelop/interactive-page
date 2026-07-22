@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：110_teacher_core/store-assignment-builder.js
- * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v14.4.0
- * - 全面支援「依據 Source 切換」的新版架構。
+ * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v14.5.0
+ * - 無遺漏捕捉 AI批改(Drive/Local/PDF/Text) 與 學生端(Drive/PDF/Text) 所有切換欄位。
  */
 window.BuilderStore = (() => {
     'use strict';
@@ -64,7 +64,6 @@ window.BuilderStore = (() => {
                     if (useAiEl) t.raw_data.use_ai_grading = useAiEl.checked;
                     if (useGrammarEl) t.raw_data.use_ai_grammar = useGrammarEl.checked; 
 
-                    // AI 批改基準
                     const aiSourceTypeEl = document.getElementById(`node-ai-source-type-${pathStr}`);
                     if (aiSourceTypeEl) t.raw_data.ai_source_type = aiSourceTypeEl.value;
 
@@ -80,7 +79,6 @@ window.BuilderStore = (() => {
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
                     if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
 
-                    // 學生端教材
                     const studentSourceTypeEl = document.getElementById(`node-student-source-type-${pathStr}`);
                     if (studentSourceTypeEl) t.raw_data.student_source_type = studentSourceTypeEl.value;
 
@@ -89,11 +87,6 @@ window.BuilderStore = (() => {
 
                     const studentRangeEl = document.getElementById(`node-student-range-${pathStr}`);
                     if (studentRangeEl) t.raw_data.student_range = studentRangeEl.value;
-
-                    const studentLocalRangeEl = document.getElementById(`node-student-local-range-${pathStr}`);
-                    if (studentLocalRangeEl && studentSourceTypeEl && studentSourceTypeEl.value === 'local') {
-                        t.raw_data.student_range = studentLocalRangeEl.value;
-                    }
 
                     const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
                     if (studentTextEl) t.raw_data.student_text = studentTextEl.value;
