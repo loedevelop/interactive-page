@@ -3,11 +3,23 @@
  * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦
  * 職責：管理記憶體內的 bState 樹狀結構、負責節點的增刪改查與 DOM 狀態同步。
  * 規範：不發送 API、不依賴外部 DB，純粹的資料結構守護者。
+ * 升級：實裝「無情淨化引擎 (Ruthless Sanitization)」，強制淨化 AI 批改基準文本。
  */
 window.BuilderStore = (() => {
     'use strict';
     
     let bState = null;
+
+    // --- 🛡️ 內部私有輔助：無情淨化引擎 ---
+    function sanitizeScript(text) {
+        if (!text) return '';
+        return text
+            .replace(/<[^>]*>?/gm, '') // 1. 徹底去除任何混入的 HTML 標籤
+            .replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)) // 2. 全形英文/數字/符號強制轉半形
+            .replace(/\u3000/g, ' ') // 3. 全形空白轉半形空白
+            .replace(/[^\S\r\n]+/g, ' ') // 4. 壓縮連續空白(不含換行)為單一空白，防止斷詞誤判
+            .trim();
+    }
 
     // --- 內部私有方法：DOM 狀態同步與樹狀走訪 ---
     function syncTasksState(tasks, parentPathArray = []) {
@@ -54,12 +66,17 @@ window.BuilderStore = (() => {
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
                     const matUrlEl = document.getElementById(`node-material-url-${pathStr}`);
                     const matRangeEl = document.getElementById(`node-material-range-${pathStr}`);
-                    const useAiEl = document.getElementById(`node-use-ai-${pathStr}`); // 🔴 捕捉 AI 開關
+                    const useAiEl = document.getElementById(`node-use-ai-${pathStr}`); 
+                    const useGrammarEl = document.getElementById(`node-use-grammar-${pathStr}`); // 🌟 捕捉 AI 文法糾正開關
                     
-                    if (scriptEl) t.raw_data.original_script = scriptEl.value;
+                    if (scriptEl) {
+                        // 🛡️ 觸發淨化引擎：寫入資料庫前，確保 The Golden Anchor 100% 純淨
+                        t.raw_data.original_script = sanitizeScript(scriptEl.value);
+                    }
                     if (matUrlEl) t.raw_data.material_url = matUrlEl.value;
                     if (matRangeEl) t.raw_data.material_range = matRangeEl.value;
                     if (useAiEl) t.raw_data.use_ai_grading = useAiEl.checked;
+                    if (useGrammarEl) t.raw_data.use_ai_grammar = useGrammarEl.checked; // 🌟 寫入 JSONB
                 }
             }
         });
@@ -154,8 +171,8 @@ window.BuilderStore = (() => {
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
                 due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
-                // 🌟 新增節點時，若為錄音作業則預設開啟 AI
-                raw_data: type === 'audio_record' ? { use_ai_grading: true } : {}, 
+                // 🌟 新增節點時：錄音作業預設開啟發音 AI (true)，預設關閉文法 AI (false)
+                raw_data: type === 'audio_record' ? { use_ai_grading: true, use_ai_grammar: false } : {}, 
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
         },
@@ -215,10 +232,11 @@ window.BuilderStore = (() => {
             task.type = newType;
             if (newType === 'link' && !task.url) { task.url = ''; task.url_text = ''; }
             
-            // 🌟 防呆：若切換為錄音作業且未設定 AI 屬性，預設為開啟
+            // 🌟 防呆：若切換為錄音作業且未設定 AI 屬性，預設發音為 true，文法為 false
             if (newType === 'audio_record') {
                 if (!task.raw_data) task.raw_data = {};
                 if (task.raw_data.use_ai_grading === undefined) task.raw_data.use_ai_grading = true;
+                if (task.raw_data.use_ai_grammar === undefined) task.raw_data.use_ai_grammar = false;
             }
         },
         updateNodeUrl: (pathStr, val) => {
@@ -277,9 +295,10 @@ window.BuilderStore = (() => {
                     delete cloned.resource_id;
                     if (!cloned.raw_data) cloned.raw_data = {};
                     
-                    // 🌟 複製歷史作業時，若為錄音且尚未設定 AI，預設補齊為 true
-                    if (cloned.type === 'audio_record' && cloned.raw_data.use_ai_grading === undefined) {
-                        cloned.raw_data.use_ai_grading = true;
+                    // 🌟 複製歷史作業時，若為錄音且尚未設定 AI，進行預設值補齊
+                    if (cloned.type === 'audio_record') {
+                        if (cloned.raw_data.use_ai_grading === undefined) cloned.raw_data.use_ai_grading = true;
+                        if (cloned.raw_data.use_ai_grammar === undefined) cloned.raw_data.use_ai_grammar = false;
                     }
                     if (cloned.type === 'group' && cloned.subTasks) cloned.subTasks = assignNewIdsRecursive(cloned.subTasks);
                     return cloned;

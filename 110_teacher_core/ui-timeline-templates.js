@@ -1,8 +1,9 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v13.9.4：
+ * 🌟 純視覺模板工廠 v14.0.0：
  * 徹底拔除 data-url DOM 污染，全面回歸透過 Feature 呼叫 applyResourceUrl() 進行乾淨的狀態更新。
- * 新增：於錄音作業 (audio_record) 支援「啟用 AI 輔助批改」功能開關與唯讀標籤。
+ * 新增：於錄音作業 (audio_record) 支援「啟用 AI 輔助批改」與「啟用 AI 文法糾正」功能開關與唯讀標籤。
+ * 新增：無縫整合 GasService 執行 Excel/Google Sheets 指定範圍取字，並強制掛載防呆人工核對警告。
  */
 
 window.TimelineTemplates = (() => {
@@ -44,8 +45,10 @@ window.TimelineTemplates = (() => {
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
         else if (t.type === 'audio_record') {
             const useAi = t.raw_data?.use_ai_grading !== false;
+            const useGrammar = t.raw_data?.use_ai_grammar === true; // 🌟 讀取文法糾正狀態
             const aiBadge = useAi ? `<span style="font-size:0.8rem; background:#DBEAFE; color:#1D4ED8; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">✨ AI 批改</span>` : `<span style="font-size:0.8rem; background:#F1F5F9; color:#64748B; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">👨‍🏫 手工批改</span>`;
-            extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}`;
+            const grammarBadge = useGrammar ? `<span style="font-size:0.8rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">📝 文法糾正</span>` : '';
+            extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}${grammarBadge}`;
         }
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
@@ -319,6 +322,7 @@ window.TimelineTemplates = (() => {
                 if (t.type === 'audio_record') {
                     const raw = t.raw_data || {};
                     const useAi = raw.use_ai_grading !== false; // 預設為 true
+                    const useAiGrammar = raw.use_ai_grammar === true; // 🌟 新增：文法糾正開關 (預設為 false)
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;');
                     const safeRange = (raw.material_range || '').replace(/"/g, '&quot;');
@@ -333,7 +337,7 @@ window.TimelineTemplates = (() => {
 
                     audioInputHtml = `
                         <div style="margin-top:10px; width:100%;">
-                            <!-- 🌟 新增：AI 開關 -->
+                            <!-- 🌟 AI 發音批改開關 -->
                             <div style="margin-bottom: 12px; background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
                                 <div>
                                     <div style="font-weight: 900; color: #4338CA; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
@@ -352,15 +356,54 @@ window.TimelineTemplates = (() => {
                                 </label>
                             </div>
 
+                            <!-- 🌟 新增：AI 文法糾正開關 (自由回覆適用) -->
+                            <div style="margin-bottom: 12px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <div style="font-weight: 900; color: #D97706; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
+                                        📝 啟用 AI 文法糾正 (自由回覆適用)
+                                    </div>
+                                    <div style="font-size: 0.8rem; color: #B45309; margin-top: 4px; font-weight: bold;">
+                                        開啟後，AI 將針對學生的語音內容進行文法與用詞的糾錯分析。
+                                    </div>
+                                </div>
+                                <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
+                                    <span id="label-use-grammar-${pathStr}" style="font-size: 0.9rem; font-weight: 800; color: ${useAiGrammar ? '#D97706' : '#94A3B8'};">
+                                        ${useAiGrammar ? '✅ 已啟用' : '❌ 已停用'}
+                                    </span>
+                                    <input type="checkbox" id="node-use-grammar-${pathStr}" style="transform: scale(1.5); cursor: pointer; accent-color: #F59E0B;" ${useAiGrammar ? 'checked' : ''} 
+                                           onchange="document.getElementById('label-use-grammar-${pathStr}').innerHTML = this.checked ? '✅ 已啟用' : '❌ 已停用'; document.getElementById('label-use-grammar-${pathStr}').style.color = this.checked ? '#D97706' : '#94A3B8';">
+                                </label>
+                            </div>
+
                             <details style="background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:10px; outline:none;" open>
                                 <summary style="font-weight:900; color:#4F46E5; cursor:pointer; outline:none; user-select:none;">⚙️ 錄音原稿與擷取範圍設定 (點擊展開/收合)</summary>
                                 <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; padding-top:10px; border-top:1px dashed #A5B4FC;">
                                     <div>
                                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:5px;">
                                             <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">1. 學生端顯示文本 (可直接貼上，或由後端抽出後填入)：</label>
-                                            <input type="file" id="pdf-upload-${pathStr}" accept="application/pdf" style="display:none;" onchange="window.FeatureTimeline.handlePDFUpload(this, '${pathStr}')">
-                                            <button class="btn-action" style="font-size:0.8rem; background:#4F46E5; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(79, 70, 229, 0.3);" onclick="document.getElementById('pdf-upload-${pathStr}').click()">📄 快速匯入 PDF 取字</button>
+                                            <div style="display:flex; gap: 8px;">
+                                                <button class="btn-action" style="font-size:0.8rem; background:#10B981; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(16, 185, 129, 0.3);" onclick="
+                                                    const url = document.getElementById('node-material-url-${pathStr}').value;
+                                                    const range = document.getElementById('node-material-range-${pathStr}').value;
+                                                    const targetArea = document.getElementById('node-script-${pathStr}');
+                                                    if(!url) return alert('請先在下方【2. 雲端素材來源】填寫 Excel 或 Google Sheets 網址！');
+                                                    const btn = this; btn.innerText = '⏳ 萃取中...'; btn.disabled = true;
+                                                    window.GasService.extractSheetData(url, 'Sheet1', range || 'A1:B20')
+                                                    .then(text => { 
+                                                        targetArea.value = text; 
+                                                        alert('✅ Excel 萃取成功！\\n\\n⚠️ 【架構師防呆提醒】\\n請務必人工核對 Textarea 內的文字，清除可能殘留的亂碼或排版符號，確保 AI 批改基準 (唯一真理) 的 100% 純淨。'); 
+                                                    })
+                                                    .catch(err => { alert('❌ 萃取失敗：' + err.message); })
+                                                    .finally(() => { btn.innerText = '📊 自 Excel 網址萃取'; btn.disabled = false; });
+                                                ">📊 自 Excel 網址萃取</button>
+                                                <input type="file" id="pdf-upload-${pathStr}" accept="application/pdf" style="display:none;" onchange="
+                                                    window.FeatureTimeline.handlePDFUpload(this, '${pathStr}');
+                                                    setTimeout(() => alert('⚠️ 【架構師防呆提醒】\\nPDF 萃取極易產生亂碼 (如：底線、頁碼)。\\n\\n請務必人工核對 Textarea 內的文字並清除雜訊，確保 AI 批改基準 (唯一真理) 100% 純淨！'), 500);
+                                                ">
+                                                <button class="btn-action" style="font-size:0.8rem; background:#4F46E5; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(79, 70, 229, 0.3);" onclick="document.getElementById('pdf-upload-${pathStr}').click()">📄 快速匯入 PDF 取字</button>
+                                            </div>
                                         </div>
+                                        <div style="font-size:0.85rem; color:#EF4444; font-weight:900; margin-top:5px; background: #FEF2F2; padding: 6px 10px; border-radius: 4px; border: 1px dashed #FCA5A5;">⚠️ 萃取後請務必人工核對與清除亂碼，AI 將 100% 依據此框內的純淨文字進行發音比對。</div>
                                         <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:100px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="在此貼上純文字原稿，學生錄音時可同步看稿...">${safeScript}</textarea>
                                     </div>
                                     <div style="display:flex; gap:15px; flex-wrap:wrap;">
@@ -373,7 +416,7 @@ window.TimelineTemplates = (() => {
                                         </div>
                                         <div style="flex:1; min-width:140px;">
                                             <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">3. 指定擷取範圍：</label>
-                                            <input type="text" id="node-material-range-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="例: pp. 3~4 或 #31~49" value="${safeRange}">
+                                            <input type="text" id="node-material-range-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="Excel例: A1:B20 / PDF例: pp. 3~4" value="${safeRange}">
                                         </div>
                                     </div>
                                     <div style="font-size:0.8rem; color:#4F46E5; font-weight:bold; margin-top:4px;">💡 未來將透過 Python 出題引擎，根據您設定的「網址」與「範圍」，自動擷取並派發文本。</div>
