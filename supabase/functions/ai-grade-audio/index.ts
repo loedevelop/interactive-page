@@ -1,9 +1,10 @@
 // 📂 檔案：supabase/functions/ai-grade-audio/index.ts
-// 🌟 100% 完整無省略：Google Drive OAuth + Gemini Multimodal + Supabase Service Role
+// 🌟 100% 完整無省略：Google Drive OAuth + Gemini Multimodal + Supabase Service Role + Native Base64 + Response Schema
 
-import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { GoogleAuth } from "https://esm.sh/google-auth-library@9.6.3";
+import { serve } from "[https://deno.land/std@0.192.0/http/server.ts](https://deno.land/std@0.192.0/http/server.ts)";
+import { createClient } from "[https://esm.sh/@supabase/supabase-js@2.39.3](https://esm.sh/@supabase/supabase-js@2.39.3)";
+import { GoogleAuth } from "[https://esm.sh/google-auth-library@9.6.3](https://esm.sh/google-auth-library@9.6.3)";
+import { encode } from "[https://deno.land/std@0.192.0/encoding/base64.ts](https://deno.land/std@0.192.0/encoding/base64.ts)";
 
 // 定義 CORS 標頭，允許前端直呼或 Webhook 觸發
 const corsHeaders = {
@@ -41,13 +42,13 @@ serve(async (req) => {
     const credentials = JSON.parse(serviceAccountJsonStr);
     const auth = new GoogleAuth({
       credentials,
-      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+      scopes: ["[https://www.googleapis.com/auth/drive.readonly](https://www.googleapis.com/auth/drive.readonly)"],
     });
     const driveClient = await auth.getClient();
     const { token: driveAccessToken } = await driveClient.getAccessToken();
 
-    // 4. 下載 Google Drive 音檔並轉為 Base64
-    const driveFileUrl = `https://www.googleapis.com/drive/v3/files/${file_drive_id}?alt=media`;
+    // 4. 下載 Google Drive 音檔並轉為 Base64 (🚀 優化：使用 Deno 原生 encode，防記憶體溢出)
+    const driveFileUrl = `[https://www.googleapis.com/drive/v3/files/$](https://www.googleapis.com/drive/v3/files/$){file_drive_id}?alt=media`;
     const driveResponse = await fetch(driveFileUrl, {
       headers: { Authorization: `Bearer ${driveAccessToken}` },
     });
@@ -57,14 +58,7 @@ serve(async (req) => {
     }
 
     const arrayBuffer = await driveResponse.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // 將 Uint8Array 轉為 Base64 (Deno 寫法)
-    let binaryString = "";
-    for (let i = 0; i < uint8Array.byteLength; i++) {
-      binaryString += String.fromCharCode(uint8Array[i]);
-    }
-    const audioBase64 = btoa(binaryString);
+    const audioBase64 = encode(new Uint8Array(arrayBuffer));
 
     // 5. 建構 Gemini Prompt (動態對齊鐵律)
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
@@ -90,23 +84,10 @@ serve(async (req) => {
       1. Pronunciation Score: Calculate exactly as (100 - total number of distinct word errors). If there are 5 errors, the score is 95.
       2. Fluency Score: You MUST choose ONLY one of these exact values: 90 (Native-like), 80 (Clear, no meaning lost), 70 (Minor interference), 60 (Meaning confused/broken).
       3. Word Errors: Provide the exact misspelled or mispronounced word, the correct phonetic symbol in ${phoneticFormat} format, and a brief tip.
-
-      You must return ONLY a valid JSON object strictly matching this schema:
-      {
-        "pronunciation_score": number,
-        "fluency_score": number,
-        "comprehensive_feedback": "string (Overall positive and constructive feedback)",
-        "word_errors": [
-          { "word": "string", "phonetic": "string", "tip": "string" }
-        ],
-        "grammar_corrections": [
-          { "original": "string", "correction": "string", "explanation": "string" }
-        ]
-      }
     `;
 
-    // 6. 呼叫 Gemini 1.5 Pro API (強制要求 JSON 回傳)
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${geminiApiKey}`;
+    // 6. 呼叫 Gemini 1.5 Pro API (🚀 優化：強制綁定 responseSchema 合約)
+    const geminiUrl = `[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=$](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=$){geminiApiKey}`;
     const geminiResponse = await fetch(geminiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -120,7 +101,41 @@ serve(async (req) => {
           }
         ],
         generationConfig: {
-          response_mime_type: "application/json",
+          temperature: 0.2,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              pronunciation_score: { type: "INTEGER" },
+              fluency_score: { type: "INTEGER" },
+              comprehensive_feedback: { type: "STRING" },
+              word_errors: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    word: { type: "STRING" },
+                    phonetic: { type: "STRING" },
+                    tip: { type: "STRING" }
+                  },
+                  required: ["word", "phonetic", "tip"]
+                }
+              },
+              grammar_corrections: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    original: { type: "STRING" },
+                    correction: { type: "STRING" },
+                    explanation: { type: "STRING" }
+                  },
+                  required: ["original", "correction", "explanation"]
+                }
+              }
+            },
+            required: ["pronunciation_score", "fluency_score", "comprehensive_feedback", "word_errors", "grammar_corrections"]
+          }
         }
       }),
     });
@@ -135,7 +150,6 @@ serve(async (req) => {
     const aiEvaluation = JSON.parse(rawAiResultText);
 
     // 7. 寫回 Supabase (軟刪除與 JSONB 擴充鐵律)
-    // 取得舊資料以確保 grading_history 不被覆蓋
     const { data: existingRecord, error: fetchError } = await supabase
       .from("task_completions")
       .select("raw_data")
