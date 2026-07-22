@@ -1,15 +1,13 @@
 /**
  * 📂 檔案路徑：110_teacher_core/store-assignment-builder.js
- * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦
- * 職責：管理記憶體內的 bState 樹狀結構、負責節點的增刪改查與 DOM 狀態同步。
- * 升級：實裝「無情淨化引擎」與「三位一體分離架構 (PDF / Excel分離寫入)」。
+ * 🌟 第三層 (State Store)：作業編輯器狀態管理大腦 v14.4.0
+ * - 全面支援「依據 Source 切換」的新版架構。
  */
 window.BuilderStore = (() => {
     'use strict';
     
     let bState = null;
 
-    // --- 🛡️ 內部私有輔助：無情淨化引擎 ---
     function sanitizeScript(text) {
         if (!text) return '';
         return text
@@ -20,7 +18,6 @@ window.BuilderStore = (() => {
             .trim();
     }
 
-    // --- 內部私有方法：DOM 狀態同步與樹狀走訪 ---
     function syncTasksState(tasks, parentPathArray = []) {
         tasks.forEach((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -59,27 +56,47 @@ window.BuilderStore = (() => {
                     t.description = (text === '') ? '' : descEl.innerHTML;
                 }
 
-                // 🌟 新增：針對語音錄製任務，捕捉拆分後的三區塊資料
                 if (t.type === 'audio_record') {
                     if (!t.raw_data) t.raw_data = {};
-                    const scriptEl = document.getElementById(`node-script-${pathStr}`);
-                    const matUrlEl = document.getElementById(`node-material-url-${pathStr}`);
-                    const excelUrlEl = document.getElementById(`node-excel-url-${pathStr}`);
-                    const excelSheetEl = document.getElementById(`node-excel-sheet-${pathStr}`);
-                    const excelRangeEl = document.getElementById(`node-excel-range-${pathStr}`);
+                    
                     const useAiEl = document.getElementById(`node-use-ai-${pathStr}`); 
                     const useGrammarEl = document.getElementById(`node-use-grammar-${pathStr}`);
-                    
-                    if (scriptEl) {
-                        t.raw_data.original_script = sanitizeScript(scriptEl.value); // 觸發淨化引擎
-                    }
-                    if (matUrlEl) t.raw_data.material_url = matUrlEl.value; // 學生 PDF 網址
-                    if (excelUrlEl) t.raw_data.excel_source_url = excelUrlEl.value; // 教師 Excel 網址
-                    if (excelSheetEl) t.raw_data.excel_sheet = excelSheetEl.value; // 教師 Excel 工作表
-                    if (excelRangeEl) t.raw_data.excel_range = excelRangeEl.value; // 教師 Excel 範圍
-
                     if (useAiEl) t.raw_data.use_ai_grading = useAiEl.checked;
                     if (useGrammarEl) t.raw_data.use_ai_grammar = useGrammarEl.checked; 
+
+                    // AI 批改基準
+                    const aiSourceTypeEl = document.getElementById(`node-ai-source-type-${pathStr}`);
+                    if (aiSourceTypeEl) t.raw_data.ai_source_type = aiSourceTypeEl.value;
+
+                    const aiDriveUrlEl = document.getElementById(`node-ai-drive-url-${pathStr}`);
+                    if (aiDriveUrlEl) t.raw_data.ai_drive_url = aiDriveUrlEl.value;
+
+                    const aiSheetEl = document.getElementById(`node-ai-sheet-${pathStr}`);
+                    if (aiSheetEl) t.raw_data.ai_sheet = aiSheetEl.value;
+
+                    const aiRangeEl = document.getElementById(`node-ai-range-${pathStr}`);
+                    if (aiRangeEl) t.raw_data.ai_range = aiRangeEl.value;
+
+                    const scriptEl = document.getElementById(`node-script-${pathStr}`);
+                    if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
+
+                    // 學生端教材
+                    const studentSourceTypeEl = document.getElementById(`node-student-source-type-${pathStr}`);
+                    if (studentSourceTypeEl) t.raw_data.student_source_type = studentSourceTypeEl.value;
+
+                    const studentDriveUrlEl = document.getElementById(`node-student-drive-url-${pathStr}`);
+                    if (studentDriveUrlEl) t.raw_data.student_drive_url = studentDriveUrlEl.value;
+
+                    const studentRangeEl = document.getElementById(`node-student-range-${pathStr}`);
+                    if (studentRangeEl) t.raw_data.student_range = studentRangeEl.value;
+
+                    const studentLocalRangeEl = document.getElementById(`node-student-local-range-${pathStr}`);
+                    if (studentLocalRangeEl && studentSourceTypeEl && studentSourceTypeEl.value === 'local') {
+                        t.raw_data.student_range = studentLocalRangeEl.value;
+                    }
+
+                    const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
+                    if (studentTextEl) t.raw_data.student_text = studentTextEl.value;
                 }
             }
         });
@@ -125,7 +142,6 @@ window.BuilderStore = (() => {
         return current.subTasks;
     }
 
-    // --- 暴露的公開 API ---
     return {
         initNew: (classId, date, containerId) => {
             bState = { 
@@ -159,7 +175,6 @@ window.BuilderStore = (() => {
         
         getTaskParentArray: getTaskParentArray,
 
-        // --- 節點樹狀操作引擎 ---
         addNode: (pathStr, type) => {
             syncState();
             let targetArr;
@@ -174,7 +189,7 @@ window.BuilderStore = (() => {
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
                 due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
-                raw_data: type === 'audio_record' ? { use_ai_grading: true, use_ai_grammar: false } : {}, 
+                raw_data: type === 'audio_record' ? { use_ai_grading: true, use_ai_grammar: false, ai_source_type: 'text', student_source_type: 'text' } : {}, 
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
         },
@@ -238,6 +253,8 @@ window.BuilderStore = (() => {
                 if (!task.raw_data) task.raw_data = {};
                 if (task.raw_data.use_ai_grading === undefined) task.raw_data.use_ai_grading = true;
                 if (task.raw_data.use_ai_grammar === undefined) task.raw_data.use_ai_grammar = false;
+                if (task.raw_data.ai_source_type === undefined) task.raw_data.ai_source_type = 'text';
+                if (task.raw_data.student_source_type === undefined) task.raw_data.student_source_type = 'text';
             }
         },
         updateNodeUrl: (pathStr, val) => {
@@ -299,6 +316,8 @@ window.BuilderStore = (() => {
                     if (cloned.type === 'audio_record') {
                         if (cloned.raw_data.use_ai_grading === undefined) cloned.raw_data.use_ai_grading = true;
                         if (cloned.raw_data.use_ai_grammar === undefined) cloned.raw_data.use_ai_grammar = false;
+                        if (cloned.raw_data.ai_source_type === undefined) cloned.raw_data.ai_source_type = 'text';
+                        if (cloned.raw_data.student_source_type === undefined) cloned.raw_data.student_source_type = 'text';
                     }
                     if (cloned.type === 'group' && cloned.subTasks) cloned.subTasks = assignNewIdsRecursive(cloned.subTasks);
                     return cloned;

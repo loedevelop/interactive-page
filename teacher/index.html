@@ -44,7 +44,6 @@
                 <button class="tab-btn active" data-target="view-progress">📅 課程進度</button>
                 <button class="tab-btn" data-target="view-progress-report" onclick="if(window.FeatureProgress && window.TeacherUI) window.FeatureProgress.renderProgressReport(window.TeacherUI.getCurrentClassId());">📈 班級進度總表</button>
                 
-                <!-- 🌟 第 8 點修正：移除「矩陣」字眼，並且移除突兀的 inline CSS 藍框，回歸清爽原廠 UI -->
                 <button class="tab-btn" data-target="view-gradebook">🎙️ 批改與成績</button>
 
                 <button class="tab-btn" data-target="view-resources">📁 班級資源</button>
@@ -59,7 +58,6 @@
             <div id="progress-report-container"></div>
         </div>
 
-        <!-- 🌟 第 8 點修正：內容區塊移除矩陣字眼，文案極簡化 -->
         <div id="view-gradebook" class="view-section">
             <div class="top-bar" style="margin-bottom: 20px;">
                 <div class="breadcrumb">🎙️ 語音教練與成績</div>
@@ -121,7 +119,6 @@
                 <button id="btn-save-class-dates" class="btn btn-primary btn-block">💾 儲存設定並自動鋪設排程</button>
             </div>
 
-            <!-- ⚠️ 成功搶救回來的表單：班級姓名顯示模式設定 -->
             <div class="settings-card">
                 <h3>👤 班級姓名顯示模式 (覆寫設定)</h3>
                 <p style="color:#94A3B8; font-size: 0.9rem; margin-top: 5px;">若不設定，將自動套用分校或全域預設值。</p>
@@ -147,7 +144,6 @@
         <div id="view-global-resources" class="view-section">
             <div class="top-bar"><div class="breadcrumb">📚 全域教學資源庫</div></div>
             
-            <!-- ⚠️ 成功搶救回來的表單：建立新資源並派發 -->
             <div class="settings-card">
                 <h3 id="form-title">📤 建立新資源並派發</h3>
                 <input type="hidden" id="res-existing-id" value="">
@@ -166,7 +162,6 @@
         <div id="view-manage-classes" class="view-section">
             <div class="top-bar"><div class="breadcrumb">⚙️ 班級主檔管理</div></div>
             
-            <!-- ⚠️ 成功搶救回來的表單：建立新班級 -->
             <div class="settings-card">
                 <h3 style="color: var(--primary-dark);">➕ 建立新班級</h3>
                 <div style="display: grid; grid-template-columns: 1fr 3fr; gap: 20px; align-items: end; margin-top: 15px;">
@@ -182,7 +177,6 @@
         <div id="view-profile" class="view-section">
             <div class="top-bar"><div class="breadcrumb">👤 系統帳號設定</div></div>
             
-            <!-- ⚠️ 成功搶救回來的表單：當前登入資訊卡片 -->
             <div class="settings-card" style="border: 2px solid var(--primary);">
                 <h3 style="color: var(--primary-dark); margin-top: 0;">👤 當前登入資訊</h3>
                 <div id="profile-info-card" style="margin-top: 15px; padding: 15px; background: #F8FAFC; border-radius: 10px; line-height: 1.8;">
@@ -201,7 +195,7 @@
         </div>
     </div>
 
-    <!-- 🌟 Gradebook 專屬掛載點 (Off-canvas & Popover) -->
+    <!-- 🌟 Gradebook 專屬掛載點 -->
     <div id="grading-sidebar-mount-point"></div>
     <div id="grading-popover-mount-point"></div>
 
@@ -215,13 +209,12 @@
     <script src="../020_js_core/utils-date.js?v=36"></script> 
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <!-- 🌟 注入 GAS 服務引擎 -->
-    <script src="../110_teacher_core/api-gas-service.js?v=43"></script>
+    <script src="../110_teacher_core/api-gas-service.js?v=44"></script>
     <script src="../110_teacher_core/ui-core.js?v=36"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=36"></script>
-    <!-- ⚠️ 確保載入最新的 v43 模板與 v40 store -->
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=43"></script>
-    <script src="../110_teacher_core/store-assignment-builder.js?v=40"></script> 
+    <!-- ⚠️ 確保載入最新的 v44 模板與 v41 store -->
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=44"></script>
+    <script src="../110_teacher_core/store-assignment-builder.js?v=41"></script> 
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=18"></script>
@@ -250,8 +243,6 @@
                 const sessionStr = localStorage.getItem('LogOnEnglish_Session');
                 if(sessionStr) {
                     const session = JSON.parse(sessionStr);
-                    
-                    // ⚠️ 成功搶救回來的登入身份渲染邏輯
                     const pEmail = document.getElementById('profile-email');
                     const pRole = document.getElementById('profile-role');
                     if (pEmail) pEmail.textContent = session.email;

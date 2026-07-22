@@ -1,8 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v14.1.0：
- * - 徹底拆分「學生端 PDF 網址」與「教師端 Excel 萃取網址」區塊。
- * - 強化 GAS 萃取按鈕的 Try-Catch 防護，防止 JS 錯誤導致按鈕死鎖。
+ * 🌟 純視覺模板工廠 v14.4.0：
+ * - 徹底對齊「作業為最小單位」之架構。
+ * - 批改文稿與學生文稿，皆收斂為「來源 (Drive/Local/Text)」+「範圍/活頁設定」。
  */
 
 window.TimelineTemplates = (() => {
@@ -45,8 +45,8 @@ window.TimelineTemplates = (() => {
         else if (t.type === 'audio_record') {
             const useAi = t.raw_data?.use_ai_grading !== false;
             const useGrammar = t.raw_data?.use_ai_grammar === true; 
-            const aiBadge = useAi ? `<span style="font-size:0.8rem; background:#DBEAFE; color:#1D4ED8; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">✨ AI 批改</span>` : `<span style="font-size:0.8rem; background:#F1F5F9; color:#64748B; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">👨‍🏫 手工批改</span>`;
-            const grammarBadge = useGrammar ? `<span style="font-size:0.8rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">📝 文法糾正</span>` : '';
+            const aiBadge = useAi ? `<span style="font-size:0.8rem; background:#DBEAFE; color:#1D4ED8; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">✨ 發音</span>` : ``;
+            const grammarBadge = useGrammar ? `<span style="font-size:0.8rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">📝 文法</span>` : '';
             extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}${grammarBadge}`;
         }
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
@@ -320,136 +320,114 @@ window.TimelineTemplates = (() => {
                     const raw = t.raw_data || {};
                     const useAi = raw.use_ai_grading !== false; 
                     const useAiGrammar = raw.use_ai_grammar === true; 
+                    
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     
-                    const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;'); // PDF用
-                    
-                    const safeExcelUrl = (raw.excel_source_url || '').replace(/"/g, '&quot;');
-                    const safeExcelSheet = (raw.excel_sheet || 'Sheet1').replace(/"/g, '&quot;');
-                    const safeExcelRange = (raw.excel_range || '').replace(/"/g, '&quot;');
+                    const aiSourceType = raw.ai_source_type || 'text'; // drive, local, text
+                    const safeAiDriveUrl = (raw.ai_drive_url || '').replace(/"/g, '&quot;');
+                    const safeAiSheet = (raw.ai_sheet || 'Sheet1').replace(/"/g, '&quot;');
+                    const safeAiRange = (raw.ai_range || '').replace(/"/g, '&quot;');
 
-                    let resOptsHtmlForAudio = '';
-                    if (classResOpts) {
-                        resOptsHtmlForAudio = `<select class="form-control" style="width:auto; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-material-url-${pathStr}');">
-                            <option value="" disabled selected>📚 從資源庫選擇</option>${classResOpts}
-                        </select>`;
-                    }
+                    const studentSourceType = raw.student_source_type || 'text'; // drive, local, text
+                    const safeStudentDriveUrl = (raw.student_drive_url || '').replace(/"/g, '&quot;');
+                    const safeStudentRange = (raw.student_range || '').replace(/"/g, '&quot;');
+                    const safeStudentText = (raw.student_text || '').replace(/"/g, '&quot;');
 
                     audioInputHtml = `
-                        <div style="margin-top:10px; width:100%;">
+                        <div style="margin-top:15px; width:100%; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
                             
-                            <div style="margin-bottom: 12px; background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
-                                <div>
-                                    <div style="font-weight: 900; color: #4338CA; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
-                                        ✨ 啟用 AI 語音輔助批改
-                                    </div>
-                                    <div style="font-size: 0.8rem; color: #6366F1; margin-top: 4px; font-weight: bold;">
-                                        開啟後，學生繳交錄音時將自動發送至後端進行發音與語調糾錯分析。
-                                    </div>
-                                </div>
-                                <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
-                                    <span id="label-use-ai-${pathStr}" style="font-size: 0.9rem; font-weight: 800; color: ${useAi ? '#4338CA' : '#94A3B8'};">
-                                        ${useAi ? '✅ 已啟用' : '❌ 已停用'}
-                                    </span>
-                                    <input type="checkbox" id="node-use-ai-${pathStr}" style="transform: scale(1.5); cursor: pointer; accent-color: #4F46E5;" ${useAi ? 'checked' : ''} 
-                                           onchange="document.getElementById('label-use-ai-${pathStr}').innerHTML = this.checked ? '✅ 已啟用' : '❌ 已停用'; document.getElementById('label-use-ai-${pathStr}').style.color = this.checked ? '#4338CA' : '#94A3B8';">
+                            <!-- 🌟 1. AI 開關 (極簡同行) -->
+                            <div style="display:flex; gap: 20px; align-items: center; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px dashed #CBD5E1;">
+                                <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#4338CA;">
+                                    <input type="checkbox" id="node-use-ai-${pathStr}" style="transform:scale(1.2); accent-color:#4338CA;" ${useAi ? 'checked' : ''}> ✨ AI 批改發音
+                                </label>
+                                <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#D97706;">
+                                    <input type="checkbox" id="node-use-grammar-${pathStr}" style="transform:scale(1.2); accent-color:#D97706;" ${useAiGrammar ? 'checked' : ''}> 📝 AI 批改文法
                                 </label>
                             </div>
 
-                            <div style="margin-bottom: 12px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
-                                <div>
-                                    <div style="font-weight: 900; color: #D97706; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
-                                        📝 啟用 AI 文法糾正 (自由回覆適用)
+                            <div style="display:flex; flex-direction:column; gap:15px;">
+                                
+                                <!-- 🌟 2. 批改文稿區 (AI 基準) -->
+                                <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 12px;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                                        <div style="font-weight: 900; color: #334155; font-size: 1rem;">🎯 批改文稿 (AI 評分基準)</div>
+                                        <select id="node-ai-source-type-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem; font-weight:bold; background:#EEF2FF; border-color:#A5B4FC; color:#4338CA;" onchange="
+                                            document.getElementById('ai-source-drive-${pathStr}').style.display = (this.value === 'drive') ? 'flex' : 'none';
+                                            document.getElementById('ai-source-local-${pathStr}').style.display = (this.value === 'local') ? 'flex' : 'none';
+                                        ">
+                                            <option value="text" ${aiSourceType === 'text' ? 'selected' : ''}>📝 純文字貼上</option>
+                                            <option value="drive" ${aiSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結萃取</option>
+                                            <option value="local" ${aiSourceType === 'local' ? 'selected' : ''}>📂 Local 檔案萃取</option>
+                                        </select>
                                     </div>
-                                    <div style="font-size: 0.8rem; color: #B45309; margin-top: 4px; font-weight: bold;">
-                                        開啟後，AI 將針對學生的語音內容進行文法與用詞的糾錯分析。
+
+                                    <!-- AI Source: Drive -->
+                                    <div id="ai-source-drive-${pathStr}" style="display:${aiSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px;">
+                                        <input type="url" id="node-ai-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入 Drive URL (PDF/Excel)" value="${safeAiDriveUrl}">
+                                        <input type="text" id="node-ai-sheet-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="活頁/頁碼" value="${safeAiSheet}">
+                                        <input type="text" id="node-ai-range-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="範圍 (例: A1:B20)" value="${safeAiRange}">
+                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#10B981; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
+                                            try {
+                                                const url = document.getElementById('node-ai-drive-url-${pathStr}').value;
+                                                const targetArea = document.getElementById('node-script-${pathStr}');
+                                                if(!url) return alert('請先填寫網址！');
+                                                if(typeof window.GasService === 'undefined') return alert('系統錯誤：找不到 GasService。');
+                                                const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
+                                                window.GasService.extractSheetData(url, document.getElementById('node-ai-sheet-${pathStr}').value || 'Sheet1', document.getElementById('node-ai-range-${pathStr}').value || 'A1:B20')
+                                                .then(text => { targetArea.value = text; alert('✅ 萃取成功，請人工核對內容！'); })
+                                                .catch(err => alert('❌ 失敗: ' + err.message))
+                                                .finally(() => { btn.innerText = '執行萃取'; btn.disabled = false; });
+                                            } catch(e) { alert('錯誤: ' + e.message); this.innerText = '執行萃取'; this.disabled = false; }
+                                        ">執行萃取</button>
+                                    </div>
+
+                                    <!-- AI Source: Local -->
+                                    <div id="ai-source-local-${pathStr}" style="display:${aiSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px; align-items:center;">
+                                        <input type="file" id="node-ai-local-file-${pathStr}" accept=".pdf, .xlsx, .csv, .txt" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;" onchange="window.FeatureTimeline.handlePDFUpload(this, '${pathStr}')">
+                                        <input type="text" id="node-ai-local-sheet-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="活頁/頁碼">
+                                        <input type="text" id="node-ai-local-range-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="範圍">
+                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="alert('Local Excel 萃取功能即將上線，目前請先貼上文字，或上傳 PDF 取字。')">執行萃取</button>
+                                    </div>
+
+                                    <!-- Final Script Textarea -->
+                                    <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="此處為最終 AI 評分基準。請確認內容正確純淨...">${safeScript}</textarea>
+                                </div>
+
+                                <!-- 🌟 3. 學生端文稿區 (視覺教材) -->
+                                <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 12px;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                                        <div style="font-weight: 900; color: #334155; font-size: 1rem;">👀 學生端文稿 (錄音時視覺教材)</div>
+                                        <select id="node-student-source-type-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem; font-weight:bold; background:#F0FDF4; border-color:#6EE7B7; color:#065F46;" onchange="
+                                            document.getElementById('student-source-drive-${pathStr}').style.display = (this.value === 'drive') ? 'flex' : 'none';
+                                            document.getElementById('student-source-local-${pathStr}').style.display = (this.value === 'local') ? 'flex' : 'none';
+                                            document.getElementById('student-source-text-${pathStr}').style.display = (this.value === 'text') ? 'block' : 'none';
+                                        ">
+                                            <option value="text" ${studentSourceType === 'text' ? 'selected' : ''}>📝 純文字貼上</option>
+                                            <option value="drive" ${studentSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結</option>
+                                            <option value="local" ${studentSourceType === 'local' ? 'selected' : ''}>☁️ Local 檔案上傳</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- Student Source: Drive -->
+                                    <div id="student-source-drive-${pathStr}" style="display:${studentSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
+                                        <input type="url" id="node-student-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入教材網址 (例如 Drive 連結)" value="${safeStudentDriveUrl}">
+                                        <input type="text" id="node-student-range-${pathStr}" class="form-control" style="flex:1; min-width:100px; padding:6px; font-size:0.85rem;" placeholder="指定範圍或說明 (例: Read pp.3~4)" value="${safeStudentRange}">
+                                    </div>
+
+                                    <!-- Student Source: Local -->
+                                    <div id="student-source-local-${pathStr}" style="display:${studentSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; align-items:center;">
+                                        <input type="file" id="node-student-local-file-${pathStr}" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
+                                        <input type="text" id="node-student-local-range-${pathStr}" class="form-control" style="flex:1; min-width:100px; padding:6px; font-size:0.85rem;" placeholder="指定範圍或說明" value="${safeStudentRange}">
+                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#059669; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="alert('檔案上傳至 Drive 功能整合中。目前請先使用 Drive 連結或直接貼上文字。')">上傳至雲端</button>
+                                    </div>
+
+                                    <!-- Student Source: Text -->
+                                    <div id="student-source-text-${pathStr}" style="display:${studentSourceType === 'text' ? 'block' : 'none'};">
+                                        <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="在此輸入或貼上給學生看的純文字內容...">${safeStudentText}</textarea>
                                     </div>
                                 </div>
-                                <label style="display: flex; align-items: center; cursor: pointer; gap: 10px;">
-                                    <span id="label-use-grammar-${pathStr}" style="font-size: 0.9rem; font-weight: 800; color: ${useAiGrammar ? '#D97706' : '#94A3B8'};">
-                                        ${useAiGrammar ? '✅ 已啟用' : '❌ 已停用'}
-                                    </span>
-                                    <input type="checkbox" id="node-use-grammar-${pathStr}" style="transform: scale(1.5); cursor: pointer; accent-color: #F59E0B;" ${useAiGrammar ? 'checked' : ''} 
-                                           onchange="document.getElementById('label-use-grammar-${pathStr}').innerHTML = this.checked ? '✅ 已啟用' : '❌ 已停用'; document.getElementById('label-use-grammar-${pathStr}').style.color = this.checked ? '#D97706' : '#94A3B8';">
-                                </label>
                             </div>
-
-                            <details style="background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:10px; outline:none;" open>
-                                <summary style="font-weight:900; color:#4F46E5; cursor:pointer; outline:none; user-select:none;">⚙️ 錄音原稿與擷取範圍設定 (點擊展開/收合)</summary>
-                                <div style="margin-top:12px; display:flex; flex-direction:column; gap:15px; padding-top:10px; border-top:1px dashed #A5B4FC;">
-                                    
-                                    <!-- 區塊 A：AI 批改基準 (純淨文稿) -->
-                                    <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #C7D2FE;">
-                                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:5px;">
-                                            <label style="font-size:0.9rem; font-weight:900; color:#3730A3;">1. AI 批改基準純淨文稿 (The Golden Anchor)：</label>
-                                            <div style="display:flex; gap: 8px;">
-                                                <button type="button" class="btn-action" style="font-size:0.8rem; background:#10B981; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(16, 185, 129, 0.3);" onclick="
-                                                    try {
-                                                        const url = document.getElementById('node-excel-url-${pathStr}').value;
-                                                        const range = document.getElementById('node-excel-range-${pathStr}').value;
-                                                        const sheet = document.getElementById('node-excel-sheet-${pathStr}').value || 'Sheet1';
-                                                        const targetArea = document.getElementById('node-script-${pathStr}');
-                                                        if(!url) return alert('請先在下方【3. 教師端 Excel 萃取來源設定】填寫網址！');
-                                                        
-                                                        if(typeof window.GasService === 'undefined') {
-                                                            alert('❌ 系統錯誤：找不到 GasService 模組。請確認您的 api-gas-service.js 是否有正確載入。');
-                                                            return;
-                                                        }
-                                                        
-                                                        const btn = this; btn.innerText = '⏳ 萃取中...'; btn.disabled = true;
-                                                        window.GasService.extractSheetData(url, sheet, range || 'A1:B20')
-                                                        .then(text => { 
-                                                            targetArea.value = text; 
-                                                            alert('✅ Excel 萃取成功！\\n\\n⚠️ 【架構師防呆提醒】\\n請務必人工核對 Textarea 內的文字，清除可能殘留的亂碼或排版符號，確保 AI 批改基準 (唯一真理) 的 100% 純淨。'); 
-                                                        })
-                                                        .catch(err => { alert('❌ 萃取失敗，可能是檔案權限未開放：\\n' + err.message); })
-                                                        .finally(() => { btn.innerText = '📊 從 Excel 網址萃取'; btn.disabled = false; });
-                                                    } catch (e) {
-                                                        alert('發生未預期錯誤，已自動還原狀態。詳細錯誤: ' + e.message);
-                                                        this.innerText = '📊 從 Excel 網址萃取'; this.disabled = false;
-                                                    }
-                                                ">📊 從 Excel 網址萃取</button>
-                                                
-                                                <input type="file" id="pdf-upload-${pathStr}" accept="application/pdf" style="display:none;" onchange="
-                                                    window.FeatureTimeline.handlePDFUpload(this, '${pathStr}');
-                                                    setTimeout(() => alert('⚠️ 【架構師防呆提醒】\\nPDF 萃取極易產生亂碼 (如：底線、頁碼)。\\n\\n請務必人工核對 Textarea 內的文字並清除雜訊，確保 AI 批改基準 (唯一真理) 100% 純淨！'), 500);
-                                                ">
-                                                <button type="button" class="btn-action" style="font-size:0.8rem; background:#4F46E5; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(79, 70, 229, 0.3);" onclick="document.getElementById('pdf-upload-${pathStr}').click()">📄 匯入 PDF 取字</button>
-                                            </div>
-                                        </div>
-                                        <div style="font-size:0.85rem; color:#EF4444; font-weight:900; margin-top:5px; background: #FEF2F2; padding: 6px 10px; border-radius: 4px; border: 1px dashed #FCA5A5;">⚠️ 萃取後請務必人工核對與清除亂碼，AI 將 100% 依據此框內的純淨文字進行發音比對。</div>
-                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:100px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="在此貼上純文字原稿，這是 AI 評分的唯一依據...">${safeScript}</textarea>
-                                    </div>
-
-                                    <!-- 區塊 B：學生端視覺教材 (PDF 網址) -->
-                                    <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #C7D2FE;">
-                                        <label style="font-size:0.9rem; font-weight:900; color:#3730A3;">2. 學生端視覺教材 (Drive PDF 網址)：</label>
-                                        <div style="font-size:0.8rem; color:#6366F1; margin-bottom: 6px;">這是學生在錄音艙看到的畫面，用來保留最完整的講義排版與插圖。</div>
-                                        <div style="display:flex; gap:8px;">
-                                            <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:1; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="https://drive.google.com/..." value="${safeUrl}">
-                                            ${resOptsHtmlForAudio}
-                                        </div>
-                                    </div>
-
-                                    <!-- 區塊 C：教師端 Excel 萃取網址 -->
-                                    <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #C7D2FE;">
-                                        <label style="font-size:0.9rem; font-weight:900; color:#3730A3;">3. 教師端 Excel 萃取來源設定：</label>
-                                        <div style="font-size:0.8rem; color:#6366F1; margin-bottom: 6px;">若您的文稿位於 Excel 或 Google Sheets，請於此處設定後，點擊上方的「從 Excel 網址萃取」按鈕。</div>
-                                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                            <div style="flex:2; min-width:200px;">
-                                                <input type="url" id="node-excel-url-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="Excel / Google Sheets 共用網址" value="${safeExcelUrl}">
-                                            </div>
-                                            <div style="flex:1; min-width:100px;">
-                                                <input type="text" id="node-excel-sheet-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="工作表 (預設: Sheet1)" value="${safeExcelSheet}">
-                                            </div>
-                                            <div style="flex:1; min-width:100px;">
-                                                <input type="text" id="node-excel-range-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="範圍 (例如: A1:B20)" value="${safeExcelRange}">
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                </div>
-                            </details>
                         </div>
                     `;
                 }
