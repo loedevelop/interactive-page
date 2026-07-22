@@ -1,11 +1,11 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
- * 🌟 v66 終極自動上雲防護版：
+ * 🌟 v67 終極自動上雲防護版：
  * 導入 handleStudentLocalFileChange 與 saveBlock 攔截器。
  * 老師選取 Local 檔案，存檔時會自動呼叫 GAS 上傳至雲端，神不知鬼不覺轉為 Drive 網址！
  */
 
-console.log("🚀 FeatureTimeline v66 載入成功！(支援學生端 Local 檔案自動上雲)");
+console.log("🚀 FeatureTimeline v67 載入成功！(支援學生端 Local 檔案自動上雲)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -337,7 +337,6 @@ window.FeatureTimeline = (() => {
             }
         },
 
-        // 🌟 處理學生教材區的 Local 檔案讀取轉碼 (Base64)
         handleStudentLocalFileChange: (inputEl, pathStr) => {
             const file = inputEl.files[0];
             if (!file) {
@@ -465,35 +464,31 @@ window.FeatureTimeline = (() => {
                                     try { clsRaw = typeof cls.raw_data === 'string' ? JSON.parse(cls.raw_data) : cls.raw_data; } catch(e){}
                                 }
                                 const targetFolderId = clsRaw.drive_folder_id || clsRaw.class_folder_id || '';
-
-                                const payload = {
-                                    action: 'upload_file',
-                                    fileData: raw.student_local_b64,
-                                    fileName: raw.student_local_filename,
-                                    mimeType: raw.student_local_mime,
-                                    folderId: targetFolderId // 若空，GAS 會幫我們放去根目錄
-                                };
-
-                                const gasUrl = window.Config?.GAS_URL || window.LogOnConfig?.GAS_URL;
-                                if (!gasUrl) throw new Error('系統設定遺失：找不到 GAS_URL 網址');
-
-                                const res = await fetch(gasUrl, { method: 'POST', body: JSON.stringify(payload) });
-                                const json = await res.json();
-
-                                if (json.status === 'success') {
-                                    // 🚀 上傳成功，神不知鬼不覺轉化為 Drive 模式存檔
-                                    raw.student_source_type = 'drive';
-                                    raw.student_drive_url = json.fileUrl;
-                                    raw.student_drive_desc = raw.student_local_desc; // 繼承範圍說明
-                                    
-                                    // 清理 Base64 垃圾，避免存庫爆掉
-                                    delete raw.student_local_b64;
-                                    delete raw.student_local_mime;
-                                    delete raw.student_local_filename;
-                                    delete raw.student_local_desc;
-                                } else {
-                                    throw new Error(json.message || 'GAS 拒絕上傳');
+                                
+                                if (!targetFolderId) throw new Error('該班級尚未綁定雲端資料夾，無法自動上傳檔案');
+                                
+                                if (typeof window.GasService === 'undefined' || !window.GasService.uploadStudentLocalFile) {
+                                    throw new Error('系統錯誤：找不到 GasService 模組或函數');
                                 }
+
+                                const fileUrl = await window.GasService.uploadStudentLocalFile(
+                                    raw.student_local_b64,
+                                    raw.student_local_filename,
+                                    raw.student_local_mime,
+                                    targetFolderId,
+                                    bState.editId || '',
+                                    t.id
+                                );
+
+                                // 🚀 上傳成功，轉化為 Drive 模式存檔
+                                raw.student_source_type = 'drive';
+                                raw.student_drive_url = fileUrl;
+                                raw.student_drive_desc = raw.student_local_desc; 
+                                
+                                delete raw.student_local_b64;
+                                delete raw.student_local_mime;
+                                delete raw.student_local_filename;
+                                delete raw.student_local_desc;
                             }
                         }
                     }
@@ -502,7 +497,6 @@ window.FeatureTimeline = (() => {
                 await processTasksForUpload(bState.tasks);
                 btnEl.innerHTML = '⏳ 儲存至雲端...';
 
-                // --- 原有 Supabase 儲存邏輯 ---
                 let mergedRawData = bState.raw_data || {};
                 if (typeof mergedRawData === 'string') { try { mergedRawData = JSON.parse(mergedRawData); } catch(e) { mergedRawData = {}; } }
                 
