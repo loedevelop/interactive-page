@@ -1,9 +1,8 @@
 /**
  * 📂 檔案路徑：110_teacher_core/ui-timeline-templates.js
- * 🌟 純視覺模板工廠 v14.0.0：
- * 徹底拔除 data-url DOM 污染，全面回歸透過 Feature 呼叫 applyResourceUrl() 進行乾淨的狀態更新。
- * 新增：於錄音作業 (audio_record) 支援「啟用 AI 輔助批改」與「啟用 AI 文法糾正」功能開關與唯讀標籤。
- * 新增：無縫整合 GasService 執行 Excel/Google Sheets 指定範圍取字，並強制掛載防呆人工核對警告。
+ * 🌟 純視覺模板工廠 v14.1.0：
+ * - 徹底拆分「學生端 PDF 網址」與「教師端 Excel 萃取網址」區塊。
+ * - 強化 GAS 萃取按鈕的 Try-Catch 防護，防止 JS 錯誤導致按鈕死鎖。
  */
 
 window.TimelineTemplates = (() => {
@@ -45,7 +44,7 @@ window.TimelineTemplates = (() => {
         if (t.type === 'drive') extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(專屬資料夾)</span>';
         else if (t.type === 'audio_record') {
             const useAi = t.raw_data?.use_ai_grading !== false;
-            const useGrammar = t.raw_data?.use_ai_grammar === true; // 🌟 讀取文法糾正狀態
+            const useGrammar = t.raw_data?.use_ai_grammar === true; 
             const aiBadge = useAi ? `<span style="font-size:0.8rem; background:#DBEAFE; color:#1D4ED8; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">✨ AI 批改</span>` : `<span style="font-size:0.8rem; background:#F1F5F9; color:#64748B; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">👨‍🏫 手工批改</span>`;
             const grammarBadge = useGrammar ? `<span style="font-size:0.8rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">📝 文法糾正</span>` : '';
             extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}${grammarBadge}`;
@@ -177,10 +176,10 @@ window.TimelineTemplates = (() => {
 
         return `
             <div style="display:flex; gap:4px;">
-                <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canUp ? 'white' : '#F1F5F9'}; cursor:${canUp ? 'pointer' : 'not-allowed'}; opacity:${canUp ? '1' : '0.4'}; border-radius:4px;" onclick="${canUp ? `window.FeatureTimeline.moveNodeUp('${pathStr}')` : ''}" ${canUp ? '' : 'disabled'} title="上移">⬆️</button>
-                <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canDown ? 'white' : '#F1F5F9'}; cursor:${canDown ? 'pointer' : 'not-allowed'}; opacity:${canDown ? '1' : '0.4'}; border-radius:4px;" onclick="${canDown ? `window.FeatureTimeline.moveNodeDown('${pathStr}')` : ''}" ${canDown ? '' : 'disabled'} title="下移">⬇️</button>
-                <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canLeft ? 'white' : '#F1F5F9'}; cursor:${canLeft ? 'pointer' : 'not-allowed'}; opacity:${canLeft ? '1' : '0.4'}; border-radius:4px;" onclick="${canLeft ? `window.FeatureTimeline.moveNodeLeft('${pathStr}')` : ''}" ${canLeft ? '' : 'disabled'} title="向左 (移出目前群組)">⬅️</button>
-                <button class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canRight ? 'white' : '#F1F5F9'}; cursor:${canRight ? 'pointer' : 'not-allowed'}; opacity:${canRight ? '1' : '0.4'}; border-radius:4px;" onclick="${canRight ? `window.FeatureTimeline.moveNodeRight('${pathStr}')` : ''}" ${canRight ? '' : 'disabled'} title="向右 (歸入上方群組)">➡️</button>
+                <button type="button" class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canUp ? 'white' : '#F1F5F9'}; cursor:${canUp ? 'pointer' : 'not-allowed'}; opacity:${canUp ? '1' : '0.4'}; border-radius:4px;" onclick="${canUp ? `window.FeatureTimeline.moveNodeUp('${pathStr}')` : ''}" ${canUp ? '' : 'disabled'} title="上移">⬆️</button>
+                <button type="button" class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canDown ? 'white' : '#F1F5F9'}; cursor:${canDown ? 'pointer' : 'not-allowed'}; opacity:${canDown ? '1' : '0.4'}; border-radius:4px;" onclick="${canDown ? `window.FeatureTimeline.moveNodeDown('${pathStr}')` : ''}" ${canDown ? '' : 'disabled'} title="下移">⬇️</button>
+                <button type="button" class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canLeft ? 'white' : '#F1F5F9'}; cursor:${canLeft ? 'pointer' : 'not-allowed'}; opacity:${canLeft ? '1' : '0.4'}; border-radius:4px;" onclick="${canLeft ? `window.FeatureTimeline.moveNodeLeft('${pathStr}')` : ''}" ${canLeft ? '' : 'disabled'} title="向左 (移出目前群組)">⬅️</button>
+                <button type="button" class="btn-icon" style="padding:2px 6px; border:1px solid #CBD5E1; background:${canRight ? 'white' : '#F1F5F9'}; cursor:${canRight ? 'pointer' : 'not-allowed'}; opacity:${canRight ? '1' : '0.4'}; border-radius:4px;" onclick="${canRight ? `window.FeatureTimeline.moveNodeRight('${pathStr}')` : ''}" ${canRight ? '' : 'disabled'} title="向右 (歸入上方群組)">➡️</button>
             </div>
         `;
     }
@@ -205,13 +204,12 @@ window.TimelineTemplates = (() => {
                     subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此群組作業尚無內容)</div>`;
                 }
 
-                // 🌟 群組/根節點直接匯入 Task，仍依賴 this.value 傳遞 ID 給 Feature
                 let addResourceHtml = classResOpts ? `
                     <select class="form-control" style="width:auto; padding:4px 10px; font-size:0.9rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink('${pathStr}', this.value); this.value=''; }">
                         <option value="" disabled selected>+ 📚 班級與全域資源</option>
                         ${classResOpts}
                     </select>
-                ` : `<button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:0.9rem; padding:4px 10px;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>`;
+                ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:0.9rem; padding:4px 10px;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>`;
 
                 let gLateMode = t.late_mode || 'infinite';
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
@@ -226,7 +224,7 @@ window.TimelineTemplates = (() => {
                             
                             <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
                                 ${arrowHtml}
-                                <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
+                                <button type="button" class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
                             </div>
                         </div>
 
@@ -265,16 +263,16 @@ window.TimelineTemplates = (() => {
                             ${subTasksHtml}
                             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top: 15px; margin-left: 10px;">
                                 <span style="font-size:0.85rem; color:${lvl.text}; font-weight:bold; margin-right:5px; opacity:0.8;">子層作業新增：</span>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'audio_record')">+ 🎙️ 錄音</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'audio_record')">+ 🎙️ 錄音</button>
                                 
                                 <div style="display:inline-flex; align-items:center; gap:4px;">
-                                    <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
+                                    <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
                                 </div>
 
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
-                                <button class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 ${addResourceHtml}
                             </div>
@@ -297,11 +295,10 @@ window.TimelineTemplates = (() => {
                     if (pathArray[pathArray.length-1] > 0) {
                         const parentArr = window.FeatureTimeline.getTaskParentArray(pathArray);
                         if (parentArr[pathArray[pathArray.length-1]-1].type === 'link') {
-                            sameBtn = `<button class="btn-icon" style="font-size:0.9rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevNodeUrl('${pathStr}')">👇 同上 URL</button>`;
+                            sameBtn = `<button type="button" class="btn-icon" style="font-size:0.9rem; background:#E2E8F0; padding:6px; margin-left:5px;" onclick="window.FeatureTimeline.copyPrevNodeUrl('${pathStr}')">👇 同上 URL</button>`;
                         }
                     }
 
-                    // 🌟 修正點：呼叫專屬輔助函式 applyResourceUrl
                     let resOptsHtml = '';
                     if (classResOpts) {
                         resOptsHtml = `<select class="form-control" style="width:auto; padding:6px; font-size:1rem; flex-shrink:0;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value);">
@@ -321,23 +318,26 @@ window.TimelineTemplates = (() => {
                 let audioInputHtml = '';
                 if (t.type === 'audio_record') {
                     const raw = t.raw_data || {};
-                    const useAi = raw.use_ai_grading !== false; // 預設為 true
-                    const useAiGrammar = raw.use_ai_grammar === true; // 🌟 新增：文法糾正開關 (預設為 false)
+                    const useAi = raw.use_ai_grading !== false; 
+                    const useAiGrammar = raw.use_ai_grammar === true; 
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
-                    const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;');
-                    const safeRange = (raw.material_range || '').replace(/"/g, '&quot;');
+                    
+                    const safeUrl = (raw.material_url || '').replace(/"/g, '&quot;'); // PDF用
+                    
+                    const safeExcelUrl = (raw.excel_source_url || '').replace(/"/g, '&quot;');
+                    const safeExcelSheet = (raw.excel_sheet || 'Sheet1').replace(/"/g, '&quot;');
+                    const safeExcelRange = (raw.excel_range || '').replace(/"/g, '&quot;');
 
-                    // 🌟 修正點：呼叫專屬輔助函式 applyResourceUrl，並傳入 targetInputId
                     let resOptsHtmlForAudio = '';
                     if (classResOpts) {
-                        resOptsHtmlForAudio = `<select class="form-control" style="width:auto; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-material-url-${pathStr}');">
+                        resOptsHtmlForAudio = `<select class="form-control" style="width:auto; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-material-url-${pathStr}');">
                             <option value="" disabled selected>📚 從資源庫選擇</option>${classResOpts}
                         </select>`;
                     }
 
                     audioInputHtml = `
                         <div style="margin-top:10px; width:100%;">
-                            <!-- 🌟 AI 發音批改開關 -->
+                            
                             <div style="margin-bottom: 12px; background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
                                 <div>
                                     <div style="font-weight: 900; color: #4338CA; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
@@ -356,7 +356,6 @@ window.TimelineTemplates = (() => {
                                 </label>
                             </div>
 
-                            <!-- 🌟 新增：AI 文法糾正開關 (自由回覆適用) -->
                             <div style="margin-bottom: 12px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; justify-content: space-between;">
                                 <div>
                                     <div style="font-weight: 900; color: #D97706; display: flex; align-items: center; gap: 8px; font-size: 1.05rem;">
@@ -377,49 +376,78 @@ window.TimelineTemplates = (() => {
 
                             <details style="background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:10px; outline:none;" open>
                                 <summary style="font-weight:900; color:#4F46E5; cursor:pointer; outline:none; user-select:none;">⚙️ 錄音原稿與擷取範圍設定 (點擊展開/收合)</summary>
-                                <div style="margin-top:12px; display:flex; flex-direction:column; gap:12px; padding-top:10px; border-top:1px dashed #A5B4FC;">
-                                    <div>
+                                <div style="margin-top:12px; display:flex; flex-direction:column; gap:15px; padding-top:10px; border-top:1px dashed #A5B4FC;">
+                                    
+                                    <!-- 區塊 A：AI 批改基準 (純淨文稿) -->
+                                    <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #C7D2FE;">
                                         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:5px;">
-                                            <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">1. 學生端顯示文本 (可直接貼上，或由後端抽出後填入)：</label>
+                                            <label style="font-size:0.9rem; font-weight:900; color:#3730A3;">1. AI 批改基準純淨文稿 (The Golden Anchor)：</label>
                                             <div style="display:flex; gap: 8px;">
-                                                <button class="btn-action" style="font-size:0.8rem; background:#10B981; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(16, 185, 129, 0.3);" onclick="
-                                                    const url = document.getElementById('node-material-url-${pathStr}').value;
-                                                    const range = document.getElementById('node-material-range-${pathStr}').value;
-                                                    const targetArea = document.getElementById('node-script-${pathStr}');
-                                                    if(!url) return alert('請先在下方【2. 雲端素材來源】填寫 Excel 或 Google Sheets 網址！');
-                                                    const btn = this; btn.innerText = '⏳ 萃取中...'; btn.disabled = true;
-                                                    window.GasService.extractSheetData(url, 'Sheet1', range || 'A1:B20')
-                                                    .then(text => { 
-                                                        targetArea.value = text; 
-                                                        alert('✅ Excel 萃取成功！\\n\\n⚠️ 【架構師防呆提醒】\\n請務必人工核對 Textarea 內的文字，清除可能殘留的亂碼或排版符號，確保 AI 批改基準 (唯一真理) 的 100% 純淨。'); 
-                                                    })
-                                                    .catch(err => { alert('❌ 萃取失敗：' + err.message); })
-                                                    .finally(() => { btn.innerText = '📊 自 Excel 網址萃取'; btn.disabled = false; });
-                                                ">📊 自 Excel 網址萃取</button>
+                                                <button type="button" class="btn-action" style="font-size:0.8rem; background:#10B981; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(16, 185, 129, 0.3);" onclick="
+                                                    try {
+                                                        const url = document.getElementById('node-excel-url-${pathStr}').value;
+                                                        const range = document.getElementById('node-excel-range-${pathStr}').value;
+                                                        const sheet = document.getElementById('node-excel-sheet-${pathStr}').value || 'Sheet1';
+                                                        const targetArea = document.getElementById('node-script-${pathStr}');
+                                                        if(!url) return alert('請先在下方【3. 教師端 Excel 萃取來源設定】填寫網址！');
+                                                        
+                                                        if(typeof window.GasService === 'undefined') {
+                                                            alert('❌ 系統錯誤：找不到 GasService 模組。請確認您的 api-gas-service.js 是否有正確載入。');
+                                                            return;
+                                                        }
+                                                        
+                                                        const btn = this; btn.innerText = '⏳ 萃取中...'; btn.disabled = true;
+                                                        window.GasService.extractSheetData(url, sheet, range || 'A1:B20')
+                                                        .then(text => { 
+                                                            targetArea.value = text; 
+                                                            alert('✅ Excel 萃取成功！\\n\\n⚠️ 【架構師防呆提醒】\\n請務必人工核對 Textarea 內的文字，清除可能殘留的亂碼或排版符號，確保 AI 批改基準 (唯一真理) 的 100% 純淨。'); 
+                                                        })
+                                                        .catch(err => { alert('❌ 萃取失敗，可能是檔案權限未開放：\\n' + err.message); })
+                                                        .finally(() => { btn.innerText = '📊 從 Excel 網址萃取'; btn.disabled = false; });
+                                                    } catch (e) {
+                                                        alert('發生未預期錯誤，已自動還原狀態。詳細錯誤: ' + e.message);
+                                                        this.innerText = '📊 從 Excel 網址萃取'; this.disabled = false;
+                                                    }
+                                                ">📊 從 Excel 網址萃取</button>
+                                                
                                                 <input type="file" id="pdf-upload-${pathStr}" accept="application/pdf" style="display:none;" onchange="
                                                     window.FeatureTimeline.handlePDFUpload(this, '${pathStr}');
                                                     setTimeout(() => alert('⚠️ 【架構師防呆提醒】\\nPDF 萃取極易產生亂碼 (如：底線、頁碼)。\\n\\n請務必人工核對 Textarea 內的文字並清除雜訊，確保 AI 批改基準 (唯一真理) 100% 純淨！'), 500);
                                                 ">
-                                                <button class="btn-action" style="font-size:0.8rem; background:#4F46E5; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(79, 70, 229, 0.3);" onclick="document.getElementById('pdf-upload-${pathStr}').click()">📄 快速匯入 PDF 取字</button>
+                                                <button type="button" class="btn-action" style="font-size:0.8rem; background:#4F46E5; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow:0 2px 4px rgba(79, 70, 229, 0.3);" onclick="document.getElementById('pdf-upload-${pathStr}').click()">📄 匯入 PDF 取字</button>
                                             </div>
                                         </div>
                                         <div style="font-size:0.85rem; color:#EF4444; font-weight:900; margin-top:5px; background: #FEF2F2; padding: 6px 10px; border-radius: 4px; border: 1px dashed #FCA5A5;">⚠️ 萃取後請務必人工核對與清除亂碼，AI 將 100% 依據此框內的純淨文字進行發音比對。</div>
-                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:100px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="在此貼上純文字原稿，學生錄音時可同步看稿...">${safeScript}</textarea>
+                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:100px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="在此貼上純文字原稿，這是 AI 評分的唯一依據...">${safeScript}</textarea>
                                     </div>
-                                    <div style="display:flex; gap:15px; flex-wrap:wrap;">
-                                        <div style="flex:2; min-width:200px;">
-                                            <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">2. 雲端素材來源 (Drive PDF / Excel 網址)：</label>
-                                            <div style="display:flex; gap:8px;">
-                                                <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:1; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="https://drive.google.com/..." value="${safeUrl}">
-                                                ${resOptsHtmlForAudio}
+
+                                    <!-- 區塊 B：學生端視覺教材 (PDF 網址) -->
+                                    <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #C7D2FE;">
+                                        <label style="font-size:0.9rem; font-weight:900; color:#3730A3;">2. 學生端視覺教材 (Drive PDF 網址)：</label>
+                                        <div style="font-size:0.8rem; color:#6366F1; margin-bottom: 6px;">這是學生在錄音艙看到的畫面，用來保留最完整的講義排版與插圖。</div>
+                                        <div style="display:flex; gap:8px;">
+                                            <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:1; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="https://drive.google.com/..." value="${safeUrl}">
+                                            ${resOptsHtmlForAudio}
+                                        </div>
+                                    </div>
+
+                                    <!-- 區塊 C：教師端 Excel 萃取網址 -->
+                                    <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #C7D2FE;">
+                                        <label style="font-size:0.9rem; font-weight:900; color:#3730A3;">3. 教師端 Excel 萃取來源設定：</label>
+                                        <div style="font-size:0.8rem; color:#6366F1; margin-bottom: 6px;">若您的文稿位於 Excel 或 Google Sheets，請於此處設定後，點擊上方的「從 Excel 網址萃取」按鈕。</div>
+                                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                            <div style="flex:2; min-width:200px;">
+                                                <input type="url" id="node-excel-url-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="Excel / Google Sheets 共用網址" value="${safeExcelUrl}">
+                                            </div>
+                                            <div style="flex:1; min-width:100px;">
+                                                <input type="text" id="node-excel-sheet-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="工作表 (預設: Sheet1)" value="${safeExcelSheet}">
+                                            </div>
+                                            <div style="flex:1; min-width:100px;">
+                                                <input type="text" id="node-excel-range-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC;" placeholder="範圍 (例如: A1:B20)" value="${safeExcelRange}">
                                             </div>
                                         </div>
-                                        <div style="flex:1; min-width:140px;">
-                                            <label style="font-size:0.85rem; font-weight:800; color:#3730A3;">3. 指定擷取範圍：</label>
-                                            <input type="text" id="node-material-range-${pathStr}" class="form-control" style="width:100%; padding:8px; font-size:0.9rem; border-radius:6px; border:1px solid #A5B4FC; margin-top:6px;" placeholder="Excel例: A1:B20 / PDF例: pp. 3~4" value="${safeRange}">
-                                        </div>
                                     </div>
-                                    <div style="font-size:0.8rem; color:#4F46E5; font-weight:bold; margin-top:4px;">💡 未來將透過 Python 出題引擎，根據您設定的「網址」與「範圍」，自動擷取並派發文本。</div>
+
                                 </div>
                             </details>
                         </div>
@@ -467,7 +495,7 @@ window.TimelineTemplates = (() => {
 
                             <div style="display:flex; align-items:center; gap:8px; padding-top:4px; margin-left:auto;">
                                 ${arrowHtml}
-                                <button class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')">❌</button>
+                                <button type="button" class="btn-danger" style="padding:6px 10px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')">❌</button>
                             </div>
                         </div>
                         ${urlInputHtml}
@@ -493,7 +521,7 @@ window.TimelineTemplates = (() => {
                         <option value="">-- 選擇歷史紀錄 --</option>
                         ${opts}
                     </select>
-                    <button class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.deleteHistoryTemplate()" title="刪除選取的歷史紀錄">🗑️ 刪除紀錄</button>
+                    <button type="button" class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.deleteHistoryTemplate()" title="刪除選取的歷史紀錄">🗑️ 刪除紀錄</button>
                 </div>
             </div>`;
     }
@@ -503,9 +531,9 @@ window.TimelineTemplates = (() => {
         const rteToolbarHtml = `
             <div class="rte-toolbar">
                 <span style="font-size:1rem; font-weight:800; color:#64748B; margin-right:5px;">反白選取編輯：</span>
-                <button class="rte-btn" onmousedown="event.preventDefault(); document.execCommand('bold', false, null);">B</button>
-                <button class="rte-btn" style="font-style:italic;" onmousedown="event.preventDefault(); document.execCommand('italic', false, null);">I</button>
-                <button class="rte-btn" style="text-decoration:underline;" onmousedown="event.preventDefault(); document.execCommand('underline', false, null);">U</button>
+                <button type="button" class="rte-btn" onmousedown="event.preventDefault(); document.execCommand('bold', false, null);">B</button>
+                <button type="button" class="rte-btn" style="font-style:italic;" onmousedown="event.preventDefault(); document.execCommand('italic', false, null);">I</button>
+                <button type="button" class="rte-btn" style="text-decoration:underline;" onmousedown="event.preventDefault(); document.execCommand('underline', false, null);">U</button>
                 <select class="rte-btn" onchange="document.execCommand('foreColor', false, this.value); this.selectedIndex=0;" style="padding: 2px 4px; border-radius: 4px; cursor: pointer; font-weight: 800;">
                     <option value="">🎨 顏色</option>
                     <option value="#EF4444" style="color:#EF4444; font-weight:bold;">🔴 紅色</option>
@@ -523,7 +551,7 @@ window.TimelineTemplates = (() => {
                 <option value="" disabled selected>+ 📚 班級與全域資源</option>
                 ${classResOpts}
             </select>
-        ` : `<button class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>`;
+        ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>`;
 
         return `
             <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">
@@ -571,21 +599,21 @@ window.TimelineTemplates = (() => {
 
                 <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; background: #F1F5F9; padding: 12px; border-radius: 8px; border: 1px solid #CBD5E1;">
                     <span style="font-size:0.9rem; font-weight:bold; color:#475569; margin-right:5px;">外層作業新增：</span>
-                    <button class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addNode(null, 'check')">+ 📌 一般</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
-                    <button class="btn btn-action" style="font-size:1rem; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode(null, 'audio_record')">+ 🎙️ 錄音</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addNode(null, 'check')">+ 📌 一般</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode(null, 'audio_record')">+ 🎙️ 錄音</button>
                     <div style="display:inline-flex; align-items:center; gap:4px;">
-                        <button class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
+                        <button type="button" class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                     </div>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
-                    <button class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     ${addResourceHtml}
                 </div>
 
                 <div style="display:flex; gap:10px; margin-top:20px; border-top:1px solid #E2E8F0; padding-top:15px;">
-                    <button id="btn-save-block-${bState.containerId}" class="btn btn-primary" style="font-size:1rem;" onclick="window.FeatureTimeline.saveBlock(this)">💾 ${bState.editId ? '儲存修改' : '完成並儲存區塊'}</button>
-                    <button class="btn" style="background:#E2E8F0; color:#334155; font-size:1rem;" onclick="window.FeatureTimeline.cancelBuilder()">取消</button>
+                    <button type="button" id="btn-save-block-${bState.containerId}" class="btn btn-primary" style="font-size:1rem;" onclick="window.FeatureTimeline.saveBlock(this)">💾 ${bState.editId ? '儲存修改' : '完成並儲存區塊'}</button>
+                    <button type="button" class="btn" style="background:#E2E8F0; color:#334155; font-size:1rem;" onclick="window.FeatureTimeline.cancelBuilder()">取消</button>
                 </div>
             </div>
         `;
@@ -607,10 +635,10 @@ window.TimelineTemplates = (() => {
         const dragHandleHtml = canEditTimeline ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` : '';
             
         const actionButtonsHtml = canEditTimeline ? `<div style="display:flex; gap:8px; align-items:center;">
-                   <button class="btn-icon" style="font-size:1rem; background:#ECFDF5; color:#065F46; padding:4px 10px; border-radius:6px; cursor:pointer; border:1px solid #A7F3D0; font-weight:bold;" onclick="window.FeatureTimeline.confirmLinePush('${a.id}', '${classId}')" title="推播至 LINE 群組">📢 推播</button>
-                   <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.moveAssignment('${a.id}', '${classId}')" title="更換日期">📅 改期</button>
-                   <button class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
-                   <button class="btn-icon btn-danger" style="font-size:1rem; border:none; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.deleteAssignment('${a.id}', '${classId}')" title="刪除">🗑️</button>
+                   <button type="button" class="btn-icon" style="font-size:1rem; background:#ECFDF5; color:#065F46; padding:4px 10px; border-radius:6px; cursor:pointer; border:1px solid #A7F3D0; font-weight:bold;" onclick="window.FeatureTimeline.confirmLinePush('${a.id}', '${classId}')" title="推播至 LINE 群組">📢 推播</button>
+                   <button type="button" class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.moveAssignment('${a.id}', '${classId}')" title="更換日期">📅 改期</button>
+                   <button type="button" class="btn-icon" style="font-size:1rem; background:#F1F5F9; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.editAssignment('${a.id}')">✏️ 修改</button>
+                   <button type="button" class="btn-icon btn-danger" style="font-size:1rem; border:none; padding:4px 10px; border-radius:6px; cursor:pointer;" onclick="window.FeatureTimeline.deleteAssignment('${a.id}', '${classId}')" title="刪除">🗑️</button>
                </div>` : '';
 
         const dragEventsHtml = canEditTimeline ? `ondragstart="window.FeatureTimeline.dragAssignStart(event, '${a.id}')" ondragover="event.preventDefault(); this.classList.add('drag-over');" ondragleave="this.classList.remove('drag-over');" ondrop="this.classList.remove('drag-over'); window.FeatureTimeline.dropAssign(event, '${a.id}', '${classId}')" ondragend="this.setAttribute('draggable', 'false');"` : '';
@@ -642,7 +670,7 @@ window.TimelineTemplates = (() => {
             dotColor = '#CBD5E1'; bgColor = '#F8FAFC'; headerTextColor = '#94A3B8';
         }
 
-        const addBlockBtn = canEditTimeline ? `<button class="btn btn-primary" onclick="window.FeatureTimeline.openBuilder('${classId}', '${nodeDate}', '${builderContainerId}')">+ 新增區塊</button>` : '';
+        const addBlockBtn = canEditTimeline ? `<button type="button" class="btn btn-primary" onclick="window.FeatureTimeline.openBuilder('${classId}', '${nodeDate}', '${builderContainerId}')">+ 新增區塊</button>` : '';
         const nodeDragEvents = canEditTimeline ? `ondragover="event.preventDefault();" ondrop="window.FeatureTimeline.dropAssignToNode(event, '${nodeDate}', '${classId}')"` : '';
 
         return `
@@ -671,8 +699,8 @@ window.TimelineTemplates = (() => {
                     <input type="date" id="move-target-date" class="form-control" style="flex:1; padding: 8px; font-size: 1rem;" value="${targetDate}">
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="document.getElementById('move-assign-modal').remove()">取消</button>
-                    <button class="btn btn-primary" id="btn-confirm-move" style="padding: 8px 20px; font-size:1rem;" onclick="window.FeatureTimeline.submitMove('${assignId}', '${classId}', '${targetDate}')">確認改期</button>
+                    <button type="button" class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="document.getElementById('move-assign-modal').remove()">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-move" style="padding: 8px 20px; font-size:1rem;" onclick="window.FeatureTimeline.submitMove('${assignId}', '${classId}', '${targetDate}')">確認改期</button>
                 </div>
             </div>
         `;
@@ -686,8 +714,8 @@ window.TimelineTemplates = (() => {
                     準備將 <strong>「${cleanTitle}」</strong> 的作業詳情，傳送至已綁定的 LINE 群組。
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight:bold; font-size:1rem;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
-                    <button class="btn btn-primary" id="btn-confirm-push" style="padding: 8px 20px; font-weight:bold; font-size:1rem; background:#10B981; border:none;" onclick="window.FeatureTimeline.executeLinePush('${assignId}', '${classId}')">🚀 確認發送</button>
+                    <button type="button" class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight:bold; font-size:1rem;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-push" style="padding: 8px 20px; font-weight:bold; font-size:1rem; background:#10B981; border:none;" onclick="window.FeatureTimeline.executeLinePush('${assignId}', '${classId}')">🚀 確認發送</button>
                 </div>
             </div>
         `;
