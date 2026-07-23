@@ -489,6 +489,15 @@ window.FeatureStudentTimeline = (() => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
                     const statusEl = document.getElementById(statusId);
                     
+                    // 🛡️ UI 防呆鎖定：防止手抖連點引發併發異常
+                    if (window._isUploadingAudio) {
+                        console.warn('正在處理上傳中，請勿重複點擊');
+                        return;
+                    }
+                    window._isUploadingAudio = true;
+                    const originalPointerEvents = document.body.style.pointerEvents;
+                    document.body.style.pointerEvents = 'none';
+
                     try {
                         if (statusEl) {
                             statusEl.textContent = '🚀 錄音上傳中...';
@@ -510,10 +519,34 @@ window.FeatureStudentTimeline = (() => {
                         const result = await window.ApiService.uploadToGAS(audioData.base64, finalFileName, audioData.mimeType, targetFolderId, assignmentId, taskId);
                         
                         if (statusEl) {
-                            statusEl.textContent = '✅ 上傳成功';
+                            statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
+                            statusEl.style.color = '#8B5CF6';
+                        }
+
+                        // 🚀 The Missing Link: 拔除前端脆弱寫入，改用 RPC 扣下 AI 大腦扳機 (Atomic Operation)
+                        const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
+                        const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
+                            p_assignment_id: assignmentId,
+                            p_task_id: taskId,
+                            p_student_id: userId,
+                            p_class_id: classId,
+                            p_file_id: result.fileId,
+                            p_audio_url: audioUrl
+                        });
+
+                        if (rpcErr) throw rpcErr;
+                        
+                        if (statusEl) {
+                            statusEl.textContent = '✅ 繳交成功！AI 已接管';
                             statusEl.style.color = '#10B981';
                         }
-                        setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [result.fileId]), 500);
+                        
+                        // 靜默更新前端狀態並重新渲染，不須再次寫入 DB
+                        const compositeKey = `${assignmentId}_${taskId}`;
+                        if (!completedTasks.includes(compositeKey)) {
+                            completedTasks.push(compositeKey);
+                            renderCourses();
+                        }
 
                     } catch (err) {
                         alert(`❌ 錄音上傳失敗: ${err.message}`);
@@ -521,6 +554,9 @@ window.FeatureStudentTimeline = (() => {
                             statusEl.textContent = '❌ 上傳失敗';
                             statusEl.style.color = '#EF4444';
                         }
+                    } finally {
+                        window._isUploadingAudio = false; // 解開鎖定
+                        document.body.style.pointerEvents = originalPointerEvents;
                     }
                 });
             } else {
