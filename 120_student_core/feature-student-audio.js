@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-audio.js
  * 🌟 學生端輕量指揮官：硬體授權、狀態機切換、5 分鐘防護與 Base64 轉換
- * 🚀 v48 絕對鎖死版：導入動態 Viewport Lock，完美修復 Android 縮放跑版災難！
+ * 🚀 v55 逆向追蹤引擎版：導入 VisualViewport 數學計算，徹底讓 Dock 免疫 Android 全局縮放！
  */
 
 window.FeatureStudentAudio = (function() {
@@ -15,35 +15,85 @@ window.FeatureStudentAudio = (function() {
     let el = {};
     let onSubmitCallback = null;
 
-    // --- 🛡️ 核心防禦：動態 Viewport Lock 引擎 ---
-    let originalViewportContent = null;
-    let originalTouchAction = null;
+    // --- 🚀 核心武裝：Visual Viewport 追蹤引擎 ---
+    let vvHandler = null;
+    let rafId = null;
 
-    function lockViewport() {
-        let meta = document.querySelector('meta[name="viewport"]');
-        if (!meta) {
-            meta = document.createElement('meta');
-            meta.name = 'viewport';
-            document.head.appendChild(meta);
-        }
-        originalViewportContent = meta.getAttribute('content');
-        // 強制鎖死：禁止整個父層網頁縮放，確保底部控制列永不跑版
-        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+    function setupVisualViewport() {
+        const dock = document.getElementById('audio-dock-section');
+        if (!dock || !window.visualViewport) return;
+
+        const stabilize = () => {
+            if (window.innerWidth > 768) {
+                dock.style.cssText = '';
+                return;
+            }
+
+            const vv = window.visualViewport;
+            const scale = vv.scale;
+
+            // 只要有縮放，引擎就接管
+            if (scale > 1.01) {
+                const invScale = 1 / scale;
+                const vw = vv.width;
+                const vh = vv.height;
+                
+                // Dock 視覺寬度設定為螢幕的 92%
+                const targetWidthVisual = vw * 0.92;
+                // 反推在 Layout Viewport 中的實體寬度
+                const layoutWidth = targetWidthVisual * scale; 
+                
+                // 必須先設置寬度，才能讀取正確的物理高度
+                dock.style.setProperty('width', `${layoutWidth}px`, 'important');
+                const layoutHeight = dock.offsetHeight;
+                const targetHeightVisual = layoutHeight * invScale;
+                
+                // 安全邊緣 (15px padding)
+                const paddingBottomVisual = 15 * invScale;
+                
+                // 🌟 絕對座標計算 (左上角為 0,0 基準，根絕下沉 Bug)
+                const x = vv.offsetLeft + (vw - targetWidthVisual) / 2;
+                const y = vv.offsetTop + vh - targetHeightVisual - paddingBottomVisual;
+                
+                // 暴力寫入：斷開原始 CSS 鎖鏈，以實體螢幕座標強制繪製
+                dock.style.cssText = `
+                    position: fixed !important;
+                    left: ${x}px !important;
+                    top: ${y}px !important;
+                    bottom: auto !important;
+                    right: auto !important;
+                    width: ${layoutWidth}px !important;
+                    transform-origin: 0 0 !important;
+                    transform: scale(${invScale}) !important;
+                    z-index: 2147483647 !important;
+                    transition: none !important;
+                `;
+            } else {
+                // 無縮放時，歸還給純 CSS 處理
+                dock.style.cssText = '';
+            }
+        };
+
+        vvHandler = () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(stabilize);
+        };
+
+        // 綁定事件：不管是雙指縮放(resize)還是單指拖曳滑動(scroll)，Dock 永遠死死跟隨
+        window.visualViewport.addEventListener('resize', vvHandler);
+        window.visualViewport.addEventListener('scroll', vvHandler);
         
-        originalTouchAction = document.body.style.touchAction;
-        document.body.style.touchAction = 'pan-x pan-y'; 
+        // 初次校準
+        setTimeout(vvHandler, 100);
     }
 
-    function unlockViewport() {
-        let meta = document.querySelector('meta[name="viewport"]');
-        if (meta) {
-            if (originalViewportContent !== null) {
-                meta.setAttribute('content', originalViewportContent);
-            } else {
-                meta.removeAttribute('content');
-            }
+    function cleanupVisualViewport() {
+        if (vvHandler && window.visualViewport) {
+            window.visualViewport.removeEventListener('resize', vvHandler);
+            window.visualViewport.removeEventListener('scroll', vvHandler);
+            vvHandler = null;
+            if (rafId) cancelAnimationFrame(rafId);
         }
-        document.body.style.touchAction = originalTouchAction !== null ? originalTouchAction : '';
     }
     // ---------------------------------------------
 
@@ -207,8 +257,8 @@ window.FeatureStudentAudio = (function() {
     function closeStudio() {
         stopRecording();
         if (timerInterval) clearInterval(timerInterval);
+        cleanupVisualViewport(); // 🧹 關閉時清空追蹤引擎
         if (el.modal) el.modal.remove(); 
-        unlockViewport(); // 🔓 關閉錄音艙時，解除視窗鎖定，將縮放權限還給手機
         onSubmitCallback = null;
     }
 
@@ -255,12 +305,11 @@ window.FeatureStudentAudio = (function() {
             closeStudio(); 
             onSubmitCallback = submitCallback;
             
-            lockViewport(); // 🔒 開啟錄音艙的瞬間，強制凍結全網頁縮放
-            
             const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(transcriptText, taskTitle, materialUrl, materialRange);
             document.body.insertAdjacentHTML('beforeend', htmlString);
             
             initDOM();
+            setupVisualViewport(); // 🚀 啟動追蹤引擎
         }
     };
 })();

@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v48 淨空降維版：徹底移除走火的 visualViewport 腳本，全面交由 Viewport Lock 引擎接管！
+ * 🚀 v55 乾淨地基版：移除舊有腳本，提供穩定 CSS 供追蹤引擎操作！
  */
 
 window.UIAudioTemplates = {
@@ -175,6 +175,7 @@ window.UIAudioTemplates = {
                 .audio-header-wrap > div { flex-wrap: wrap !important; overflow: visible !important; }
                 .audio-header-title { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; font-size: 1rem !important; }
 
+                /* 🔥 為下方控制列留出緩衝區，才不會擋住 PDF */
                 #audio-modal-container:not(.is-collapsed) .audio-upper {
                     flex: 1 !important;
                     height: 100% !important;
