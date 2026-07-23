@@ -1,9 +1,10 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v43 終極沉浸式文字模式 & AI/人類視角徹底解耦版：
+ * 🚀 v44 齊寬瀏覽優化版 (Fit Horizontal) & AI/人類視角徹底解耦：
  * 1. 【修復】徹底解耦：當存在 PDF (Drive/Local) 時，絕對隱藏純文字，將 100% 畫面還給 PDF。
  * 2. 【防護】在不封鎖原生縮放的前提下，完美解決「手機放大 PDF 導致 UI 跑出螢幕」的問題。
+ * 3. 【優化】強制掛載 #view=FitH 參數，盡可能要求瀏覽器以 100% 寬度渲染 PDF。
  */
 
 window.UIAudioTemplates = {
@@ -24,6 +25,14 @@ window.UIAudioTemplates = {
             embedUrl = materialUrl.trim();
             if (embedUrl.includes('drive.google.com') && embedUrl.includes('/view')) {
                 embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
+            }
+
+            // 🌟 齊寬瀏覽 (Fit Width) 參數注入
+            // 強制加上網頁標準的 #view=FitH，要求 PDF 渲染器以 100% 寬度顯示
+            if (embedUrl.includes('#')) {
+                embedUrl = embedUrl.split('#')[0] + '#view=FitH';
+            } else {
+                embedUrl += '#view=FitH';
             }
 
             if (materialRange) {
@@ -211,13 +220,11 @@ window.UIAudioTemplates = {
                 <div class="audio-header-wrap" style="background-color: #4f46e5; color: #ffffff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: nowrap; gap: 15px; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10; overflow: hidden;">
                     
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow: hidden; flex: 1;">
-                        <h2 class="audio-header-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;">🎙️ ${displayTitle}</h2>
-                        ${rangeText}
+                        <h2 class="audio-header-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;">🎙️ ${displayTitle}</h2>${rangeText}
                     </div>
                     
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex-shrink: 0;">
-                        ${toggleBtnHtml}
-                        ${newWindowBtnHtml}
+                        ${toggleBtnHtml}${newWindowBtnHtml}
                         <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s; padding: 0 0 0 8px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
                     </div>
 
@@ -257,7 +264,7 @@ window.UIAudioTemplates = {
             </div>
         </div>
 
-        <!-- 🚀 v43 核心：Visual Viewport 數學反追蹤引擎 -->
+        <!-- 🚀 v44 核心：Visual Viewport 數學反追蹤引擎 -->
         <script>
             (function() {
                 const dock = document.getElementById('audio-dock-section');
