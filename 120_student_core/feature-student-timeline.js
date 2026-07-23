@@ -1,6 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.0)
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.1)
+ * 🚀 核心修復：在 openAudioStudio 內遞迴尋找原始 task 資料，強勢提取 student_drive_url (PDF)，修復錄音艙純文字跑版問題。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -188,7 +189,7 @@ window.FeatureStudentTimeline = (() => {
                 if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
                 weeksMap.get(weekStr).push(d);
             });
-            weeksMap.forEach((chunk) => timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], dates: chunk }));
+            weeksMap.forEach((chunk) => timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~${chunk[chunk.length-1]}` : chunk[0], dates: chunk }));
         }
 
         const todayStr = DateUtils.getTaiwanTodayString();
@@ -434,7 +435,40 @@ window.FeatureStudentTimeline = (() => {
 
         openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {
             if (window.FeatureStudentAudio) {
-                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange, async (audioData) => {
+                // 🌟 核心修復：在全域 assignments 樹狀陣列中，遞迴尋找真實的 task 節點
+                let foundTask = null;
+                const findTaskRecursive = (taskList) => {
+                    if (!taskList || !Array.isArray(taskList)) return;
+                    for (let i = 0; i < taskList.length; i++) {
+                        const t = taskList[i];
+                        if (String(t.id) === String(taskId)) {
+                            foundTask = t;
+                            return;
+                        }
+                        if (t.type === 'group' && t.subTasks) {
+                            findTaskRecursive(t.subTasks);
+                        }
+                    }
+                };
+
+                const assignRecord = assignments.find(a => String(a.id) === String(assignmentId));
+                if (assignRecord) {
+                    let parsedTasks = [];
+                    if (typeof assignRecord.tasks === 'string') {
+                        try { parsedTasks = JSON.parse(assignRecord.tasks); } catch(e) {}
+                    } else if (Array.isArray(assignRecord.tasks)) {
+                        parsedTasks = assignRecord.tasks;
+                    }
+                    findTaskRecursive(parsedTasks);
+                }
+
+                // 🌟 強勢提取：如果 UI 沒傳網址進來，我們自己從 raw_data 裡挖出來！
+                let finalMaterialUrl = safeMatUrl;
+                if (!finalMaterialUrl && foundTask && foundTask.raw_data) {
+                    finalMaterialUrl = foundTask.raw_data.student_drive_url || '';
+                }
+
+                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, finalMaterialUrl, safeMatRange, async (audioData) => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
                     const statusEl = document.getElementById(statusId);
                     
