@@ -6,6 +6,9 @@
 2. **精準快取破除與入口檔連動 (Cache Busting & Index Sync)：** 若動到前端 `110_teacher_core` 內的任何程式，必須一併附上完整的 `teacher/index.html`，並將對應 `<script>` 的 `?v=` 版本號 +1。動到 `120_student_core` 同理更新 `student/index.html`。
 3. **自動 GitHub 推播指令 (Auto Git Push)：** 在每次輸出完所有程式碼後，必須在回覆的最末端，自動附上 VS Code terminal 可用的 GitHub 推播指令碼 (`git add .`, `git commit -m "..."`, `git push`)。
 4. **排版鐵律：** 輸出長篇 Markdown 文件或 JSON 時，若有內嵌 Code Block，外層請強制使用四個反引號 ` ```` ` 封裝，絕對避免因內部範例導致排版崩潰。
+5. **嚴格 Git 操作限制： git add 後面絕對禁止加上檔案名稱！！！
+6. **高效推進原則： 禁止鬼打牆，禁止重複抓著一個已處理過的舊問題不放！！！！！
+7. **程式與文件封裝： 所有的程式及文件，都要放在 Code Block 裡面給我，確保可以直接全選與複製。
 
 ---
 

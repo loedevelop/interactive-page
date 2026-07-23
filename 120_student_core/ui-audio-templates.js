@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v45 終極贖罪版：徹底拔除 Drive 網址的 Hash 毒藥，修復 Android 登入牆災難！
+ * 🚀 v46 終極重組版：強制提煉 Drive ID 產生純淨 preview 網址，100% 摧毀 Android 登入牆！
  */
 
 window.UIAudioTemplates = {
@@ -37,14 +37,18 @@ window.UIAudioTemplates = {
                     </button>
                 `;
             } 
-            // 2️⃣ 一般 Google Drive 網址 (拔除毒藥)
+            // 2️⃣ 一般 Google Drive 網址 (🔥 終極解法：正規化重組)
             else {
                 embedUrl = rawUrl;
-                if (embedUrl.includes('drive.google.com')) {
-                    // 🛑 致命錯誤贖罪：絕對拔除任何 Hash (#)，防止 Android 手機版 Google Drive 路由崩潰！
-                    embedUrl = embedUrl.split('#')[0];
-                    if (embedUrl.includes('/view')) {
-                        embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
+                if (embedUrl.includes('drive.google.com') || embedUrl.includes('docs.google.com')) {
+                    // 🛑 鐵律：強制抓取 ID，重組純淨 preview 網址，捨棄所有污染參數
+                    const idMatch = embedUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || embedUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                    if (idMatch && idMatch[1]) {
+                        embedUrl = `https://drive.google.com/file/d/${idMatch[1]}/preview`;
+                    } else {
+                        // 退回原機制防呆
+                        embedUrl = embedUrl.split('#')[0];
+                        embedUrl = embedUrl.replace(/\/(view|edit).*$/, '/preview');
                     }
                 } else if (embedUrl.toLowerCase().endsWith('.pdf')) {
                     // 只有非 Drive 的一般 PDF 才加上放寬參數

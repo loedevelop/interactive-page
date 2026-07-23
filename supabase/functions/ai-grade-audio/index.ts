@@ -1,19 +1,50 @@
 // 📂 檔案：supabase/functions/ai-grade-audio/index.ts
-// 🌟 100% 完整無省略：Google Drive OAuth + Gemini Multimodal + Supabase Service Role + Native Base64 + Response Schema
+// 🌟 100% 完整無省略：結合前端 Direct Payload + Deno 安全 JWT Auth + 歷史溯源陣列推入
 
-import { serve } from "[https://deno.land/std@0.192.0/http/server.ts](https://deno.land/std@0.192.0/http/server.ts)";
-import { createClient } from "[https://esm.sh/@supabase/supabase-js@2.39.3](https://esm.sh/@supabase/supabase-js@2.39.3)";
-import { GoogleAuth } from "[https://esm.sh/google-auth-library@9.6.3](https://esm.sh/google-auth-library@9.6.3)";
-import { encode } from "[https://deno.land/std@0.192.0/encoding/base64.ts](https://deno.land/std@0.192.0/encoding/base64.ts)";
+import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { importPKCS8, SignJWT } from "https://deno.land/x/jose@v4.14.4/index.ts";
+import { encode } from "https://deno.land/std@0.192.0/encoding/base64.ts";
 
-// 定義 CORS 標頭，允許前端直呼或 Webhook 觸發
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ==========================================
+// 工具函式：純 Deno 環境安全的 Google Drive OAuth
+// ==========================================
+async function getGoogleAccessToken(serviceAccountJsonStr: string): Promise<string> {
+  const credentials = JSON.parse(serviceAccountJsonStr);
+  const privateKey = await importPKCS8(credentials.private_key, "RS256");
+  
+  const jwt = await new SignJWT({
+    iss: credentials.client_email,
+    scope: "https://www.googleapis.com/auth/drive.readonly",
+    aud: "https://oauth2.googleapis.com/token",
+  })
+    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(privateKey);
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.access_token) {
+    throw new Error(`Google Auth Failed: ${JSON.stringify(data)}`);
+  }
+  return data.access_token;
+}
+
 serve(async (req) => {
-  // 1. 處理 CORS 預檢請求
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -26,29 +57,22 @@ serve(async (req) => {
       throw new Error("Missing required parameters: completion_id or file_drive_id");
     }
 
-    // 2. 初始化 Supabase Service Role Client (繞過 RLS 強制寫入)
+    // 1. 初始化 Supabase Service Role Client (繞過 RLS 強制寫入)
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const supabase = createClient(supabaseUrl, supabaseServiceKey, {
       auth: { persistSession: false },
     });
 
-    // 3. 讀取 Google Service Account JSON 並取得授權 Token
+    // 2. 獲取 Google 授權 (使用 jose 確保 Deno 環境不崩潰)
     const serviceAccountJsonStr = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
     if (!serviceAccountJsonStr) {
       throw new Error("Server configuration error: Missing GOOGLE_SERVICE_ACCOUNT_JSON");
     }
-    
-    const credentials = JSON.parse(serviceAccountJsonStr);
-    const auth = new GoogleAuth({
-      credentials,
-      scopes: ["[https://www.googleapis.com/auth/drive.readonly](https://www.googleapis.com/auth/drive.readonly)"],
-    });
-    const driveClient = await auth.getClient();
-    const { token: driveAccessToken } = await driveClient.getAccessToken();
+    const driveAccessToken = await getGoogleAccessToken(serviceAccountJsonStr);
 
-    // 4. 下載 Google Drive 音檔並轉為 Base64 (🚀 優化：使用 Deno 原生 encode，防記憶體溢出)
-    const driveFileUrl = `[https://www.googleapis.com/drive/v3/files/$](https://www.googleapis.com/drive/v3/files/$){file_drive_id}?alt=media`;
+    // 3. 下載 Google Drive 音檔並轉為 Base64
+    const driveFileUrl = `https://www.googleapis.com/drive/v3/files/${file_drive_id}?alt=media`;
     const driveResponse = await fetch(driveFileUrl, {
       headers: { Authorization: `Bearer ${driveAccessToken}` },
     });
@@ -60,7 +84,7 @@ serve(async (req) => {
     const arrayBuffer = await driveResponse.arrayBuffer();
     const audioBase64 = encode(new Uint8Array(arrayBuffer));
 
-    // 5. 建構 Gemini Prompt (動態對齊鐵律)
+    // 4. 建構 Gemini Prompt (保留你的動態對齊鐵律)
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
     if (!geminiApiKey) {
       throw new Error("Server configuration error: Missing GEMINI_API_KEY");
@@ -86,8 +110,8 @@ serve(async (req) => {
       3. Word Errors: Provide the exact misspelled or mispronounced word, the correct phonetic symbol in ${phoneticFormat} format, and a brief tip.
     `;
 
-    // 6. 呼叫 Gemini 1.5 Pro API (🚀 優化：強制綁定 responseSchema 合約)
-    const geminiUrl = `[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=$](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=$){geminiApiKey}`;
+    // 5. 呼叫 Gemini API (強制降級為 flash 確保 Edge Function 不會 Timeout)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
     const geminiResponse = await fetch(geminiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -149,7 +173,7 @@ serve(async (req) => {
     const rawAiResultText = geminiData.candidates[0].content.parts[0].text;
     const aiEvaluation = JSON.parse(rawAiResultText);
 
-    // 7. 寫回 Supabase (軟刪除與 JSONB 擴充鐵律)
+    // 6. 寫回 Supabase (保留你的完美 JSONB 歷史溯源陣列推入)
     const { data: existingRecord, error: fetchError } = await supabase
       .from("task_completions")
       .select("raw_data")
@@ -186,7 +210,7 @@ serve(async (req) => {
 
     if (updateError) throw new Error(`Supabase Update Error: ${updateError.message}`);
 
-    // 8. 成功回應
+    // 7. 成功回應
     return new Response(JSON.stringify({
       success: true,
       message: "Audio graded successfully",
@@ -196,7 +220,7 @@ serve(async (req) => {
       status: 200 
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("AI Grading Error:", error.message);
     return new Response(JSON.stringify({ 
       success: false, 

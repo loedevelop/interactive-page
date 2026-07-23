@@ -191,7 +191,10 @@ window.FeatureStudentAudio = (function() {
                 const base64Data = reader.result.split(',')[1];
                 const ext = audioBlob.type.includes('mp4') ? 'mp4' : 'webm';
                 
-                const timestamp = window.UtilsDate.getTaiwanIsoTimestamp().replace(/[:.]/g, '-');
+                // 相容於舊版全域物件或是新的時間工具
+                const getIsoTs = window.DateUtils ? window.DateUtils.getTaiwanIsoTimestamp : 
+                               (window.UtilsDate ? window.UtilsDate.getTaiwanIsoTimestamp : () => new Date().toISOString());
+                const timestamp = getIsoTs().replace(/[:.]/g, '-');
                 const fileName = `Audio_${timestamp}.${ext}`;
                 
                 if (typeof onSubmitCallback === 'function') {
