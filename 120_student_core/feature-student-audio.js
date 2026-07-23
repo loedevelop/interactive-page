@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-audio.js
  * 🌟 學生端輕量指揮官：硬體授權、狀態機切換、5 分鐘防護與 Base64 轉換
- * 🔄 v42 沉浸式錄音艙更新版：完美配合 Dock 響應式佈局切換
+ * 🚀 v48 絕對鎖死版：導入動態 Viewport Lock，完美修復 Android 縮放跑版災難！
  */
 
 window.FeatureStudentAudio = (function() {
@@ -14,6 +14,38 @@ window.FeatureStudentAudio = (function() {
     
     let el = {};
     let onSubmitCallback = null;
+
+    // --- 🛡️ 核心防禦：動態 Viewport Lock 引擎 ---
+    let originalViewportContent = null;
+    let originalTouchAction = null;
+
+    function lockViewport() {
+        let meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+            meta = document.createElement('meta');
+            meta.name = 'viewport';
+            document.head.appendChild(meta);
+        }
+        originalViewportContent = meta.getAttribute('content');
+        // 強制鎖死：禁止整個父層網頁縮放，確保底部控制列永不跑版
+        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        
+        originalTouchAction = document.body.style.touchAction;
+        document.body.style.touchAction = 'pan-x pan-y'; 
+    }
+
+    function unlockViewport() {
+        let meta = document.querySelector('meta[name="viewport"]');
+        if (meta) {
+            if (originalViewportContent !== null) {
+                meta.setAttribute('content', originalViewportContent);
+            } else {
+                meta.removeAttribute('content');
+            }
+        }
+        document.body.style.touchAction = originalTouchAction !== null ? originalTouchAction : '';
+    }
+    // ---------------------------------------------
 
     function initDOM() {
         el = {
@@ -176,6 +208,7 @@ window.FeatureStudentAudio = (function() {
         stopRecording();
         if (timerInterval) clearInterval(timerInterval);
         if (el.modal) el.modal.remove(); 
+        unlockViewport(); // 🔓 關閉錄音艙時，解除視窗鎖定，將縮放權限還給手機
         onSubmitCallback = null;
     }
 
@@ -191,7 +224,6 @@ window.FeatureStudentAudio = (function() {
                 const base64Data = reader.result.split(',')[1];
                 const ext = audioBlob.type.includes('mp4') ? 'mp4' : 'webm';
                 
-                // 相容於舊版全域物件或是新的時間工具
                 const getIsoTs = window.DateUtils ? window.DateUtils.getTaiwanIsoTimestamp : 
                                (window.UtilsDate ? window.UtilsDate.getTaiwanIsoTimestamp : () => new Date().toISOString());
                 const timestamp = getIsoTs().replace(/[:.]/g, '-');
@@ -222,6 +254,8 @@ window.FeatureStudentAudio = (function() {
         openStudio: function(taskTitle, transcriptText, materialUrl, materialRange, submitCallback) {
             closeStudio(); 
             onSubmitCallback = submitCallback;
+            
+            lockViewport(); // 🔒 開啟錄音艙的瞬間，強制凍結全網頁縮放
             
             const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(transcriptText, taskTitle, materialUrl, materialRange);
             document.body.insertAdjacentHTML('beforeend', htmlString);

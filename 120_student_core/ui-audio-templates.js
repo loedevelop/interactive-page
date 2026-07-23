@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v46 終極重組版：強制提煉 Drive ID 產生純淨 preview 網址，100% 摧毀 Android 登入牆！
+ * 🚀 v48 淨空降維版：徹底移除走火的 visualViewport 腳本，全面交由 Viewport Lock 引擎接管！
  */
 
 window.UIAudioTemplates = {
@@ -21,7 +21,6 @@ window.UIAudioTemplates = {
         if (materialUrl && materialUrl.trim() !== '') {
             let rawUrl = materialUrl.trim();
             
-            // 1️⃣ Base64 資料流處理 (完全避開 Google，免登入秒開)
             if (rawUrl.startsWith('data:')) {
                 embedUrl = rawUrl;
                 newWindowBtnHtml = `
@@ -37,21 +36,17 @@ window.UIAudioTemplates = {
                     </button>
                 `;
             } 
-            // 2️⃣ 一般 Google Drive 網址 (🔥 終極解法：正規化重組)
             else {
                 embedUrl = rawUrl;
                 if (embedUrl.includes('drive.google.com') || embedUrl.includes('docs.google.com')) {
-                    // 🛑 鐵律：強制抓取 ID，重組純淨 preview 網址，捨棄所有污染參數
                     const idMatch = embedUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || embedUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
                     if (idMatch && idMatch[1]) {
                         embedUrl = `https://drive.google.com/file/d/${idMatch[1]}/preview`;
                     } else {
-                        // 退回原機制防呆
                         embedUrl = embedUrl.split('#')[0];
                         embedUrl = embedUrl.replace(/\/(view|edit).*$/, '/preview');
                     }
                 } else if (embedUrl.toLowerCase().endsWith('.pdf')) {
-                    // 只有非 Drive 的一般 PDF 才加上放寬參數
                     if (embedUrl.includes('#')) {
                         embedUrl = embedUrl.split('#')[0] + '#view=FitH';
                     } else {
@@ -205,7 +200,6 @@ window.UIAudioTemplates = {
                     justify-content: space-between !important;
                     padding: 8px 12px !important;
                     min-height: 60px !important;
-                    transform-origin: bottom center !important; 
                 }
                 
                 #audio-modal-container:not(.is-collapsed) .dock-left,
@@ -282,50 +276,6 @@ window.UIAudioTemplates = {
                 </div>
             </div>
         </div>
-
-        <script>
-            (function() {
-                const dock = document.getElementById('audio-dock-section');
-                
-                if (window.visualViewport && dock) {
-                    const adjustDockForZoom = () => {
-                        if (window.innerWidth > 768) {
-                            dock.style.transform = '';
-                            dock.style.top = '';
-                            dock.style.left = '';
-                            dock.style.position = '';
-                            dock.style.bottom = '';
-                            return;
-                        }
-
-                        const vv = window.visualViewport;
-                        
-                        if (vv.scale > 1.01) {
-                            const inverseScale = 1 / vv.scale;
-                            dock.style.position = 'fixed';
-                            const dockHeight = dock.offsetHeight;
-                            const topPosition = vv.offsetTop + vv.height - (dockHeight * inverseScale) - (15 * inverseScale);
-                            const leftPosition = vv.offsetLeft + (vv.width / 2);
-                            
-                            dock.style.bottom = 'auto'; 
-                            dock.style.top = topPosition + 'px';
-                            dock.style.left = leftPosition + 'px';
-                            dock.style.transform = \`translate(-50%, 0) scale(\${inverseScale})\`;
-                        } else {
-                            dock.style.position = 'absolute';
-                            dock.style.top = 'auto';
-                            dock.style.bottom = '15px';
-                            dock.style.left = '50%';
-                            dock.style.transform = 'translateX(-50%)';
-                        }
-                    };
-
-                    window.visualViewport.addEventListener('resize', adjustDockForZoom);
-                    window.visualViewport.addEventListener('scroll', adjustDockForZoom);
-                    setTimeout(adjustDockForZoom, 150);
-                }
-            })();
-        </script>
         `;
     }
 };
