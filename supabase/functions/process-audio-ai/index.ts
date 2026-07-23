@@ -63,12 +63,27 @@ serve(async (req: Request) => {
     let useAiGrading = true;
     let useAiGrammar = false;
 
+    // 🚀 架構師修復 1：加入遞迴搜尋支援 Group 嵌套
     if (Array.isArray(assignmentRaw.tasks)) {
-      const task = assignmentRaw.tasks.find((t: any) => t.id === record.task_id);
-      if (task) {
-        originalScript = task.original_script || "";
-        useAiGrading = task.use_ai_grading !== false;
-        useAiGrammar = task.use_ai_grammar === true;
+      let foundTask: any = null;
+      const findTaskRecursive = (taskList: any[]) => {
+        if (!taskList) return;
+        for (const t of taskList) {
+          if (String(t.id) === String(record.task_id)) {
+            foundTask = t;
+            return;
+          }
+          if (t.type === 'group' && Array.isArray(t.subTasks)) {
+            findTaskRecursive(t.subTasks);
+          }
+        }
+      };
+      findTaskRecursive(assignmentRaw.tasks);
+
+      if (foundTask) {
+        originalScript = foundTask.original_script || (foundTask.raw_data && foundTask.raw_data.original_script) || "";
+        useAiGrading = foundTask.use_ai_grading !== false;
+        useAiGrammar = foundTask.use_ai_grammar === true;
       }
     } else {
       originalScript = assignmentRaw.original_script || "";
@@ -88,9 +103,10 @@ serve(async (req: Request) => {
       throw new Error("Fatal: original_script is missing in assignment.");
     }
 
-    const driveUrl = record.audio_url || currentRawData.audio_url;
+    // 🚀 架構師修復 2：精準對齊前端 RPC 寫入的 student_audio_url
+    const driveUrl = currentRawData.student_audio_url || record.audio_url || currentRawData.audio_url;
     if (!driveUrl) {
-      throw new Error("Fatal: audio_url is missing.");
+      throw new Error("Fatal: audio_url or student_audio_url is missing.");
     }
 
     const fileIdMatch = driveUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || driveUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
@@ -107,6 +123,15 @@ serve(async (req: Request) => {
     }
 
     const audioBuffer = await audioRes.arrayBuffer();
+    
+    // 防禦 Google Drive 擋檔
+    if (audioBuffer.byteLength < 50000) {
+      const textCheck = new TextDecoder().decode(audioBuffer.slice(0, 500)).toLowerCase();
+      if (textCheck.includes('<!doctype html') || textCheck.includes('<html')) {
+        throw new Error(`Drive Download blocked. Google Drive returned an HTML page instead of an audio file. File ID: ${fileId}`);
+      }
+    }
+
     const audioBase64 = encodeBase64(new Uint8Array(audioBuffer));
 
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
@@ -220,10 +245,6 @@ Respond strictly in JSON matching the specified schema.
       throw new Error(`Database Commit Failed: ${updateError.message}`);
     }
 
-    // ============================================================================
-    // Step 6: 同步擴充 Defect Bank 弱點庫
-    // ============================================================================
-    // 🔴 修正：完美對齊你資料庫中的 student_id 欄位名稱
     const targetUserId = record.student_id || record.user_id;
 
     if (targetUserId && errorCount > 0) {
@@ -261,6 +282,7 @@ Respond strictly in JSON matching the specified schema.
   } catch (error: any) {
     console.error(`AI Pipeline Error: ${error.message}`);
     
+    // 🚀 萬一出錯，強制把狀態改成 ai_error 寫入資料庫，前端才不會無限卡死
     if (recordId && supabase) {
       try {
         await supabase.from('task_completions').update({
