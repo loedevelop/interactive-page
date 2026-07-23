@@ -1,6 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
  * 🌟 純粹視覺模板層：負責將作業 JSON 轉化為 HTML 字串
+ * 🚀 核心更新：加入 AI 批改結果卡片與狀態標籤 (The Magic UI)
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -25,6 +26,55 @@ window.UIStudentTimelineTemplates = (() => {
                 const compositeKey = `${course.id}_${task.id}`;
                 const isTaskDone = completedTasks.includes(compositeKey);
                 const checked = isTaskDone ? 'checked' : '';
+                
+                // 🌟 新增：攔截 AI 批改狀態與結果 (需配合 feature 檔案掛載 window._studentTaskCompletions)
+                let aiFeedbackHtml = '';
+                let statusBadgeHtml = '';
+
+                if (window._studentTaskCompletions) {
+                    const compRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id));
+                    if (compRecord) {
+                        // 1. 渲染狀態標籤
+                        if (compRecord.status === 'ai_processing') {
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
+                        } else if (compRecord.status === 'graded' || compRecord.status === 'completed') {
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                        }
+
+                        // 2. 渲染 AI 成績卡片
+                        if (compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
+                            const ai = compRecord.raw_data.ai_evaluation;
+                            const pScore = ai.pronunciation_score ?? ai.score ?? 'N/A';
+                            const fluency = ai.fluency_score ?? 'N/A';
+                            const feedback = ai.comprehensive_feedback ?? ai.feedback ?? '無綜合評語';
+                            
+                            let pScoreColor = '#10B981';
+                            if (pScore !== 'N/A') {
+                                const numScore = Number(pScore);
+                                if (numScore < 80) pScoreColor = '#F59E0B';
+                                if (numScore < 60) pScoreColor = '#EF4444';
+                            }
+
+                            aiFeedbackHtml = `
+                                <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                            <span style="font-size:1.1rem;">🤖</span>
+                                            <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">AI 批改報告</span>
+                                        </div>
+                                        <div style="display: flex; gap: 8px;">
+                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: ${pScoreColor}; border: 1px solid #E2E8F0;">發音: ${pScore}</span>
+                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: #3B82F6; border: 1px solid #E2E8F0;">流暢度: ${fluency}</span>
+                                        </div>
+                                    </div>
+                                    <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 200px; overflow-y: auto;">
+                                        ${String(feedback).replace(/\n/g, '<br>')}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    }
+                }
 
                 let iconStr = task.type === 'check' ? '📌' : (task.type === 'link' ? '🔗' : (task.type === 'audio_record' ? '🎙️' : '📁'));
                 let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
@@ -131,9 +181,10 @@ window.UIStudentTimelineTemplates = (() => {
                 return `
                     <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
                         <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                            ${checkboxHtml}${iconHtml}${taskTitleDisplay}${linkContent}${btn}${localDueHtml}
+                            ${checkboxHtml}${iconHtml}${taskTitleDisplay}${statusBadgeHtml}${linkContent}${btn}${localDueHtml}
                         </div>
                         ${taskDescHtml}
+                        ${aiFeedbackHtml}
                     </div>
                 `;
             };

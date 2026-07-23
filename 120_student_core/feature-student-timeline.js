@@ -1,7 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.3)
- * 🚀 核心修復：找回被我誤拔的 Base64 護城河！只要老師上傳本機檔案，絕對優先使用 Base64 繞開 Drive 權限牆！
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.4 AI 連動渲染版)
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -114,14 +113,16 @@ window.FeatureStudentTimeline = (() => {
             if (assignErr) throw assignErr;
             assignments = assignData || [];
 
+            // 🚀 核心升級：不僅撈取 ID，同步撈出 status 與 raw_data 以供 AI 紫卡渲染
             const { data: compData, error: compErr } = await window.supabaseClient
                 .from('task_completions')
-                .select('assignment_id, task_id')
+                .select('assignment_id, task_id, status, raw_data')
                 .eq('student_id', userId)
                 .eq('class_id', classId)
                 .is('deleted_at', null);
 
             if (compErr) throw compErr;
+            window._studentTaskCompletions = compData || [];
             completedTasks = (compData || []).map(row => `${row.assignment_id}_${row.task_id}`);
 
             renderCourses();
@@ -272,8 +273,18 @@ window.FeatureStudentTimeline = (() => {
             try {
                 const { userId, classId } = await getAuthContext();
                 const compositeKey = `${assignmentId}_${taskId}`;
-                if (isChecked && !completedTasks.includes(compositeKey)) completedTasks.push(compositeKey);
-                else if (!isChecked) completedTasks = completedTasks.filter(id => id !== compositeKey);
+                
+                if (isChecked && !completedTasks.includes(compositeKey)) {
+                    completedTasks.push(compositeKey);
+                    if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+                    window._studentTaskCompletions.push({ assignment_id: assignmentId, task_id: taskId, status: 'completed', raw_data: {} });
+                }
+                else if (!isChecked) {
+                    completedTasks = completedTasks.filter(id => id !== compositeKey);
+                    if (window._studentTaskCompletions) {
+                        window._studentTaskCompletions = window._studentTaskCompletions.filter(c => !(String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId)));
+                    }
+                }
                 renderCourses(); 
                 
                 const nowTimestamp = window.UtilsDate.getTaiwanIsoTimestamp();
@@ -464,17 +475,13 @@ window.FeatureStudentTimeline = (() => {
                 let finalMaterialRange = safeMatRange;
                 if (finalMaterialRange === 'undefined' || finalMaterialRange === 'null') finalMaterialRange = '';
 
-                // 🌟 核心贖罪修復：找回 Base64 護城河！
-                // 只要老師是用「本機上傳」，我們就直接提取 Base64，從根本繞開 Google Drive 的權限鐵壁！
                 if (foundTask && foundTask.raw_data) {
                     if (!finalMaterialUrl) {
-                        // 1. 優先使用本機上傳轉出的 Base64 (絕不卡權限、免登入、手機點另開視窗秒開！)
                         if (foundTask.raw_data.student_local_b64) {
                             const b64 = foundTask.raw_data.student_local_b64;
                             const mime = foundTask.raw_data.student_local_mime || 'application/pdf';
                             finalMaterialUrl = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
                         } 
-                        // 2. 如果真的沒有 Base64，才退而求其次使用 Drive 網址
                         else {
                             finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
                         }
@@ -489,7 +496,6 @@ window.FeatureStudentTimeline = (() => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
                     const statusEl = document.getElementById(statusId);
                     
-                    // 🛡️ UI 防呆鎖定：防止手抖連點引發併發異常
                     if (window._isUploadingAudio) {
                         console.warn('正在處理上傳中，請勿重複點擊');
                         return;
@@ -523,7 +529,7 @@ window.FeatureStudentTimeline = (() => {
                             statusEl.style.color = '#8B5CF6';
                         }
 
-                        // 🚀 The Missing Link: 拔除前端脆弱寫入，改用 RPC 扣下 AI 大腦扳機 (Atomic Operation)
+                        // 🚀 核心防彈 RPC 觸發
                         const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
                         const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
                             p_assignment_id: assignmentId,
@@ -541,12 +547,26 @@ window.FeatureStudentTimeline = (() => {
                             statusEl.style.color = '#10B981';
                         }
                         
-                        // 靜默更新前端狀態並重新渲染，不須再次寫入 DB
                         const compositeKey = `${assignmentId}_${taskId}`;
                         if (!completedTasks.includes(compositeKey)) {
                             completedTasks.push(compositeKey);
-                            renderCourses();
                         }
+                        
+                        // 🌟 UI 魔法：靜默注入「AI 批改中」假狀態並重新渲染
+                        if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+                        let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
+                        if (tempRecord) {
+                            tempRecord.status = 'ai_processing';
+                        } else {
+                            window._studentTaskCompletions.push({
+                                assignment_id: assignmentId,
+                                task_id: taskId,
+                                status: 'ai_processing',
+                                raw_data: {}
+                            });
+                        }
+                        
+                        renderCourses();
 
                     } catch (err) {
                         alert(`❌ 錄音上傳失敗: ${err.message}`);
@@ -555,7 +575,7 @@ window.FeatureStudentTimeline = (() => {
                             statusEl.style.color = '#EF4444';
                         }
                     } finally {
-                        window._isUploadingAudio = false; // 解開鎖定
+                        window._isUploadingAudio = false; 
                         document.body.style.pointerEvents = originalPointerEvents;
                     }
                 });
