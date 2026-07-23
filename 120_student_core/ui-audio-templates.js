@@ -1,7 +1,9 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v43 絕對排他鐵律版：只要有 PDF (網址)，強制封殺文字渲染，100% 只顯示原汁原味的 PDF！
+ * 🚀 v43 終極沉浸式文字模式 & AI/人類視角徹底解耦版：
+ * 1. 【修復】徹底解耦：當存在 PDF (Drive/Local) 時，絕對隱藏純文字，將 100% 畫面還給 PDF。
+ * 2. 【防護】在不封鎖原生縮放的前提下，完美解決「手機放大 PDF 導致 UI 跑出螢幕」的問題。
  */
 
 window.UIAudioTemplates = {
@@ -10,13 +12,14 @@ window.UIAudioTemplates = {
         function escapeHTML(str) { return str ? String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : ''; }
         
         const displayTitle = taskTitle || '未命名錄音作業';
+        const hasText = transcriptText && transcriptText.trim() !== '';
+        const safeText = hasText ? String(transcriptText).replace(/\n/g, '<br>') : '';
         
         let embedUrl = '';
         let newWindowBtnHtml = '';
         let rangeText = '';
         let toggleBtnHtml = '';
 
-        // 1. 優先確認是否有 PDF 或雲端網址
         if (materialUrl && materialUrl.trim() !== '') {
             embedUrl = materialUrl.trim();
             if (embedUrl.includes('drive.google.com') && embedUrl.includes('/view')) {
@@ -34,12 +37,11 @@ window.UIAudioTemplates = {
             `;
         }
 
-        // 🌟 2. 絕對防護鐵律：只要有 embedUrl (PDF)，就強制宣告 hasText 為 false，徹底封殺文字的渲染！
-        const showIframeOnly = !!embedUrl; 
-        const hasText = !showIframeOnly && transcriptText && transcriptText.trim() !== '';
-        const safeText = hasText ? String(transcriptText).replace(/\n/g, '<br>') : '';
+        // 🌟 核心修復：AI 視角 (純文字) 與 學生視角 (PDF) 徹底解耦。
+        // 當老師有設定 PDF (embedUrl 存在) 時，強制隱藏 transcriptText (這只給 AI 看)，學生端只渲染 PDF。
+        const showText = hasText && !embedUrl;
 
-        if (hasText || embedUrl) {
+        if (showText || embedUrl) {
             toggleBtnHtml = `
                 <button onclick="
                     const container = document.getElementById('audio-modal-container');
@@ -60,14 +62,13 @@ window.UIAudioTemplates = {
         }
 
         let bodyHtml = '';
-        
-        // 只有在「沒有 PDF」且「有純文字」的狀況下，才會印出這塊白底純文字區
-        if (hasText) {
+        if (showText) {
+            // 🌟 核心修復：拔除原本死板的 max-height，讓純文字完全霸佔 flex 空間
             bodyHtml += `<div style="color: #334155; line-height: 1.6; overflow-y: auto; background: #ffffff; flex: 1; max-height: none; height: 100%; padding: 24px 32px; font-size: 1.15rem;">${safeText}</div>`;
         }
         
-        // 只要有 PDF，就100%只會印出這塊黑底 iframe 區
         if (embedUrl) {
+            // 🌟 核心修復：100% 滿版渲染 PDF，不再與文字區塊搶空間
             bodyHtml += `
                 <div style="width: 100%; height: 100%; flex: 1; position: relative; background: #323639;">
                     <iframe src="${embedUrl}" style="width: 100%; height: 100%; border: none; display: block; background: #323639;" allow="autoplay"></iframe>
@@ -75,15 +76,14 @@ window.UIAudioTemplates = {
             `;
         }
         
-        // 如果老師兩個都沒給
-        if (!hasText && !embedUrl) {
+        if (!showText && !embedUrl) {
             bodyHtml += `<div style="padding: 20px; color: #9ca3af; font-style: italic; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; background: #ffffff;">（老師未提供任何教材或原稿，請直接錄音）</div>`;
         }
 
         let upperSectionHtml = '';
         let defaultCollapsed = '';
 
-        if (hasText || embedUrl) {
+        if (showText || embedUrl) {
             const upperBgColor = embedUrl ? '#323639' : '#ffffff';
             upperSectionHtml = `
                 <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: ${upperBgColor}; position: relative;">
@@ -140,7 +140,7 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .timer-text { font-size: 6.5rem; line-height: 1; color: #1e293b;}
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
 
-            /* === 📱 行動端佈局設計 (基礎，後續由 JS 引擎接管動態座標) === */
+            /* === 📱 行動端佈局設計 === */
             @media (max-width: 768px) {
                 #audio-modal-container { 
                     width: 100% !important; 
@@ -159,7 +159,7 @@ window.UIAudioTemplates = {
                     padding-bottom: 75px !important; 
                 }
 
-                /* 基礎懸浮設計，縮放時由下方注入的 JS 動態覆寫 transform 與 top/left */
+                /* 基礎懸浮設計 */
                 #audio-modal-container:not(.is-collapsed) .audio-dock {
                     position: absolute !important;
                     bottom: max(15px, env(safe-area-inset-bottom)) !important;
@@ -179,7 +179,7 @@ window.UIAudioTemplates = {
                     justify-content: space-between !important;
                     padding: 8px 12px !important;
                     min-height: 60px !important;
-                    transform-origin: bottom center !important; /* 為 JS 逆向縮放準備 */
+                    transform-origin: bottom center !important; 
                 }
                 
                 #audio-modal-container:not(.is-collapsed) .dock-left,
@@ -257,12 +257,14 @@ window.UIAudioTemplates = {
             </div>
         </div>
 
+        <!-- 🚀 v43 核心：Visual Viewport 數學反追蹤引擎 -->
         <script>
             (function() {
                 const dock = document.getElementById('audio-dock-section');
                 
                 if (window.visualViewport && dock) {
                     const adjustDockForZoom = () => {
+                        // 僅在手機版佈局下啟動引擎
                         if (window.innerWidth > 768) {
                             dock.style.transform = '';
                             dock.style.top = '';
@@ -274,18 +276,29 @@ window.UIAudioTemplates = {
 
                         const vv = window.visualViewport;
                         
+                        // 當偵測到使用者進行 Pinch-to-Zoom 放大時 (Scale > 1)
                         if (vv.scale > 1.01) {
+                            // 1. 逆向縮放：將工具列等比例縮小，確保在放大的螢幕中維持「視覺原大小」
                             const inverseScale = 1 / vv.scale;
+                            
+                            // 2. 切換為 Layout Viewport 固定定位
                             dock.style.position = 'fixed';
+                            
+                            // 3. 數學重算 Y 軸：Visual Viewport 的底部絕對座標
                             const dockHeight = dock.offsetHeight;
+                            // 公式: VisualTop偏移量 + Visual總高度 - (縮小後的工具列高度) - 邊距
                             const topPosition = vv.offsetTop + vv.height - (dockHeight * inverseScale) - (15 * inverseScale);
+                            
+                            // 4. 數學重算 X 軸：Visual Viewport 的中心點
                             const leftPosition = vv.offsetLeft + (vv.width / 2);
                             
-                            dock.style.bottom = 'auto';
+                            // 5. 暴力覆寫 CSS，將其釘死在視野內
+                            dock.style.bottom = 'auto'; // 取消底層設定
                             dock.style.top = topPosition + 'px';
                             dock.style.left = leftPosition + 'px';
                             dock.style.transform = \`translate(-50%, 0) scale(\${inverseScale})\`;
                         } else {
+                            // 恢復為預設未縮放狀態
                             dock.style.position = 'absolute';
                             dock.style.top = 'auto';
                             dock.style.bottom = '15px';
@@ -294,8 +307,11 @@ window.UIAudioTemplates = {
                         }
                     };
 
+                    // 綁定極高頻率的縮放與滑動事件
                     window.visualViewport.addEventListener('resize', adjustDockForZoom);
                     window.visualViewport.addEventListener('scroll', adjustDockForZoom);
+                    
+                    // 初始化啟動
                     setTimeout(adjustDockForZoom, 150);
                 }
             })();
