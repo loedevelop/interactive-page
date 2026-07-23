@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.1)
- * 🚀 核心修復：在 openAudioStudio 內遞迴尋找原始 task 資料，強勢提取 student_drive_url (PDF)，修復錄音艙純文字跑版問題。
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.2)
+ * 🚀 核心修復：在 openAudioStudio 內同步強勢提取 `student_drive_desc`，修復範圍遺失不顯示的 Bug。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -435,7 +435,7 @@ window.FeatureStudentTimeline = (() => {
 
         openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {
             if (window.FeatureStudentAudio) {
-                // 🌟 核心修復：在全域 assignments 樹狀陣列中，遞迴尋找真實的 task 節點
+                
                 let foundTask = null;
                 const findTaskRecursive = (taskList) => {
                     if (!taskList || !Array.isArray(taskList)) return;
@@ -462,13 +462,25 @@ window.FeatureStudentTimeline = (() => {
                     findTaskRecursive(parsedTasks);
                 }
 
-                // 🌟 強勢提取：如果 UI 沒傳網址進來，我們自己從 raw_data 裡挖出來！
+                // 防呆：避免因底層模板傳遞問題變成字串 'undefined'
                 let finalMaterialUrl = safeMatUrl;
-                if (!finalMaterialUrl && foundTask && foundTask.raw_data) {
-                    finalMaterialUrl = foundTask.raw_data.student_drive_url || '';
+                if (finalMaterialUrl === 'undefined' || finalMaterialUrl === 'null') finalMaterialUrl = '';
+                
+                let finalMaterialRange = safeMatRange;
+                if (finalMaterialRange === 'undefined' || finalMaterialRange === 'null') finalMaterialRange = '';
+
+                // 🌟 強勢提取：網址與範圍(Description) 雙管齊下提取！
+                if (foundTask && foundTask.raw_data) {
+                    if (!finalMaterialUrl) {
+                        finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
+                    }
+                    if (!finalMaterialRange) {
+                        // 這是核心修復點：把存在資料庫裡的 desc 撈出來當作範圍顯示
+                        finalMaterialRange = foundTask.raw_data.student_drive_desc || foundTask.raw_data.student_local_desc || '';
+                    }
                 }
 
-                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, finalMaterialUrl, safeMatRange, async (audioData) => {
+                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, finalMaterialUrl, finalMaterialRange, async (audioData) => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
                     const statusEl = document.getElementById(statusId);
                     
