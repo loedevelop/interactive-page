@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v45 Base64 無損渲染修復版：正確辨識 dataURI，避開 Google Drive 登入牆！
+ * 🚀 v45 終極贖罪版：徹底拔除 Drive 網址的 Hash 毒藥，修復 Android 登入牆災難！
  */
 
 window.UIAudioTemplates = {
@@ -19,36 +19,44 @@ window.UIAudioTemplates = {
         let toggleBtnHtml = '';
 
         if (materialUrl && materialUrl.trim() !== '') {
-            embedUrl = materialUrl.trim();
+            let rawUrl = materialUrl.trim();
             
-            // 🌟 核心修復：如果這是 Base64 資料流，絕對不要做 Google Drive 的取代動作！
-            if (embedUrl.startsWith('data:')) {
-                if (!embedUrl.includes('#')) {
-                    embedUrl += '#view=FitH';
-                }
-                
-                // Base64 太長了，另開視窗按鈕直接用 iframe 的 src 開啟
+            // 1️⃣ Base64 資料流處理 (完全避開 Google，免登入秒開)
+            if (rawUrl.startsWith('data:')) {
+                embedUrl = rawUrl;
                 newWindowBtnHtml = `
                     <button onclick="
-                        const win = window.open();
-                        win.document.write('<iframe src=&quot;${embedUrl}&quot; frameborder=&quot;0&quot; style=&quot;border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;&quot; allowfullscreen></iframe>');
+                        try {
+                            var w = window.open();
+                            w.document.write('<iframe src=&quot;${embedUrl}&quot; frameborder=&quot;0&quot; style=&quot;border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;&quot; allowfullscreen></iframe>');
+                        } catch(e) {
+                            alert('瀏覽器阻擋了彈出視窗，請允許後重試。');
+                        }
                     " style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; cursor:pointer; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
                         ↗️ 另開視窗
                     </button>
                 `;
-            } else {
-                // 這是傳統網址 (如 Drive)
-                if (embedUrl.includes('drive.google.com') && embedUrl.includes('/view')) {
-                    embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
-                }
-                if (embedUrl.includes('#')) {
-                    embedUrl = embedUrl.split('#')[0] + '#view=FitH';
-                } else {
-                    embedUrl += '#view=FitH';
+            } 
+            // 2️⃣ 一般 Google Drive 網址 (拔除毒藥)
+            else {
+                embedUrl = rawUrl;
+                if (embedUrl.includes('drive.google.com')) {
+                    // 🛑 致命錯誤贖罪：絕對拔除任何 Hash (#)，防止 Android 手機版 Google Drive 路由崩潰！
+                    embedUrl = embedUrl.split('#')[0];
+                    if (embedUrl.includes('/view')) {
+                        embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
+                    }
+                } else if (embedUrl.toLowerCase().endsWith('.pdf')) {
+                    // 只有非 Drive 的一般 PDF 才加上放寬參數
+                    if (embedUrl.includes('#')) {
+                        embedUrl = embedUrl.split('#')[0] + '#view=FitH';
+                    } else {
+                        embedUrl += '#view=FitH';
+                    }
                 }
                 
                 newWindowBtnHtml = `
-                    <a href="${escapeHTML(materialUrl)}" target="_blank" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
+                    <a href="${escapeHTML(rawUrl)}" target="_blank" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
                         ↗️ 另開視窗
                     </a>
                 `;

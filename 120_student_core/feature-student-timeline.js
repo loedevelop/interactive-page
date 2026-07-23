@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.3)
- * 🚀 核心修復：為愚蠢的錯誤贖罪。強勢恢復 Base64 優先權，徹底繞開 Drive 權限牆。
+ * 🚀 核心修復：找回被我誤拔的 Base64 護城河！只要老師上傳本機檔案，絕對優先使用 Base64 繞開 Drive 權限牆！
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -47,7 +47,6 @@ window.FeatureStudentTimeline = (() => {
         });
     }
 
-    // 🌟 核心防雷：智慧 URL 修復引擎，保留 ?usp=sharing 參數，防止 404
     function safeFormatUrl(url) {
         if (!url) return '';
         let trimmedUrl = String(url).replace(/['"]/g, '').trim();
@@ -186,7 +185,7 @@ window.FeatureStudentTimeline = (() => {
                 if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
                 weeksMap.get(weekStr).push(d);
             });
-            weeksMap.forEach((chunk) => timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], dates: chunk }));
+            weeksMap.forEach((chunk) => timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~${chunk[chunk.length-1]}` : chunk[0], dates: chunk }));
         }
 
         const todayStr = DateUtils.getTaiwanTodayString();
@@ -465,19 +464,20 @@ window.FeatureStudentTimeline = (() => {
                 let finalMaterialRange = safeMatRange;
                 if (finalMaterialRange === 'undefined' || finalMaterialRange === 'null') finalMaterialRange = '';
 
-                // 🌟 核心贖罪修復：找回被我拔掉的 Base64 護城河！
+                // 🌟 核心贖罪修復：找回 Base64 護城河！
+                // 只要老師是用「本機上傳」，我們就直接提取 Base64，從根本繞開 Google Drive 的權限鐵壁！
                 if (foundTask && foundTask.raw_data) {
-                    // 1. 優先使用本機上傳轉出的 Base64 (絕不卡權限、免登入、手機秒開！)
-                    if (foundTask.raw_data.student_local_b64) {
-                        finalMaterialUrl = foundTask.raw_data.student_local_b64;
-                        if (!finalMaterialUrl.startsWith('data:')) {
+                    if (!finalMaterialUrl) {
+                        // 1. 優先使用本機上傳轉出的 Base64 (絕不卡權限、免登入、手機點另開視窗秒開！)
+                        if (foundTask.raw_data.student_local_b64) {
+                            const b64 = foundTask.raw_data.student_local_b64;
                             const mime = foundTask.raw_data.student_local_mime || 'application/pdf';
-                            finalMaterialUrl = `data:${mime};base64,${finalMaterialUrl}`;
+                            finalMaterialUrl = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
+                        } 
+                        // 2. 如果真的沒有 Base64，才退而求其次使用 Drive 網址
+                        else {
+                            finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
                         }
-                    } 
-                    // 2. 如果真的沒有 Base64，才退而求其次使用 Drive URL
-                    else if (!finalMaterialUrl) {
-                        finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
                     }
 
                     if (!finalMaterialRange) {
