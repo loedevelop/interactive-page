@@ -1,10 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v44 齊寬瀏覽優化版 (Fit Horizontal) & AI/人類視角徹底解耦：
- * 1. 【修復】徹底解耦：當存在 PDF (Drive/Local) 時，絕對隱藏純文字，將 100% 畫面還給 PDF。
- * 2. 【防護】在不封鎖原生縮放的前提下，完美解決「手機放大 PDF 導致 UI 跑出螢幕」的問題。
- * 3. 【優化】強制掛載 #view=FitH 參數，盡可能要求瀏覽器以 100% 寬度渲染 PDF。
+ * 🚀 v45 Base64 無損渲染修復版：正確辨識 dataURI，避開 Google Drive 登入牆！
  */
 
 window.UIAudioTemplates = {
@@ -23,31 +20,45 @@ window.UIAudioTemplates = {
 
         if (materialUrl && materialUrl.trim() !== '') {
             embedUrl = materialUrl.trim();
-            if (embedUrl.includes('drive.google.com') && embedUrl.includes('/view')) {
-                embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
-            }
-
-            // 🌟 齊寬瀏覽 (Fit Width) 參數注入
-            // 強制加上網頁標準的 #view=FitH，要求 PDF 渲染器以 100% 寬度顯示
-            if (embedUrl.includes('#')) {
-                embedUrl = embedUrl.split('#')[0] + '#view=FitH';
+            
+            // 🌟 核心修復：如果這是 Base64 資料流，絕對不要做 Google Drive 的取代動作！
+            if (embedUrl.startsWith('data:')) {
+                if (!embedUrl.includes('#')) {
+                    embedUrl += '#view=FitH';
+                }
+                
+                // Base64 太長了，另開視窗按鈕直接用 iframe 的 src 開啟
+                newWindowBtnHtml = `
+                    <button onclick="
+                        const win = window.open();
+                        win.document.write('<iframe src=&quot;${embedUrl}&quot; frameborder=&quot;0&quot; style=&quot;border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;&quot; allowfullscreen></iframe>');
+                    " style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; cursor:pointer; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
+                        ↗️ 另開視窗
+                    </button>
+                `;
             } else {
-                embedUrl += '#view=FitH';
+                // 這是傳統網址 (如 Drive)
+                if (embedUrl.includes('drive.google.com') && embedUrl.includes('/view')) {
+                    embedUrl = embedUrl.replace(/\/view.*$/, '/preview');
+                }
+                if (embedUrl.includes('#')) {
+                    embedUrl = embedUrl.split('#')[0] + '#view=FitH';
+                } else {
+                    embedUrl += '#view=FitH';
+                }
+                
+                newWindowBtnHtml = `
+                    <a href="${escapeHTML(materialUrl)}" target="_blank" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
+                        ↗️ 另開視窗
+                    </a>
+                `;
             }
 
             if (materialRange) {
                 rangeText = `<span style="font-size:0.85rem; color:rgba(255, 255, 255, 0.85); margin-left:8px; font-weight: normal; white-space: nowrap; flex-shrink: 0;">(指定範圍：${escapeHTML(materialRange)})</span>`;
             }
-            
-            newWindowBtnHtml = `
-                <a href="${escapeHTML(materialUrl)}" target="_blank" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
-                    ↗️ 另開視窗
-                </a>
-            `;
         }
 
-        // 🌟 核心修復：AI 視角 (純文字) 與 學生視角 (PDF) 徹底解耦。
-        // 當老師有設定 PDF (embedUrl 存在) 時，強制隱藏 transcriptText (這只給 AI 看)，學生端只渲染 PDF。
         const showText = hasText && !embedUrl;
 
         if (showText || embedUrl) {
@@ -72,12 +83,10 @@ window.UIAudioTemplates = {
 
         let bodyHtml = '';
         if (showText) {
-            // 🌟 核心修復：拔除原本死板的 max-height，讓純文字完全霸佔 flex 空間
             bodyHtml += `<div style="color: #334155; line-height: 1.6; overflow-y: auto; background: #ffffff; flex: 1; max-height: none; height: 100%; padding: 24px 32px; font-size: 1.15rem;">${safeText}</div>`;
         }
         
         if (embedUrl) {
-            // 🌟 核心修復：100% 滿版渲染 PDF，不再與文字區塊搶空間
             bodyHtml += `
                 <div style="width: 100%; height: 100%; flex: 1; position: relative; background: #323639;">
                     <iframe src="${embedUrl}" style="width: 100%; height: 100%; border: none; display: block; background: #323639;" allow="autoplay"></iframe>
@@ -114,7 +123,6 @@ window.UIAudioTemplates = {
             .ctrl-btn { border: none; color: #ffffff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; border-radius: 50%; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
             .ctrl-btn:hover { transform: scale(1.05); }
 
-            /* === 桌面版原貌 === */
             #audio-modal-container:not(.is-collapsed) .audio-upper { flex: 1; }
             #audio-modal-container:not(.is-collapsed) .audio-dock { 
                 min-height: 80px; 
@@ -136,7 +144,6 @@ window.UIAudioTemplates = {
             #audio-modal-container:not(.is-collapsed) .timer-text { font-size: 2.2rem; line-height: 1; }
             #audio-modal-container:not(.is-collapsed) .ctrl-btn { width: 55px; height: 55px; font-size: 1.8rem; }
 
-            /* === 錄音室模式 (無教材) === */
             #audio-modal-container.is-collapsed { width: 95% !important; max-width: 650px !important; height: auto !important; }
             #audio-modal-container.is-collapsed .audio-upper { flex: 0 0 auto; padding-bottom: 0; }
             #audio-modal-container.is-collapsed .audio-dock { flex: 1; height: auto; flex-direction: column; justify-content: center; align-items: center; padding: 40px; background-color: #f8fafc; border-top: none; position: static !important; width: 100% !important; transform: none !important;}
@@ -149,7 +156,6 @@ window.UIAudioTemplates = {
             #audio-modal-container.is-collapsed .timer-text { font-size: 6.5rem; line-height: 1; color: #1e293b;}
             #audio-modal-container.is-collapsed .ctrl-btn { width: 90px; height: 90px; font-size: 3.5rem; }
 
-            /* === 📱 行動端佈局設計 === */
             @media (max-width: 768px) {
                 #audio-modal-container { 
                     width: 100% !important; 
@@ -168,7 +174,6 @@ window.UIAudioTemplates = {
                     padding-bottom: 75px !important; 
                 }
 
-                /* 基礎懸浮設計 */
                 #audio-modal-container:not(.is-collapsed) .audio-dock {
                     position: absolute !important;
                     bottom: max(15px, env(safe-area-inset-bottom)) !important;
@@ -220,11 +225,13 @@ window.UIAudioTemplates = {
                 <div class="audio-header-wrap" style="background-color: #4f46e5; color: #ffffff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: nowrap; gap: 15px; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 10; overflow: hidden;">
                     
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow: hidden; flex: 1;">
-                        <h2 class="audio-header-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;">🎙️ ${displayTitle}</h2>${rangeText}
+                        <h2 class="audio-header-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;">🎙️ ${displayTitle}</h2>
+                        ${rangeText}
                     </div>
                     
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex-shrink: 0;">
-                        ${toggleBtnHtml}${newWindowBtnHtml}
+                        ${toggleBtnHtml}
+                        ${newWindowBtnHtml}
                         <button id="btn-audio-close" style="background: none; border: none; color: #ffffff; cursor: pointer; font-size: 1.8rem; line-height: 1; opacity: 0.8; transition: opacity 0.2s; padding: 0 0 0 8px;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
                     </div>
 
@@ -264,14 +271,12 @@ window.UIAudioTemplates = {
             </div>
         </div>
 
-        <!-- 🚀 v44 核心：Visual Viewport 數學反追蹤引擎 -->
         <script>
             (function() {
                 const dock = document.getElementById('audio-dock-section');
                 
                 if (window.visualViewport && dock) {
                     const adjustDockForZoom = () => {
-                        // 僅在手機版佈局下啟動引擎
                         if (window.innerWidth > 768) {
                             dock.style.transform = '';
                             dock.style.top = '';
@@ -283,29 +288,18 @@ window.UIAudioTemplates = {
 
                         const vv = window.visualViewport;
                         
-                        // 當偵測到使用者進行 Pinch-to-Zoom 放大時 (Scale > 1)
                         if (vv.scale > 1.01) {
-                            // 1. 逆向縮放：將工具列等比例縮小，確保在放大的螢幕中維持「視覺原大小」
                             const inverseScale = 1 / vv.scale;
-                            
-                            // 2. 切換為 Layout Viewport 固定定位
                             dock.style.position = 'fixed';
-                            
-                            // 3. 數學重算 Y 軸：Visual Viewport 的底部絕對座標
                             const dockHeight = dock.offsetHeight;
-                            // 公式: VisualTop偏移量 + Visual總高度 - (縮小後的工具列高度) - 邊距
                             const topPosition = vv.offsetTop + vv.height - (dockHeight * inverseScale) - (15 * inverseScale);
-                            
-                            // 4. 數學重算 X 軸：Visual Viewport 的中心點
                             const leftPosition = vv.offsetLeft + (vv.width / 2);
                             
-                            // 5. 暴力覆寫 CSS，將其釘死在視野內
-                            dock.style.bottom = 'auto'; // 取消底層設定
+                            dock.style.bottom = 'auto'; 
                             dock.style.top = topPosition + 'px';
                             dock.style.left = leftPosition + 'px';
                             dock.style.transform = \`translate(-50%, 0) scale(\${inverseScale})\`;
                         } else {
-                            // 恢復為預設未縮放狀態
                             dock.style.position = 'absolute';
                             dock.style.top = 'auto';
                             dock.style.bottom = '15px';
@@ -314,11 +308,8 @@ window.UIAudioTemplates = {
                         }
                     };
 
-                    // 綁定極高頻率的縮放與滑動事件
                     window.visualViewport.addEventListener('resize', adjustDockForZoom);
                     window.visualViewport.addEventListener('scroll', adjustDockForZoom);
-                    
-                    // 初始化啟動
                     setTimeout(adjustDockForZoom, 150);
                 }
             })();

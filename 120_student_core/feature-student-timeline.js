@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.2)
- * 🚀 核心修復：在 openAudioStudio 內同步強勢提取 `student_drive_desc`，修復範圍遺失不顯示的 Bug。
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.3)
+ * 🚀 核心修復：為愚蠢的錯誤贖罪。強勢恢復 Base64 優先權，徹底繞開 Drive 權限牆。
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -53,17 +53,14 @@ window.FeatureStudentTimeline = (() => {
         let trimmedUrl = String(url).replace(/['"]/g, '').trim();
         if (trimmedUrl === '') return '';
         
-        // 如果已經是完整的 http 或 https 開頭，直接回傳不亂動
         if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
             return trimmedUrl;
         }
         
-        // 判斷是否為純 Google Drive ID (長度大於 20 且無斜線或點)
         if (trimmedUrl.length > 20 && !trimmedUrl.includes('/') && !trimmedUrl.includes('.')) {
             return `https://drive.google.com/drive/folders/${trimmedUrl}`;
         }
         
-        // 否則視為一般網域，補上 https://
         return `https://${trimmedUrl}`;
     }
 
@@ -189,7 +186,7 @@ window.FeatureStudentTimeline = (() => {
                 if (!weeksMap.has(weekStr)) weeksMap.set(weekStr, []);
                 weeksMap.get(weekStr).push(d);
             });
-            weeksMap.forEach((chunk) => timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~${chunk[chunk.length-1]}` : chunk[0], dates: chunk }));
+            weeksMap.forEach((chunk) => timelineNodes.push({ title: chunk.length > 1 ? `${chunk[0]} ~ ${chunk[chunk.length-1]}` : chunk[0], dates: chunk }));
         }
 
         const todayStr = DateUtils.getTaiwanTodayString();
@@ -462,20 +459,28 @@ window.FeatureStudentTimeline = (() => {
                     findTaskRecursive(parsedTasks);
                 }
 
-                // 防呆：避免因底層模板傳遞問題變成字串 'undefined'
                 let finalMaterialUrl = safeMatUrl;
                 if (finalMaterialUrl === 'undefined' || finalMaterialUrl === 'null') finalMaterialUrl = '';
                 
                 let finalMaterialRange = safeMatRange;
                 if (finalMaterialRange === 'undefined' || finalMaterialRange === 'null') finalMaterialRange = '';
 
-                // 🌟 強勢提取：網址與範圍(Description) 雙管齊下提取！
+                // 🌟 核心贖罪修復：找回被我拔掉的 Base64 護城河！
                 if (foundTask && foundTask.raw_data) {
-                    if (!finalMaterialUrl) {
+                    // 1. 優先使用本機上傳轉出的 Base64 (絕不卡權限、免登入、手機秒開！)
+                    if (foundTask.raw_data.student_local_b64) {
+                        finalMaterialUrl = foundTask.raw_data.student_local_b64;
+                        if (!finalMaterialUrl.startsWith('data:')) {
+                            const mime = foundTask.raw_data.student_local_mime || 'application/pdf';
+                            finalMaterialUrl = `data:${mime};base64,${finalMaterialUrl}`;
+                        }
+                    } 
+                    // 2. 如果真的沒有 Base64，才退而求其次使用 Drive URL
+                    else if (!finalMaterialUrl) {
                         finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
                     }
+
                     if (!finalMaterialRange) {
-                        // 這是核心修復點：把存在資料庫裡的 desc 撈出來當作範圍顯示
                         finalMaterialRange = foundTask.raw_data.student_drive_desc || foundTask.raw_data.student_local_desc || '';
                     }
                 }
