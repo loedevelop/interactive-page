@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
  * 🌟 純粹視覺模板層：負責將作業 JSON 轉化為 HTML 字串
- * 🚀 核心更新：iframe 微型播放器、Google TTS 正確發音功能！
+ * 🚀 核心更新：精簡播放按鈕置左、純淨版發音表格與雙向 TTS 發音圖示！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -78,7 +78,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 核心渲染：發音錯誤表格與 TTS 語音發音按鈕
+                            // 🚀 雙向語音表格：簡化表頭，導入正確與錯誤唸法的喇叭圖示
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -87,7 +87,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
                                             <thead>
                                                 <tr style="background: #FEF2F2; color: #991B1B;">
-                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字 (點擊聽正確發音)</th>
+                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字</th>
                                                     <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的錯誤發音</th>
                                                     <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">正確音標</th>
                                                     <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
@@ -96,12 +96,14 @@ window.UIStudentTimelineTemplates = (() => {
                                             <tbody>
                                                 ${ai.word_errors.map(err => `
                                                 <tr style="background: white;">
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">
-                                                        ${err.word}
-                                                        <button onclick="new Audio('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}').play()" style="background: #EEF2FF; border: 1px solid #BFDBFE; color: #3B82F6; cursor: pointer; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#DBEAFE'" onmouseout="this.style.background='#EEF2FF'">🔊 聽正確唸法</button>
+                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
+                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
+                                                        ${err.student_pronunciation}
+                                                        <span onclick="new Audio('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.student_pronunciation)}').play()" style="cursor:pointer; margin-left:4px; font-size:1rem;" title="聽聽看這個錯誤發音">🔊</span>
                                                     </td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">${err.student_pronunciation}</td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">${err.expected_phonetic}</td>
+                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
+                                                        <span onclick="new Audio('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}').play()" style="cursor:pointer; margin-right:4px; font-size:1rem;" title="聽正確發音">🔊</span>${err.expected_phonetic}
+                                                    </td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${err.error_type}</td>
                                                 </tr>`).join('')}
                                             </tbody>
@@ -211,19 +213,15 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 核心突破：不另開視窗的 iframe 微型播放器！徹底繞過 Drive 的 CORS 封鎖
-                            audioPlayerHtml = `
-                                <div style="height: 55px; width: 260px; border-radius: 8px; overflow: hidden; border: 1px solid #CBD5E1; display: inline-block; vertical-align: middle; background: #F8FAFC; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
-                                    <iframe src="https://drive.google.com/file/d/${retryAudioId}/preview" width="100%" height="100%" frameborder="0" allow="autoplay" style="margin-top: -5px;"></iframe>
-                                </div>
-                            `;
+                            // 🚀 原生「點此播放」按鈕：乾淨俐落的按鈕連結
+                            audioPlayerHtml = `<a href="https://drive.google.com/file/d/${retryAudioId}/view" target="_blank" class="btn-action" style="background:white; border:1px solid #3B82F6; color:#3B82F6; padding:6px 12px; border-radius:6px; font-weight:900; text-decoration:none; font-size:0.85rem; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: 0.2s;" onmouseover="this.style.background='#EFF6FF'" onmouseout="this.style.background='white'">▶️ 點此播放</a>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
-                                manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
+                                manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
                             }
                         }
 
-                        // 排版順序：[微型 iframe 播放器] -> [重新錄製] -> [檢視 Drive] -> [手動提交批改]
+                        // 排版順序：[▶️ 點此播放] -> [重新錄製] -> [檢視 Drive] -> [手動提交批改]
                         btn = `
                             <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap; margin-top:8px;">
                                 ${audioPlayerHtml}

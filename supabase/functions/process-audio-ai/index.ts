@@ -161,7 +161,7 @@ serve(async (req: Request) => {
 
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/${targetModel.name}:generateContent?key=${geminiApiKey}`;
 
-    // 🚀 架構師修正：加入 Completeness Check 讓 AI 確保整段稿子都有錄到！
+    // 🚀 重新加入 Completeness Check 於指令第一條！
     const promptText = `
 You are an expert English pronunciation and grammar evaluator.
 Analyze the student's audio recording strictly against the Standard Script below.
@@ -245,7 +245,6 @@ Respond strictly in JSON matching the specified schema.
 
     const gradingHistory = currentRawData.grading_history || [];
     
-    // 🚀 核心歷史備份：包含時間戳記，確保音檔與評語永遠綁定
     if (currentRawData.ai_evaluation) {
       gradingHistory.push({
         timestamp: new Date().toISOString(),
