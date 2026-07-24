@@ -47,9 +47,10 @@ serve(async (req: Request) => {
 
     supabase = createClient(supabaseUrl, supabaseKey);
 
+    // 🚀 架構師核心修復 1：同時精準 Select raw_data 與獨立的 tasks 欄位
     const { data: assignmentData, error: assignmentError } = await supabase
       .from('assignments')
-      .select('raw_data')
+      .select('raw_data, tasks')
       .eq('id', record.assignment_id)
       .is('deleted_at', null)
       .single();
@@ -59,12 +60,19 @@ serve(async (req: Request) => {
     }
 
     const assignmentRaw = assignmentData.raw_data || {};
+    let assignmentTasks = assignmentData.tasks || [];
+    
+    // 如果資料庫裡存成字串，先解析它
+    if (typeof assignmentTasks === 'string') {
+      try { assignmentTasks = JSON.parse(assignmentTasks); } catch (e) { assignmentTasks = []; }
+    }
+
     let originalScript = "";
     let useAiGrading = true;
     let useAiGrammar = false;
 
-    // 🚀 架構師修復 1：加入遞迴搜尋支援 Group 嵌套
-    if (Array.isArray(assignmentRaw.tasks)) {
+    // 🚀 架構師核心修復 2：從真正的 tasks 獨立陣列中尋找文稿
+    if (Array.isArray(assignmentTasks) && assignmentTasks.length > 0) {
       let foundTask: any = null;
       const findTaskRecursive = (taskList: any[]) => {
         if (!taskList) return;
@@ -78,17 +86,18 @@ serve(async (req: Request) => {
           }
         }
       };
-      findTaskRecursive(assignmentRaw.tasks);
+      findTaskRecursive(assignmentTasks);
 
       if (foundTask) {
         originalScript = foundTask.original_script || (foundTask.raw_data && foundTask.raw_data.original_script) || "";
-        useAiGrading = foundTask.use_ai_grading !== false;
-        useAiGrammar = foundTask.use_ai_grammar === true;
+        useAiGrading = foundTask.use_ai_grading !== false && (!foundTask.raw_data || foundTask.raw_data.use_ai_grading !== false);
+        useAiGrammar = foundTask.use_ai_grammar === true || (foundTask.raw_data && foundTask.raw_data.use_ai_grammar === true);
       }
-    } else {
+    } 
+    
+    // 萬用後備：如果任務裡沒寫，去外層找
+    if (!originalScript) {
       originalScript = assignmentRaw.original_script || "";
-      useAiGrading = assignmentRaw.use_ai_grading !== false;
-      useAiGrammar = assignmentRaw.use_ai_grammar === true;
     }
 
     if (!useAiGrading) {
@@ -99,11 +108,10 @@ serve(async (req: Request) => {
       });
     }
 
-    if (!originalScript) {
-      throw new Error("Fatal: original_script is missing in assignment.");
+    if (!originalScript || originalScript.trim() === "") {
+      throw new Error("Fatal: original_script is missing in assignment tasks.");
     }
 
-    // 🚀 架構師修復 2：精準對齊前端 RPC 寫入的 student_audio_url
     const driveUrl = currentRawData.student_audio_url || record.audio_url || currentRawData.audio_url;
     if (!driveUrl) {
       throw new Error("Fatal: audio_url or student_audio_url is missing.");
@@ -282,7 +290,6 @@ Respond strictly in JSON matching the specified schema.
   } catch (error: any) {
     console.error(`AI Pipeline Error: ${error.message}`);
     
-    // 🚀 萬一出錯，強制把狀態改成 ai_error 寫入資料庫，前端才不會無限卡死
     if (recordId && supabase) {
       try {
         await supabase.from('task_completions').update({
