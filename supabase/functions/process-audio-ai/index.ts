@@ -137,8 +137,8 @@ serve(async (req: Request) => {
 
     const audioBase64 = encodeBase64(new Uint8Array(audioBuffer));
 
-    // 🚀 架構師核心修復：加上 -latest 突破 Google API 404 限制！
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${geminiApiKey}`;
+    // 🚀 架構師核心修復：改用官方穩定版模型，徹底解決 -latest 造成的 404 找不到模型問題！
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
 
     const promptText = `
 You are an expert English pronunciation and grammar evaluator.
