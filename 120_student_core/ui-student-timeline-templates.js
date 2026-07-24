@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v65 原生播放器與同行排版修復版)
- * 🚀 核心修復：強制按鈕同列不折行，全面導入原生 <audio controls> 進度條與時間軸切片！
+ * 🌟 純粹視覺模板層 (v66 解決 0:00 播放壞死問題)
+ * 🚀 核心修復：全面將 Google Drive 網址從 export=download 改為 export=view，解除瀏覽器安全封鎖！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -78,7 +78,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 原生切片播放器：徹底廢除 JS 按鈕，掛載實體微型 <audio>
+                            // 🚀 精準修復：將 export=download 替換為 export=view，解除瀏覽器附件封鎖
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -100,12 +100,12 @@ window.UIStudentTimelineTemplates = (() => {
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
                                                         <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                                             <span>${err.student_pronunciation}</span>
-                                                            ${retryAudioId ? `<audio controls src="https://drive.google.com/uc?export=download&id=${retryAudioId}#t=${err.start_time || 0},${err.end_time || ((err.start_time || 0) + 1.5)}" style="height: 30px; width: 140px; outline: none;"></audio>` : ''}
+                                                            ${retryAudioId ? `<audio controls preload="metadata" src="https://drive.google.com/uc?export=view&id=${retryAudioId}#t=${err.start_time || 0},${err.end_time || ((err.start_time || 0) + 1.5)}" style="height: 30px; width: 140px; outline: none;"></audio>` : ''}
                                                         </div>
                                                     </td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
                                                         <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                                                            <audio controls src="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}" style="height: 30px; width: 140px; outline: none;"></audio>
+                                                            <audio controls preload="metadata" src="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}" style="height: 30px; width: 140px; outline: none;"></audio>
                                                             <span>${err.expected_phonetic}</span>
                                                         </div>
                                                     </td>
@@ -218,8 +218,8 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 核心修復：直接掛載 HTML5 原生播放器 (Bar)，拔除所有被阻擋的 JS 點擊事件
-                            audioPlayerHtml = `<audio controls src="https://drive.google.com/uc?export=download&id=${retryAudioId}" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
+                            // 🚀 精準修復：將 export=download 替換為 export=view，加入 preload
+                            audioPlayerHtml = `<audio controls preload="metadata" src="https://drive.google.com/uc?export=view&id=${retryAudioId}" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
                                 manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
@@ -276,7 +276,6 @@ window.UIStudentTimelineTemplates = (() => {
 
                 let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
-                // 🚀 核心排版修復：使用 justify-content: space-between 強制按鈕與標題同行
                 return `
                     <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
                         <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
