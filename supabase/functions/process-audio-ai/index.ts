@@ -161,7 +161,7 @@ serve(async (req: Request) => {
 
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/${targetModel.name}:generateContent?key=${geminiApiKey}`;
 
-    // 🚀 重新加入 Completeness Check 於指令第一條！
+    // 🚀 v63: 升級 Prompt，強制要求時間軸切片數據
     const promptText = `
 You are an expert English pronunciation and grammar evaluator.
 Analyze the student's audio recording strictly against the Standard Script below.
@@ -173,12 +173,13 @@ Tasks:
 1. Completeness Check: Verify if the student recorded the ENTIRE Standard Script. Did they skip paragraphs, sentences, or stop early? You MUST point out any missing sections in the Comprehensive Feedback.
 2. Fluency Score: Use the 4-level scale (95: Native-like, 85: Clear, 75: Interference, 55: Broken).
 3. Comprehensive Feedback: Provide encouraging, specific feedback in Traditional Chinese. You MUST point out exactly where fluency drops and if the recording is incomplete.
-4. Word Errors: Identify EVERY mispronounced, distorted, inserted, or omitted word. Mark completely skipped words as 'omission'.
+4. Word Errors: Identify EVERY mispronounced, distorted, inserted, or omitted word. Mark completely skipped words as 'omission'. You MUST provide the exact \`start_time\` and \`end_time\` (in seconds, e.g., 2.5, 3.1) indicating exactly when the error occurred in the audio timeline.
 ${useAiGrammar ? "5. Grammar Analysis: Note grammatical errors in ad-lib speech in Traditional Chinese." : ""}
 
 Respond strictly in JSON matching the specified schema.
 `;
 
+    // 🚀 v63: 強化 responseSchema，鎖死時間軸神經元
     const requestBody = {
       contents: [{
         role: "user",
@@ -208,9 +209,11 @@ Respond strictly in JSON matching the specified schema.
                   word: { type: "STRING", description: "Target word from script" },
                   error_type: { type: "STRING", description: "omission, insertion, or mispronunciation" },
                   expected_phonetic: { type: "STRING", description: "Correct IPA" },
-                  student_pronunciation: { type: "STRING", description: "What the student said" }
+                  student_pronunciation: { type: "STRING", description: "What the student said" },
+                  start_time: { type: "NUMBER", description: "Start time of the error in seconds (e.g. 1.2)" },
+                  end_time: { type: "NUMBER", description: "End time of the error in seconds (e.g. 1.8)" }
                 },
-                required: ["word", "error_type", "expected_phonetic", "student_pronunciation"]
+                required: ["word", "error_type", "expected_phonetic", "student_pronunciation", "start_time", "end_time"]
               }
             },
             grammar_analysis: { type: "STRING" }

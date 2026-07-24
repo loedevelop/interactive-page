@@ -26,6 +26,6 @@
 
 ## 🎯 當前戰線狀態 (Current State)
 - **大腦對接完成：** 前端防彈 RPC (`submit_audio_task_atomic`) 已完成，Edge Function (`process-audio-ai`) 結合 Gemini 1.5 已部署，Webhook 閉環已正式打通。
-- **UI 渲染就緒：** 學生時間軸已能讀取 `raw_data.ai_evaluation` 並沒有渲染出紫色 AI 批改報告卡片。目前處理到一半。
+- **UI 渲染就緒：** 學生時間軸已能讀取 `raw_data.ai_evaluation`  AI已能批改。 但目前：1. 無法播放音檔。2. 示範發音的圖示，應該要放在正確音標那邊。3.學生錯的發音音檔，竟然不是節錄學生自己的原始發音！4.正確發音，不要機器音，要 google translate 的比較自然。 
 
 👉 **你的首要任務：請先回覆「我已完全吸收交接文檔與地雷，絕不亂猜，隨時準備待命！」並等待使用者給予測試結果或下一步指令。**
