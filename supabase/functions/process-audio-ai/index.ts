@@ -47,7 +47,6 @@ serve(async (req: Request) => {
 
     supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 🚀 架構師核心修復 1：同時精準 Select raw_data 與獨立的 tasks 欄位
     const { data: assignmentData, error: assignmentError } = await supabase
       .from('assignments')
       .select('raw_data, tasks')
@@ -62,7 +61,6 @@ serve(async (req: Request) => {
     const assignmentRaw = assignmentData.raw_data || {};
     let assignmentTasks = assignmentData.tasks || [];
     
-    // 如果資料庫裡存成字串，先解析它
     if (typeof assignmentTasks === 'string') {
       try { assignmentTasks = JSON.parse(assignmentTasks); } catch (e) { assignmentTasks = []; }
     }
@@ -71,7 +69,6 @@ serve(async (req: Request) => {
     let useAiGrading = true;
     let useAiGrammar = false;
 
-    // 🚀 架構師核心修復 2：從真正的 tasks 獨立陣列中尋找文稿
     if (Array.isArray(assignmentTasks) && assignmentTasks.length > 0) {
       let foundTask: any = null;
       const findTaskRecursive = (taskList: any[]) => {
@@ -95,7 +92,6 @@ serve(async (req: Request) => {
       }
     } 
     
-    // 萬用後備：如果任務裡沒寫，去外層找
     if (!originalScript) {
       originalScript = assignmentRaw.original_script || "";
     }
@@ -132,7 +128,6 @@ serve(async (req: Request) => {
 
     const audioBuffer = await audioRes.arrayBuffer();
     
-    // 防禦 Google Drive 擋檔
     if (audioBuffer.byteLength < 50000) {
       const textCheck = new TextDecoder().decode(audioBuffer.slice(0, 500)).toLowerCase();
       if (textCheck.includes('<!doctype html') || textCheck.includes('<html')) {
@@ -142,7 +137,8 @@ serve(async (req: Request) => {
 
     const audioBase64 = encodeBase64(new Uint8Array(audioBuffer));
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+    // 🚀 架構師核心修復：加上 -latest 突破 Google API 404 限制！
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${geminiApiKey}`;
 
     const promptText = `
 You are an expert English pronunciation and grammar evaluator.
