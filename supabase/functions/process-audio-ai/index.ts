@@ -137,8 +137,32 @@ serve(async (req: Request) => {
 
     const audioBase64 = encodeBase64(new Uint8Array(audioBuffer));
 
-    // 🚀 架構師核心修復：改用官方穩定版模型，徹底解決 -latest 造成的 404 找不到模型問題！
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+    // 🚀 架構師核心修復：全面拔除 1.5 硬編碼，讓 Google API 自己決定最好的 flash 模型！
+    const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`;
+    const listRes = await fetch(listModelsUrl);
+    
+    if (!listRes.ok) {
+      throw new Error(`Failed to list Gemini models: ${await listRes.text()}`);
+    }
+    
+    const listData = await listRes.json();
+    const availableModels = listData.models || [];
+    
+    // 找出所有支援 generateContent 且名稱帶有 flash 的模型 (不再限制 1.5)
+    const validModels = availableModels.filter((m: any) => 
+      m.supportedGenerationMethods?.includes('generateContent') && 
+      m.name.includes('flash')
+    );
+
+    if (validModels.length === 0) {
+      throw new Error(`Critical Error: No flash models are available for your API Key.`);
+    }
+
+    // 取得最新可用的 flash 模型 (優先找完整名稱的正式版)
+    let targetModel = validModels.find((m: any) => m.name.match(/gemini-[0-9.]+-flash$/))
+                   || validModels[0];
+
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/${targetModel.name}:generateContent?key=${geminiApiKey}`;
 
     const promptText = `
 You are an expert English pronunciation and grammar evaluator.
@@ -286,6 +310,7 @@ Respond strictly in JSON matching the specified schema.
   } catch (error: any) {
     console.error(`AI Pipeline Error: ${error.message}`);
     
+    // 🚨 即使失敗，也要利用 Service Role 寫回 ai_error 狀態與 Log！
     if (recordId && supabase) {
       try {
         await supabase.from('task_completions').update({

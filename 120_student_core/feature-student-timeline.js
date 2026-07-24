@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.5 AI 連動與 PDF 萬年 Bug 終極修復版)
- * 🚀 核心修復：找回被我誤拔的 Base64 護城河！只要老師上傳本機檔案，絕對優先使用 Base64 繞開 Drive 權限牆！
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v56 完整版)
+ * 🚀 核心修復：找回被我誤拔的 Base64 護城河！導入免重錄重試引擎！
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -377,7 +377,6 @@ window.FeatureStudentTimeline = (() => {
                         const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
                         const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}_${i+1}${lateSuffixStr}${ext}`;
                         
-                        // 🛡️ 架構師終極防禦：多音檔 MIME Type 強制裝甲
                         let mime = file.type;
                         if (!mime || mime === '' || mime === 'text/plain') {
                             const lowExt = ext.toLowerCase();
@@ -430,7 +429,6 @@ window.FeatureStudentTimeline = (() => {
                     const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
                     finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}${ext}`;
                     
-                    // 🛡️ 架構師終極防禦：絕對 MIME Type 綁定裝甲，徹底消滅 PDF 變 TXT 災難
                     let mime = file.type;
                     if (!mime || mime === '' || mime === 'text/plain') {
                         const lowExt = ext.toLowerCase();
@@ -498,19 +496,14 @@ window.FeatureStudentTimeline = (() => {
                 let finalMaterialRange = safeMatRange;
                 if (finalMaterialRange === 'undefined' || finalMaterialRange === 'null') finalMaterialRange = '';
 
-                // 🌟 核心贖罪修復：找回 Base64 護城河！
-                // 只要老師是用「本機上傳」，我們就直接提取 Base64，從根本繞開 Google Drive 的權限鐵壁！
                 if (foundTask && foundTask.raw_data) {
                     if (!finalMaterialUrl) {
-                        // 1. 優先使用本機上傳轉出的 Base64
                         if (foundTask.raw_data.student_local_b64) {
                             const b64 = foundTask.raw_data.student_local_b64;
                             let mime = foundTask.raw_data.student_local_mime || 'application/pdf';
-                            if (mime === 'text/plain') mime = 'application/pdf'; // 防禦舊資料污染
+                            if (mime === 'text/plain') mime = 'application/pdf'; 
                             finalMaterialUrl = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
-                        } 
-                        // 2. 如果真的沒有 Base64，才退而求其次使用 Drive 網址
-                        else {
+                        } else {
                             finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
                         }
                     }
@@ -557,7 +550,6 @@ window.FeatureStudentTimeline = (() => {
                             statusEl.style.color = '#8B5CF6';
                         }
 
-                        // 🚀 核心防彈 RPC 觸發
                         const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
                         const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
                             p_assignment_id: assignmentId,
@@ -580,7 +572,6 @@ window.FeatureStudentTimeline = (() => {
                             completedTasks.push(compositeKey);
                         }
                         
-                        // 🌟 UI 魔法：靜默注入「AI 批改中」假狀態並重新渲染
                         if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
                         let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
                         if (tempRecord) {
@@ -618,6 +609,64 @@ window.FeatureStudentTimeline = (() => {
                 return;
             }
             window.open(safeFormatUrl(studentDriveUrl), '_blank');
+        },
+
+        retryAIGrading: async (assignmentId, taskId, fileId, audioUrl) => {
+            if (window._isUploadingAudio) {
+                console.warn('正在處理中，請勿重複點擊');
+                return;
+            }
+            window._isUploadingAudio = true;
+            
+            const statusId = `upload-status-${assignmentId}-${taskId}`;
+            const statusEl = document.getElementById(statusId);
+
+            try {
+                if (statusEl) {
+                    statusEl.textContent = '🚀 重新喚醒 AI 大腦批改中...';
+                    statusEl.style.color = '#3B82F6';
+                }
+                
+                const { userId, classId } = await getAuthContext(); 
+                if (!window.supabaseClient) throw new Error("系統 API 模組尚未載入");
+                
+                if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+                let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
+                if (tempRecord) {
+                    tempRecord.status = 'ai_processing';
+                }
+                renderCourses();
+
+                const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
+                    p_assignment_id: assignmentId,
+                    p_task_id: taskId,
+                    p_student_id: userId,
+                    p_class_id: classId,
+                    p_file_id: fileId,
+                    p_audio_url: audioUrl
+                });
+
+                if (rpcErr) throw rpcErr;
+                
+                if (statusEl) {
+                    statusEl.textContent = '✅ 已重新喚醒！AI 已接管';
+                    statusEl.style.color = '#10B981';
+                }
+
+            } catch (err) {
+                alert(`❌ 重新啟動 AI 失敗: ${err.message}`);
+                if (statusEl) {
+                    statusEl.textContent = '❌ 重新啟動失敗';
+                    statusEl.style.color = '#EF4444';
+                }
+                let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
+                if (tempRecord) {
+                    tempRecord.status = 'ai_error';
+                }
+                renderCourses();
+            } finally {
+                window._isUploadingAudio = false; 
+            }
         }
     };
 })();
