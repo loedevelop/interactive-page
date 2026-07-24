@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v56 完整版)
- * 🚀 核心修復：包含完整 60fps 追蹤、Base64 保護，以及一鍵喚醒 AI 的 retryAIGrading 引擎！
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v63 完整版)
+ * 🚀 核心修復：包含完整 60fps 追蹤、一鍵喚醒 AI，並導入全新的「時間軸切片」與「TTS 播放」引擎！
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -10,6 +10,11 @@ window.FeatureStudentTimeline = (() => {
     let studentDriveUrl = null; 
     let studentUsername = '學生';
     let currentClassConfig = null; 
+
+    // 🚀 v63 全域音效播放引擎
+    let _audioCache = {};
+    let _currentPlaying = null;
+    let _pauseTimeout = null;
 
     const scrollToCurrentWeek = () => {
         const targetNode = document.querySelector('.timeline-node[data-is-current="true"]');
@@ -251,6 +256,58 @@ window.FeatureStudentTimeline = (() => {
                 }
             }
             fetchData();
+        },
+
+        // 🚀 v63: 播放 Google 真人發音引擎 (解決機器音問題)
+        playTTS: (text) => {
+            if (!text) return;
+            if (_currentPlaying) _currentPlaying.pause();
+            if (_pauseTimeout) clearTimeout(_pauseTimeout);
+            
+            // 使用 client=tw-ob 規避基礎防盜鏈，原生的 new Audio 即可播放
+            const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(text)}`;
+            _currentPlaying = new Audio(url);
+            _currentPlaying.play().catch(e => {
+                console.warn('TTS Playback blocked', e);
+                alert('播放示範音失敗，您的瀏覽器可能阻擋了自動播放。');
+            });
+        },
+
+        // 🚀 v63: 播放學生的原始音檔切片 (透過 Drive uc?export API 串流載入)
+        playStudentAudioSlice: (fileId, start, end) => {
+            if (_currentPlaying) _currentPlaying.pause();
+            if (_pauseTimeout) clearTimeout(_pauseTimeout);
+            if (!fileId) {
+                alert('無法取得原始音檔 ID');
+                return;
+            }
+
+            const startTime = Number(start) || 0;
+            let endTime = Number(end) || 0;
+            
+            // 容錯機制：如果 AI 沒給 endTime，預設向後播 1.5 秒
+            if (endTime <= startTime) endTime = startTime + 1.5;
+
+            // 快取音檔，避免重複下載
+            if (!_audioCache[fileId]) {
+                _audioCache[fileId] = new Audio(`https://drive.google.com/uc?export=download&id=${fileId}`);
+            }
+            const audio = _audioCache[fileId];
+            _currentPlaying = audio;
+
+            audio.currentTime = startTime;
+            audio.play().catch(e => {
+                console.warn('Slice playback blocked', e);
+                alert('播放您的原音失敗，請先確認瀏覽器允許媒體播放。');
+            });
+
+            // 到達 endTime 自動暫停
+            const durationMs = (endTime - startTime) * 1000;
+            _pauseTimeout = setTimeout(() => {
+                if (_currentPlaying === audio) {
+                    audio.pause();
+                }
+            }, durationMs);
         },
 
         switchView: (viewId, btnElement) => {
