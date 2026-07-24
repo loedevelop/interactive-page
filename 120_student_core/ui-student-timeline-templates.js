@@ -1,10 +1,58 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v69 終極防禦版：全面廢除 <audio> 標籤，改用 Popup 彈出視窗)
- * 🚀 核心修復：徹底放棄對抗瀏覽器第三方 Cookie 封鎖，改用 window.open() 彈出官方播放器，保證 100% 可播放！
+ * 🌟 純粹視覺模板層 (v70 終極清爽版：廢除表格內所有播放 Bar，改用 JS 微型引擎 + 圖示精準片段播放)
+ * 🚀 核心修復：使用隱形 Audio 引擎，透過 timeupdate 事件精準擷取 start_time 與 end_time 播放學生片段。
  */
 
 window.UIStudentTimelineTemplates = (() => {
+    // 🎵 隱形微型播放引擎 (共用同一個實體，確保切換時不會重疊播放)
+    let sharedAudio = null;
+    let timeUpdateHandler = null;
+
+    const playStudentSegment = (driveId, start, end) => {
+        if (sharedAudio) {
+            sharedAudio.pause();
+            if (timeUpdateHandler) sharedAudio.removeEventListener('timeupdate', timeUpdateHandler);
+        }
+        
+        const startTime = parseFloat(start) || 0;
+        const endTime = parseFloat(end) || (startTime + 1.5);
+        
+        // 加上 #t=start,end 讓支援的瀏覽器原生切片
+        sharedAudio = new Audio(`https://drive.google.com/uc?export=download&id=${driveId}&confirm=t#t=${startTime},${endTime}`);
+        
+        // 針對不支援 #t 的環境，手動跳轉
+        sharedAudio.addEventListener('loadedmetadata', () => {
+            if (Math.abs(sharedAudio.currentTime - startTime) > 0.5) {
+                sharedAudio.currentTime = startTime;
+            }
+        });
+
+        sharedAudio.play().catch(e => {
+            console.warn("Auto-play blocked:", e);
+            alert("播放失敗，請確認瀏覽器允許網站自動播放音訊。");
+        });
+
+        // 雙重保險：透過 JS 監聽器強制在 end_time 瞬間喀嚓切斷
+        timeUpdateHandler = () => {
+            if (sharedAudio.currentTime >= endTime) {
+                sharedAudio.pause();
+                sharedAudio.removeEventListener('timeupdate', timeUpdateHandler);
+            }
+        };
+        sharedAudio.addEventListener('timeupdate', timeUpdateHandler);
+    };
+
+    const playTTS = (text) => {
+        if (sharedAudio) {
+            sharedAudio.pause();
+            if (timeUpdateHandler) sharedAudio.removeEventListener('timeupdate', timeUpdateHandler);
+        }
+        sharedAudio = new Audio(`https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(text)}`);
+        sharedAudio.play().catch(e => console.warn("TTS blocked:", e));
+    };
+
+
     function getLevelStyle(depth) {
         const styles = [
             { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, 
@@ -17,6 +65,10 @@ window.UIStudentTimelineTemplates = (() => {
     }
 
     return {
+        // 暴露給全域 onclick 使用
+        playStudentSegment,
+        playTTS,
+        
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
             let html = '';
             const reversedNodes = timelineNodes.map((node, index) => ({ node, weekIndex: index + 1 })).reverse();
@@ -78,7 +130,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 終極修復：將單字錯誤面板的學生音檔 <audio> 替換為 Popup 彈出按鈕
+                            // 🚀 終極修復：表格內廢除所有 <audio> 標籤，全部改用極簡圖示按鈕呼叫 JS 引擎
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -94,23 +146,26 @@ window.UIStudentTimelineTemplates = (() => {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                ${ai.word_errors.map(err => `
-                                                <tr style="background: white;">
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
-                                                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                                                            <span>${err.student_pronunciation}</span>
-                                                            ${retryAudioId ? `<button type="button" onclick="window.open('https://drive.google.com/file/d/${retryAudioId}/view', 'AudioPlayer', 'width=500,height=450');" style="background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px; padding:2px 6px; font-size:0.8rem; cursor:pointer; color:#475569; font-weight:bold;">🎵 彈出播放</button>` : ''}
-                                                        </div>
-                                                    </td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
-                                                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                                                            <audio controls preload="metadata" src="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}" style="height: 30px; width: 140px; outline: none;"></audio>
-                                                            <span>${err.expected_phonetic}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${err.error_type}</td>
-                                                </tr>`).join('')}
+                                                ${ai.word_errors.map(err => {
+                                                    const safeWord = (err.word || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                                    return `
+                                                    <tr style="background: white;">
+                                                        <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
+                                                        <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold; white-space: nowrap;">
+                                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                                <span>${err.student_pronunciation}</span>
+                                                                ${retryAudioId ? `<span onclick="window.UIStudentTimelineTemplates.playStudentSegment('${retryAudioId}', ${err.start_time || 0}, ${err.end_time || ((err.start_time || 0) + 1.5)})" style="cursor:pointer; font-size:1.1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="播放您的發音片段">🎧</span>` : ''}
+                                                            </div>
+                                                        </td>
+                                                        <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981; white-space: nowrap;">
+                                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                                <span>${err.expected_phonetic}</span>
+                                                                <span onclick="window.UIStudentTimelineTemplates.playTTS('${safeWord}')" style="cursor:pointer; font-size:1.1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽正確發音">🔊</span>
+                                                            </div>
+                                                        </td>
+                                                        <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${err.error_type}</td>
+                                                    </tr>`;
+                                                }).join('')}
                                             </tbody>
                                         </table>
                                     </div>
@@ -218,8 +273,8 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 終極修復：將主面板的 <audio> 標籤銷毀，替換成 Popup 彈出視窗按鈕
-                            audioPlayerHtml = `<button type="button" onclick="window.open('https://drive.google.com/file/d/${retryAudioId}/view', 'AudioPlayer', 'width=500,height=450');" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出播放視窗</button>`;
+                            // 頂部主作業列的播放器：這裡維持原生的 <audio controls> 讓學生能播放「完整版」的作業，並加上 confirm=t
+                            audioPlayerHtml = `<audio controls preload="metadata" src="https://drive.google.com/uc?export=download&id=${retryAudioId}&confirm=t" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
                                 manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
