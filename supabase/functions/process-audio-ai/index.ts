@@ -137,7 +137,6 @@ serve(async (req: Request) => {
 
     const audioBase64 = encodeBase64(new Uint8Array(audioBuffer));
 
-    // 🚀 架構師核心修復：全面拔除 1.5 硬編碼，讓 Google API 自己決定最好的 flash 模型！
     const listModelsUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`;
     const listRes = await fetch(listModelsUrl);
     
@@ -148,7 +147,6 @@ serve(async (req: Request) => {
     const listData = await listRes.json();
     const availableModels = listData.models || [];
     
-    // 找出所有支援 generateContent 且名稱帶有 flash 的模型 (不再限制 1.5)
     const validModels = availableModels.filter((m: any) => 
       m.supportedGenerationMethods?.includes('generateContent') && 
       m.name.includes('flash')
@@ -158,12 +156,12 @@ serve(async (req: Request) => {
       throw new Error(`Critical Error: No flash models are available for your API Key.`);
     }
 
-    // 取得最新可用的 flash 模型 (優先找完整名稱的正式版)
     let targetModel = validModels.find((m: any) => m.name.match(/gemini-[0-9.]+-flash$/))
                    || validModels[0];
 
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/${targetModel.name}:generateContent?key=${geminiApiKey}`;
 
+    // 🚀 架構師修正：加入 Completeness Check 讓 AI 確保整段稿子都有錄到！
     const promptText = `
 You are an expert English pronunciation and grammar evaluator.
 Analyze the student's audio recording strictly against the Standard Script below.
@@ -172,10 +170,11 @@ Standard Script:
 "${originalScript}"
 
 Tasks:
-1. Fluency Score: Use the 4-level scale (95: Native-like, 85: Clear, 75: Interference, 55: Broken).
-2. Comprehensive Feedback: Provide encouraging, specific feedback in Traditional Chinese.
-3. Word Errors: Identify EVERY mispronounced, distorted, inserted, or omitted word. Mark completely skipped words as 'omission'.
-${useAiGrammar ? "4. Grammar Analysis: Note grammatical errors in ad-lib speech in Traditional Chinese." : ""}
+1. Completeness Check: Verify if the student recorded the ENTIRE Standard Script. Did they skip paragraphs, sentences, or stop early? You MUST point out any missing sections in the Comprehensive Feedback.
+2. Fluency Score: Use the 4-level scale (95: Native-like, 85: Clear, 75: Interference, 55: Broken).
+3. Comprehensive Feedback: Provide encouraging, specific feedback in Traditional Chinese. You MUST point out exactly where fluency drops and if the recording is incomplete.
+4. Word Errors: Identify EVERY mispronounced, distorted, inserted, or omitted word. Mark completely skipped words as 'omission'.
+${useAiGrammar ? "5. Grammar Analysis: Note grammatical errors in ad-lib speech in Traditional Chinese." : ""}
 
 Respond strictly in JSON matching the specified schema.
 `;
@@ -200,7 +199,7 @@ Respond strictly in JSON matching the specified schema.
           type: "OBJECT",
           properties: {
             fluency_score: { type: "INTEGER", description: "Strictly 95, 85, 75, or 55." },
-            comprehensive_feedback: { type: "STRING", description: "Feedback in Traditional Chinese." },
+            comprehensive_feedback: { type: "STRING", description: "Feedback in Traditional Chinese. Must mention missed script parts." },
             word_errors: {
               type: "ARRAY",
               items: {
@@ -245,10 +244,13 @@ Respond strictly in JSON matching the specified schema.
     aiEvaluation.pronunciation_score = Math.max(0, 100 - errorCount);
 
     const gradingHistory = currentRawData.grading_history || [];
+    
+    // 🚀 核心歷史備份：包含時間戳記，確保音檔與評語永遠綁定
     if (currentRawData.ai_evaluation) {
       gradingHistory.push({
         timestamp: new Date().toISOString(),
         ai_evaluation: currentRawData.ai_evaluation,
+        audio_url: driveUrl, 
         teacher_score: currentRawData.teacher_score, 
         ta_score: currentRawData.ta_score
       });
@@ -310,7 +312,6 @@ Respond strictly in JSON matching the specified schema.
   } catch (error: any) {
     console.error(`AI Pipeline Error: ${error.message}`);
     
-    // 🚨 即使失敗，也要利用 Service Role 寫回 ai_error 狀態與 Log！
     if (recordId && supabase) {
       try {
         await supabase.from('task_completions').update({

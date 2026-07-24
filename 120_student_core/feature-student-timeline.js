@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
  * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v56 完整版)
- * 🚀 核心修復：找回被我誤拔的 Base64 護城河！導入免重錄重試引擎！
+ * 🚀 核心修復：包含完整 60fps 追蹤、Base64 保護，以及一鍵喚醒 AI 的 retryAIGrading 引擎！
  */
 
 window.FeatureStudentTimeline = (() => {
@@ -623,7 +623,7 @@ window.FeatureStudentTimeline = (() => {
 
             try {
                 if (statusEl) {
-                    statusEl.textContent = '🚀 重新喚醒 AI 大腦批改中...';
+                    statusEl.textContent = '🚀 手動喚醒 AI 批改中...';
                     statusEl.style.color = '#3B82F6';
                 }
                 
@@ -649,14 +649,14 @@ window.FeatureStudentTimeline = (() => {
                 if (rpcErr) throw rpcErr;
                 
                 if (statusEl) {
-                    statusEl.textContent = '✅ 已重新喚醒！AI 已接管';
+                    statusEl.textContent = '✅ 已提交！AI 已接管';
                     statusEl.style.color = '#10B981';
                 }
 
             } catch (err) {
                 alert(`❌ 重新啟動 AI 失敗: ${err.message}`);
                 if (statusEl) {
-                    statusEl.textContent = '❌ 重新啟動失敗';
+                    statusEl.textContent = '❌ 提交失敗';
                     statusEl.style.color = '#EF4444';
                 }
                 let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
@@ -666,6 +666,22 @@ window.FeatureStudentTimeline = (() => {
                 renderCourses();
             } finally {
                 window._isUploadingAudio = false; 
+            }
+        },
+
+        toggleAIReport: (compositeKey) => {
+            const body = document.getElementById(`ai-report-body-${compositeKey}`);
+            const icon = document.getElementById(`toggle-icon-${compositeKey}`);
+            if (!body) return;
+            
+            if (body.style.display === 'none') {
+                body.style.display = 'block';
+                icon.textContent = '🔽';
+                localStorage.setItem(`ai_report_collapsed_${compositeKey}`, 'false');
+            } else {
+                body.style.display = 'none';
+                icon.textContent = '◀️';
+                localStorage.setItem(`ai_report_collapsed_${compositeKey}`, 'true');
             }
         }
     };
