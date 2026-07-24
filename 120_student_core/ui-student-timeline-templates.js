@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v63 升級版)
- * 🚀 核心修復：精準接合時間軸切片播放，並完美解決圖示與音標排版錯位問題。
+ * 🌟 純粹視覺模板層 (v64 緊急排版與原地播放修復版)
+ * 🚀 核心修復：強制按鈕同列不折行，拔除所有外連 target="_blank"，實現真・原地播放！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -56,13 +56,13 @@ window.UIStudentTimelineTemplates = (() => {
                         }
 
                         if (taskStatus === 'ai_processing') {
-                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
                         } else if (taskStatus === 'graded' || taskStatus === 'completed') {
-                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
                         } else if (taskStatus === 'ai_error' || taskStatus === 'failed') {
-                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
                         } else if (taskStatus === 'submitted') {
-                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交 (未批改)</span>`;
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交</span>`;
                         }
 
                         if (compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
@@ -78,7 +78,6 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 v63: 導入 Flexbox 解決錯位，並精準綁定全新的 Timeline 播放引擎
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -171,7 +170,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                     if (actualUrlText !== '') {
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${actualTitle || '未命名任務'}</span>`;
-                        linkContent = formattedTaskUrl ? `<a href="${formattedTaskUrl}" target="_blank" class="btn-action" style="margin-left:10px; font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 8px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
+                        linkContent = formattedTaskUrl ? `<a href="${formattedTaskUrl}" target="_blank" class="btn-action" style="font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
                     } else {
                         let fallbackText = actualTitle || '未命名連結';
                         if (formattedTaskUrl) {
@@ -185,10 +184,10 @@ window.UIStudentTimelineTemplates = (() => {
 
                     if (!canUpload) {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
-                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⛔ 已逾期，停止收件</div>`;
+                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⛔ 已逾期，停止收件</div>`;
                     } else if (!studentDriveUrl) {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
-                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⚠️ 您的專屬資料夾尚未設定</div>`;
+                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⚠️ 您的專屬資料夾尚未設定</div>`;
                     } else {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                         
@@ -218,18 +217,19 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            audioPlayerHtml = `<a href="https://drive.google.com/file/d/${retryAudioId}/view" target="_blank" class="btn-action" style="background:white; border:1px solid #3B82F6; color:#3B82F6; padding:6px 12px; border-radius:6px; font-weight:900; text-decoration:none; font-size:0.85rem; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: 0.2s;" onmouseover="this.style.background='#EFF6FF'" onmouseout="this.style.background='white'">▶️ 打開完整音檔</a>`;
+                            // 🚀 核心修復：拔除外連，改用原地播放，對接 JS 引擎！
+                            audioPlayerHtml = `<button onclick="window.FeatureStudentTimeline.playStudentAudioSlice('${retryAudioId}', 0, 99999)" class="btn-action" style="background:white; border:1px solid #3B82F6; color:#3B82F6; padding:4px 10px; border-radius:6px; font-weight:900; font-size:0.85rem; cursor:pointer;">▶️ 原地播放</button>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
-                                manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
+                                manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
                             }
                         }
 
                         btn = `
-                            <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap; margin-top:8px;">
+                            <div style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                 ${audioPlayerHtml}
-                                <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
-                                <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
+                                <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
+                                <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
                                 ${manualSubmitBtnHtml}
                                 <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                             </div>
@@ -240,10 +240,10 @@ window.UIStudentTimelineTemplates = (() => {
 
                     if (!canUpload) {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
-                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⛔ 已逾期，停止收件</div>`;
+                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⛔ 已逾期，停止收件</div>`;
                     } else if (!studentDriveUrl) {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
-                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block; margin-left:10px;">⚠️ 您的專屬資料夾尚未設定</div>`;
+                        btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⚠️ 您的專屬資料夾尚未設定</div>`;
                     } else {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                         
@@ -255,7 +255,7 @@ window.UIStudentTimelineTemplates = (() => {
                         const statusId = `upload-status-${course.id}-${task.id}`;
 
                         btn = `
-                            <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap;">
+                            <div style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                 <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
                                 <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
                                 <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
@@ -271,16 +271,22 @@ window.UIStudentTimelineTemplates = (() => {
                 let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${task.description}</div>` : '';
                 
                 let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
-                let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; margin-left:8px; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
+                let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
                 let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
+                // 🚀 核心排版修復：將 btn 放進與標題同一層的 Flex 容器中！保證在同一行
                 return `
                     <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
-                        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                            ${checkboxHtml}${iconHtml}${taskTitleDisplay}${statusBadgeHtml}${linkContent}${localDueHtml}
+                        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; line-height: 1.2;">
+                            <div style="display:flex; align-items:center; gap:4px;">
+                                ${checkboxHtml}${iconHtml}${taskTitleDisplay}
+                            </div>
+                            ${statusBadgeHtml}
+                            ${localDueHtml}
+                            ${linkContent}
+                            ${btn}
                         </div>
-                        ${btn}
                         ${taskDescHtml}
                         ${aiFeedbackHtml}
                     </div>
