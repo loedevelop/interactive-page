@@ -1,67 +1,63 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V75 絕對防彈版：解決 JS 閃退、加入 oncanplay 安全鎖、確立跨平台相容性)
+ * 🌟 純粹視覺模板層 (V76 終極解圍版：修復同步播放阻擋、實裝範圍標籤 UI)
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 1. 最穩定的 Google 真人發音引擎 (回歸純記憶體 Audio，絕不操作 DOM 導致崩潰)
+    // 🔊 1. Google 真人發音引擎 (強制 DOM 實體化 + 同步觸發，破解瀏覽器阻擋)
     let sharedTTS = null;
     const playGoogleTTS = (text) => {
-        if (sharedTTS) {
-            sharedTTS.pause();
-            sharedTTS.removeAttribute('src');
+        if (!sharedTTS) {
+            sharedTTS = document.createElement('audio');
+            sharedTTS.id = 'rt-hidden-tts';
+            document.body.appendChild(sharedTTS);
         }
-        // client=tw-ob 經實測是最不易被阻擋的免金鑰參數，且不需等候 metadata
-        sharedTTS = new Audio(`https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(text)}`);
-        sharedTTS.play().catch(e => console.warn("Google TTS 播放失敗:", e));
-    };
-
-    // 🎧 2. 學生背景切片引擎 (異步安全載入版，根絕點擊閃退)
-    let sliceAudio = null;
-    let sliceTimer = null;
-    const playStudentAudioSlice = (driveId, startTime, endTime) => {
-        if (sliceAudio) {
-            sliceAudio.pause();
-            sliceAudio.oncanplay = null;
-            sliceAudio.onerror = null;
-        }
-        if (sliceTimer) clearTimeout(sliceTimer);
-
-        sliceAudio = new Audio();
+        sharedTTS.pause();
+        sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text)}`;
         
-        // 🛡️ 致命防護：必須等到 oncanplay (音檔真正準備好) 才能調 currentTime
-        sliceAudio.oncanplay = () => {
-            try {
-                // 如果是 WebM 無長度檔案，這行可能被瀏覽器忽略，但 try-catch 保證絕不閃退
-                if (Math.abs(sliceAudio.currentTime - startTime) > 0.5) {
-                    sliceAudio.currentTime = startTime;
-                }
-            } catch(e) {
-                console.warn("跳播受限 (檔案可能缺乏時長元數據):", e);
-            }
-            
-            sliceAudio.play().then(() => {
-                const duration = (endTime > startTime) ? (endTime - startTime) : 1.5;
-                sliceTimer = setTimeout(() => {
-                    if (sliceAudio) sliceAudio.pause();
-                }, duration * 1000);
-            }).catch(e => console.warn("背景播放被阻擋 (請確認自動播放權限):", e));
-            
-            sliceAudio.oncanplay = null; // 觸發後立即解除綁定，避免無限迴圈
-        };
-
-        sliceAudio.onerror = () => {
-            console.error("無法載入學生音檔，可能因 CORS 或 Drive 權限被阻擋");
-        };
-
-        sliceAudio.src = `https://drive.google.com/uc?export=download&id=${driveId}`;
-        sliceAudio.load();
+        // 必須在點擊的同一毫秒內呼叫 play()，絕不能等待載入
+        sharedTTS.play().catch(e => console.warn("Google TTS 播放被阻擋:", e));
     };
 
-    // 🖥️ 3. 網頁內建懸浮視窗 Modal 
-    // ⚠️ 鐵律：必須使用 iframe /preview！因為 iOS Safari 原生不支援 WebM 播放。
-    // 透過 Drive 預覽，Google 會自動轉碼，這是行動裝置唯一的活路。
+    // 🎧 2. 學生背景切片引擎 (同步觸發版)
+    let sharedSlice = null;
+    let sliceTimerInterval = null;
+    const playStudentAudioSlice = (driveId, startTime, endTime) => {
+        if (!sharedSlice) {
+            sharedSlice = document.createElement('audio');
+            sharedSlice.id = 'rt-hidden-slice';
+            document.body.appendChild(sharedSlice);
+        }
+        
+        if (sliceTimerInterval) clearInterval(sliceTimerInterval);
+        
+        sharedSlice.pause();
+        sharedSlice.src = `https://drive.google.com/uc?export=download&id=${driveId}`;
+        
+        // 🛡️ 致命防護：同步呼叫 play()，徹底繞過 Autoplay 阻擋政策
+        const playPromise = sharedSlice.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                // 等開始播放後，才進行時間點跳轉 (若 WebM 拒絕跳轉，則會從頭播)
+                if (Math.abs(sharedSlice.currentTime - startTime) > 0.5) {
+                    try { sharedSlice.currentTime = startTime; } catch(e){}
+                }
+                
+                sliceTimerInterval = setInterval(() => {
+                    if (sharedSlice.currentTime >= endTime || sharedSlice.paused) {
+                        sharedSlice.pause();
+                        clearInterval(sliceTimerInterval);
+                    }
+                }, 100);
+            }).catch(e => {
+                console.warn("背景播放被阻擋:", e);
+                alert("⚠️ 瀏覽器安全性阻擋：請點擊網址列旁的 🔒 圖示，允許網站「自動播放聲音」。");
+            });
+        }
+    };
+
+    // 🖥️ 3. 網頁內建懸浮視窗 Modal (保留 Drive 預覽，交由 Google 雲端轉碼以相容舊版 WebM)
     const openDriveModal = (driveId) => {
         let modal = document.getElementById('rt-custom-audio-modal');
         if (!modal) {
@@ -87,7 +83,7 @@ window.UIStudentTimelineTemplates = (() => {
                 <iframe src="https://drive.google.com/file/d/${driveId}/preview" style="flex:1; width:100%; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC;"></iframe>
                 <div style="text-align:center; margin-top:12px; font-size:0.85rem; color:#94A3B8; font-weight:bold;">
                     👆 點擊視窗外部黑色區域即可關閉 <br>
-                    <span style="font-size:0.75rem; color:#CBD5E1; font-weight:normal;">(註：若進度條無法拉動，為瀏覽器原始錄音檔缺乏長度數據之限制)</span>
+                    <span style="font-size:0.75rem; color:#CBD5E1; font-weight:normal;">(註：舊版 WebM 錄音若無法拉動進度條為格式先天限制，新版將轉換格式)</span>
                 </div>
             </div>
         `;
@@ -284,7 +280,21 @@ window.UIStudentTimelineTemplates = (() => {
                         }
                     }
                 } else if (task.type === 'audio_record') {
-                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title || '語音錄製任務'}</span>`;
+                    
+                    // 🚨 修正：將 material_range 提取到全域作用域，並動態組裝到任務標題後方
+                    let originalScript = '';
+                    let materialUrl = '';
+                    let materialRange = '';
+                    if (task.raw_data) {
+                        originalScript = task.raw_data.original_script || '';
+                        materialUrl = task.raw_data.material_url || '';
+                        materialRange = task.raw_data.material_range || '';
+                    }
+
+                    // 📖 動態渲染閱讀範圍標籤 (不再只藏在錄音艙！)
+                    let rangeHtml = materialRange ? `<span style="font-size:0.8rem; background:#E0E7FF; color:#4338CA; padding:2px 8px; border-radius:12px; margin-left:10px; font-weight:800; border:1px solid #C7D2FE; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display:inline-block; vertical-align:middle;">📖 範圍: ${materialRange}</span>` : '';
+
+                    taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${task.title \vert{}\vert{} '語音錄製任務'}</span>${rangeHtml}`;
 
                     if (!canUpload) {
                         checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -298,15 +308,6 @@ window.UIStudentTimelineTemplates = (() => {
                         const pureTaskTitle = (task.title || '未命名任務').replace(/<[^>]*>?/gm, '').trim();
                         const safeTitleForJS = pureTaskTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                         const statusId = `upload-status-${course.id}-${task.id}`;
-
-                        let originalScript = '';
-                        let materialUrl = '';
-                        let materialRange = '';
-                        if (task.raw_data) {
-                            originalScript = task.raw_data.original_script || '';
-                            materialUrl = task.raw_data.material_url || '';
-                            materialRange = task.raw_data.material_range || '';
-                        }
                         
                         const safeScriptForJS = originalScript.replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
                         const safeUrlForJS = safeFormatUrl(materialUrl).replace(/'/g, "\\'").replace(/"/g, "&quot;");
