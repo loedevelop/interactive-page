@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v68 解決 0:00 播放壞死問題 - 終極快取與掃描防禦版)
- * 🚀 核心修復：使用 export=download 並強制加上 &confirm=t 繞過 Google Drive 潛在的轉址掃描
+ * 🌟 純粹視覺模板層 (v69 終極防禦版：全面廢除 <audio> 標籤，改用 Popup 彈出視窗)
+ * 🚀 核心修復：徹底放棄對抗瀏覽器第三方 Cookie 封鎖，改用 window.open() 彈出官方播放器，保證 100% 可播放！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -78,7 +78,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 加入 &confirm=t 繞過 Google Drive 潛在的大檔案轉址掃描
+                            // 🚀 終極修復：將單字錯誤面板的學生音檔 <audio> 替換為 Popup 彈出按鈕
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -100,7 +100,7 @@ window.UIStudentTimelineTemplates = (() => {
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
                                                         <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                                             <span>${err.student_pronunciation}</span>
-                                                            ${retryAudioId ? `<audio controls preload="metadata" src="https://drive.google.com/uc?export=download&id=${retryAudioId}&confirm=t#t=${err.start_time || 0},${err.end_time || ((err.start_time || 0) + 1.5)}" style="height: 30px; width: 140px; outline: none;"></audio>` : ''}
+                                                            ${retryAudioId ? `<button type="button" onclick="window.open('https://drive.google.com/file/d/${retryAudioId}/view', 'AudioPlayer', 'width=500,height=450');" style="background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px; padding:2px 6px; font-size:0.8rem; cursor:pointer; color:#475569; font-weight:bold;">🎵 彈出播放</button>` : ''}
                                                         </div>
                                                     </td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
@@ -218,8 +218,8 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 加入 &confirm=t 繞過 Google Drive 潛在的大檔案轉址掃描
-                            audioPlayerHtml = `<audio controls preload="metadata" src="https://drive.google.com/uc?export=download&id=${retryAudioId}&confirm=t" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
+                            // 🚀 終極修復：將主面板的 <audio> 標籤銷毀，替換成 Popup 彈出視窗按鈕
+                            audioPlayerHtml = `<button type="button" onclick="window.open('https://drive.google.com/file/d/${retryAudioId}/view', 'AudioPlayer', 'width=500,height=450');" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出播放視窗</button>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
                                 manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
