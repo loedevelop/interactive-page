@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
  * 🌟 純粹視覺模板層：負責將作業 JSON 轉化為 HTML 字串
- * 🚀 核心更新：原生播放器置左、渲染詳細發音錯誤表格、徹底拔除冗字！
+ * 🚀 核心更新：iframe 微型播放器、Google TTS 正確發音功能！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -30,7 +30,6 @@ window.UIStudentTimelineTemplates = (() => {
                 let aiFeedbackHtml = '';
                 let statusBadgeHtml = '';
                 
-                // 供下方按鈕區使用的變數
                 let hasValidAudioFile = false; 
                 let retryAudioId = '';
                 let retryAudioUrl = '';
@@ -41,7 +40,6 @@ window.UIStudentTimelineTemplates = (() => {
                     if (compRecord) {
                         taskStatus = compRecord.status;
                         
-                        // 1. 強制檢查是否有歷史音檔 ID
                         if (compRecord.raw_data) {
                             retryAudioUrl = compRecord.raw_data.student_audio_url || compRecord.raw_data.audio_url || '';
                             if (!retryAudioUrl && compRecord.raw_data.drive_file_ids && compRecord.raw_data.drive_file_ids.length > 0) {
@@ -57,7 +55,6 @@ window.UIStudentTimelineTemplates = (() => {
                             }
                         }
 
-                        // 2. 狀態標籤渲染
                         if (taskStatus === 'ai_processing') {
                             statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
                         } else if (taskStatus === 'graded' || taskStatus === 'completed') {
@@ -68,7 +65,6 @@ window.UIStudentTimelineTemplates = (() => {
                             statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交 (未批改)</span>`;
                         }
 
-                        // 3. 渲染 AI 成績卡片與單字錯誤表格
                         if (compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
                             const ai = compRecord.raw_data.ai_evaluation;
                             const pScore = ai.pronunciation_score ?? ai.score ?? 'N/A';
@@ -82,28 +78,31 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 產生單字錯誤表格 (解決漏標單字發音錯誤的問題)
+                            // 🚀 核心渲染：發音錯誤表格與 TTS 語音發音按鈕
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
-                                    <div style="font-weight: 900; color: #EF4444; font-size: 0.9rem; margin-bottom: 8px;">🔍 系統抓出的發音與漏念錯誤：</div>
+                                    <div style="font-weight: 900; color: #EF4444; font-size: 0.9rem; margin-bottom: 8px;">🔍 單字發音診斷：</div>
                                     <div style="overflow-x: auto;">
                                         <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
                                             <thead>
                                                 <tr style="background: #FEF2F2; color: #991B1B;">
-                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字</th>
-                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
+                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字 (點擊聽正確發音)</th>
+                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的錯誤發音</th>
                                                     <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">正確音標</th>
-                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的發音</th>
+                                                    <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 ${ai.word_errors.map(err => `
                                                 <tr style="background: white;">
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${err.error_type}</td>
-                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">${err.expected_phonetic}</td>
+                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">
+                                                        ${err.word}
+                                                        <button onclick="new Audio('https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}').play()" style="background: #EEF2FF; border: 1px solid #BFDBFE; color: #3B82F6; cursor: pointer; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#DBEAFE'" onmouseout="this.style.background='#EEF2FF'">🔊 聽正確唸法</button>
+                                                    </td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">${err.student_pronunciation}</td>
+                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">${err.expected_phonetic}</td>
+                                                    <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${err.error_type}</td>
                                                 </tr>`).join('')}
                                             </tbody>
                                         </table>
@@ -130,7 +129,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     </div>
                                     <div id="ai-report-body-${compositeKey}" style="display: ${reportDisplay}; margin-top: 12px;">
                                         <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
-                                            <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語與完整度分析：</div>
+                                            <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
                                             ${String(feedback).replace(/\n/g, '<br>')}
                                             ${wordErrorsHtml}
                                         </div>
@@ -211,23 +210,25 @@ window.UIStudentTimelineTemplates = (() => {
                         let audioPlayerHtml = '';
                         let manualSubmitBtnHtml = '';
 
-                        // 如果有音檔，生成「原生播放器」與「手動觸發按鈕」
                         if (hasValidAudioFile) {
-                            // 原生播放器放在重新錄製的左邊 (利用 flex 排序)
-                            audioPlayerHtml = `<audio controls src="https://drive.google.com/uc?export=download&id=${retryAudioId}" style="height: 32px; width: 220px; outline: none; background: #F8FAFC; border-radius: 20px; margin-right: 4px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
+                            // 🚀 核心突破：不另開視窗的 iframe 微型播放器！徹底繞過 Drive 的 CORS 封鎖
+                            audioPlayerHtml = `
+                                <div style="height: 55px; width: 260px; border-radius: 8px; overflow: hidden; border: 1px solid #CBD5E1; display: inline-block; vertical-align: middle; background: #F8FAFC; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
+                                    <iframe src="https://drive.google.com/file/d/${retryAudioId}/preview" width="100%" height="100%" frameborder="0" allow="autoplay" style="margin-top: -5px;"></iframe>
+                                </div>
+                            `;
                             
-                            // 防呆：只有在 submitted / failed / ai_error 狀態下才顯示「手動提交」
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
                                 manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
                             }
                         }
 
-                        // 按鈕嚴格排序：[原生播放器] -> [重新錄製] -> [檢視Drive] -> [手動提交批改]
+                        // 排版順序：[微型 iframe 播放器] -> [重新錄製] -> [檢視 Drive] -> [手動提交批改]
                         btn = `
-                            <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap;">
+                            <div style="display:inline-flex; align-items:center; gap:8px; margin-left:10px; flex-wrap:wrap; margin-top:8px;">
                                 ${audioPlayerHtml}
-                                <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
-                                <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
+                                <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
+                                <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
                                 ${manualSubmitBtnHtml}
                                 <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                             </div>
@@ -276,8 +277,9 @@ window.UIStudentTimelineTemplates = (() => {
                 return `
                     <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
                         <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
-                            ${checkboxHtml}${iconHtml}${taskTitleDisplay}${statusBadgeHtml}${linkContent}${btn}${localDueHtml}
+                            ${checkboxHtml}${iconHtml}${taskTitleDisplay}${statusBadgeHtml}${linkContent}${localDueHtml}
                         </div>
+                        ${btn}
                         ${taskDescHtml}
                         ${aiFeedbackHtml}
                     </div>
