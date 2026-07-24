@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v66 解決 0:00 播放壞死問題)
- * 🚀 核心修復：全面將 Google Drive 網址從 export=download 改為 export=view，解除瀏覽器安全封鎖！
+ * 🌟 純粹視覺模板層 (v67 解決 0:00 播放壞死問題)
+ * 🚀 核心修復：全面將 Google Drive 網址從 export=view 改回 export=download，確保 <audio> 標籤能讀取真實二進位串流！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -78,7 +78,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 精準修復：將 export=download 替換為 export=view，解除瀏覽器附件封鎖
+                            // 🚀 精準修復：將 export=view 改回 export=download，確保 <audio> 標籤能讀取真實二進位串流 (HTML 預覽頁面會導致 0:00)
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -100,7 +100,7 @@ window.UIStudentTimelineTemplates = (() => {
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
                                                         <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                                             <span>${err.student_pronunciation}</span>
-                                                            ${retryAudioId ? `<audio controls preload="metadata" src="https://drive.google.com/uc?export=view&id=${retryAudioId}#t=${err.start_time || 0},${err.end_time || ((err.start_time || 0) + 1.5)}" style="height: 30px; width: 140px; outline: none;"></audio>` : ''}
+                                                            ${retryAudioId ? `<audio controls preload="metadata" src="https://drive.google.com/uc?export=download&id=${retryAudioId}#t=${err.start_time || 0},${err.end_time || ((err.start_time || 0) + 1.5)}" style="height: 30px; width: 140px; outline: none;"></audio>` : ''}
                                                         </div>
                                                     </td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
@@ -218,8 +218,8 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 精準修復：將 export=download 替換為 export=view，加入 preload
-                            audioPlayerHtml = `<audio controls preload="metadata" src="https://drive.google.com/uc?export=view&id=${retryAudioId}" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
+                            // 🚀 精準修復：將 export=view 改回 export=download，確保 <audio> 標籤能讀取真實二進位串流 (HTML 預覽頁面會導致 0:00)
+                            audioPlayerHtml = `<audio controls preload="metadata" src="https://drive.google.com/uc?export=download&id=${retryAudioId}" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
                                 manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
