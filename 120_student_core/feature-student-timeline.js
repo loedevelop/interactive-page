@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-timeline.js
- * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.5 AI 連動與 PDF 萬年 Bug 修復版)
+ * 🌟 UX 視覺終極打磨版 & API 解耦瘦身版 (v23.5 AI 連動與 PDF 萬年 Bug 終極修復版)
  * 🚀 核心修復：找回被我誤拔的 Base64 護城河！只要老師上傳本機檔案，絕對優先使用 Base64 繞開 Drive 權限牆！
  */
 
@@ -374,9 +374,19 @@ window.FeatureStudentTimeline = (() => {
                         const file = filesArray[i];
                         if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB。`);
                         
-                        const ext = file.name.substring(file.name.lastIndexOf('.'));
+                        const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
                         const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}_${i+1}${lateSuffixStr}${ext}`;
-                        const finalMimeType = file.type || 'audio/mpeg';
+                        
+                        // 🛡️ 架構師終極防禦：多音檔 MIME Type 強制裝甲
+                        let mime = file.type;
+                        if (!mime || mime === '' || mime === 'text/plain') {
+                            const lowExt = ext.toLowerCase();
+                            if (lowExt === '.mp3') mime = 'audio/mpeg';
+                            else if (lowExt === '.wav') mime = 'audio/wav';
+                            else if (lowExt === '.m4a') mime = 'audio/mp4';
+                            else mime = 'audio/mpeg';
+                        }
+                        const finalMimeType = mime;
                         
                         updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
                         const base64Data = (await readFileAsDataURL(file)).split(',')[1];
@@ -422,8 +432,8 @@ window.FeatureStudentTimeline = (() => {
                     
                     // 🛡️ 架構師終極防禦：絕對 MIME Type 綁定裝甲，徹底消滅 PDF 變 TXT 災難
                     let mime = file.type;
-                    const lowExt = ext.toLowerCase();
                     if (!mime || mime === '' || mime === 'text/plain') {
+                        const lowExt = ext.toLowerCase();
                         if (lowExt === '.pdf') mime = 'application/pdf';
                         else if (lowExt === '.mp3') mime = 'audio/mpeg';
                         else if (lowExt === '.wav') mime = 'audio/wav';
@@ -492,7 +502,7 @@ window.FeatureStudentTimeline = (() => {
                 // 只要老師是用「本機上傳」，我們就直接提取 Base64，從根本繞開 Google Drive 的權限鐵壁！
                 if (foundTask && foundTask.raw_data) {
                     if (!finalMaterialUrl) {
-                        // 1. 優先使用本機上傳轉出的 Base64 (絕不卡權限、免登入、手機點另開視窗秒開！)
+                        // 1. 優先使用本機上傳轉出的 Base64
                         if (foundTask.raw_data.student_local_b64) {
                             const b64 = foundTask.raw_data.student_local_b64;
                             let mime = foundTask.raw_data.student_local_mime || 'application/pdf';
