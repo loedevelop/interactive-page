@@ -55,7 +55,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     <div style="margin-top: 12px; margin-left: 36px; display: flex; align-items: center; gap: 10px; background: #F8FAFC; padding: 10px 16px; border-radius: 8px; border: 1px solid #E2E8F0; width: fit-content; box-shadow: inset 0 1px 2px rgba(0,0,0,0.05); flex-wrap: wrap;">
                                         <span style="font-size:0.9rem; font-weight:900; color:#475569;">🎧 您的歷史錄音已妥善保存：</span>
                                         <a href="https://drive.google.com/file/d/${retryAudioId}/view" target="_blank" style="background: white; border: 1px solid #CBD5E1; color: #3B82F6; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 900; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: 0.2s;" onmouseover="this.style.background='#F1F5F9'" onmouseout="this.style.background='white'">
-                                            ▶️ 點此開啟播放
+                                            ▶️ 點此播放目前版本
                                         </a>
                                     </div>
                                 `;
@@ -66,7 +66,7 @@ window.UIStudentTimelineTemplates = (() => {
                         if (compRecord.status === 'ai_processing') {
                             statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
                         } else if (compRecord.status === 'graded' || compRecord.status === 'completed') {
-                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                            statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 批改</span>`;
                         } else if (compRecord.status === 'ai_error' || compRecord.status === 'failed' || (compRecord.status === 'submitted' && hasValidAudioFile)) {
                             // 只要狀態是 submitted 或 error，而且有檔案，一律給重試按鈕！
                             
@@ -184,7 +184,7 @@ window.UIStudentTimelineTemplates = (() => {
                         const safeRangeForJS = materialRange.replace(/'/g, "\\'").replace(/"/g, "&quot;");
 
                         // 🌟 若已繳交過，淡化「重新錄製」按鈕，避免喧賓奪主
-                        const recordBtnText = hasValidAudioFile ? '放棄舊檔重錄' : '🎙️ 開啟錄音艙';
+                        const recordBtnText = hasValidAudioFile ? '重新錄製' : '🎙️ 開啟錄音艙';
                         const recordBtnStyle = hasValidAudioFile ? 
                             'background:white; color:#94A3B8; border:1px solid #CBD5E1;' : 
                             'background:#EF4444; color:white; border:none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);';
