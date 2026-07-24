@@ -1,69 +1,67 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V74 絕對降維版：全 DOM 實體化原生播放器 + 破除 Iframe 鎖鏈)
+ * 🌟 純粹視覺模板層 (V75 絕對防彈版：解決 JS 閃退、加入 oncanplay 安全鎖、確立跨平台相容性)
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 隱藏式 Google Translate 音訊引擎 (DOM 實體掛載，徹底擊碎瀏覽器靜音阻擋)
+    // 🔊 1. 最穩定的 Google 真人發音引擎 (回歸純記憶體 Audio，絕不操作 DOM 導致崩潰)
+    let sharedTTS = null;
     const playGoogleTTS = (text) => {
-        let ttsAudio = document.getElementById('rt-hidden-tts-player');
-        if (!ttsAudio) {
-            ttsAudio = document.createElement('audio');
-            ttsAudio.id = 'rt-hidden-tts-player';
-            ttsAudio.style.display = 'none';
-            document.body.appendChild(ttsAudio);
+        if (sharedTTS) {
+            sharedTTS.pause();
+            sharedTTS.removeAttribute('src');
         }
-        ttsAudio.pause();
-        ttsAudio.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text)}`;
-        ttsAudio.currentTime = 0;
-        
-        // 必須在 Click 同一個 Tick 內觸發 play()
-        const playPromise = ttsAudio.play();
-        if (playPromise !== undefined) {
-            playPromise.catch(e => console.warn("Google TTS 被自動播放政策阻擋:", e));
-        }
+        // client=tw-ob 經實測是最不易被阻擋的免金鑰參數，且不需等候 metadata
+        sharedTTS = new Audio(`https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(text)}`);
+        sharedTTS.play().catch(e => console.warn("Google TTS 播放失敗:", e));
     };
 
-    // 🎧 學生專屬背景切片引擎 (DOM 實體掛載 + 原生 setInterval 精準攔截)
+    // 🎧 2. 學生背景切片引擎 (異步安全載入版，根絕點擊閃退)
+    let sliceAudio = null;
+    let sliceTimer = null;
     const playStudentAudioSlice = (driveId, startTime, endTime) => {
-        let sliceAudio = document.getElementById('rt-hidden-slice-player');
-        if (!sliceAudio) {
-            sliceAudio = document.createElement('audio');
-            sliceAudio.id = 'rt-hidden-slice-player';
-            sliceAudio.style.display = 'none';
-            document.body.appendChild(sliceAudio);
+        if (sliceAudio) {
+            sliceAudio.pause();
+            sliceAudio.oncanplay = null;
+            sliceAudio.onerror = null;
         }
-        
-        if (window.sliceTimerInterval) clearInterval(window.sliceTimerInterval);
+        if (sliceTimer) clearTimeout(sliceTimer);
 
-        sliceAudio.pause();
-        // 嘗試寫入 Media Fragments (#t=start,end)，部分瀏覽器支援原生切片
-        sliceAudio.src = `https://drive.google.com/uc?export=download&id=${driveId}#t=${startTime},${endTime}`;
+        sliceAudio = new Audio();
         
-        const playPromise = sliceAudio.play();
-        if (playPromise !== undefined) {
-            playPromise.then(() => {
-                // 強制精準對齊時間點 (避免 #t 被忽略)
+        // 🛡️ 致命防護：必須等到 oncanplay (音檔真正準備好) 才能調 currentTime
+        sliceAudio.oncanplay = () => {
+            try {
+                // 如果是 WebM 無長度檔案，這行可能被瀏覽器忽略，但 try-catch 保證絕不閃退
                 if (Math.abs(sliceAudio.currentTime - startTime) > 0.5) {
                     sliceAudio.currentTime = startTime;
                 }
-                
-                // 100 毫秒極速輪詢，到達 endTime 瞬間斬斷
-                window.sliceTimerInterval = setInterval(() => {
-                    if (sliceAudio.currentTime >= endTime || sliceAudio.paused) {
-                        sliceAudio.pause();
-                        clearInterval(window.sliceTimerInterval);
-                    }
-                }, 100);
-            }).catch(e => {
-                console.warn("背景切片播放失敗:", e);
-                alert("⚠️ 播放被阻擋：請確認您的手機或瀏覽器允許網站自動播放聲音。");
-            });
-        }
+            } catch(e) {
+                console.warn("跳播受限 (檔案可能缺乏時長元數據):", e);
+            }
+            
+            sliceAudio.play().then(() => {
+                const duration = (endTime > startTime) ? (endTime - startTime) : 1.5;
+                sliceTimer = setTimeout(() => {
+                    if (sliceAudio) sliceAudio.pause();
+                }, duration * 1000);
+            }).catch(e => console.warn("背景播放被阻擋 (請確認自動播放權限):", e));
+            
+            sliceAudio.oncanplay = null; // 觸發後立即解除綁定，避免無限迴圈
+        };
+
+        sliceAudio.onerror = () => {
+            console.error("無法載入學生音檔，可能因 CORS 或 Drive 權限被阻擋");
+        };
+
+        sliceAudio.src = `https://drive.google.com/uc?export=download&id=${driveId}`;
+        sliceAudio.load();
     };
 
-    // 🖥️ 網頁內建懸浮視窗 (Modal) 引擎 - 【重大改版：全 HTML5 原生播放器】
+    // 🖥️ 3. 網頁內建懸浮視窗 Modal 
+    // ⚠️ 鐵律：必須使用 iframe /preview！因為 iOS Safari 原生不支援 WebM 播放。
+    // 透過 Drive 預覽，Google 會自動轉碼，這是行動裝置唯一的活路。
     const openDriveModal = (driveId) => {
         let modal = document.getElementById('rt-custom-audio-modal');
         if (!modal) {
@@ -75,28 +73,21 @@ window.UIStudentTimelineTemplates = (() => {
             modal.onclick = (e) => {
                 if (e.target === modal) {
                     modal.style.display = 'none';
-                    modal.innerHTML = ''; // 瞬間清空內部 DOM，徹底砍斷原生 Audio 音軌
+                    modal.innerHTML = ''; // 清空 iframe，瞬間停止播放
                 }
             };
             document.body.appendChild(modal);
         }
 
-        // 徹底廢除 Iframe！直接植入 <audio controls> 召喚原生播放器，100% 支援拉 Bar 跳播
         modal.innerHTML = `
-            <div style="background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:90%; max-width:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
+            <div style="background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:90%; max-width:550px; height:80vh; max-height:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
                 <div style="font-weight:900; color:#334155; margin-bottom:12px; font-size:1.1rem; text-align:center;">
                     🎵 完整錄音作業
                 </div>
-                <div style="background:#F8FAFC; border-radius:8px; padding:15px 10px; border:1px solid #E2E8F0; display:flex; justify-content:center; align-items:center;">
-                    <audio controls autoplay style="width:100%; outline:none;" name="media">
-                        <source src="https://drive.google.com/uc?export=download&id=${driveId}" type="audio/webm">
-                        <source src="https://drive.google.com/uc?export=download&id=${driveId}" type="audio/mp3">
-                        <source src="https://drive.google.com/uc?export=download&id=${driveId}" type="audio/m4a">
-                        ⚠️ 您的裝置不支援此音訊格式
-                    </audio>
-                </div>
+                <iframe src="https://drive.google.com/file/d/${driveId}/preview" style="flex:1; width:100%; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC;"></iframe>
                 <div style="text-align:center; margin-top:12px; font-size:0.85rem; color:#94A3B8; font-weight:bold;">
-                    👆 點擊視窗外部黑色區域即可關閉
+                    👆 點擊視窗外部黑色區域即可關閉 <br>
+                    <span style="font-size:0.75rem; color:#CBD5E1; font-weight:normal;">(註：若進度條無法拉動，為瀏覽器原始錄音檔缺乏長度數據之限制)</span>
                 </div>
             </div>
         `;
