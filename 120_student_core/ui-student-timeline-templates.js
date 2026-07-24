@@ -1,7 +1,7 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v64 緊急排版與原地播放修復版)
- * 🚀 核心修復：強制按鈕同列不折行，拔除所有外連 target="_blank"，實現真・原地播放！
+ * 🌟 純粹視覺模板層 (v65 原生播放器與同行排版修復版)
+ * 🚀 核心修復：強制按鈕同列不折行，全面導入原生 <audio controls> 進度條與時間軸切片！
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -78,6 +78,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
+                            // 🚀 原生切片播放器：徹底廢除 JS 按鈕，掛載實體微型 <audio>
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -97,14 +98,14 @@ window.UIStudentTimelineTemplates = (() => {
                                                 <tr style="background: white;">
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
-                                                        <div style="display:flex; align-items:center; gap:4px;">
+                                                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                                                             <span>${err.student_pronunciation}</span>
-                                                            <button onclick="window.FeatureStudentTimeline.playStudentAudioSlice('${retryAudioId}', ${err.start_time || 0}, ${err.end_time || 0})" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0;" title="聽聽看你唸錯的原音片段">🔊</button>
+                                                            ${retryAudioId ? `<audio controls src="https://drive.google.com/uc?export=download&id=${retryAudioId}#t=${err.start_time || 0},${err.end_time || ((err.start_time || 0) + 1.5)}" style="height: 30px; width: 140px; outline: none;"></audio>` : ''}
                                                         </div>
                                                     </td>
                                                     <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
-                                                        <div style="display:flex; align-items:center; gap:4px;">
-                                                            <button onclick="window.FeatureStudentTimeline.playTTS('${err.word.replace(/'/g, "\\'")}')" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0;" title="聽正確真人發音">🔊</button>
+                                                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                                                            <audio controls src="https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(err.word)}" style="height: 30px; width: 140px; outline: none;"></audio>
                                                             <span>${err.expected_phonetic}</span>
                                                         </div>
                                                     </td>
@@ -217,16 +218,16 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 核心修復：拔除外連，改用原地播放，對接 JS 引擎！
-                            audioPlayerHtml = `<button onclick="window.FeatureStudentTimeline.playStudentAudioSlice('${retryAudioId}', 0, 99999)" class="btn-action" style="background:white; border:1px solid #3B82F6; color:#3B82F6; padding:4px 10px; border-radius:6px; font-weight:900; font-size:0.85rem; cursor:pointer;">▶️ 原地播放</button>`;
+                            // 🚀 核心修復：直接掛載 HTML5 原生播放器 (Bar)，拔除所有被阻擋的 JS 點擊事件
+                            audioPlayerHtml = `<audio controls src="https://drive.google.com/uc?export=download&id=${retryAudioId}" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
-                                manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
+                                manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
                             }
                         }
 
                         btn = `
-                            <div style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                            <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                 ${audioPlayerHtml}
                                 <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
                                 <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
@@ -255,7 +256,7 @@ window.UIStudentTimelineTemplates = (() => {
                         const statusId = `upload-status-${course.id}-${task.id}`;
 
                         btn = `
-                            <div style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                            <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                 <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
                                 <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
                                 <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
@@ -275,16 +276,13 @@ window.UIStudentTimelineTemplates = (() => {
 
                 let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
-                // 🚀 核心排版修復：將 btn 放進與標題同一層的 Flex 容器中！保證在同一行
+                // 🚀 核心排版修復：使用 justify-content: space-between 強制按鈕與標題同行
                 return `
                     <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
-                        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; line-height: 1.2;">
-                            <div style="display:flex; align-items:center; gap:4px;">
-                                ${checkboxHtml}${iconHtml}${taskTitleDisplay}
+                        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; line-height: 1.2;">
+                                ${checkboxHtml}${iconHtml}${taskTitleDisplay}${statusBadgeHtml}${localDueHtml}${linkContent}
                             </div>
-                            ${statusBadgeHtml}
-                            ${localDueHtml}
-                            ${linkContent}
                             ${btn}
                         </div>
                         ${taskDescHtml}
