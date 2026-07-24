@@ -1,50 +1,69 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (最終絕對定案版：背景切片引擎 + Google 真人發音 + 純淨預覽 Modal)
+ * 🌟 純粹視覺模板層 (V74 絕對降維版：全 DOM 實體化原生播放器 + 破除 Iframe 鎖鏈)
  */
 
 window.UIStudentTimelineTemplates = (() => {
-    // 🔊 隱藏式 Google Translate 音訊引擎 (保證真人自然發音，無播放條)
-    let sharedAudio = null;
+    
+    // 🔊 隱藏式 Google Translate 音訊引擎 (DOM 實體掛載，徹底擊碎瀏覽器靜音阻擋)
     const playGoogleTTS = (text) => {
-        if (sharedAudio) {
-            sharedAudio.pause();
-            sharedAudio.removeAttribute('src');
+        let ttsAudio = document.getElementById('rt-hidden-tts-player');
+        if (!ttsAudio) {
+            ttsAudio = document.createElement('audio');
+            ttsAudio.id = 'rt-hidden-tts-player';
+            ttsAudio.style.display = 'none';
+            document.body.appendChild(ttsAudio);
         }
-        // 使用 Google 隱藏版免驗證 API (gtx)，瞬間發音
-        sharedAudio = new Audio(`https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text)}`);
-        sharedAudio.play().catch(e => console.warn("Google TTS 被瀏覽器阻擋:", e));
-    };
-
-    // 🎧 學生專屬背景切片引擎 (絕對不再彈出視窗，背景精準播放)
-    let studentAudio = null;
-    let studentAudioTimer = null;
-    const playStudentAudioSlice = (driveId, startTime, endTime) => {
-        if (studentAudio) {
-            studentAudio.pause();
-            studentAudio.removeAttribute('src');
-        }
-        if (studentAudioTimer) clearTimeout(studentAudioTimer);
-
-        // 使用 uc?export=download 轉換為直連串流，徹底繞過 iframe 登入牆限制
-        studentAudio = new Audio(`https://drive.google.com/uc?export=download&id=${driveId}`);
+        ttsAudio.pause();
+        ttsAudio.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text)}`;
+        ttsAudio.currentTime = 0;
         
-        // 必須等待 metadata 載入才能精準設定 currentTime
-        studentAudio.onloadedmetadata = () => {
-            studentAudio.currentTime = startTime;
-            studentAudio.play().then(() => {
-                const duration = (endTime > startTime) ? (endTime - startTime) : 1.5; // 若無時間差，預設播 1.5 秒
-                studentAudioTimer = setTimeout(() => {
-                    if (studentAudio) studentAudio.pause();
-                }, duration * 1000);
-            }).catch(e => {
-                console.warn("背景播放失敗 (可能被瀏覽器政策阻擋):", e);
-                alert("背景播放失敗：可能音檔權限尚未完全公開，或瀏覽器阻擋自動播放。");
-            });
-        };
+        // 必須在 Click 同一個 Tick 內觸發 play()
+        const playPromise = ttsAudio.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(e => console.warn("Google TTS 被自動播放政策阻擋:", e));
+        }
     };
 
-    // 🖥️ 網頁內建懸浮視窗 (Modal) 引擎 - 僅用於主作業完整播放 (點擊外部即可關閉)
+    // 🎧 學生專屬背景切片引擎 (DOM 實體掛載 + 原生 setInterval 精準攔截)
+    const playStudentAudioSlice = (driveId, startTime, endTime) => {
+        let sliceAudio = document.getElementById('rt-hidden-slice-player');
+        if (!sliceAudio) {
+            sliceAudio = document.createElement('audio');
+            sliceAudio.id = 'rt-hidden-slice-player';
+            sliceAudio.style.display = 'none';
+            document.body.appendChild(sliceAudio);
+        }
+        
+        if (window.sliceTimerInterval) clearInterval(window.sliceTimerInterval);
+
+        sliceAudio.pause();
+        // 嘗試寫入 Media Fragments (#t=start,end)，部分瀏覽器支援原生切片
+        sliceAudio.src = `https://drive.google.com/uc?export=download&id=${driveId}#t=${startTime},${endTime}`;
+        
+        const playPromise = sliceAudio.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                // 強制精準對齊時間點 (避免 #t 被忽略)
+                if (Math.abs(sliceAudio.currentTime - startTime) > 0.5) {
+                    sliceAudio.currentTime = startTime;
+                }
+                
+                // 100 毫秒極速輪詢，到達 endTime 瞬間斬斷
+                window.sliceTimerInterval = setInterval(() => {
+                    if (sliceAudio.currentTime >= endTime || sliceAudio.paused) {
+                        sliceAudio.pause();
+                        clearInterval(window.sliceTimerInterval);
+                    }
+                }, 100);
+            }).catch(e => {
+                console.warn("背景切片播放失敗:", e);
+                alert("⚠️ 播放被阻擋：請確認您的手機或瀏覽器允許網站自動播放聲音。");
+            });
+        }
+    };
+
+    // 🖥️ 網頁內建懸浮視窗 (Modal) 引擎 - 【重大改版：全 HTML5 原生播放器】
     const openDriveModal = (driveId) => {
         let modal = document.getElementById('rt-custom-audio-modal');
         if (!modal) {
@@ -56,20 +75,26 @@ window.UIStudentTimelineTemplates = (() => {
             modal.onclick = (e) => {
                 if (e.target === modal) {
                     modal.style.display = 'none';
-                    modal.innerHTML = ''; // 清空 iframe，瞬間停止播放
+                    modal.innerHTML = ''; // 瞬間清空內部 DOM，徹底砍斷原生 Audio 音軌
                 }
             };
             document.body.appendChild(modal);
         }
 
-        // 內部白底視窗 (點擊內部不會關閉)
-        // ⚠️ 嚴格執行 Zero-Trust Iframe Rendering 鐵律：強制使用 /preview 擊碎登入牆
+        // 徹底廢除 Iframe！直接植入 <audio controls> 召喚原生播放器，100% 支援拉 Bar 跳播
         modal.innerHTML = `
-            <div style="background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:90%; max-width:550px; height:80vh; max-height:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
+            <div style="background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:90%; max-width:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
                 <div style="font-weight:900; color:#334155; margin-bottom:12px; font-size:1.1rem; text-align:center;">
                     🎵 完整錄音作業
                 </div>
-                <iframe src="https://drive.google.com/file/d/${driveId}/preview" style="flex:1; width:100%; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC;"></iframe>
+                <div style="background:#F8FAFC; border-radius:8px; padding:15px 10px; border:1px solid #E2E8F0; display:flex; justify-content:center; align-items:center;">
+                    <audio controls autoplay style="width:100%; outline:none;" name="media">
+                        <source src="https://drive.google.com/uc?export=download&id=${driveId}" type="audio/webm">
+                        <source src="https://drive.google.com/uc?export=download&id=${driveId}" type="audio/mp3">
+                        <source src="https://drive.google.com/uc?export=download&id=${driveId}" type="audio/m4a">
+                        ⚠️ 您的裝置不支援此音訊格式
+                    </audio>
+                </div>
                 <div style="text-align:center; margin-top:12px; font-size:0.85rem; color:#94A3B8; font-weight:bold;">
                     👆 點擊視窗外部黑色區域即可關閉
                 </div>
@@ -123,7 +148,6 @@ window.UIStudentTimelineTemplates = (() => {
                                 retryAudioId = compRecord.raw_data.drive_file_ids[0];
                                 retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
                             } else if (retryAudioUrl) {
-                                // 嚴格採用交接文檔 Regex 確保萬無一失提取 File ID
                                 const driveIdMatch = retryAudioUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
                                 if (driveIdMatch) retryAudioId = driveIdMatch[1];
                             }
@@ -156,7 +180,6 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 終極淨化版：學生背景引擎發音 🎧 ＋ Google 直連發音 🔊
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -174,7 +197,6 @@ window.UIStudentTimelineTemplates = (() => {
                                             <tbody>
                                                 ${ai.word_errors.map(err => {
                                                     const safeWord = (err.word || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                                    // 就算沒有時間點也絕對不再隱藏按鈕，給予預設值讓系統防呆播放
                                                     const sTime = err.start_time || 0;
                                                     const eTime = err.end_time || (sTime + 1.5);
                                                     const formatTime = (secs) => {
@@ -308,7 +330,6 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 主作業列維持網頁內建 Modal 彈出，不再帶有時間點參數
                             audioPlayerHtml = `<button type="button" onclick="window.UIStudentTimelineTemplates.openDriveModal('${retryAudioId}')" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出完整錄音</button>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
@@ -506,7 +527,8 @@ window.UIStudentTimelineTemplates = (() => {
                                         <div>${dueHtml}</div>
                                     </div>
                                 </div>
-                                ${blockDescHtml}${tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : ''}
+                                ${blockDescHtml}
+                                ${tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : ''}
                             </div>
                         `;
                     }).join('');
