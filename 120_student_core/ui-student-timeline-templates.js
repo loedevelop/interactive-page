@@ -1,56 +1,56 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v75 終極定案版：拔除鬼打牆邏輯，完美整合 Modal 與隱形切片)
+ * 🌟 純粹視覺模板層 (最終絕對定案版：背景切片引擎 + Google 真人發音 + 純淨預覽 Modal)
  */
 
 window.UIStudentTimelineTemplates = (() => {
-    // 🔊 Google 真人語音引擎 (使用 gtx 免驗證通道，無須 API Key，瞬間發音)
-    let sharedTTS = null;
+    // 🔊 隱藏式 Google Translate 音訊引擎 (保證真人自然發音，無播放條)
+    let sharedAudio = null;
     const playGoogleTTS = (text) => {
-        if (sharedTTS) sharedTTS.pause();
-        sharedTTS = new Audio(`https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text)}`);
-        sharedTTS.play().catch(e => console.error("Google TTS Playback Error:", e));
-    };
-
-    // 🎧 學生音檔隱形切片引擎 (無條件支援，缺時間則預設從頭播)
-    let sharedStudentAudio = null;
-    let timeUpdateHandler = null;
-    const playStudentSlice = (driveId, start, end) => {
-        if (sharedStudentAudio) {
-            sharedStudentAudio.pause();
-            if (timeUpdateHandler) sharedStudentAudio.removeEventListener('timeupdate', timeUpdateHandler);
+        if (sharedAudio) {
+            sharedAudio.pause();
+            sharedAudio.removeAttribute('src');
         }
-        
-        const startTime = parseFloat(start) || 0;
-        const endTime = parseFloat(end) || (startTime + 1.5);
-
-        sharedStudentAudio = new Audio(`https://drive.google.com/uc?export=download&id=${driveId}&confirm=t#t=${startTime},${endTime}`);
-        
-        sharedStudentAudio.addEventListener('loadedmetadata', () => {
-            sharedStudentAudio.currentTime = startTime;
-            sharedStudentAudio.play().catch(e => {
-                console.warn("Auto-play blocked", e);
-                alert('⚠️ 播放失敗！若持續發生，請確認 Google Drive 檔案權限已設為「知道連結的人均可檢視」。');
-            });
-        });
-
-        timeUpdateHandler = () => {
-            if (sharedStudentAudio.currentTime >= endTime) {
-                sharedStudentAudio.pause();
-                sharedStudentAudio.removeEventListener('timeupdate', timeUpdateHandler);
-            }
-        };
-        sharedStudentAudio.addEventListener('timeupdate', timeUpdateHandler);
-        sharedStudentAudio.load();
+        // 使用 Google 隱藏版免驗證 API (gtx)，瞬間發音
+        sharedAudio = new Audio(`https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text)}`);
+        sharedAudio.play().catch(e => console.warn("Google TTS 被瀏覽器阻擋:", e));
     };
 
-    // 🖥️ 網頁內建懸浮視窗 (Modal) - 點擊外部黑底瞬間關閉
+    // 🎧 學生專屬背景切片引擎 (絕對不再彈出視窗，背景精準播放)
+    let studentAudio = null;
+    let studentAudioTimer = null;
+    const playStudentAudioSlice = (driveId, startTime, endTime) => {
+        if (studentAudio) {
+            studentAudio.pause();
+            studentAudio.removeAttribute('src');
+        }
+        if (studentAudioTimer) clearTimeout(studentAudioTimer);
+
+        // 使用 uc?export=download 轉換為直連串流，徹底繞過 iframe 登入牆限制
+        studentAudio = new Audio(`https://drive.google.com/uc?export=download&id=${driveId}`);
+        
+        // 必須等待 metadata 載入才能精準設定 currentTime
+        studentAudio.onloadedmetadata = () => {
+            studentAudio.currentTime = startTime;
+            studentAudio.play().then(() => {
+                const duration = (endTime > startTime) ? (endTime - startTime) : 1.5; // 若無時間差，預設播 1.5 秒
+                studentAudioTimer = setTimeout(() => {
+                    if (studentAudio) studentAudio.pause();
+                }, duration * 1000);
+            }).catch(e => {
+                console.warn("背景播放失敗 (可能被瀏覽器政策阻擋):", e);
+                alert("背景播放失敗：可能音檔權限尚未完全公開，或瀏覽器阻擋自動播放。");
+            });
+        };
+    };
+
+    // 🖥️ 網頁內建懸浮視窗 (Modal) 引擎 - 僅用於主作業完整播放 (點擊外部即可關閉)
     const openDriveModal = (driveId) => {
         let modal = document.getElementById('rt-custom-audio-modal');
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'rt-custom-audio-modal';
-            // 滿版半透明黑底
+            // 滿版半透明黑底，點擊即可關閉
             modal.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); z-index:99999; display:flex; justify-content:center; align-items:center; backdrop-filter:blur(3px); cursor:pointer;';
             
             modal.onclick = (e) => {
@@ -62,12 +62,14 @@ window.UIStudentTimelineTemplates = (() => {
             document.body.appendChild(modal);
         }
 
+        // 內部白底視窗 (點擊內部不會關閉)
+        // ⚠️ 嚴格執行 Zero-Trust Iframe Rendering 鐵律：強制使用 /preview 擊碎登入牆
         modal.innerHTML = `
             <div style="background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:90%; max-width:550px; height:80vh; max-height:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
                 <div style="font-weight:900; color:#334155; margin-bottom:12px; font-size:1.1rem; text-align:center;">
                     🎵 完整錄音作業
                 </div>
-                <iframe src="https://drive.google.com/file/d/${driveId}/view" style="flex:1; width:100%; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC;"></iframe>
+                <iframe src="https://drive.google.com/file/d/${driveId}/preview" style="flex:1; width:100%; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC;"></iframe>
                 <div style="text-align:center; margin-top:12px; font-size:0.85rem; color:#94A3B8; font-weight:bold;">
                     👆 點擊視窗外部黑色區域即可關閉
                 </div>
@@ -88,9 +90,8 @@ window.UIStudentTimelineTemplates = (() => {
     }
 
     return {
-        // 暴露給 HTML onclick 使用
         playGoogleTTS,
-        playStudentSlice,
+        playStudentAudioSlice, 
         openDriveModal,
         
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
@@ -122,6 +123,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 retryAudioId = compRecord.raw_data.drive_file_ids[0];
                                 retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
                             } else if (retryAudioUrl) {
+                                // 嚴格採用交接文檔 Regex 確保萬無一失提取 File ID
                                 const driveIdMatch = retryAudioUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
                                 if (driveIdMatch) retryAudioId = driveIdMatch[1];
                             }
@@ -154,6 +156,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
+                            // 🚀 終極淨化版：學生背景引擎發音 🎧 ＋ Google 直連發音 🔊
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -171,26 +174,29 @@ window.UIStudentTimelineTemplates = (() => {
                                             <tbody>
                                                 ${ai.word_errors.map(err => {
                                                     const safeWord = (err.word || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                                    // 🛡️ 絕對不隱藏按鈕！沒有 start_time 就給 0，保證圖示永遠存在
+                                                    // 就算沒有時間點也絕對不再隱藏按鈕，給予預設值讓系統防呆播放
                                                     const sTime = err.start_time || 0;
                                                     const eTime = err.end_time || (sTime + 1.5);
-                                                    const sliceButtonHtml = retryAudioId 
-                                                        ? `<span onclick="window.UIStudentTimelineTemplates.playStudentSlice('${retryAudioId}', ${sTime}, ${eTime})" style="cursor:pointer; font-size:1.1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="播放您的發音片段">🎧</span>` 
-                                                        : '';
+                                                    const formatTime = (secs) => {
+                                                        const m = Math.floor(secs / 60);
+                                                        const s = Math.floor(secs % 60);
+                                                        return `${m}:${s.toString().padStart(2, '0')}`;
+                                                    };
+                                                    const timeLabel = `${formatTime(sTime)}~${formatTime(eTime)}`;
 
                                                     return `
                                                     <tr style="background: white;">
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
-                                                            <div style="display:inline-flex; align-items:center; gap:6px;">
+                                                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                                                 <span>${err.student_pronunciation}</span>
-                                                                ${sliceButtonHtml}
+                                                                ${retryAudioId ? `<button type="button" onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${retryAudioId}',${sTime}, ${eTime})" style="background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px; padding:4px 8px; font-size:0.8rem; cursor:pointer; color:#475569; font-weight:bold; white-space:nowrap; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.05)); transition:all 0.1s;" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'" title="背景切片回放，不再彈出視窗">🎧 ${timeLabel} 播放</button>` : ''}
                                                             </div>
                                                         </td>
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
-                                                            <div style="display:inline-flex; align-items:center; gap:6px;">
+                                                            <div style="display:flex; align-items:center; gap:8px;">
                                                                 <span>${err.expected_phonetic}</span>
-                                                                <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽 Google 正確發音">🔊</span>
+                                                                <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.3rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽 Google 真人發音">🔊</span>
                                                             </div>
                                                         </td>
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${err.error_type}</td>
@@ -222,8 +228,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     <div id="ai-report-body-${compositeKey}" style="display: ${reportDisplay}; margin-top: 12px;">
                                         <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
                                             <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
-                                            ${String(feedback).replace(/\n/g, '<br>')}
-                                            ${wordErrorsHtml}
+                                            ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
                                         </div>
                                     </div>
                                 </div>
@@ -303,7 +308,7 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 頂部主作業播放器：永遠鎖定使用網頁內 Modal 懸浮窗，絕不再放會死當的 audio
+                            // 🚀 主作業列維持網頁內建 Modal 彈出，不再帶有時間點參數
                             audioPlayerHtml = `<button type="button" onclick="window.UIStudentTimelineTemplates.openDriveModal('${retryAudioId}')" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出完整錄音</button>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
@@ -342,7 +347,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                         btn = `
                             <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
+                                <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
                                 <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
                                 <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
                                 <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
@@ -369,8 +374,7 @@ window.UIStudentTimelineTemplates = (() => {
                             </div>
                             ${btn}
                         </div>
-                        ${taskDescHtml}
-                        ${aiFeedbackHtml}
+                        ${taskDescHtml}${aiFeedbackHtml}
                     </div>
                 `;
             };
@@ -474,7 +478,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
                                     return `
-                                        <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
+                                        <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background:${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                                             <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
                                                 <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                             </div>
@@ -502,8 +506,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         <div>${dueHtml}</div>
                                     </div>
                                 </div>
-                                ${blockDescHtml}
-                                ${tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : ''}
+                                ${blockDescHtml}${tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : ''}
                             </div>
                         `;
                     }).join('');
