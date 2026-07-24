@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (v73 終極洗門風版：Google API 真人發音 + 極簡圖示精準切片)
+ * 🌟 純粹視覺模板層 (v74 穩定修復版：解決模組死當、防禦舊資料缺失時間點、完美 Google 真人發音)
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -60,8 +60,8 @@ window.UIStudentTimelineTemplates = (() => {
 
     return {
         // 暴露給 HTML onclick 使用
-        playGoogleTTS,
-        playStudentSlice,
+        playGoogleTTS: playGoogleTTS,
+        playStudentSlice: playStudentSlice,
         
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
             let html = '';
@@ -124,7 +124,6 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (numScore < 60) pScoreColor = '#EF4444';
                             }
 
-                            // 🚀 終極排版：清空所有多餘按鈕與播放列，只保留乾淨的 🎧 與 🔊
                             let wordErrorsHtml = '';
                             if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
                                 wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -142,13 +141,19 @@ window.UIStudentTimelineTemplates = (() => {
                                             <tbody>
                                                 ${ai.word_errors.map(err => {
                                                     const safeWord = (err.word || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                                    // 🛡️ 新舊資料防禦：確認真的有 start_time 才顯示 🎧 按鈕
+                                                    const hasRealTime = err.start_time !== undefined && err.start_time !== null;
+                                                    const sliceButtonHtml = (retryAudioId && hasRealTime) 
+                                                        ? `<span onclick="window.UIStudentTimelineTemplates.playStudentSlice('${retryAudioId}', ${err.start_time}, ${err.end_time || (err.start_time + 1.5)})" style="cursor:pointer; font-size:1.1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="播放您的發音片段">🎧</span>` 
+                                                        : '';
+
                                                     return `
                                                     <tr style="background: white;">
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${err.word}</td>
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
                                                             <div style="display:inline-flex; align-items:center; gap:6px;">
                                                                 <span>${err.student_pronunciation}</span>
-                                                                ${retryAudioId ? `<span onclick="window.UIStudentTimelineTemplates.playStudentSlice('${retryAudioId}', ${err.start_time \vert{}\vert{} 0},${err.end_time || ((err.start_time || 0) + 1.5)})" style="cursor:pointer; font-size:1.1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="播放您的發音片段">🎧</span>` : ''}
+                                                                ${sliceButtonHtml}
                                                             </div>
                                                         </td>
                                                         <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
@@ -186,7 +191,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     <div id="ai-report-body-${compositeKey}" style="display: ${reportDisplay}; margin-top: 12px;">
                                         <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
                                             <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
-                                            ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
+                                            ${String(feedback).replace(/\n/g, '<br>')}
+                                            ${wordErrorsHtml}
                                         </div>
                                     </div>
                                 </div>
@@ -266,7 +272,7 @@ window.UIStudentTimelineTemplates = (() => {
                         let manualSubmitBtnHtml = '';
 
                         if (hasValidAudioFile) {
-                            // 🚀 回歸最標準乾淨的 <audio>。如果這條 0:00，表示該學生的檔案權限在 Drive 上沒有被開啟 (Anyone with link)
+                            // 頂部完整作業保留原生 audio
                             audioPlayerHtml = `<audio controls preload="metadata" src="https://drive.google.com/uc?export=download&id=${retryAudioId}" style="height: 35px; max-width: 220px; outline: none;"></audio>`;
                             
                             if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
@@ -305,7 +311,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                         btn = `
                             <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
+                                <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}', ${isLateUpload})">
                                 <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
                                 <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
                                 <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
@@ -332,7 +338,8 @@ window.UIStudentTimelineTemplates = (() => {
                             </div>
                             ${btn}
                         </div>
-                        ${taskDescHtml}${aiFeedbackHtml}
+                        ${taskDescHtml}
+                        ${aiFeedbackHtml}
                     </div>
                 `;
             };
@@ -436,7 +443,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
                                     return `
-                                        <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background:${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
+                                        <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                                             <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
                                                 <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                             </div>
@@ -464,7 +471,8 @@ window.UIStudentTimelineTemplates = (() => {
                                         <div>${dueHtml}</div>
                                     </div>
                                 </div>
-                                ${blockDescHtml}${tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : ''}
+                                ${blockDescHtml}
+                                ${tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : ''}
                             </div>
                         `;
                     }).join('');
@@ -479,18 +487,18 @@ window.UIStudentTimelineTemplates = (() => {
                     let badgeColor = isAllDone ? '#059669' : '#EA580C';
                     let badgeBorder = isAllDone ? '#D1FAE5' : '#FFEDD5';
                     progressBadgeHtml = `
-                        <div style="background:${badgeBg}; color:${badgeColor}; border:1px solid${badgeBorder}; padding:4px 10px; border-radius:20px; font-size:0.85rem; font-weight:800;">
-                            完成進度 ${doneTasksInDate} /${totalTasksInDate}
+                        <div style="background:${badgeBg}; color:${badgeColor}; border:1px solid ${badgeBorder}; padding:4px 10px; border-radius:20px; font-size:0.85rem; font-weight:800;">
+                            完成進度 ${doneTasksInDate} / ${totalTasksInDate}
                         </div>
                     `;
                 }
 
                 html += `
-                    <div id="timeline-node-${weekIndex}" class="timeline-node" data-is-current="${isCurrentWeek}" style="scroll-margin-top: 25px; border: 2px solid ${borderColor}; background-color:${bgColor}; padding: 15px; border-radius: 12px; margin-bottom: 25px; position: relative;">
+                    <div id="timeline-node-${weekIndex}" class="timeline-node" data-is-current="${isCurrentWeek}" style="scroll-margin-top: 25px; border: 2px solid ${borderColor}; background-color: ${bgColor}; padding: 15px; border-radius: 12px; margin-bottom: 25px; position: relative;">
                         <div class="node-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap; gap:10px;">
                             <div class="node-date" style="display:flex; align-items:center; position:relative;">
                                 <div style="position: absolute; left: -65px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; border: 4px solid ${dotColor}; z-index: 1;"></div>
-                                <span style="font-weight: 800; color: ${headerTextColor}; font-size:1.05rem;">📅 第 ${weekIndex}${mode === 'weekly' ? '週' : '堂'} - ${node.title}</span>${badge}
+                                <span style="font-weight: 800; color: ${headerTextColor}; font-size:1.05rem;">📅 第 ${weekIndex} ${mode === 'weekly' ? '週' : '堂'} - ${node.title}</span> ${badge}
                             </div>
                             ${progressBadgeHtml}
                         </div>
