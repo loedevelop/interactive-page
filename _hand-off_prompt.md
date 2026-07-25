@@ -1,31 +1,69 @@
-# 🚀 [LogOn Web 系統開發交接文檔 - The Master Handoff Prompt]
+# 📘 LogOn Web 終極系統架構與工程規範白皮書 (Architecture Blueprint)
+*(Timestamp: 2026-07-25 12:00:00 CST)*
+*(Document Status: Finalized | Architecture: JSONB-Driven Array V2 & AI Pipeline)*
 
-## 👨‍💻 你的角色與行為準則 (Persona & Directives)
-請你扮演一位具備「軟體工匠精神 (Software Craftsmanship)」的 Modern SaaS 全端架構師與後端工程師。這是一個已經上線並高度複雜的系統，你必須嚴格遵守以下「七大鐵律」，違反任何一條將被視為嚴重失職。
+## 🎯 壹、 總綱與計畫核心願景 (The Vision)
+建立一套從 「教師產出純淨文稿」 ➡️ 「學生防斷線與防跑版錄音」 ➡️ 「Webhook 靜默觸發 Edge Function」 ➡️ 「Gemini 多模態強制對齊分析」 ➡️ 「Gradebook 極限空間壓縮與瞬間對齊紅黑字」 的零人工介入自動化大閉環。
+系統架構將從傳統的「絕對/全域身分制」升級為高彈性的**「情境身分制 (Contextual Multi-Persona)」**，並強制導入**「軟刪除 (Soft Deletes)」、「RPC 原子化寫入 (Atomic RPC)」、「JSONB 動態擴充」與「網頁端背景同步 (Web Sync Queue)」**四大標準。
 
-1. **絕對完整 (Zero-Placeholder Rule)：** 每次提供程式碼時，必須給出 **100% 完整、無省略、可直接複製貼上覆蓋原檔** 的程式碼。絕對禁止使用 `// ... remaining code` 等偷懶佔位符。**絕對禁止隨意刪減原有程式內容與排版（包含特殊的空白字元）！**
-2. **不准亂猜 (No Blind Guesses) ⚠️ 致命鐵律：** 有任何對資料庫 Schema 或商業邏輯的疑慮，**必須先向使用者詢問，絕對禁止自作聰明推測型別！** (過去曾發生因亂猜型別導致系統崩潰的嚴重事故，絕不允許重演)。
-3. **精準快取破除與入口檔連動 (Cache Busting & Index Sync)：** 若動到前端 JS 程式，必須一併附上完整的 `index.html`，並將對應 `<script>` 的 `?v=` 版本號 +1。
-4. **自動 GitHub 推播指令 (Auto Git Push)：** 在每次輸出完所有程式碼後，必須在回覆的最末端，自動附上 VS Code terminal 可用的 GitHub 推播指令碼 (`git add .`, `git commit -m "..."`, `git push`)。
-5. **排版鐵律：** 輸出長篇 Markdown 文件或 JSON 時，若有內嵌 Code Block，外層請強制使用四個反引號 ` ```` ` 封裝，絕對避免因內部範例導致排版崩潰。
-6. **嚴格 Git 操作限制：** `git add` 後面絕對禁止加上檔案名稱！！！只准使用 `git add .`。
-7. **程式與文件封裝：** 所有的程式及文件，都要放在 Code Block 裡面給我，確保可以直接全選與複製。
+## 🗄️ 貳、 資料庫單元化與 JSONB 歷史追蹤 (DB Schema & Versioning Strategy)
+為避免物理 INSERT 造成資料庫膨脹，全面轉向 「單筆紀錄 + JSONB 陣列溯源」 策略。
 
-## 💣 歷史雷區與系統記憶 (The Minefield)
-你必須永遠銘記以下我們踩過並修復的技術坑，觸碰即死：
+1. **確立標準父節點 (The Golden Anchor)：**
+   * 當教師在 assignments 內建立 audio_record 任務時，強制寫入 original_script (標準文稿)。
+   * 此文稿為該單元唯一真理。AI 的強制對齊與前端紅黑字渲染，絕對只能基於這段字串進行。
+2. **單一更新與 JSONB 歷史疊代 (History Array)：**
+   * 學生針對同一個 Task ID 無論繳交幾次，task_completions 永遠只維持一筆紀錄 (UPDATE 絕不 INSERT)。
+   * 每次重新繳交或教師發布成績時，舊成績、AI 評估與評語會打包成 Object，推入 raw_data.grading_history 陣列中。
+
+## 👨‍🏫 參、 教師端：標準派發、文稿淨化與客製化設定 (Teacher Pipeline)
+1. **教師專屬評估偏好 (Teacher Preferences)：**
+   * 目標口音標準：允許教師設定批改基準（預設：美式英文 / 可自訂英式或其他）。
+   * 音標顯示格式：允許教師設定介面顯示的音標系統（KK, IPA, 或自然發音 Phonics）。
+2. **編輯器 UI 擴充與多源文稿匯入引擎：** 
+   * 實作 GAS 試算表引擎，支援自 Google Sheets / Excel 指定範圍精準匯入純淨文字。保留「快速匯入 PDF 取字」按鈕，但強制掛載「⚠️ 萃取後請務必人工核對與清除亂碼」警告。
+
+## 📱 肆、 學生端：防斷線錄音艙與離線防護佇列 (Student Studio & Offline Defense)
+1. **真・懸浮面板與光學反追蹤引擎 (60fps VisualViewport Tracker)：** 
+   * **終極解法：** 改用每秒 60 幀的 `VisualViewport API` 逆向追蹤。偵測到縮放 (`scale > 1.01`) 時，執行反向縮小、精準實體座標定位、暴力拋錨（斷開原生 CSS 鎖鏈），永遠死釘在螢幕最下方。
+   * **💣 絕對不能踩的雷區：** 嚴禁依賴純 CSS (`position: fixed`) 定位、嚴禁依賴 Meta 鎖定、嚴禁刪除數學跟蹤公式。
+2. **真正前端轉碼器 (Native WAV Encoder)：**
+   * **正面對決 WebM：** 針對 Chrome 錄出來缺乏 Metadata 的 WebM，透過前端 C++ `AudioContext` 實時轉碼為「16kHz 單聲道標準 WAV 格式」。確保所有播放器與 Google Drive 都能抓到長度，實現 100% 完美的進度條拉動與切片定位。
+3. **Iframe 跨域登入牆防禦機制 (Zero-Trust Iframe Rendering)：**
+   * 接收 Google Drive 網址時，**絕對禁止直接使用或簡單 replace**。必須透過正則表達式精準提煉出唯一的 `File ID`，重組為純淨的預覽格式：`https://drive.google.com/file/d/{File_ID}/preview`。嚴禁殘留 Hash 標籤 (`#`)。
+
+## ☁️ 伍、 雲端隔離儲存與中轉引擎 (Cloud Storage & GAS Middleware)
+1. **安全上傳通道：** 前端將 Blob 轉 Base64 送給 GAS，GAS 解析 student_drive_folder_id 存入學生專屬資料夾。
+2. **絕對檔名正規化：** 強制命名為 {ClassID}_{StudentID}_{TaskID}_{Timestamp}.wav。
+3. **🛡️ 極限 MIME Type 裝甲：** 攔截 `.pdf`，若偵測到空值或 `text/plain`，一律鎖死為 `application/pdf`，根絕 Drive 誤判 TXT 災難。
+
+## 🤖 陸、 邊緣運算與 Gemini AI 批改大腦 (Supabase Webhooks & Edge Functions)
+1. **防彈 RPC 發射器 (Atomic Operations)：** 呼叫 `supabase.rpc('submit_audio_task_atomic')` 實現防併發寫入，瞬間將 `status` 改為 `ai_processing` 扣下扳機。**必須精準對齊內部混血型別 (BIGINT 與 UUID)**。
+2. **Webhook 靜默觸發：** 監聽器偵測到 status === 'ai_processing' 自動觸發 Edge Function。(已透過 SQL 建立 `http_request` 觸發器修復官方 Bug)。
+3. **強型別 JSON 合約 (Strict Data Contract)：** 全面導入 Gemini 1.5 `responseSchema` 強制鎖死輸出神經元，確保 100% 純淨 JSON。使用 Deno 原生 `encode` 處理 Base64 轉換避免記憶體溢出。
+
+## 📈 柒、 教師批改艙：極限空間壓縮與無佔位視覺化 (The Ultra-Compact Gradebook)
+1. **核彈級空間壓縮：** 廢除巨大 AI 分數卡，與音檔控制列合併為頂部 Sticky 導覽列。
+2. **字音互動與 Click-Outside 防呆：** 點擊波浪線跳轉音檔，全域 Click-Outside 確保氣泡瞬間關閉。
+3. **智慧評語詞庫 (Feedback Phrase Bank)：** 透過 Selection API 瞬間安插句子至輸入框游標處，達成「套用、客製、自製」。
+
+## 🛡️ 捌、 歷史雷區與系統開發 AI 協作鐵律 (The Minefields & Directives)
+為了防止 AI 或開發者在協助開發時引發不可預期的災難，確立以下不可逾越的鐵律：
+
 1. **混血型別地雷 (Mixed-Type DB Schema)：** 
-   我們的資料庫 ID 系統非常特殊，屬於混合型別。例如在 `task_completions` 表格中，`assignment_id` 是 **BIGINT** (數字，如 "82")，而 `class_id` 和 `student_id` 卻是 **UUID** (如 "a2931...")。撰寫 SQL RPC 時如果不精準對齊，就會立刻引發 `invalid input syntax` 崩潰。**必須善用 `%TYPE` 動態繼承。**
-2. **Google Drive PDF 變 TXT 災難：** 
-   前端上傳檔案時，部分行動設備無法判定 `file.type`，導致 Drive API 擅自把 `.pdf` 轉成 `.txt`。我們已在前端加入 **「極限 MIME Type 強制裝甲」**，將缺少型別的 `.pdf` 強制鎖定為 `application/pdf`。這段防禦代碼絕對不允許被精簡或刪除！
-3. **Webhook 官方底層 Bug：** 
-   Supabase 官方曾出現底層 `3F000 / 42883` 錯誤。我們已經透過 SQL 手動建立 `supabase_functions.http_request()` 觸發器解決。若未來再遇建立失敗，不得歸咎於前端。
-4. **VisualViewport 追蹤防禦：**
-   為了防禦手機端 iframe 放大跑版，我們已實作 60fps 的 `VisualViewport` 反縮放引擎。這段高複雜度的數學定位公式嚴禁任何「自以為是的優化與刪減」。
-5. **RLS 未啟用風險：**
-   目前部分資料表仍處於 `UNRESTRICTED` 狀態，需在測試穩定後補完 RLS，在此之前仰賴 RPC 的 `SECURITY DEFINER`。
+   系統中存在混血型別（例如 `assignments.id` 為 `BIGINT`，但 `classes.id` 為 `UUID`）。撰寫 SQL 函數或 RPC 時，接收變數必須嚴格區分與對齊，內部主鍵變數必須使用 `%TYPE`（如 `task_completions.id%TYPE`）自動綁定，**絕對禁止自作聰明盲目推測統一型別**。
+2. **🚫 絕對禁止「自作聰明的優化」(The Zero-Tampering Rule)：**
+   * **鐵律：禁止去動不需動的地方！**
+   * 只要不是明確要求修改的功能、變數或區塊，**絕對禁止**以「優化、整理、重構」為由，隨意更動、刪減或調整原有的程式碼、業務邏輯，甚至特殊的空白字元與排版。確保每次輸出的程式碼都能 **100% 無損覆蓋**原檔。
+3. **🚫 AI 介面 LaTeX 渲染災難 (The UI OR-Operator Bug) —— 終極免疫指令：**
+   * **歷史血淚：** AI 聊天介面的底層 Markdown/LaTeX 渲染引擎，會自作聰明將 JavaScript 中的雙直豎線 (OR 運算子 `||`) 強制轉譯為 `\vert{}\vert{}` 絕對值符號，導致引發 `Uncaught SyntaxError` 模組死當。
+   * **防禦標準：** 在撰寫或修改 UI 模板字串、事件綁定或純字串拼接時，**嚴格禁止使用雙直豎線 (||) 作預設值判定或正則表達式。** 必須全面改用「三元運算子 (`A ? A : B`)」、「`if/else` 條件式」，物理性消滅該符號。
+4. **🚫 絕對完整輸出 (Zero-Placeholder Rule)：**
+   * 每次提供程式碼或文件時，必須給出 **100% 完整、無省略** 的內容。
+   * 嚴禁使用 `// ... remaining code` 等偷懶佔位符。
+5. **🚫 狀態同步優先級 (Source of Truth Priority)：**
+   * UI 渲染批改報告與分數前，**必須嚴格判斷 `status` 欄位**。若狀態為 `ai_error`, `failed`, `submitted`, `ai_processing` 等非完成狀態，絕對不准渲染 `raw_data.ai_evaluation` 內的舊成績假資料。
 
-## 🎯 當前戰線狀態 (Current State)
-- **大腦對接完成：** 前端防彈 RPC (`submit_audio_task_atomic`) 已完成，Edge Function (`process-audio-ai`) 結合 Gemini 1.5 已部署，Webhook 閉環已正式打通。
-- **UI 渲染就緒：** 學生時間軸已能讀取 `raw_data.ai_evaluation`  AI已能批改。 但目前：1. 無法播放音檔。2. 示範發音的圖示，應該要放在正確音標那邊。3.學生錯的發音音檔，竟然不是節錄學生自己的原始發音！4.正確發音，不要機器音，要 google translate 的比較自然。 
-
-👉 **你的首要任務：請先回覆「我已完全吸收交接文檔與地雷，絕不亂猜，隨時準備待命！」並等待使用者給予測試結果或下一步指令。**
+## 📝 玖、 待辦任務 (Next Action Items)
+* **📍 戰線 A：打通 AI 批改後端閉環** (Edge Function 解析 16kHz WAV 並強制對齊 Gemini JSON 輸出)。
+* **📍 戰線 B：導入 IndexedDB 離線防護佇列** (實作斷線暫存與背景自動重試上傳機制)。

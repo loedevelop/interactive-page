@@ -1,12 +1,12 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V91 終極防彈修復版：極簡切片圖示、嚴格狀態防呆、字典真人發音)
+ * 🌟 純粹視覺模板層 (V93 完美連動版：補回 loadedmetadata 監聽，徹底解決切片從頭播的 Bug)
  * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 1. 雙引擎真人發音 (字典 API + 原生 Web Speech)
+    // 🔊 1. Google 美式真人發音引擎 (帶有原生備用防線)
     let sharedTTS = null;
     const playGoogleTTS = (text) => {
         try {
@@ -35,13 +35,13 @@ window.UIStudentTimelineTemplates = (() => {
             }
             sharedTTS.pause();
             
-            // 🌟 串接有道字典真人發音 API
-            sharedTTS.src = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(safeText)}&type=2`;
+            // 🌟 回歸 Google 官方 API，強制美式發音 (en-US)
+            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(safeText)}`;
             
             const playPromise = sharedTTS.play();
             if (playPromise !== undefined) {
                 playPromise.catch(e => {
-                    console.warn("外部發音 API 被阻擋，無縫切換至原生語音引擎:", e);
+                    console.warn("Google TTS 播放被阻擋，無縫切換至原生語音引擎:", e);
                     fallbackTTS();
                 });
             }
@@ -50,101 +50,60 @@ window.UIStudentTimelineTemplates = (() => {
         }
     };
 
-    // 🎧 2. 學生背景切片引擎 (導入 Metadata 監聽，解決無法定位問題)
-    let sharedSlice = null;
+    // 🎧 2. 錯音切片連動引擎 (🌟 V93 核心修復：補回 loadedmetadata 監聽防護)
     let sliceTimerInterval = null;
-    const playStudentAudioSlice = (driveId, startTime, endTime) => {
+    const playStudentAudioSlice = (playerId, startTime, endTime) => {
         try {
-            if (!sharedSlice) {
-                sharedSlice = document.createElement('audio');
-                sharedSlice.id = 'rt-hidden-slice';
-                document.body.appendChild(sharedSlice);
+            const player = document.getElementById(playerId);
+            if (!player) {
+                alert("找不到音檔播放器，請確認作業是否已繳交。");
+                return;
             }
             
             if (sliceTimerInterval) clearInterval(sliceTimerInterval);
-            sharedSlice.pause();
+            player.pause();
             
-            const srcUrl = `https://drive.google.com/uc?export=download&id=${driveId}`;
-            if (sharedSlice.src !== srcUrl) {
-                sharedSlice.src = srcUrl;
-                sharedSlice.load(); 
-            }
-
+            // 獨立的播放執行器
             const executePlay = () => {
-                sharedSlice.currentTime = startTime; 
-                const playPromise = sharedSlice.play();
+                player.currentTime = startTime; 
+                const playPromise = player.play();
                 
                 if (playPromise !== undefined) {
                     playPromise.then(() => {
-                        if (Math.abs(sharedSlice.currentTime - startTime) > 0.5) {
-                            sharedSlice.currentTime = startTime;
+                        // 雙重保險，確保跳轉成功
+                        if (Math.abs(player.currentTime - startTime) > 0.5) {
+                            player.currentTime = startTime;
                         }
                         
                         sliceTimerInterval = setInterval(() => {
                             let shouldStop = false;
-                            if (sharedSlice.currentTime >= endTime) shouldStop = true;
-                            if (sharedSlice.paused) shouldStop = true;
+                            if (player.currentTime >= endTime) shouldStop = true;
+                            if (player.paused) shouldStop = true;
                             
                             if (shouldStop) {
-                                sharedSlice.pause();
+                                player.pause();
                                 clearInterval(sliceTimerInterval);
                             }
                         }, 50);
                     }).catch(e => {
-                        console.warn("背景播放被阻擋:", e);
-                        alert("⚠️ 瀏覽器阻擋了自動播放，請先點擊網頁任意處後再試一次！");
+                        console.warn("切片播放被阻擋:", e);
+                        alert("⚠️ 瀏覽器阻擋了自動播放，請手動點擊上方播放器播放。");
                     });
                 }
             };
 
-            // 🌟 等待瀏覽器解析完音檔長度，才進行時間跳轉
-            if (sharedSlice.readyState >= 1) { 
+            // 🌟 致命遺漏修復：必須等瀏覽器確認音檔長度 (readyState >= 1) 才能跳轉！
+            if (player.readyState >= 1) {
                 executePlay();
             } else {
                 const onReady = () => {
                     executePlay();
-                    sharedSlice.removeEventListener('loadedmetadata', onReady);
+                    player.removeEventListener('loadedmetadata', onReady);
                 };
-                sharedSlice.addEventListener('loadedmetadata', onReady);
+                player.addEventListener('loadedmetadata', onReady);
+                player.load(); // 強制觸發載入，防卡死
             }
-        } catch (e) { console.error("學生切片播放錯誤:", e); }
-    };
-
-    // 🖥️ 3. 網頁內建懸浮視窗 Modal (改用原生 Audio)
-    const openDriveModal = (driveId) => {
-        try {
-            let modal = document.getElementById('rt-custom-audio-modal');
-            if (!modal) {
-                modal = document.createElement('div');
-                modal.id = 'rt-custom-audio-modal';
-                modal.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:99999; display:flex; justify-content:center; align-items:center; backdrop-filter:blur(3px); cursor:pointer;';
-                
-                modal.onclick = (e) => {
-                    if (e.target === modal) {
-                        modal.style.display = 'none';
-                        modal.innerHTML = ''; 
-                    }
-                };
-                document.body.appendChild(modal);
-            }
-
-            modal.innerHTML = `
-                <div style="background:white; padding:25px; border-radius:16px; box-shadow:0 15px 35px rgba(0,0,0,0.2); width:90%; max-width:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
-                    <div style="font-weight:900; color:#334155; margin-bottom:15px; font-size:1.2rem; text-align:center;">
-                        🎵 完整錄音作業
-                    </div>
-                    <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:20px; display:flex; flex-direction:column; gap:15px; align-items:center;">
-                        <audio controls autoplay src="https://drive.google.com/uc?export=download&id=${driveId}" style="width:100%; outline:none;"></audio>
-                    </div>
-                    <div style="text-align:center; margin-top:15px; font-size:0.85rem; color:#94A3B8; font-weight:bold; line-height:1.5;">
-                        👆 點擊視窗外部黑色區域即可關閉<br>
-                        <span style="font-size:0.75rem; color:#CBD5E1; font-weight:normal;">若為舊版格式無法拉動進度條：</span><br>
-                        <a href="https://drive.google.com/uc?export=download&id=${driveId}" target="_blank" style="color:#3B82F6; text-decoration:underline;">📥 請點此下載原始音檔</a>
-                    </div>
-                </div>
-            `;
-            modal.style.display = 'flex';
-        } catch (e) { console.error("開啟 Modal 錯誤:", e); }
+        } catch (e) { console.error("切片定位錯誤:", e); }
     };
 
     function getLevelStyle(depth) {
@@ -158,12 +117,11 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V91 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V93 模組已成功載入！");
 
     return {
         playGoogleTTS,
         playStudentAudioSlice, 
-        openDriveModal,
         
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
             try {
@@ -194,6 +152,15 @@ window.UIStudentTimelineTemplates = (() => {
                     let retryAudioId = '';
                     let retryAudioUrl = '';
                     let taskStatus = '';
+                    let directAudioUrl = ''; 
+                    
+                    // 🌟 預防重複宣告的防護：在最外層宣告 inlinePlayerId
+                    let inlinePlayerId = '';
+                    if (course.id) {
+                        if (task.id) {
+                            inlinePlayerId = `inline-player-${course.id}-${task.id}`;
+                        }
+                    }
 
                     if (window._studentTaskCompletions) {
                         if (Array.isArray(window._studentTaskCompletions)) {
@@ -229,6 +196,10 @@ window.UIStudentTimelineTemplates = (() => {
                                     
                                     if (retryAudioId) {
                                         hasValidAudioFile = true;
+                                        directAudioUrl = `https://drive.google.com/uc?export=download&id=${retryAudioId}`;
+                                    } else if (retryAudioUrl) {
+                                        hasValidAudioFile = true;
+                                        directAudioUrl = retryAudioUrl;
                                     }
                                 }
 
@@ -246,7 +217,6 @@ window.UIStudentTimelineTemplates = (() => {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交</span>`;
                                 }
 
-                                // 🌟 狀態優先級防呆：只允許在 graded 狀態印出成績報告
                                 let showAIReport = false;
                                 if (taskStatus === 'graded') showAIReport = true;
                                 else if (taskStatus === 'completed') showAIReport = true;
@@ -317,10 +287,9 @@ window.UIStudentTimelineTemplates = (() => {
                                                                             let safeExpPhonetic = err.expected_phonetic ? err.expected_phonetic : '';
                                                                             let safeErrType = err.error_type ? err.error_type : '';
 
-                                                                            // 🌟 新增需求：錯音播放改為極簡圖示，不再浪費版面
                                                                             let playSliceHtml = '';
-                                                                            if (retryAudioId) {
-                                                                                playSliceHtml = `<span onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${retryAudioId}',${sTime}, ${eTime})" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="播放錯誤發音切片">🎧</span>`;
+                                                                            if (directAudioUrl !== '') {
+                                                                                playSliceHtml = `<span onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${inlinePlayerId}', ${sTime}, ${eTime})" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="定位並播放錯誤發音">🎧</span>`;
                                                                             }
 
                                                                             return `
@@ -334,7 +303,7 @@ window.UIStudentTimelineTemplates = (() => {
                                                                                 <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
                                                                                     <div style="display:flex; align-items:center; flex-wrap:nowrap;">
                                                                                         <span>${String(safeExpPhonetic)}</span>
-                                                                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽示範發音">🔊</span>
+                                                                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽美式示範發音">🔊</span>
                                                                                     </div>
                                                                                 </td>
                                                                                 <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
@@ -377,7 +346,6 @@ window.UIStudentTimelineTemplates = (() => {
                                     }
                                 }
 
-                                // 🌟 狀態防呆：只有真的出錯，才印出錯誤警告區塊
                                 let showAIError = false;
                                 if (taskStatus === 'ai_error') showAIError = true;
                                 else if (taskStatus === 'failed') showAIError = true;
@@ -439,15 +407,13 @@ window.UIStudentTimelineTemplates = (() => {
                         let materialUrl = '';
                         let materialRange = '';
                         if (task.raw_data) {
-                            originalScript = String(task.raw_data.original_script ? task.raw_data.original_script : '');
-                            materialUrl = String(task.raw_data.material_url ? task.raw_data.material_url : '');
-                            materialRange = String(task.raw_data.material_range ? task.raw_data.material_range : '');
+                            if (task.raw_data.original_script) originalScript = String(task.raw_data.original_script);
+                            if (task.raw_data.material_url) materialUrl = String(task.raw_data.material_url);
+                            if (task.raw_data.material_range) materialRange = String(task.raw_data.material_range);
                         }
 
-                        let rangeHtml = materialRange ? `<span style="font-size:0.8rem; background:#E0E7FF; color:#4338CA; padding:2px 8px; border-radius:12px; margin-left:10px; font-weight:800; border:1px solid #C7D2FE; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display:inline-block; vertical-align:middle;">📖 範圍: ${materialRange}</span>` : '';
-
                         let displayTitle = task.title ? task.title : '語音錄製任務';
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>${rangeHtml}`;
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -476,9 +442,10 @@ window.UIStudentTimelineTemplates = (() => {
                             let manualSubmitBtnHtml = '';
 
                             if (hasValidAudioFile) {
-                                audioPlayerHtml = `<button type="button" onclick="window.UIStudentTimelineTemplates.openDriveModal('${retryAudioId}')" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出完整錄音</button>`;
+                                if (directAudioUrl !== '') {
+                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${directAudioUrl}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
+                                }
                                 
-                                // 🌟 嚴格手動按鈕邏輯：只有在「尚未獲得好成績」時才出現手動提交按鈕
                                 let showManualSubmit = false;
                                 if (taskStatus === 'submitted') showManualSubmit = true;
                                 else if (taskStatus === 'failed') showManualSubmit = true;
@@ -495,7 +462,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${audioPlayerHtml}
                                     <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
-                                    <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
+                                    <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
                                     ${manualSubmitBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
@@ -528,7 +495,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
                                     <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
-                                    <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 檢視 Drive</button>
+                                    <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
                             `;
@@ -538,8 +505,35 @@ window.UIStudentTimelineTemplates = (() => {
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
                     }
 
-                    let cleanTaskDesc = task.description ? String(task.description).replace(/<[^>]*>?/gm, '').trim() : '';
-                    let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${task.description}</div>` : '';
+                    // 🌟 錄音範圍極簡化：移除紫色標籤，改為普通灰色文字併入作業說明
+                    let cleanTaskDesc = '';
+                    if (task.description) {
+                        cleanTaskDesc = String(task.description).replace(/<[^>]*>?/gm, '').trim();
+                    }
+                    
+                    let materialRangeText = '';
+                    if (task.type === 'audio_record') {
+                        if (task.raw_data) {
+                            if (task.raw_data.material_range) {
+                                materialRangeText = String(task.raw_data.material_range).trim();
+                            }
+                        }
+                    }
+
+                    let finalDescText = cleanTaskDesc;
+                    if (materialRangeText !== '') {
+                        const rangeStr = `(範圍：${materialRangeText})`;
+                        if (finalDescText !== '') {
+                            finalDescText = `${finalDescText} ${rangeStr}`;
+                        } else {
+                            finalDescText = rangeStr;
+                        }
+                    }
+
+                    let taskDescHtml = '';
+                    if (finalDescText !== '') {
+                        taskDescHtml = `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${finalDescText}</div>`;
+                    }
                     
                     let showTaskDue = false;
                     if (task.due_date) {
