@@ -11,6 +11,111 @@ window.TeacherUI = (() => {
     const classContextHeader = document.getElementById('class-context-header');
     const viewSections = document.querySelectorAll('.view-section');
     const tabBtns = document.querySelectorAll('.tab-btn');
+
+    function getRoleBadgeHtml(staffRole) {
+        if (staffRole === 'admin') return '<span style="font-size:0.7rem; background:#EF4444; color:white; padding:2px 6px; border-radius:10px; margin-left:5px;">Admin</span>';
+        if (staffRole === 'primary_teacher') return '<span style="font-size:0.7rem; background:#FF8C00; color:white; padding:2px 6px; border-radius:10px; margin-left:5px;">主</span>';
+        if (staffRole === 'co_teacher') return '<span style="font-size:0.7rem; background:#4CAF50; color:white; padding:2px 6px; border-radius:10px; margin-left:5px;">協</span>';
+        if (staffRole === 'ta_senior' || staffRole === 'ta_junior') return '<span style="font-size:0.7rem; background:#9E9E9E; color:white; padding:2px 6px; border-radius:10px; margin-left:5px;">TA</span>';
+        return '';
+    }
+
+    function applyStaffRoleUI(staffRole) {
+        const tabSettings = document.querySelector('.tab-btn[data-target="view-settings"]');
+        const navManageClasses = document.getElementById('nav-manage-classes');
+        const tabStudents = document.querySelector('.tab-btn[data-target="view-students"]');
+        const tabResources = document.querySelector('.tab-btn[data-target="view-resources"]');
+        const navGlobalResources = document.getElementById('nav-global-resources');
+
+        if (staffRole === 'admin' || staffRole === 'primary_teacher') {
+            if (tabSettings) tabSettings.style.display = 'inline-block';
+            if (navManageClasses) navManageClasses.style.display = 'block';
+        } else {
+            if (tabSettings) tabSettings.style.display = 'none';
+            if (navManageClasses) navManageClasses.style.display = 'none';
+        }
+
+        if (staffRole === 'ta_junior') {
+            if (tabStudents) tabStudents.style.display = 'none';
+            if (tabResources) tabResources.style.display = 'none';
+            if (navGlobalResources) navGlobalResources.style.display = 'none';
+        } else {
+            if (tabStudents) tabStudents.style.display = 'inline-block';
+            if (tabResources) tabResources.style.display = 'inline-block';
+            if (navGlobalResources) navGlobalResources.style.display = 'block';
+        }
+    }
+
+    function resolveStaffRoleFromSession(session, classId) {
+        if (session.activeContext && session.activeContext.staffRole) {
+            return session.activeContext.staffRole;
+        }
+        if (session.enrollments && classId) {
+            const enrollment = session.enrollments.find(function(e) { return e.id === classId; });
+            if (enrollment && enrollment.staff_role) {
+                return enrollment.staff_role;
+            }
+        }
+        const storedRole = localStorage.getItem('activeRole');
+        return storedRole ? storedRole : 'ta_junior';
+    }
+
+    function preRenderSidebarFromSession(session, activeClassId) {
+        if (!classListContainer || !session.enrollments || session.enrollments.length === 0) return;
+
+        classListContainer.innerHTML = '';
+        session.enrollments.forEach(function(en) {
+            const div = document.createElement('div');
+            div.className = 'class-item' + (en.id === activeClassId ? ' active' : '');
+            const staffRole = en.staff_role ? en.staff_role : 'ta_junior';
+            div.innerHTML = '<span style="width:20px; display:inline-block;">📘</span> <span style="flex-grow:1; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">' + en.name + '</span> ' + getRoleBadgeHtml(staffRole);
+            div.style.display = 'flex';
+            div.style.alignItems = 'center';
+            classListContainer.appendChild(div);
+        });
+    }
+
+    function bootstrapFromSession() {
+        const sessionString = localStorage.getItem('LogOnEnglish_Session');
+        if (!sessionString) return null;
+
+        try {
+            const session = JSON.parse(sessionString);
+            let classId = null;
+            if (session.activeContext && session.activeContext.classId) {
+                classId = session.activeContext.classId;
+            } else if (session.class_id) {
+                classId = session.class_id;
+            } else {
+                classId = localStorage.getItem('activeClassId');
+            }
+
+            const staffRole = resolveStaffRoleFromSession(session, classId);
+            applyStaffRoleUI(staffRole);
+            preRenderSidebarFromSession(session, classId);
+
+            const greetingEl = document.getElementById('top-teacher-greeting');
+            if (greetingEl && session.username) {
+                greetingEl.innerHTML = 'Hi, ' + session.username + ' 👋';
+            }
+
+            const titleEl = document.getElementById('current-class-title');
+            if (titleEl && session.enrollments && classId) {
+                const activeEnrollment = session.enrollments.find(function(e) { return e.id === classId; });
+                if (activeEnrollment && activeEnrollment.name) {
+                    titleEl.textContent = activeEnrollment.name;
+                }
+            }
+
+            if (classContextHeader && classId) {
+                classContextHeader.style.display = 'block';
+            }
+
+            return { session: session, classId: classId, staffRole: staffRole };
+        } catch (e) {
+            return null;
+        }
+    }
     
     function renderSidebar() {
         if (!classListContainer) return;
@@ -56,35 +161,10 @@ window.TeacherUI = (() => {
         // ==========================================
         const staffRole = currentClass.staff_role || currentClass.currentUserRole || 'ta_junior';
 
-        // 🚨 修正防呆：使用安全的方法更新情境，絕對不竄改 localStorage 的主憑證字串
         localStorage.setItem('activeClassId', classId);
         localStorage.setItem('activeRole', staffRole);
-        
-        const tabSettings = document.querySelector('.tab-btn[data-target="view-settings"]');
-        const navManageClasses = document.getElementById('nav-manage-classes');
-        const tabStudents = document.querySelector('.tab-btn[data-target="view-students"]');
-        const tabResources = document.querySelector('.tab-btn[data-target="view-resources"]');
-        const navGlobalResources = document.getElementById('nav-global-resources');
 
-        // 僅 Admin 或 Primary Teacher 可見底層設定與班級主檔管理
-        if (staffRole === 'admin' || staffRole === 'primary_teacher') {
-            if(tabSettings) tabSettings.style.display = 'inline-block';
-            if(navManageClasses) navManageClasses.style.display = 'block';
-        } else {
-            if(tabSettings) tabSettings.style.display = 'none';
-            if(navManageClasses) navManageClasses.style.display = 'none';
-        }
-
-        // TA Junior 看不到成員管理、班級資源與全域資源
-        if (staffRole === 'ta_junior') {
-            if(tabStudents) tabStudents.style.display = 'none';
-            if(tabResources) tabResources.style.display = 'none';
-            if(navGlobalResources) navGlobalResources.style.display = 'none';
-        } else {
-            if(tabStudents) tabStudents.style.display = 'inline-block';
-            if(tabResources) tabResources.style.display = 'inline-block';
-            if(navGlobalResources) navGlobalResources.style.display = 'block';
-        }
+        applyStaffRoleUI(staffRole);
 
         document.querySelectorAll('.bottom-nav .class-item').forEach(el => el.classList.remove('active'));
         
@@ -187,10 +267,11 @@ window.TeacherUI = (() => {
     }
 
     async function initApp() {
+        const boot = bootstrapFromSession();
         const sessionString = localStorage.getItem('LogOnEnglish_Session');
         if (!sessionString) {
             alert('❌ 尚未登入或連線逾時，請重新登入！');
-            window.location.replace('../index.html');
+            window.location.replace(window.buildLoginUrl ? window.buildLoginUrl(false) : '../index.html?_=' + Date.now());
             return;
         }
         
@@ -198,7 +279,7 @@ window.TeacherUI = (() => {
         try {
             session = JSON.parse(sessionString);
         } catch (e) {
-            window.location.replace('../index.html');
+            window.location.replace(window.buildLoginUrl ? window.buildLoginUrl(false) : '../index.html?_=' + Date.now());
             return;
         }
         
@@ -235,9 +316,18 @@ window.TeacherUI = (() => {
 
         // 🌟 恢復上次瀏覽的班級 (Active Context)
         if (window.TeacherDB.classes.length > 0) {
-            const savedClassId = localStorage.getItem('activeClassId');
-            const classExists = window.TeacherDB.classes.some(c => c.id === savedClassId);
-            currentClassId = classExists ? savedClassId : window.TeacherDB.classes[0].id;
+            let preferredClassId = null;
+            if (boot && boot.classId) {
+                preferredClassId = boot.classId;
+            } else if (session.activeContext && session.activeContext.classId) {
+                preferredClassId = session.activeContext.classId;
+            } else if (session.class_id) {
+                preferredClassId = session.class_id;
+            } else {
+                preferredClassId = localStorage.getItem('activeClassId');
+            }
+            const classExists = window.TeacherDB.classes.some(function(c) { return c.id === preferredClassId; });
+            currentClassId = classExists ? preferredClassId : window.TeacherDB.classes[0].id;
         }
 
         renderSidebar();
@@ -257,6 +347,8 @@ window.TeacherUI = (() => {
             targetBtn.click();
         }
     }
+
+    bootstrapFromSession();
 
     initApp();
 

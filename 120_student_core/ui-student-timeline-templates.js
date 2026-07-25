@@ -120,7 +120,7 @@ window.UIStudentTimelineTemplates = (() => {
         playGoogleTTS,
         playStudentAudioSlice, 
         
-        renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
+        renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl, classGradingPolicy) => {
             try {
                 let html = '';
                 
@@ -192,14 +192,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     
                                     if (retryAudioId) {
                                         hasValidAudioFile = true;
-                                        let sUrl = '';
-                                        if (window.supabaseClient) {
-                                            if (window.supabaseClient.supabaseUrl) {
-                                                sUrl = window.supabaseClient.supabaseUrl;
-                                            }
-                                        }
-                                        if (sUrl !== '') {
-                                            directAudioUrl = `${sUrl}/functions/v1/stream-audio?file_id=${retryAudioId}`;
+                                        if (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function') {
+                                            directAudioUrl = window.ApiService.getAudioStreamUrl(retryAudioId);
                                         } else {
                                             directAudioUrl = `https://drive.google.com/uc?export=download&id=${retryAudioId}`;
                                         }
@@ -211,6 +205,8 @@ window.UIStudentTimelineTemplates = (() => {
 
                                 if (taskStatus === 'ai_processing') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
+                                } else if (taskStatus === 'ai_ready') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🤖 AI 分析完成</span>`;
                                 } else if (taskStatus === 'graded') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
                                 } else if (taskStatus === 'completed') {
@@ -226,6 +222,12 @@ window.UIStudentTimelineTemplates = (() => {
                                 let showAIReport = false;
                                 if (taskStatus === 'graded') showAIReport = true;
                                 else if (taskStatus === 'completed') showAIReport = true;
+                                else if (taskStatus === 'ai_ready') showAIReport = true;
+
+                                let scoreDisclaimer = '';
+                                if (window.GradingPolicy && window.GradingPolicy.studentScoreDisclaimer) {
+                                    scoreDisclaimer = window.GradingPolicy.studentScoreDisclaimer(classGradingPolicy, compRecord.raw_data, taskStatus);
+                                }
 
                                 if (showAIReport) {
                                     if (compRecord.raw_data) {
@@ -327,6 +329,11 @@ window.UIStudentTimelineTemplates = (() => {
                                             const reportDisplay = isCollapsed ? 'none' : 'block';
                                             const toggleIcon = isCollapsed ? '◀️' : '🔽';
 
+                                            let disclaimerHtml = '';
+                                            if (scoreDisclaimer !== '') {
+                                                disclaimerHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 8px; border-radius:4px; font-weight:900; border:1px solid #FDE68A;">⚠️ ${scoreDisclaimer}</span>`;
+                                            }
+
                                             aiFeedbackHtml = `
                                                 <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                                                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
@@ -335,7 +342,8 @@ window.UIStudentTimelineTemplates = (() => {
                                                             <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">AI 批改報告</span>
                                                             <span id="toggle-icon-${compositeKey}" style="font-size: 0.8rem; margin-left: 4px; color: #8B5CF6;">${toggleIcon}</span>
                                                         </div>
-                                                        <div style="display: flex; gap: 8px;">
+                                                        <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                                                            ${disclaimerHtml}
                                                             <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: ${pScoreColor}; border: 1px solid #E2E8F0;">發音: ${pScore}</span>
                                                             <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: #3B82F6; border: 1px solid #E2E8F0;">流暢度: ${fluency}</span>
                                                         </div>
@@ -444,6 +452,8 @@ window.UIStudentTimelineTemplates = (() => {
                                 'background:white; color:#94A3B8; border:1px solid #CBD5E1;' : 
                                 'background:#EF4444; color:white; border:none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);';
 
+                            const audioUploadId = `audio-upload-input-${course.id}-${task.id}`;
+
                             let audioPlayerHtml = '';
                             let manualSubmitBtnHtml = '';
 
@@ -468,6 +478,8 @@ window.UIStudentTimelineTemplates = (() => {
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${audioPlayerHtml}
                                     <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
+                                    <input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
+                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳音檔</button>
                                     <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
                                     ${manualSubmitBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>

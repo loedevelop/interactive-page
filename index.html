@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>登入 - LogOnEnglish (SaaS 雲端升級版)</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
@@ -85,55 +88,9 @@
 
         #error-message { color: var(--error-color); font-size: 0.9rem; margin-top: 15px; min-height: 20px; font-weight: bold; }
 
-        /* 🌟 白皮書規範：多重身分選擇器 Modal 樣式 */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: rgba(0, 0, 0, 0.6);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            backdrop-filter: blur(4px);
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-        .modal-overlay.active { display: flex; opacity: 1; }
-        .modal-content {
-            background-color: white;
-            padding: 30px;
-            border-radius: 20px;
-            width: 90%;
-            max-width: 380px;
-            text-align: center;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
-            transform: translateY(20px);
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        .modal-overlay.active .modal-content { transform: translateY(0); }
-        .modal-title { font-size: 1.3rem; font-weight: 900; color: var(--text-color); margin-bottom: 5px; }
-        .modal-subtitle { font-size: 0.9rem; color: #777; margin-bottom: 25px; }
-        
-        .role-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            width: 100%;
-            padding: 15px;
-            margin-bottom: 12px;
-            border: 2px solid #EEE;
-            border-radius: 12px;
-            background-color: #FAFAFA;
-            font-size: 1.1rem;
-            font-weight: 800;
-            color: var(--text-color);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .role-btn:hover { border-color: var(--primary-color); background-color: #FFF8E1; color: var(--primary-color); transform: translateY(-2px); }
-        .cancel-btn { margin-top: 10px; background: none; border: none; color: #888; font-weight: bold; cursor: pointer; font-size: 1rem; }
-        .cancel-btn:hover { color: var(--text-color); text-decoration: underline; }
+        .forgot-link { display: block; text-align: right; margin-top: 8px; margin-bottom: 0; font-size: 0.85rem; font-weight: 700; color: #64748B; cursor: pointer; text-decoration: none; }
+        .forgot-link:hover { color: var(--primary-color); text-decoration: underline; }
+        #forgot-msg { color: #059669; font-size: 0.85rem; margin-top: 6px; margin-bottom: 0; font-weight: 800; min-height: 18px; text-align: right; }
     </style>
 </head>
 <body>
@@ -153,6 +110,8 @@
                     <input type="password" id="password" placeholder="請輸入密碼">
                     <button type="button" id="togglePasswordBtn" class="toggle-password-btn" title="顯示密碼">👁️</button>
                 </div>
+                <a href="#" class="forgot-link" id="forgotPasswordLink">忘記密碼？</a>
+                <div id="forgot-msg"></div>
             </div>
             
             <div class="checkbox-group">
@@ -162,25 +121,15 @@
 
             <button type="button" id="loginBtn" class="login-btn">準備上課！</button>
             <button type="button" class="clear-btn" onclick="clearAllCache()">🧹 登入異常？點我清除快取</button>
+            <div id="login-version-tag" style="margin-top:12px; font-size:0.75rem; color:#94A3B8; font-weight:800;">登入引擎 Persona v9</div>
             <div id="error-message"></div>
-        </div>
-    </div>
-
-    <!-- 🌟 白皮書規範：多重身分選擇 Modal -->
-    <div class="modal-overlay" id="roleSelectionModal">
-        <div class="modal-content">
-            <div class="modal-title">🎭 偵測到多重身分</div>
-            <div class="modal-subtitle">請選擇您現在要進入的視角：</div>
-            <div id="roleButtonsContainer">
-                <!-- 按鈕由 JS 動態生成 -->
-            </div>
-            <button type="button" class="cancel-btn" onclick="cancelLogin()">取消登入</button>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- 🚨 升級版本號以破除快取，確保讀取最新 API -->
-    <script type="module" src="./020_js_core/supabase-client.js?v=16"></script>
+    <script type="module" src="./020_js_core/supabase-client.js?v=18"></script>
+    <script src="./020_js_core/persona-routing.js?v=9"></script>
 
     <script>
         // ==========================================
@@ -196,14 +145,53 @@
         function clearAllCache() {
             localStorage.clear();
             sessionStorage.clear();
-            alert('✅ 系統快取已完全清除！請再次點擊「準備上課」登入。');
-            window.location.replace('?clear=true');
+            window.location.replace('./index.html?clear=true&build=v7&_=' + Date.now());
         }
 
-        function cancelLogin() {
-            document.getElementById('roleSelectionModal').classList.remove('active');
+        async function requestPasswordReset(e) {
+            if (e) e.preventDefault();
+            const emailInput = document.getElementById('email').value.trim();
+            const forgotMsg = document.getElementById('forgot-msg');
+            const errorMsg = document.getElementById('error-message');
+            errorMsg.textContent = '';
+            forgotMsg.textContent = '';
+
+            if (!emailInput) {
+                errorMsg.textContent = '⚠️ 請先輸入 Email 再申請重設密碼';
+                return;
+            }
+
+            let retries = 0;
+            while (!window.supabaseClient && retries < 15) {
+                await new Promise(function(resolve) { setTimeout(resolve, 200); });
+                retries++;
+            }
+            if (!window.supabaseClient) {
+                errorMsg.textContent = '❌ 連線未就緒，請重新整理';
+                return;
+            }
+
+            const redirectTo = window.buildResetPasswordRedirectUrl
+                ? window.buildResetPasswordRedirectUrl()
+                : (window.location.origin + '/reset-password.html');
+
+            const { error } = await window.supabaseClient.auth.resetPasswordForEmail(emailInput, {
+                redirectTo: redirectTo
+            });
+
+            if (error) {
+                errorMsg.textContent = '❌ ' + error.message;
+                return;
+            }
+
+            forgotMsg.textContent = '✅ 已寄出重設連結，請查收 Email（含垃圾郵件）';
+        }
+
+        document.getElementById('forgotPasswordLink').addEventListener('click', requestPasswordReset);
+
+        function cancelLoginPicker() {
             const submitBtn = document.getElementById('loginBtn');
-            submitBtn.textContent = '準備上課！'; 
+            submitBtn.textContent = '準備上課！';
             submitBtn.disabled = false;
             localStorage.removeItem('LogOnEnglish_Session');
             sessionStorage.removeItem('LogOn_Current_User_Id');
@@ -227,36 +215,45 @@
         // 2. 核心分流閘道器 (Auth & Routing Engine)
         // ==========================================
         
-        // 🛡️ 增強型角色比對函數 (相容舊版 profiles 資料)
-        const checkRole = (roleData, targetRole) => {
-            if (!roleData) return false;
-            const target = targetRole.toLowerCase();
-            if (Array.isArray(roleData)) {
-                return roleData.some(r => String(r).toLowerCase().trim() === target);
-            }
-            const roleStr = String(roleData).toLowerCase().trim();
-            return roleStr === target || roleStr.split(/[\s,]+/).includes(target);
-        };
+        function routeAfterLogin(uid, profile, personas, warning) {
+            const submitBtn = document.getElementById('loginBtn');
+            const errorMsg = document.getElementById('error-message');
 
-        // 安全查詢封裝，防止新表不存在時引發崩潰
-        const safeQuery = async (queryPromise) => {
-            try {
-                const res = await queryPromise;
-                if (res.error) {
-                    console.warn('[API Warning] Query failed, using fallback:', res.error.message);
-                    return [];
-                }
-                return res.data || [];
-            } catch (e) {
-                console.warn('[API Warning] Query exception, using fallback:', e.message);
-                return [];
+            if (warning) {
+                errorMsg.textContent = `⚠️ ${warning}`;
             }
-        };
+
+            if (personas.length === 1) {
+                submitBtn.textContent = '✅ 登入成功！跳轉中...';
+                window.PersonaRouting.executeJump(uid, profile, personas[0], './');
+            } else if (personas.length <= 2) {
+                submitBtn.textContent = '✅ 登入成功！跳轉中...';
+                const selected = window.PersonaRouting.resolvePersonaFromLast(uid, personas);
+                window.PersonaRouting.executeJump(uid, profile, selected, './');
+            } else {
+                submitBtn.textContent = '準備上課！';
+                submitBtn.disabled = false;
+
+                let defaultType = localStorage.getItem(window.PersonaRouting.getLastPersonaKey(uid));
+                if (!defaultType || !personas.find(function(p) { return p.type === defaultType; })) {
+                    defaultType = personas[0].type;
+                }
+
+                window.PersonaRouting.openPersonaPicker({
+                    uid: uid,
+                    profile: profile,
+                    personas: personas,
+                    defaultType: defaultType,
+                    title: '選擇身分',
+                    basePath: './',
+                    onCancel: cancelLoginPicker
+                });
+            }
+        }
 
         const RoutingEngine = {
             login: async (email, password) => {
                 try {
-                    // 1. 執行 Supabase Auth
                     const { data: authData, error: authError } = await window.supabaseClient.auth.signInWithPassword({
                         email: email,
                         password: password
@@ -269,139 +266,35 @@
                         return { success: false, message: '登入失敗: ' + authError.message };
                     }
                     if (!authData.user) return { success: false, message: '找不到此帳號' };
-                    
+
                     const authUserId = authData.user.id;
-
-                    // 2. 獲取 Profile 基本資訊 (包含舊版過繼尋回邏輯)
-                    let { data: profile } = await window.supabaseClient
-                        .from('profiles').select('*').eq('id', authUserId).is('deleted_at', null).single();
-
-                    if (!profile) {
-                        const { data: existingProfiles } = await window.supabaseClient
-                            .from('profiles').select('*').eq('email', email).is('deleted_at', null);
-
-                        if (existingProfiles && existingProfiles.length > 0) {
-                            let oldProfile = existingProfiles.find(p => checkRole(p.role, 'teacher') || checkRole(p.default_role, 'teacher')) || existingProfiles[0];
-                            const { data: newProfile, error: insertErr } = await window.supabaseClient
-                                .from('profiles')
-                                .insert([{ 
-                                    id: authUserId, email: email, name: oldProfile.name, 
-                                    role: oldProfile.role, default_role: oldProfile.default_role 
-                                }]).select().single();
-                            profile = insertErr ? { ...oldProfile, id: authUserId } : newProfile; 
-                        } else {
-                            const { data: newProfile, error: insertErr } = await window.supabaseClient
-                                .from('profiles')
-                                .insert([{ id: authUserId, email: email, name: email.split('@')[0], role: 'student' }])
-                                .select().single();
-                            if (insertErr) return { success: false, message: '初始化檔案失敗。' };
-                            profile = newProfile;
-                        }
+                    const profileResult = await window.PersonaRouting.resolveProfileForAuth(
+                        window.supabaseClient,
+                        authUserId,
+                        email
+                    );
+                    if (profileResult.error) {
+                        return { success: false, message: profileResult.error };
                     }
 
-                    // ==========================================
-                    // 🌟 3. 白皮書核心：Promise.all 動態情境身分極速併發掃描
-                    // ==========================================
-                    const [staffData, studentData, parentData] = await Promise.all([
-                        safeQuery(window.supabaseClient.from('class_staff').select('class_id, staff_role, classes(id, name)').eq('user_id', authUserId).is('deleted_at', null)),
-                        safeQuery(window.supabaseClient.from('student_enrollments').select('class_id, classes(id, name)').eq('user_id', authUserId).is('deleted_at', null)),
-                        safeQuery(window.supabaseClient.from('parent_child_mappings').select('child_user_id').eq('parent_user_id', authUserId))
-                    ]);
+                    const scanResult = await window.PersonaRouting.scanPersonas(
+                        window.supabaseClient,
+                        authUserId,
+                        email,
+                        profileResult.profile
+                    );
 
-                    let personas = [];
-                    const isAdmin = checkRole(profile.role, 'admin') || checkRole(profile.default_role, 'admin');
-
-                    // Admin (全域特權)
-                    if (isAdmin) {
-                        personas.push({ type: 'admin', label: '👑 全域管理中心', folder: 'admin', data: [] });
-                    }
-
-                    // 內部教職員 (Teacher / TA)
-                    if (staffData.length > 0) {
-                        personas.push({ type: 'teacher', label: '👨‍🏫 教職員控制台', folder: 'teacher', data: staffData });
-                    } else if (!isAdmin && (checkRole(profile.role, 'teacher') || checkRole(profile.default_role, 'teacher'))) {
-                        // 降級防禦：如果關聯表查不到，看 profile 判定
-                        personas.push({ type: 'teacher', label: '👨‍🏫 教職員控制台', folder: 'teacher', data: [] });
-                    }
-
-                    // 學生端
-                    if (studentData.length > 0) {
-                        personas.push({ type: 'student', label: '🎒 學生課程平台', folder: 'student', data: studentData });
-                    } else if (!isAdmin && (checkRole(profile.role, 'student') || checkRole(profile.default_role, 'student') || personas.length === 0)) {
-                        // 防呆：完全查不到任何身分時，保底提供學生視角
-                        personas.push({ type: 'student', label: '🎒 學生課程平台', folder: 'student', data: [] });
-                    }
-
-                    // 家長端
-                    if (parentData.length > 0) {
-                        personas.push({ type: 'parent', label: '👨‍👩‍👧 家長觀測端', folder: 'parent', data: parentData });
-                    }
-
-                    return { success: true, uid: authUserId, profile: profile, personas: personas };
-
+                    return {
+                        success: true,
+                        uid: authUserId,
+                        profile: profileResult.profile,
+                        personas: scanResult.personas,
+                        warning: scanResult.warning
+                    };
                 } catch (error) {
                     console.error("[Login Error]", error);
                     return { success: false, message: '系統發生例外錯誤，請檢查網路。' };
                 }
-            },
-
-            executeJump: (userId, profile, selectedPersona) => {
-                let activeClassId = null;
-                let enrollmentsList = [];
-
-                // 針對教職與學生端，將掃描到的名單組合出來
-                if (selectedPersona.data && selectedPersona.data.length > 0) {
-                    enrollmentsList = selectedPersona.data.map(e => {
-                        let cName = '未命名班級';
-                        if (e.classes) {
-                            // 防呆處理：Supabase 有時 array，有時 object
-                            cName = Array.isArray(e.classes) ? (e.classes[0]?.name || cName) : (e.classes.name || cName);
-                        }
-                        return {
-                            id: e.class_id,
-                            name: cName,
-                            staff_role: e.staff_role || null // 如果是教職員會有這個欄位
-                        };
-                    });
-                    
-                    // 處理預設活動班級 (Active Class) 記憶功能
-                    const savedLastClassId = localStorage.getItem(`LogOnEnglish_LastClass_${userId}_${selectedPersona.type}`);
-                    const matchedClass = enrollmentsList.find(c => c.id === savedLastClassId);
-                    
-                    if (matchedClass) {
-                        activeClassId = matchedClass.id;
-                    } else if (enrollmentsList.length > 0) {
-                        activeClassId = enrollmentsList[0].id;
-                        localStorage.setItem(`LogOnEnglish_LastClass_${userId}_${selectedPersona.type}`, activeClassId);
-                    }
-                }
-
-                // 🌟 提取當前活動班級對應的具體職級
-                const activeEnrollment = enrollmentsList.find(c => c.id === activeClassId);
-                const activeStaffRole = activeEnrollment ? activeEnrollment.staff_role : null;
-
-                // 🌟 將白皮書定義的 Active Context 寫入 Session，準備供系統內部介接！
-                const sessionData = {
-                    id: userId,
-                    username: profile.name || profile.email,
-                    email: profile.email,
-                    role: selectedPersona.type,          // 舊版大身分相容
-                    folder: selectedPersona.folder,
-                    class_id: activeClassId,             // 舊版相容
-                    enrollments: enrollmentsList,
-                    activeContext: {
-                        role: selectedPersona.type,      // 目前活動的大身分
-                        classId: activeClassId,
-                        staffRole: activeStaffRole       // 👑 (關鍵) 寫入教職員的具體職級 (primary_teacher 等)
-                    },
-                    loginTime: new Date().toISOString()
-                };
-                
-                localStorage.setItem('LogOnEnglish_Session', JSON.stringify(sessionData));
-                sessionStorage.setItem('LogOn_Current_User_Id', userId);
-
-                // 執行無縫跳轉
-                window.location.replace(`./${selectedPersona.folder}/index.html`);
             }
         };
 
@@ -428,15 +321,15 @@
             submitBtn.textContent = '📡 連線身分掃描中...';
             submitBtn.disabled = true;
 
-            // 等待 Supabase 載入完成
+            // 等待 Supabase 與 PersonaRouting 載入完成
             let retries = 0;
-            while (!window.supabaseClient && retries < 15) {
+            while ((!window.supabaseClient || !window.PersonaRouting) && retries < 15) {
                 await new Promise(resolve => setTimeout(resolve, 200));
                 retries++;
             }
 
-            if(!window.supabaseClient) {
-                errorMsg.textContent = '❌ 無法載入資料庫連線，請檢查網路。';
+            if(!window.supabaseClient || !window.PersonaRouting) {
+                errorMsg.textContent = '❌ 無法載入登入模組，請強制重新整理頁面（Cmd+Shift+R）。';
                 submitBtn.textContent = '準備上課！'; 
                 submitBtn.disabled = false;
                 return;
@@ -455,31 +348,7 @@
                 // 徹底刪除舊版系統殘留的危險明碼快取
                 localStorage.removeItem('LogOnEnglish_Creds'); 
 
-                // 🚦 情境分流決策
-                if (result.personas.length === 1) {
-                    // 情境 A：單一身分，無縫跳轉
-                    submitBtn.textContent = '✅ 登入成功！跳轉中...';
-                    RoutingEngine.executeJump(result.uid, result.profile, result.personas[0]);
-                } else {
-                    // 情境 B：多重身分，彈出選擇 Modal
-                    submitBtn.textContent = '🎭 請選擇身分...';
-                    const container = document.getElementById('roleButtonsContainer');
-                    container.innerHTML = '';
-                    
-                    result.personas.forEach(p => {
-                        const btn = document.createElement('button');
-                        btn.className = 'role-btn';
-                        btn.innerHTML = `<span>${p.label}</span>`;
-                        btn.onclick = () => {
-                            btn.innerHTML = '🔄 載入中...';
-                            btn.style.pointerEvents = 'none';
-                            RoutingEngine.executeJump(result.uid, result.profile, p);
-                        };
-                        container.appendChild(btn);
-                    });
-                    
-                    document.getElementById('roleSelectionModal').classList.add('active');
-                }
+                routeAfterLogin(result.uid, result.profile, result.personas, result.warning);
 
             } else {
                 errorMsg.textContent = `❌ ${result.message}`;
@@ -490,7 +359,8 @@
 
         // 綁定 Enter 鍵登入
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !document.getElementById('roleSelectionModal').classList.contains('active')) {
+            if (window.PersonaRouting && window.PersonaRouting.isPersonaPickerOpen()) return;
+            if (e.key === 'Enter') {
                 document.getElementById('loginBtn').click();
             }
         });
@@ -511,6 +381,7 @@
 
             const sessionString = localStorage.getItem('LogOnEnglish_Session');
             const urlParams = new URLSearchParams(window.location.search);
+
             if (sessionString && urlParams.get('clear') !== 'true') {
                 try {
                     const session = JSON.parse(sessionString);

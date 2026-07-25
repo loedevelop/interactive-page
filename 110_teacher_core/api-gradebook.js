@@ -105,7 +105,9 @@ window.GradebookAPI = (function() {
         if (!window.supabaseClient) throw new Error("Supabase 未載入");
         const db = window.supabaseClient;
 
-        const updateSubPromise = db.from(TABLE_NAME).update({ raw_data: payload.raw_data_to_patch, score: payload.score_to_update }).eq('id', payload.submission_id);
+        const updatePayload = { raw_data: payload.raw_data_to_patch, score: payload.score_to_update };
+        if (payload.status_to_update) updatePayload.status = payload.status_to_update;
+        const updateSubPromise = db.from(TABLE_NAME).update(updatePayload).eq('id', payload.submission_id);
         const { data: profile, error: profErr } = await db.from('profiles').select('raw_data').eq('id', payload.user_id).single();
         if (profErr) throw new Error('無法取得學生資料');
         

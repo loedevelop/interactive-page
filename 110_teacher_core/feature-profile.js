@@ -6,6 +6,20 @@
 
 window.FeatureProfile = (() => {
 
+    function getCurrentStaffRole() {
+        try {
+            const sessionStr = localStorage.getItem('LogOnEnglish_Session');
+            if (sessionStr) {
+                const session = JSON.parse(sessionStr);
+                if (session.activeContext && session.activeContext.staffRole) {
+                    return session.activeContext.staffRole;
+                }
+            }
+        } catch (e) {}
+        const storedRole = localStorage.getItem('activeRole');
+        return storedRole ? storedRole : 'ta_junior';
+    }
+
     // 🧠 核心大腦：名字動態組合邏輯 (用於計算老師自己的預覽與打招呼名稱)
     function calculateDisplayName(rawData, effectiveMode) {
         const enName = (rawData.nameEN || '').trim();
@@ -48,6 +62,10 @@ window.FeatureProfile = (() => {
     // 🚪 獨立出的安全登出邏輯，供全域與動態按鈕共用
     async function logout() {
         if (confirm('⚠️ 確定要安全登出系統，並註銷當前裝置的雲端授權嗎？')) {
+            if (window.logoutToLogin) {
+                await window.logoutToLogin(true);
+                return;
+            }
             try {
                 if (typeof window.supabaseClient !== 'undefined') {
                     await window.supabaseClient.auth.signOut();
@@ -57,7 +75,10 @@ window.FeatureProfile = (() => {
             }
             localStorage.clear();
             sessionStorage.clear();
-            window.location.replace('../index.html');
+            const loginUrl = window.buildLoginUrl
+                ? window.buildLoginUrl(true)
+                : '../index.html?clear=true&_=' + Date.now();
+            window.location.replace(loginUrl);
         }
     }
 
@@ -107,7 +128,7 @@ window.FeatureProfile = (() => {
                     .from('system_settings')
                     .select('value')
                     .eq('setting_key', 'global_name_mode')
-                    .single();
+                    .maybeSingle();
                 if (sysData && sysData.value) {
                     globalMode = sysData.value;
                 }
@@ -120,6 +141,8 @@ window.FeatureProfile = (() => {
             const phone = profile.phone || '';
             const teachStyle = rawData.teach_style || '';
             const preferredNameMode = rawData.preferred_name_mode || 'default';
+            const staffRole = getCurrentStaffRole();
+            const canSetNameMode = staffRole !== 'ta_junior';
             
             // 計算目前最終展現給老師看的名稱
             const effectiveMode = preferredNameMode !== 'default' ? preferredNameMode : globalMode;
@@ -135,6 +158,31 @@ window.FeatureProfile = (() => {
 
             // 4. 繪製純雲端架構的精細姓名設定表單
             if (profileContainer) {
+                let nameModeSectionHtml = '';
+                if (canSetNameMode) {
+                    nameModeSectionHtml = `
+                        <div style="margin-bottom: 25px; padding: 15px; background: #F8FAFC; border: 2px dashed #CBD5E1; border-radius: 8px;">
+                            <label style="display:block; font-weight:800; color:#3B82F6; margin-bottom:5px;">👁️ 個人名單顯示偏好 (最高優先權)</label>
+                            <p style="color:#64748B; font-size: 0.85rem; margin-top:0; margin-bottom: 15px;">設定後，無論您進入哪一個補習班班級，學生名單都會強制優先套用此格式。</p>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 12px;">
+                                <label style="cursor: pointer; font-weight: 800; color: #475569; display: flex; align-items: center;">
+                                    <input type="radio" name="prof_name_mode" value="default" ${preferredNameMode === 'default' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
+                                    ⚙️ 不覆寫 (跟隨各班級或分校全域預設)
+                                </label>
+                                <label style="cursor: pointer; font-weight: 800; color: #475569; display: flex; align-items: center;">
+                                    <input type="radio" name="prof_name_mode" value="en_first" ${preferredNameMode === 'en_first' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
+                                    🇺🇸 模式 1：英文名字 + 護照姓氏 <span style="color:#94a3b8; font-weight:normal; margin-left: 5px;">(例如：Amy Lin)</span>
+                                </label>
+                                <label style="cursor: pointer; font-weight: 800; color: #475569; display: flex; align-items: center;">
+                                    <input type="radio" name="prof_name_mode" value="cn_first" ${preferredNameMode === 'cn_first' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
+                                    🇹🇼 模式 2：中文全名 + (英文名字) <span style="color:#94a3b8; font-weight:normal; margin-left: 5px;">(例如：林美玲 (Amy))</span>
+                                </label>
+                            </div>
+                        </div>
+                    `;
+                }
+
                 profileContainer.innerHTML = `
                     <div style="background: white; padding: 25px; border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);" class="settings-card">
                         <h3 style="margin-top: 0; margin-bottom: 20px; color: var(--primary-dark); display: flex; align-items: center; gap: 8px; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px;">
@@ -194,24 +242,15 @@ window.FeatureProfile = (() => {
                             </div>
                         </div>
 
-                        <div style="margin-bottom: 25px; padding: 15px; background: #F8FAFC; border: 2px dashed #CBD5E1; border-radius: 8px;">
-                            <label style="display:block; font-weight:800; color:#3B82F6; margin-bottom:5px;">👁️ 個人名單顯示偏好 (最高優先權)</label>
-                            <p style="color:#64748B; font-size: 0.85rem; margin-top:0; margin-bottom: 15px;">設定後，無論您進入哪一個補習班班級，學生名單都會強制優先套用此格式。</p>
-                            
-                            <div style="display: flex; flex-direction: column; gap: 12px;">
-                                <label style="cursor: pointer; font-weight: 800; color: #475569; display: flex; align-items: center;">
-                                    <input type="radio" name="prof_name_mode" value="default" ${preferredNameMode === 'default' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
-                                    ⚙️ 不覆寫 (跟隨各班級或分校全域預設)
-                                </label>
-                                <label style="cursor: pointer; font-weight: 800; color: #475569; display: flex; align-items: center;">
-                                    <input type="radio" name="prof_name_mode" value="en_first" ${preferredNameMode === 'en_first' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
-                                    🇺🇸 模式 1：英文名字 + 護照姓氏 <span style="color:#94a3b8; font-weight:normal; margin-left: 5px;">(例如：Amy Lin)</span>
-                                </label>
-                                <label style="cursor: pointer; font-weight: 800; color: #475569; display: flex; align-items: center;">
-                                    <input type="radio" name="prof_name_mode" value="cn_first" ${preferredNameMode === 'cn_first' ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;"> 
-                                    🇹🇼 模式 2：中文全名 + (英文名字) <span style="color:#94a3b8; font-weight:normal; margin-left: 5px;">(例如：林美玲 (Amy))</span>
-                                </label>
-                            </div>
+                        ${nameModeSectionHtml}
+
+                        <div style="margin-bottom: 20px;">
+                            <label style="display:block; font-weight:800; color:#475569; margin-bottom:5px;">專屬 Google Drive 連結 (唯讀)</label>
+                            <input type="text" class="form-control" value="${window.ProfileForm ? window.ProfileForm.getDriveDisplay(rawData) : '尚未綁定雲端硬碟'}" disabled style="width:100%; max-width: 400px; background:#F1F5F9; color:#94A3B8; cursor:not-allowed;">
+                        </div>
+
+                        <div style="margin-bottom: 25px;">
+                            ${window.ProfileForm ? window.ProfileForm.passwordFieldHtml('prof-password', 'prof-password-toggle') : '<label>修改密碼 (若不修改請留白)</label><input type="password" id="prof-password" class="form-control" placeholder="輸入新密碼">'}
                         </div>
 
                         <div style="display:flex; justify-content:space-between; align-items:center; border-top: 1px solid #E2E8F0; padding-top: 20px;">
@@ -233,8 +272,15 @@ window.FeatureProfile = (() => {
                         lastNameCN: document.getElementById('prof-lastCN').value,
                         firstNameCN: document.getElementById('prof-firstCN').value
                     };
-                    const selectedRadio = document.querySelector('input[name="prof_name_mode"]:checked').value;
-                    const activeMode = selectedRadio !== 'default' ? selectedRadio : globalMode;
+                    let activeMode = globalMode;
+                    if (canSetNameMode) {
+                        const selectedRadio = document.querySelector('input[name="prof_name_mode"]:checked');
+                        if (selectedRadio && selectedRadio.value !== 'default') {
+                            activeMode = selectedRadio.value;
+                        }
+                    } else if (preferredNameMode !== 'default') {
+                        activeMode = preferredNameMode;
+                    }
                     const calculated = calculateDisplayName(localRaw, activeMode);
                     
                     document.getElementById('prof-sysDisplayName').value = calculated === '未命名' ? '' : calculated;
@@ -246,9 +292,15 @@ window.FeatureProfile = (() => {
                 });
                 
                 // 綁定單選鈕切換監聽
-                document.querySelectorAll('input[name="prof_name_mode"]').forEach((radio) => {
-                    radio.addEventListener('change', triggerPreviewUpdate);
-                });
+                if (canSetNameMode) {
+                    document.querySelectorAll('input[name="prof_name_mode"]').forEach((radio) => {
+                        radio.addEventListener('change', triggerPreviewUpdate);
+                    });
+                }
+
+                if (window.ProfileForm) {
+                    window.ProfileForm.bindPasswordToggle('prof-password-toggle', 'prof-password');
+                }
 
                 // 💾 儲存點擊邏輯
                 document.getElementById('btn-save-profile').onclick = async function() {
@@ -269,7 +321,15 @@ window.FeatureProfile = (() => {
 
                     const newPhone = document.getElementById('prof-input-phone').value.trim();
                     const newStyle = document.getElementById('prof-input-style').value.trim();
-                    const newNameMode = document.querySelector('input[name="prof_name_mode"]:checked').value;
+                    const newPwdEl = document.getElementById('prof-password');
+                    const newPwd = newPwdEl ? newPwdEl.value.trim() : '';
+                    let newNameMode = preferredNameMode;
+                    if (canSetNameMode) {
+                        const modeRadio = document.querySelector('input[name="prof_name_mode"]:checked');
+                        if (modeRadio) {
+                            newNameMode = modeRadio.value;
+                        }
+                    }
                     
                     // 以預覽文字框的值作為基礎 name 的寫入保底
                     const finalFallbackName = document.getElementById('prof-sysDisplayName').value.trim() || fullCN || nameEN;
@@ -303,6 +363,10 @@ window.FeatureProfile = (() => {
                             .eq('id', user.id);
 
                         if (updateErr) throw updateErr;
+
+                        if (newPwd && window.ProfileForm) {
+                            await window.ProfileForm.updatePasswordIfProvided(newPwd);
+                        }
 
                         // 同步更新畫面的招呼語
                         if (greeting) {

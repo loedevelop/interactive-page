@@ -57,7 +57,17 @@ window.ClassTemplates = (() => {
         `;
     }
 
-    function getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId) {
+    function getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy) {
+        const gp = gradingPolicy ? gradingPolicy : {};
+        const finalAuth = gp.final_authority ? gp.final_authority : 'human_confirm';
+        const accent = gp.accent ? gp.accent : 'en-us';
+        const phonetic = gp.phonetic_format ? gp.phonetic_format : 'kk';
+        const overrideRoles = Array.isArray(gp.override_roles) ? gp.override_roles : ['primary_teacher', 'co_teacher', 'ta_senior', 'ta_junior'];
+        const publishRoles = Array.isArray(gp.publish_roles) ? gp.publish_roles : ['primary_teacher', 'co_teacher', 'ta_senior'];
+
+        function roleChecked(list, role) {
+            return list.indexOf(role) > -1 ? 'checked' : '';
+        }
         return `
             <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
                 <h3 style="margin-top: 0; color: #1E293B; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px; margin-bottom: 20px;">⚙️ 班級主檔設定</h3>
@@ -110,6 +120,50 @@ window.ClassTemplates = (() => {
                                 </div>
                             </div>
                             <div style="font-size: 0.8rem; color: #D97706; margin-top: 8px;">註：修改此預設規則僅影響未來新增的作業，已派發之作業不受影響。</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="background: #EEF2FF; padding: 15px; border-radius: 8px; border: 1px solid #C7D2FE; margin-bottom: 25px;">
+                    <label style="display:block; font-weight:bold; color:#4338CA; margin-bottom:10px;">🤖 AI 批改成績設定（必選）</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                        <label style="cursor:pointer; font-weight:bold; color:#475569; display:flex; align-items:center;">
+                            <input type="radio" name="edit_final_authority" value="ai_auto" ${finalAuth === 'ai_auto' ? 'checked' : ''} style="transform:scale(1.2); margin-right:8px;">
+                            AI 評分即最終成績
+                        </label>
+                        <label style="cursor:pointer; font-weight:bold; color:#475569; display:flex; align-items:center;">
+                            <input type="radio" name="edit_final_authority" value="human_confirm" ${finalAuth === 'human_confirm' ? 'checked' : ''} style="transform:scale(1.2); margin-right:8px;">
+                            需人工確認後才為最終成績
+                        </label>
+                    </div>
+                    <div style="font-size:0.85rem; color:#4338CA; margin-bottom:10px; font-weight:bold;">誰可以覆寫分數／評語？</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-override-primary_teacher" ${roleChecked(overrideRoles, 'primary_teacher')}> 主老師</label>
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-override-co_teacher" ${roleChecked(overrideRoles, 'co_teacher')}> 協同老師</label>
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-override-ta_senior" ${roleChecked(overrideRoles, 'ta_senior')}> 資深助教</label>
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-override-ta_junior" ${roleChecked(overrideRoles, 'ta_junior')}> 一般助教</label>
+                    </div>
+                    <div style="font-size:0.85rem; color:#4338CA; margin-bottom:10px; font-weight:bold;">誰可以發布／定案成績？</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-publish-primary_teacher" ${roleChecked(publishRoles, 'primary_teacher')}> 主老師</label>
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-publish-co_teacher" ${roleChecked(publishRoles, 'co_teacher')}> 協同老師</label>
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-publish-ta_senior" ${roleChecked(publishRoles, 'ta_senior')}> 資深助教</label>
+                        <label style="font-size:0.85rem;"><input type="checkbox" id="gp-publish-ta_junior" ${roleChecked(publishRoles, 'ta_junior')}> 一般助教</label>
+                    </div>
+                    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:140px;">
+                            <label style="display:block; font-size:0.85rem; font-weight:bold; color:#4338CA; margin-bottom:4px;">口音基準</label>
+                            <select id="gp-accent" class="form-control" style="width:100%;">
+                                <option value="en-us" ${accent === 'en-us' ? 'selected' : ''}>美式英文</option>
+                                <option value="en-gb" ${accent === 'en-gb' ? 'selected' : ''}>英式英文</option>
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width:140px;">
+                            <label style="display:block; font-size:0.85rem; font-weight:bold; color:#4338CA; margin-bottom:4px;">音標格式</label>
+                            <select id="gp-phonetic" class="form-control" style="width:100%;">
+                                <option value="kk" ${phonetic === 'kk' ? 'selected' : ''}>KK</option>
+                                <option value="ipa" ${phonetic === 'ipa' ? 'selected' : ''}>IPA</option>
+                            </select>
                         </div>
                     </div>
                 </div>

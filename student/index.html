@@ -25,7 +25,7 @@
         .btn-profile { border: 2px solid #E2E8F0; color: #475569; background: white; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
         .btn-profile:hover { border-color: #CBD5E1; background: #F8FAFC; }
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
-        .modal-box { background: white; width: 90%; max-width: 450px; border-radius: 16px; padding: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .modal-box { background: white; width: 90%; max-width: 520px; border-radius: 16px; padding: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-height: 90vh; overflow-y: auto; }
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; font-weight: 800; margin-bottom: 5px; color: #475569; font-size: 0.9rem; }
         .form-group input { width: 100%; padding: 10px; border: 1px solid #CBD5E1; border-radius: 8px; outline: none; font-size: 1rem; box-sizing: border-box; }
@@ -48,6 +48,7 @@
         </div>
         
         <div class="header-actions">
+            <button class="btn-profile js-switch-persona" onclick="if(window.switchPersona) { window.switchPersona(); }">🎭 切換身分</button>
             <button class="btn-profile" onclick="openProfileModal()">👤 個人資料</button>
             <button class="logout-btn" onclick="if(window.logoutUser) { window.logoutUser(); } else { localStorage.clear(); sessionStorage.clear(); window.location.replace('../index.html'); }">登出系統</button>
         </div>
@@ -108,13 +109,30 @@
                 <label>登入帳號 (唯讀)</label>
                 <input type="text" id="profile-account" disabled>
             </div>
-            <div class="form-group">
-                <label>顯示名稱</label>
-                <input type="text" id="profile-username" placeholder="請輸入姓名">
+
+            <div class="form-group" style="background:#F8FAFC; padding:15px; border-radius:8px; border:1px dashed #CBD5E1;">
+                <label>👁️ 系統姓名預覽</label>
+                <input type="text" id="profile-sysDisplayName" disabled style="background:#DBEAFE; color:#1E3A8A; font-weight:bold;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
+                    <div><label style="font-size:0.8rem;">英文名字</label><input type="text" id="profile-nameEN" placeholder="Amy"></div>
+                    <div><label style="font-size:0.8rem;">護照姓氏</label><input type="text" id="profile-passLast" placeholder="Lin"></div>
+                    <div><label style="font-size:0.8rem;">護照名字</label><input type="text" id="profile-passFirst" placeholder="Mei-Ling"></div>
+                    <div><label style="font-size:0.8rem;">中文姓氏</label><input type="text" id="profile-lastCN" placeholder="林"></div>
+                    <div><label style="font-size:0.8rem;">中文名字</label><input type="text" id="profile-firstCN" placeholder="美玲"></div>
+                </div>
             </div>
+
+            <div class="form-group">
+                <label>聯絡電話 (選填)</label>
+                <input type="tel" id="profile-phone" placeholder="例如: 0912-345-678">
+            </div>
+
             <div class="form-group">
                 <label>修改密碼 (若不修改請留白)</label>
-                <input type="password" id="profile-password" placeholder="輸入新密碼">
+                <div style="position:relative;">
+                    <input type="password" id="profile-password" placeholder="輸入新密碼" style="padding-right:45px;">
+                    <button type="button" id="profile-password-toggle" style="position:absolute; right:12px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; font-size:1.1rem; color:#888;" title="顯示密碼">👁️</button>
+                </div>
             </div>
             <div class="form-group" style="margin-bottom: 25px;">
                 <label>專屬 Google Drive 連結 (唯讀)</label>
@@ -131,18 +149,21 @@
     <!-- 順序鐵律：config ➡️ supabase ➡️ auth ➡️ store ➡️ api ➡️ utils-date ➡️ templates ➡️ features -->
     <script src="../020_js_core/config.js?v=55"></script>
     <script type="module" src="../020_js_core/supabase-client.js?v=55"></script>
-    <script src="../020_js_core/auth-guard.js?v=55"></script>
+    <script src="../020_js_core/profile-form.js?v=1"></script>
+    <script src="../020_js_core/persona-routing.js?v=9"></script>
+    <script src="../020_js_core/auth-guard.js?v=58"></script>
     <script src="../020_js_core/store.js?v=55"></script>
     
-    <script src="../020_js_core/api.js?v=55"></script> 
+    <script src="../020_js_core/api.js?v=56"></script> 
     <script src="../020_js_core/utils-date.js?v=55"></script>
+    <script src="../020_js_core/grading-policy.js?v=1"></script>
 
     <script src="../120_student_core/ui-audio-templates.js?v=56"></script>
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=96"></script>
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=97"></script>
 
-    <script defer src="../120_student_core/feature-student-audio.js?v=56"></script>
+    <script defer src="../120_student_core/feature-student-audio.js?v=57"></script>
     <script defer src="../120_student_core/feature-student-resource.js?v=55"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=66"></script> 
+    <script defer src="../120_student_core/feature-student-timeline.js?v=67"></script> 
     
     <script defer>
         function switchClass(newClassId) {
@@ -150,7 +171,10 @@
                 sessionStorage.setItem('currentClassId', newClassId);
                 const sessionData = JSON.parse(localStorage.getItem('LogOnEnglish_Session') || '{}');
                 if (sessionData.id) {
-                    localStorage.setItem(`LogOnEnglish_LastClass_${sessionData.id}`, newClassId);
+                    const lastKey = window.PersonaRouting
+                        ? window.PersonaRouting.getLastClassKey(sessionData.id, 'student')
+                        : `LogOnEnglish_LastClass_${sessionData.id}_student`;
+                    localStorage.setItem(lastKey, newClassId);
                 }
                 window.location.reload();
             } catch (e) {
@@ -183,17 +207,21 @@
                         headerTitle.innerText = `LogOnEnglish | ${displayName} 🚀`;
                         document.title = `${displayName} 的專屬教室 | LogOnEnglish`;
 
+                        const linkedIds = window.PersonaRouting
+                            ? await window.PersonaRouting.getLinkedUserIds(window.supabaseClient, user.id, user.email ? user.email : '')
+                            : [user.id];
+
                         const { data: enrollData, error: enrollErr } = await window.supabaseClient
                             .from('student_enrollments')
                             .select('class_id')
-                            .eq('user_id', user.id)
+                            .in('user_id', linkedIds)
                             .is('deleted_at', null);
 
                         if (enrollErr) throw enrollErr;
 
                         let classIds = [];
                         if (enrollData && enrollData.length > 0) {
-                            classIds = enrollData.map(row => row.class_id);
+                            classIds = [...new Set(enrollData.map(row => row.class_id))];
                         }
 
                         if (classIds.length > 0) {
@@ -206,13 +234,16 @@
                             if (classErr) throw classErr;
 
                             if (classes && classes.length > 0) {
-                                let lastClassId = sessionStorage.getItem('currentClassId') || localStorage.getItem(`LogOnEnglish_LastClass_${user.id}`);
+                                const lastKey = window.PersonaRouting
+                                    ? window.PersonaRouting.getLastClassKey(user.id, 'student')
+                                    : `LogOnEnglish_LastClass_${user.id}_student`;
+                                let lastClassId = sessionStorage.getItem('currentClassId') || localStorage.getItem(lastKey);
                                 if (!lastClassId || !classes.some(c => c.id === lastClassId)) {
                                     lastClassId = classes[0].id; 
                                 }
 
                                 sessionStorage.setItem('currentClassId', lastClassId);
-                                localStorage.setItem(`LogOnEnglish_LastClass_${user.id}`, lastClassId);
+                                localStorage.setItem(lastKey, lastClassId);
 
                                 let optsHtml = `<select id="class-switcher" onchange="switchClass(this.value)" style="padding: 6px 12px; border-radius: 6px; border: 2px solid #E2E8F0; font-weight: 800; color: #475569; background: #F8FAFC; cursor: pointer; outline: none;">`;
                                 classes.forEach(cls => {
@@ -253,19 +284,46 @@
 
                 const { data: profile, error } = await window.supabaseClient
                     .from('profiles')
-                    .select('email, name, raw_data')
+                    .select('email, name, phone, raw_data')
                     .eq('id', user.id)
                     .single();
                 
                 if (error) throw error;
 
-                document.getElementById('profile-account').value = profile.email || '未設定';
-                document.getElementById('profile-username').value = profile.name || '';
+                const rawData = profile.raw_data ? profile.raw_data : {};
+                document.getElementById('profile-account').value = profile.email ? profile.email : '未設定';
+                document.getElementById('profile-nameEN').value = rawData.nameEN ? rawData.nameEN : '';
+                document.getElementById('profile-passLast').value = rawData.passportLast ? rawData.passportLast : '';
+                document.getElementById('profile-passFirst').value = rawData.passportFirst ? rawData.passportFirst : '';
+                document.getElementById('profile-lastCN').value = rawData.lastNameCN ? rawData.lastNameCN : '';
+                document.getElementById('profile-firstCN').value = rawData.firstNameCN ? rawData.firstNameCN : '';
+                document.getElementById('profile-phone').value = profile.phone ? profile.phone : '';
                 document.getElementById('profile-password').value = '';
-                
-                const rawData = profile.raw_data || {};
-                document.getElementById('profile-drive').value = rawData.drive_url || rawData.driveLink || '尚未綁定雲端硬碟';
-                
+                document.getElementById('profile-drive').value = window.ProfileForm
+                    ? window.ProfileForm.getDriveDisplay(rawData)
+                    : '尚未綁定雲端硬碟';
+
+                const displayName = window.ProfileForm
+                    ? window.ProfileForm.calculateDisplayName(rawData, 'en_first')
+                    : (profile.name ? profile.name : '');
+                document.getElementById('profile-sysDisplayName').value = displayName === '未命名' ? '' : displayName;
+
+                if (window.ProfileForm) {
+                    window.ProfileForm.bindPasswordToggle('profile-password-toggle', 'profile-password');
+                }
+
+                function updateStudentNamePreview() {
+                    if (!window.ProfileForm) return;
+                    const localRaw = window.ProfileForm.readNameFieldsFromDom('profile');
+                    const calculated = window.ProfileForm.calculateDisplayName(localRaw, 'en_first');
+                    document.getElementById('profile-sysDisplayName').value = calculated === '未命名' ? '' : calculated;
+                }
+
+                ['profile-nameEN', 'profile-passLast', 'profile-passFirst', 'profile-lastCN', 'profile-firstCN'].forEach(function(id) {
+                    const el = document.getElementById(id);
+                    if (el) el.oninput = updateStudentNamePreview;
+                });
+
                 document.getElementById('profile-modal').style.display = 'flex';
             } catch (e) {
                 console.error("讀取個資失敗", e);
@@ -274,14 +332,22 @@
         }
 
         async function saveProfile() {
-            const newName = document.getElementById('profile-username').value.trim();
             const newPwd = document.getElementById('profile-password').value.trim();
             const btn = document.querySelector('#profile-modal .btn-primary');
+            const nameFields = window.ProfileForm
+                ? window.ProfileForm.readNameFieldsFromDom('profile')
+                : { nameEN: '', passportLast: '', passportFirst: '', lastNameCN: '', firstNameCN: '' };
+            const fullCN = (nameFields.lastNameCN + nameFields.firstNameCN).trim();
 
-            if (!newName) {
-                alert('❌ 顯示名稱不可以空白！');
+            if (!nameFields.nameEN && !fullCN) {
+                alert('❌ 請至少填寫英文名字或中文姓名！');
                 return;
             }
+
+            const finalName = document.getElementById('profile-sysDisplayName').value.trim()
+                ? document.getElementById('profile-sysDisplayName').value.trim()
+                : (fullCN ? fullCN : nameFields.nameEN);
+            const newPhone = document.getElementById('profile-phone').value.trim();
 
             const originalBtnText = btn.innerHTML;
             btn.innerHTML = '⏳ 儲存中...';
@@ -289,24 +355,36 @@
 
             try {
                 const { data: { user } } = await window.supabaseClient.auth.getUser();
-                
+
+                const { data: oldProfile } = await window.supabaseClient
+                    .from('profiles')
+                    .select('raw_data')
+                    .eq('id', user.id)
+                    .single();
+
+                const oldRaw = oldProfile && oldProfile.raw_data ? oldProfile.raw_data : {};
+                const mergedRaw = Object.assign({}, oldRaw, {
+                    nameEN: nameFields.nameEN,
+                    passportLast: nameFields.passportLast,
+                    passportFirst: nameFields.passportFirst,
+                    lastNameCN: nameFields.lastNameCN,
+                    firstNameCN: nameFields.firstNameCN
+                });
+
                 const { error: profileErr } = await window.supabaseClient
                     .from('profiles')
-                    .update({ name: newName })
+                    .update({ name: finalName, phone: newPhone, raw_data: mergedRaw })
                     .eq('id', user.id);
                 
                 if (profileErr) throw profileErr;
 
-                if (newPwd) {
-                    const { error: authErr } = await window.supabaseClient.auth.updateUser({
-                        password: newPwd
-                    });
-                    if (authErr) throw authErr;
+                if (newPwd && window.ProfileForm) {
+                    await window.ProfileForm.updatePasswordIfProvided(newPwd);
                 }
 
                 alert('✅ 個人資料已成功更新！');
-                document.getElementById('dynamic-student-title').innerText = `LogOnEnglish | ${newName} 🚀`;
-                document.title = `${newName} 的專屬教室 | LogOnEnglish`;
+                document.getElementById('dynamic-student-title').innerText = 'LogOnEnglish | ' + finalName + ' 🚀';
+                document.title = finalName + ' 的專屬教室 | LogOnEnglish';
                 document.getElementById('profile-modal').style.display = 'none';
 
             } catch (err) {

@@ -154,12 +154,16 @@ window.FeatureClass = (() => {
             if (typeof dbRaw === 'string') { try { dbRaw = JSON.parse(dbRaw); } catch(e) { dbRaw = {}; } }
             const currentMode = dbRaw.name_display_mode || 'default';
             const lateDefaults = dbRaw.late_submission_defaults || { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 };
+            let gradingPolicy = {};
+            if (window.GradingPolicy && window.GradingPolicy.parsePolicy) {
+                gradingPolicy = window.GradingPolicy.parsePolicy(dbRaw);
+            }
 
             const mainIconSelect = document.getElementById('new-class-icon');
             let iconInputHTML = `<input type="text" id="edit-class-icon" class="form-control" value="${cls.icon || '📘'}" style="width: 100%; text-align: center;">`;
             if (mainIconSelect) iconInputHTML = `<select id="edit-class-icon" class="form-control" style="width: 100%; text-align: center;">${mainIconSelect.innerHTML}</select>`;
 
-            overlay.innerHTML = TPL.getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId);
+            overlay.innerHTML = TPL.getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy);
             
             if (mainIconSelect) document.getElementById('edit-class-icon').value = cls.icon || '📘';
         } catch (err) { 
@@ -176,6 +180,30 @@ window.FeatureClass = (() => {
         const allowLate = document.getElementById('edit-allow-late').checked;
         const gracePeriod = parseInt(document.getElementById('edit-grace-period').value) || 0;
         const penaltyPercent = parseInt(document.getElementById('edit-penalty-percent').value) || 0;
+
+        const finalAuthEl = document.querySelector('input[name="edit_final_authority"]:checked');
+        const finalAuthority = finalAuthEl ? finalAuthEl.value : 'human_confirm';
+
+        let gradingPolicyForm = {
+            final_authority: finalAuthority,
+            speech_engine: 'speechace',
+            accent: document.getElementById('gp-accent') ? document.getElementById('gp-accent').value : 'en-us',
+            phonetic_format: document.getElementById('gp-phonetic') ? document.getElementById('gp-phonetic').value : 'kk',
+            overrideRoles: {},
+            publishRoles: {}
+        };
+
+        ['primary_teacher', 'co_teacher', 'ta_senior', 'ta_junior'].forEach(function(role) {
+            const oEl = document.getElementById('gp-override-' + role);
+            const pEl = document.getElementById('gp-publish-' + role);
+            gradingPolicyForm.overrideRoles[role] = oEl ? oEl.checked : false;
+            gradingPolicyForm.publishRoles[role] = pEl ? pEl.checked : false;
+        });
+
+        let gradingPolicy = gradingPolicyForm;
+        if (window.GradingPolicy && window.GradingPolicy.buildPolicyFromForm) {
+            gradingPolicy = window.GradingPolicy.buildPolicyFromForm(gradingPolicyForm);
+        }
         
         if (!newName) return alert("⚠️ 班級名稱不能為空！");
 
@@ -187,7 +215,11 @@ window.FeatureClass = (() => {
             if (typeof dbRaw === 'string') { try { dbRaw = JSON.parse(dbRaw); } catch(e) { dbRaw = {}; } }
             
             const lateSubmissionDefaults = { allow_late: allowLate, grace_period_hours: gracePeriod, penalty_percentage: penaltyPercent };
-            const mergedRawData = Object.assign({}, dbRaw, { name_display_mode: newMode, late_submission_defaults: lateSubmissionDefaults });
+            const mergedRawData = Object.assign({}, dbRaw, {
+                name_display_mode: newMode,
+                late_submission_defaults: lateSubmissionDefaults,
+                grading_policy: gradingPolicy
+            });
 
             const { data: updatedRows, error } = await window.supabaseClient.from('classes').update({ name: newName, icon: newIcon, raw_data: mergedRawData }).eq('id', classId).select();
             if (error) throw error;

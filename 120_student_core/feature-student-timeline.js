@@ -43,6 +43,135 @@ window.FeatureStudentTimeline = (() => {
         });
     }
 
+    function isAudioUploadFile(file) {
+        if (!file) return false;
+        const name = String(file.name ? file.name : '').toLowerCase();
+        const mime = String(file.type ? file.type : '').toLowerCase();
+        if (mime.indexOf('audio/') === 0) return true;
+        if (mime.indexOf('video/mp4') === 0) return true;
+        return /\.(mp3|wav|m4a|ogg|aac|webm|flac|amr|3gp|wma|mp4|opus|aiff|caf)$/.test(name);
+    }
+
+    function resolveAudioMime(file, ext) {
+        let mime = file.type;
+        if (!mime || mime === '' || mime === 'text/plain') {
+            const lowExt = String(ext ? ext : '').toLowerCase();
+            if (lowExt === '.mp3') mime = 'audio/mpeg';
+            else if (lowExt === '.wav') mime = 'audio/wav';
+            else if (lowExt === '.m4a') mime = 'audio/mp4';
+            else if (lowExt === '.ogg') mime = 'audio/ogg';
+            else if (lowExt === '.aac') mime = 'audio/aac';
+            else if (lowExt === '.webm') mime = 'audio/webm';
+            else if (lowExt === '.flac') mime = 'audio/flac';
+            else mime = 'audio/mpeg';
+        }
+        return mime;
+    }
+
+    async function uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, fileBlob, originalFileName) {
+        const statusEl = document.getElementById(statusId);
+
+        if (window._isUploadingAudio) {
+            console.warn('正在處理上傳中，請勿重複點擊');
+            return;
+        }
+        window._isUploadingAudio = true;
+        const originalPointerEvents = document.body.style.pointerEvents;
+        document.body.style.pointerEvents = 'none';
+
+        try {
+            if (statusEl) {
+                statusEl.textContent = '⚙️ 音檔轉碼中...';
+                statusEl.style.color = '#3B82F6';
+            }
+
+            let wavBlob = fileBlob;
+            if (window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
+                wavBlob = await window.FeatureStudentAudio.convertBlobToWav(fileBlob);
+            }
+
+            const reader = new FileReader();
+            const base64Data = await new Promise((resolve, reject) => {
+                reader.onloadend = () => {
+                    const parts = String(reader.result).split(',');
+                    resolve(parts.length > 1 ? parts[1] : parts[0]);
+                };
+                reader.onerror = () => reject(new Error('FileReader Error'));
+                reader.readAsDataURL(wavBlob);
+            });
+
+            if (statusEl) {
+                statusEl.textContent = '🚀 音檔上傳中...';
+                statusEl.style.color = '#3B82F6';
+            }
+
+            const { userId, classId } = await getAuthContext();
+            if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
+            if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error('系統 API 模組尚未載入');
+
+            let targetFolderId = studentDriveUrl;
+            const folderMatch = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
+            if (folderMatch && folderMatch[1]) targetFolderId = folderMatch[1];
+
+            const classPrefix = (classId ? classId : '0000').substring(0, 4);
+            const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
+            const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
+            const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}.wav`;
+
+            const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, 'audio/wav', targetFolderId, assignmentId, taskId);
+
+            if (statusEl) {
+                statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
+                statusEl.style.color = '#8B5CF6';
+            }
+
+            const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
+            const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
+                p_assignment_id: assignmentId,
+                p_task_id: taskId,
+                p_student_id: userId,
+                p_class_id: classId,
+                p_file_id: result.fileId,
+                p_audio_url: audioUrl
+            });
+            if (rpcErr) throw rpcErr;
+
+            if (statusEl) {
+                statusEl.textContent = '✅ 繳交成功！AI 已接管';
+                statusEl.style.color = '#10B981';
+            }
+
+            const compositeKey = `${assignmentId}_${taskId}`;
+            if (!completedTasks.includes(compositeKey)) {
+                completedTasks.push(compositeKey);
+            }
+
+            if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+            let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
+            if (tempRecord) {
+                tempRecord.status = 'ai_processing';
+            } else {
+                window._studentTaskCompletions.push({
+                    assignment_id: assignmentId,
+                    task_id: taskId,
+                    status: 'ai_processing',
+                    raw_data: {}
+                });
+            }
+
+            renderCourses();
+        } catch (err) {
+            alert(`❌ 音檔上傳失敗: ${err.message}`);
+            if (statusEl) {
+                statusEl.textContent = '❌ 上傳失敗';
+                statusEl.style.color = '#EF4444';
+            }
+        } finally {
+            window._isUploadingAudio = false;
+            document.body.style.pointerEvents = originalPointerEvents;
+        }
+    }
+
     function readFileAsDataURL(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -197,8 +326,13 @@ window.FeatureStudentTimeline = (() => {
         const todayStr = DateUtils.getTaiwanTodayString();
         const currentWeekStart = DateUtils.getWeekStartStr(todayStr, weekStartSetting);
 
+        let classGradingPolicy = {};
+        if (window.GradingPolicy && window.GradingPolicy.parsePolicy) {
+            classGradingPolicy = window.GradingPolicy.parsePolicy(raw);
+        }
+
         const htmlString = window.UIStudentTimelineTemplates.renderTimelineNodes(
-            timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl
+            timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl, classGradingPolicy
         );
 
         const styleBlock = document.createElement('style');
@@ -516,6 +650,24 @@ window.FeatureStudentTimeline = (() => {
             } finally {
                 resetInput(); 
             }
+        },
+
+        handleAudioFileUpload: async (inputElement, assignmentId, taskId, safeTitleForJS, statusId, isLate) => {
+            const filesArray = Array.from(inputElement.files);
+            if (filesArray.length === 0) return;
+            const file = filesArray[0];
+            inputElement.value = '';
+
+            if (!isAudioUploadFile(file)) {
+                alert('請上傳音檔格式（支援 mp3, wav, m4a, ogg, aac, webm, flac 等）');
+                return;
+            }
+            if (file.size > 25 * 1024 * 1024) {
+                alert('檔案超過 25MB，請縮短錄音或壓縮後再上傳。');
+                return;
+            }
+
+            await uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, file, file.name);
         },
 
         openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {

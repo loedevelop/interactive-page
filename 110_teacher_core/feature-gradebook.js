@@ -156,9 +156,14 @@ window.FeatureGradebook = (function() {
             const stuId = openBtn.getAttribute('data-student-id');
             const state = window.GradebookStore.getMatrixState();
             const row = state.matrixData.find(r => String(r.student_id) === String(stuId));
+            let gradingPolicy = {};
+            if (window.GradingPolicy && window.GradingPolicy.parsePolicy) {
+                const cls = window.TeacherDB && window.TeacherDB.classes ? window.TeacherDB.classes.find(c => String(c.id) === String(_currentClassId)) : null;
+                if (cls) gradingPolicy = window.GradingPolicy.parsePolicy(cls.raw_data || cls.rawData || {});
+            }
             if (row && row.submissions) {
                 const submission = row.submissions[subId] || Object.values(row.submissions).find(s => String(s.id) === String(subId));
-                if (submission) { window.GradebookStore.setActiveSubmission(submission, row.student_name, row.defect_bank); reRenderSidebarContentOnly(); }
+                if (submission) { window.GradebookStore.setActiveSubmission(submission, row.student_name, row.defect_bank, gradingPolicy); reRenderSidebarContentOnly(); }
             }
             return;
         }
@@ -251,6 +256,14 @@ window.FeatureGradebook = (function() {
 
         const saveBtn = e.target.closest('[data-action="save-publish"]');
         if (saveBtn) {
+            if (window.GradingPolicy && window.GradingPolicy.roleCanPublish) {
+                const ctx = window.GradebookStore.getActiveContext();
+                const policy = ctx ? ctx.gradingPolicy : null;
+                if (!window.GradingPolicy.roleCanPublish(policy, _currentRole)) {
+                    alert('您目前的角色無權發布／定案成績。請聯絡主老師調整班級 AI 批改設定。');
+                    return;
+                }
+            }
             saveBtn.disabled = true;
             const originalText = saveBtn.innerHTML;
             saveBtn.innerHTML = '🔄 寫入中...';

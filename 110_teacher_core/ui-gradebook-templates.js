@@ -43,14 +43,19 @@ window.GradebookTemplates = (function() {
                     const raw = parseJSONB(sub.raw_data);
                     const override = raw.teacher_override || {};
                     const aiEval = raw.ai_evaluation || {};
+                    const policy = window.GradingPolicy ? window.GradingPolicy.parsePolicy({}) : {};
                     
-                    let defaultScore = aiEval.pronunciation_score || null;
-                    if (aiEval.pronunciation_score && aiEval.fluency_score) {
+                    let defaultScore = null;
+                    if (window.GradingPolicy && window.GradingPolicy.resolveEffectiveScore) {
+                        defaultScore = window.GradingPolicy.resolveEffectiveScore(policy, raw);
+                    } else if (aiEval.pronunciation_score && aiEval.fluency_score) {
                         defaultScore = Math.round((Number(aiEval.pronunciation_score) + Number(aiEval.fluency_score)) / 2);
+                    } else {
+                        defaultScore = aiEval.pronunciation_score || null;
                     }
 
-                    const finalScore = override.final_score ?? defaultScore ?? '待批';
-                    const isGraded = finalScore !== '待批' && override.overridden_at;
+                    const finalScore = override.final_score !== undefined && override.final_score !== null ? override.final_score : (defaultScore !== null ? defaultScore : '待批');
+                    const isGraded = override.overridden_at || (sub.status === 'graded' && defaultScore !== null);
                     
                     const scoreClass = isGraded ? (Number(finalScore) < 60 ? 'text-red-700 bg-red-100 border-red-200' : 'text-green-700 bg-green-100 border-green-200') : 'text-yellow-700 bg-yellow-100 border-yellow-200 animate-pulse';
 
@@ -150,7 +155,33 @@ window.GradebookTemplates = (function() {
         const aiData = raw.ai_evaluation || {};
         const draft = context.draft || {};
         const textContent = raw.assignment_text || "";
-        const isTaJunior = currentRole === 'ta_junior';
+        const policy = context.gradingPolicy ? context.gradingPolicy : {};
+
+        let canOverride = true;
+        let canPublish = true;
+        if (window.GradingPolicy) {
+            canOverride = window.GradingPolicy.roleCanOverride(policy, currentRole);
+            canPublish = window.GradingPolicy.roleCanPublish(policy, currentRole);
+        } else if (currentRole === 'ta_junior') {
+            canOverride = false;
+            canPublish = false;
+        }
+
+        let providerBadge = '';
+        if (window.GradingPolicy && window.GradingPolicy.providerLabel) {
+            const label = window.GradingPolicy.providerLabel(aiData);
+            if (label) {
+                providerBadge = `<span class="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded whitespace-nowrap">${escapeHtml(label)}</span>`;
+            }
+        }
+
+        let audioSrc = sub.audio_url ? sub.audio_url : (raw.audio_url ? raw.audio_url : '');
+        const audioIdMatch = String(audioSrc).match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || String(audioSrc).match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        if (audioIdMatch && audioIdMatch[1]) {
+            if (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function') {
+                audioSrc = window.ApiService.getAudioStreamUrl(audioIdMatch[1]);
+            }
+        }
 
         let historyHtml = '';
         if (context.gradingHistory && context.gradingHistory.length > 0) {
@@ -235,8 +266,9 @@ window.GradebookTemplates = (function() {
                     </div>
                     
                     <div class="flex-1 flex items-center justify-center gap-2">
-                        <audio id="student-audio" src="${escapeHtml(sub.audio_url || raw.audio_url || '')}" controls class="h-8 w-full max-w-xs outline-none"></audio>
-                        <div class="flex items-center gap-1.5 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm whitespace-nowrap">
+                        <audio id="student-audio" src="${escapeHtml(audioSrc)}" controls class="h-8 w-full max-w-xs outline-none"></audio>
+                        <div class="flex items-center gap-1.5 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm whitespace-nowrap flex-wrap">
+                            ${providerBadge}
                             <span class="text-[9px] font-bold text-gray-500">發音</span><span class="text-sm font-black text-blue-700 leading-none">${escapeHtml(aiData.pronunciation_score || '--')}</span>
                             <div class="w-px h-3 bg-blue-200"></div>
                             <span class="text-[9px] font-bold text-gray-500">流暢</span><span class="text-sm font-black text-blue-700 leading-none">${escapeHtml(aiData.fluency_score || '--')}</span>
@@ -267,14 +299,14 @@ window.GradebookTemplates = (function() {
                     
                     <div class="flex gap-2 items-center mt-1">
                         <label class="text-[10px] font-bold text-gray-500 whitespace-nowrap">總分</label>
-                        <input type="number" id="input-draft-score" ${isTaJunior ? 'disabled' : ''} class="w-14 h-8 px-1 border border-gray-300 rounded font-black text-lg text-blue-700 focus:ring-1 focus:ring-blue-500 focus:outline-none text-center shadow-inner bg-white" value="${escapeHtml(draft.final_score !== null ? draft.final_score : '')}">
+                        <input type="number" id="input-draft-score" ${canOverride ? '' : 'disabled'} class="w-14 h-8 px-1 border border-gray-300 rounded font-black text-lg text-blue-700 focus:ring-1 focus:ring-blue-500 focus:outline-none text-center shadow-inner bg-white" value="${escapeHtml(draft.final_score !== null ? draft.final_score : '')}">
                         
                         <label class="text-[10px] font-bold text-gray-500 whitespace-nowrap ml-1">評語</label>
-                        <input type="text" id="input-draft-feedback" ${isTaJunior ? 'disabled' : ''} class="flex-1 h-8 px-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:outline-none text-[12px] shadow-inner bg-white" placeholder="給予建議..." value="${escapeHtml(draft.manual_feedback)}">
+                        <input type="text" id="input-draft-feedback" ${canOverride ? '' : 'disabled'} class="flex-1 h-8 px-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:outline-none text-[12px] shadow-inner bg-white" placeholder="給予建議..." value="${escapeHtml(draft.manual_feedback)}">
                         
-                        <button data-action="save-publish" ${isTaJunior ? 'disabled' : ''} class="bg-blue-600 text-white font-bold h-8 px-3 rounded hover:bg-blue-700 shadow-sm transition disabled:opacity-50 border-0 cursor-pointer text-[12px] whitespace-nowrap">🚀 發布成績</button>
+                        <button data-action="save-publish" ${canPublish ? '' : 'disabled'} class="bg-blue-600 text-white font-bold h-8 px-3 rounded hover:bg-blue-700 shadow-sm transition disabled:opacity-50 border-0 cursor-pointer text-[12px] whitespace-nowrap">🚀 發布成績</button>
                     </div>
-                    ${isTaJunior ? `<div class="text-[9px] text-red-600 mt-1 font-bold text-center">⚠️ 一般助教僅供檢視</div>` : ''}
+                    ${(!canOverride || !canPublish) ? `<div class="text-[9px] text-red-600 mt-1 font-bold text-center">⚠️ 依班級 AI 設定，您目前${!canPublish ? '無法發布成績' : '僅能檢視'}</div>` : ''}
                 </div>
             </div>
         </div>`;

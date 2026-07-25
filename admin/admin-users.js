@@ -13,7 +13,7 @@ window.AdminUsers = (() => {
                 .from('system_settings')
                 .select('value')
                 .eq('setting_key', 'global_name_mode')
-                .single();
+                .maybeSingle();
                 
             if (data && data.value) {
                 globalMode = data.value;

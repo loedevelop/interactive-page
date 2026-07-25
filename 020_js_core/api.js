@@ -54,7 +54,12 @@ const ApiService = (() => {
                 if (isAdmin) {
                     role = 'admin';
                 } else if (row.class_staff && row.class_staff.length > 0) {
-                    role = row.class_staff[0].staff_role;
+                    const myMembership = row.class_staff.find(function(s) { return s.user_id === userId; });
+                    if (myMembership && myMembership.staff_role) {
+                        role = myMembership.staff_role;
+                    } else {
+                        role = row.class_staff[0].staff_role;
+                    }
                 }
 
                 return {
@@ -237,6 +242,17 @@ const ApiService = (() => {
     };
 
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
+    const SUPABASE_PROJECT_URL = 'https://ueigcfdpnsohmkavbzmw.supabase.co';
+
+    const getAudioStreamUrl = (fileId) => {
+        if (!fileId) return '';
+        return `${SUPABASE_PROJECT_URL}/functions/v1/stream-audio?file_id=${encodeURIComponent(String(fileId))}`;
+    };
+
+    const getGASAudioStreamUrl = (fileId) => {
+        if (!fileId) return '';
+        return `${GAS_API_URL}?action=stream_audio&fileId=${encodeURIComponent(String(fileId))}`;
+    };
 
     // 🌟 核心擴充修復：新增 requireShare 參數，精準控制是否開放權限
     const createGASFolder = async (folderName, parentFolderId = null, requireShare = false) => {
@@ -313,7 +329,7 @@ const ApiService = (() => {
     };
 
     return { 
-        fetchClasses, fetchStudents, fetchClassStaff, fetchAssignments, syncProgress, archiveClass, createGASFolder, uploadToGAS
+        fetchClasses, fetchStudents, fetchClassStaff, fetchAssignments, syncProgress, archiveClass, createGASFolder, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
     };
 })();
 

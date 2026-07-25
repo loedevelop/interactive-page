@@ -19,6 +19,15 @@
     
     <!-- 🌟 引入強大的前端 Excel 解析引擎 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        #nav-global-resources,
+        #nav-manage-classes,
+        .tab-btn[data-target="view-settings"],
+        .tab-btn[data-target="view-students"],
+        .tab-btn[data-target="view-resources"] {
+            display: none;
+        }
+    </style>
 </head>
 <body>
     <div class="sidebar">
@@ -40,7 +49,8 @@
                 
                 <div style="display: flex; align-items: center; gap: 15px;">
                     <div style="font-weight: 800; color: #64748B;" id="top-teacher-greeting">Hi, Teacher 👋</div>
-                    <button class="btn btn-danger" style="padding: 5px 12px; font-size: 0.85rem;" onclick="localStorage.clear(); sessionStorage.clear(); if(window.supabaseClient) window.supabaseClient.auth.signOut(); window.location.replace('../index.html?clear=true');">登出系統</button>
+                    <button class="btn js-switch-persona" style="padding: 5px 12px; font-size: 0.85rem; background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE;" onclick="if(window.switchPersona) { window.switchPersona(); }">🎭 切換身分</button>
+                    <button class="btn btn-danger" style="padding: 5px 12px; font-size: 0.85rem;" onclick="if(window.logoutToLogin) { window.logoutToLogin(true); }">登出系統</button>
                 </div>
             </div>
             <div class="tabs">
@@ -197,8 +207,9 @@
             <div class="settings-card">
                 <h3>💾 本地端快取管理</h3>
                 <p style="color:#94A3B8; font-size: 0.9rem; margin-top: 5px;">本系統已全面上雲，本地端僅保留效能加速快取。若畫面異常可點擊清除。</p>
-                <div style="display: flex; gap: 15px; margin-top: 25px;">
-                    <button class="btn btn-danger" style="margin-left: auto;" onclick="localStorage.clear(); sessionStorage.clear(); if(window.supabaseClient) window.supabaseClient.auth.signOut(); window.location.replace('../index.html?clear=true');">⚠️ 清除所有快取並登出</button>
+                <div style="display: flex; gap: 15px; margin-top: 25px; flex-wrap: wrap;">
+                    <button class="btn js-switch-persona" style="background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE;" onclick="if(window.switchPersona) { window.switchPersona(); }">🎭 切換身分</button>
+                    <button class="btn btn-danger" style="margin-left: auto;" onclick="if(window.logoutToLogin) { window.logoutToLogin(true); }">⚠️ 清除所有快取並登出</button>
                 </div>
             </div>
         </div>
@@ -211,31 +222,34 @@
     <!-- 🌟 020_js_core: 核心基建層 -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="../020_js_core/config.js?v=36"></script>
-    <script src="../020_js_core/supabase-client.js?v=36"></script>
-    <script src="../020_js_core/auth-guard.js?v=36"></script>
-    <script src="../020_js_core/store.js?v=36"></script>  
+    <script src="../020_js_core/supabase-client.js?v=37"></script>
+    <script src="../020_js_core/persona-routing.js?v=9"></script>
+    <script src="../020_js_core/auth-guard.js?v=38"></script>
+    <script src="../020_js_core/store.js?v=37"></script>  
     <script src="../020_js_core/api.js?v=36"></script> 
     <script src="../020_js_core/utils-date.js?v=36"></script> 
+    <script src="../020_js_core/grading-policy.js?v=1"></script>
+    <script src="../020_js_core/profile-form.js?v=1"></script>
 
 <!-<!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
     <script src="../110_teacher_core/api-gas-service.js?v=50"></script> <!-- 這裡已更新，確保打通 API -->
-    <script src="../110_teacher_core/ui-core.js?v=36"></script>
-    <script src="../110_teacher_core/ui-class-templates.js?v=36"></script>
+    <script src="../110_teacher_core/ui-core.js?v=37"></script>
+    <script src="../110_teacher_core/ui-class-templates.js?v=37"></script>
     <script src="../110_teacher_core/ui-timeline-templates.js?v=48"></script>
     <script src="../110_teacher_core/store-assignment-builder.js?v=45"></script> 
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
-    <script src="../110_teacher_core/store-gradebook.js?v=18"></script>
-    <script src="../110_teacher_core/api-gradebook.js?v=17"></script> 
-    <script src="../110_teacher_core/ui-gradebook-templates.js?v=20"></script>
-    <script src="../110_teacher_core/feature-gradebook.js?v=23"></script>
+    <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
+    <script src="../110_teacher_core/api-gradebook.js?v=18"></script> 
+    <script src="../110_teacher_core/ui-gradebook-templates.js?v=21"></script>
+    <script src="../110_teacher_core/feature-gradebook.js?v=24"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=36"></script>
+    <script src="../110_teacher_core/feature-class.js?v=37"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=36"></script>
     <script src="../110_teacher_core/feature-timeline.js?v=69"></script> <!-- 這裡已更新為 v67 -->
     <script src="../110_teacher_core/feature-resource.js?v=37"></script>
-    <script src="../110_teacher_core/feature-profile.js?v=36"></script>
+    <script src="../110_teacher_core/feature-profile.js?v=39"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=36"></script>
     <script src="../110_teacher_core/feature-progress.js?v=36"></script>
 

@@ -20,14 +20,16 @@ window.GradebookStore = (function() {
         return data;
     }
 
-    function setActiveSubmission(submission, studentName, defectBank) {
+    function setActiveSubmission(submission, studentName, defectBank, gradingPolicy) {
         const raw = parseJSONB(submission?.raw_data);
         const override = raw.teacher_override || {};
         const aiEval = raw.ai_evaluation || {};
+        const policy = gradingPolicy ? gradingPolicy : (window.GradingPolicy ? window.GradingPolicy.DEFAULT_POLICY : {});
 
-        // 🌟 第 2 點：AI 總分平均公式計算
         let defaultScore = null;
-        if (override.final_score !== undefined && override.final_score !== null) {
+        if (window.GradingPolicy && window.GradingPolicy.resolveEffectiveScore) {
+            defaultScore = window.GradingPolicy.resolveEffectiveScore(policy, raw);
+        } else if (override.final_score !== undefined && override.final_score !== null) {
             defaultScore = override.final_score;
         } else if (aiEval.pronunciation_score && aiEval.fluency_score) {
             defaultScore = Math.round((Number(aiEval.pronunciation_score) + Number(aiEval.fluency_score)) / 2);
@@ -39,7 +41,8 @@ window.GradebookStore = (function() {
             submission: submission,
             studentName: studentName || '未知學生',
             defectBank: defectBank || {},
-            gradingHistory: Array.isArray(raw.grading_history) ? raw.grading_history : [], // 🌟 載入歷史
+            gradingPolicy: policy,
+            gradingHistory: Array.isArray(raw.grading_history) ? raw.grading_history : [],
             draft: {
                 final_score: defaultScore,
                 manual_feedback: override.manual_feedback || '',
@@ -123,7 +126,8 @@ window.GradebookStore = (function() {
 
         return {
             submission_id: sub.id, user_id: sub.user_id || sub.student_id, 
-            score_to_update: ctx.draft.final_score, raw_data_to_patch: newRawData, defect_bank_to_patch: newDefectBank
+            score_to_update: ctx.draft.final_score, raw_data_to_patch: newRawData, defect_bank_to_patch: newDefectBank,
+            status_to_update: 'graded'
         };
     }
 

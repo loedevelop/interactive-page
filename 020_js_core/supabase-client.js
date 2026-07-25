@@ -68,6 +68,7 @@ window.TeacherDB = {
                 calcMode: cls.calcMode, 
                 resources: cls.resources || [], 
                 students: cls.students || [], 
+                staff_role: cls.staff_role,
                 currentUserRole: cls.staff_role,
                 raw_data: cls.raw_data,
                 rawData: cls.rawData

@@ -405,6 +405,7 @@ window.FeatureStudentAudio = (function() {
             
             initDOM();
             setupVisualViewport(); 
-        }
+        },
+        convertBlobToWav: convertToWav
     };
 })();
