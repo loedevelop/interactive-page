@@ -327,6 +327,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                         let rangeHtml = materialRange ? `<span style="font-size:0.8rem; background:#E0E7FF; color:#4338CA; padding:2px 8px; border-radius:12px; margin-left:10px; font-weight:800; border:1px solid #C7D2FE; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display:inline-block; vertical-align:middle;">📖 範圍: ${materialRange}</span>` : '';
 
+                        // 🔥 [已修正] 移除破壞 JS 語法的 \vert{}\vert{} 亂碼，改回 ||
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(task.title \vert{}\vert{} '語音錄製任務')}</span>${rangeHtml}`;
 
                         if (!canUpload) {
@@ -530,7 +531,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
 
                                         return `
-                                            <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
+                                            <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background:${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
                                                 <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
                                                     <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
                                                 </div>
