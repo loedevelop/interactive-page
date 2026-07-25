@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V88 終極防彈版：修復 OR 運算子崩潰 + 反斜線脫逃終極裝甲)
+ * 🌟 純粹視覺模板層 (V89 終極防彈版：物理消滅 OR 運算子，徹底免疫介面 LaTeX 渲染 Bug)
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -15,7 +15,8 @@ window.UIStudentTimelineTemplates = (() => {
                 document.body.appendChild(sharedTTS);
             }
             sharedTTS.pause();
-            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(text || '')}`;
+            const safeText = text ? text : '';
+            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(safeText)}`;
             
             const playPromise = sharedTTS.play();
             if (playPromise !== undefined) {
@@ -48,7 +49,11 @@ window.UIStudentTimelineTemplates = (() => {
                     }
                     
                     sliceTimerInterval = setInterval(() => {
-                        if (sharedSlice.currentTime >= endTime || sharedSlice.paused) {
+                        let shouldStop = false;
+                        if (sharedSlice.currentTime >= endTime) shouldStop = true;
+                        if (sharedSlice.paused) shouldStop = true;
+                        
+                        if (shouldStop) {
                             sharedSlice.pause();
                             clearInterval(sliceTimerInterval);
                         }
@@ -106,7 +111,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V88 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V89 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -114,11 +119,9 @@ window.UIStudentTimelineTemplates = (() => {
         openDriveModal,
         
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl) => {
-            // 🛡️ 核彈級 Try-Catch 攔截網：絕對禁止渲染錯誤引發模組遺失警告
             try {
                 let html = '';
                 
-                // 🛡️ 陣列強制防護：就算傳進來 null，也強制轉為空陣列
                 const safeTimelineNodes = Array.isArray(timelineNodes) ? timelineNodes : [];
                 const safeAssignments = Array.isArray(assignments) ? assignments : [];
                 const safeCompletedTasks = Array.isArray(completedTasks) ? completedTasks : [];
@@ -126,7 +129,9 @@ window.UIStudentTimelineTemplates = (() => {
                 const reversedNodes = safeTimelineNodes.map((node, index) => ({ node, weekIndex: index + 1 })).reverse();
 
                 const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
-                    const canUpload = !(isLateUpload && !allowLateFlag);
+                    let canUpload = true;
+                    if (isLateUpload && !allowLateFlag) canUpload = false;
+                    
                     const compositeKey = `${course.id}_${task.id}`;
                     const isTaskDone = safeCompletedTasks.includes(compositeKey);
                     const checked = isTaskDone ? 'checked' : '';
@@ -142,15 +147,22 @@ window.UIStudentTimelineTemplates = (() => {
                     if (window._studentTaskCompletions && Array.isArray(window._studentTaskCompletions)) {
                         const compRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id));
                         if (compRecord) {
-                            taskStatus = String(compRecord.status || '');
+                            taskStatus = String(compRecord.status ? compRecord.status : '');
                             
                             if (compRecord.raw_data) {
-                                retryAudioUrl = String(compRecord.raw_data.student_audio_url || compRecord.raw_data.audio_url || '');
+                                let url1 = compRecord.raw_data.student_audio_url;
+                                let url2 = compRecord.raw_data.audio_url;
+                                retryAudioUrl = String(url1 ? url1 : (url2 ? url2 : ''));
+                                
                                 if (!retryAudioUrl && Array.isArray(compRecord.raw_data.drive_file_ids) && compRecord.raw_data.drive_file_ids.length > 0) {
                                     retryAudioId = String(compRecord.raw_data.drive_file_ids[0]);
                                     retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
                                 } else if (retryAudioUrl) {
-                                    const driveIdMatch = retryAudioUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                                    let driveIdMatch = retryAudioUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                                    if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+                                    if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                    if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                                    
                                     if (driveIdMatch) retryAudioId = driveIdMatch[1];
                                 }
                                 
@@ -161,9 +173,9 @@ window.UIStudentTimelineTemplates = (() => {
 
                             if (taskStatus === 'ai_processing') {
                                 statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
-                            } else if (taskStatus === 'graded' || taskStatus === 'completed') {
+                            } else if (['graded', 'completed'].includes(taskStatus)) {
                                 statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
-                            } else if (taskStatus === 'ai_error' || taskStatus === 'failed') {
+                            } else if (['ai_error', 'failed'].includes(taskStatus)) {
                                 statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
                             } else if (taskStatus === 'submitted') {
                                 statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交</span>`;
@@ -214,9 +226,10 @@ window.UIStudentTimelineTemplates = (() => {
                                                 </thead>
                                                 <tbody>
                                                     ${ai.word_errors.map(err => {
-                                                        const safeWord = String(err.word || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                                        const sTime = Number(err.start_time) || 0;
-                                                        const eTime = Number(err.end_time) || (sTime + 1.5);
+                                                        const safeErrWord = err.word ? err.word : '';
+                                                        const safeWord = String(safeErrWord).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                                        const sTime = (err.start_time !== undefined && err.start_time !== null) ? Number(err.start_time) : 0;
+                                                        const eTime = (err.end_time !== undefined && err.end_time !== null) ? Number(err.end_time) : (sTime + 1.5);
                                                         const formatTime = (secs) => {
                                                             const m = Math.floor(secs / 60);
                                                             const s = Math.floor(secs % 60);
@@ -224,22 +237,26 @@ window.UIStudentTimelineTemplates = (() => {
                                                         };
                                                         const timeLabel = `${formatTime(sTime)}~${formatTime(eTime)}`;
 
+                                                        let safeStuPron = err.student_pronunciation ? err.student_pronunciation : '';
+                                                        let safeExpPhonetic = err.expected_phonetic ? err.expected_phonetic : '';
+                                                        let safeErrType = err.error_type ? err.error_type : '';
+
                                                         return `
                                                         <tr style="background: white;">
-                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${String(err.word || '')}</td>
+                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${String(safeErrWord)}</td>
                                                             <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
                                                                 <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                                                    <span>${String(err.student_pronunciation || '')}</span>
+                                                                    <span>${String(safeStuPron)}</span>
                                                                     ${retryAudioId ? `<button type="button" onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${retryAudioId}',${sTime}, ${eTime})" style="background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px; padding:4px 8px; font-size:0.8rem; cursor:pointer; color:#475569; font-weight:bold; white-space:nowrap; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.05)); transition:all 0.1s;" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'" title="背景切片回放，不再彈出視窗">🎧 ${timeLabel} 播放</button>` : ''}
                                                                 </div>
                                                             </td>
                                                             <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
                                                                 <div style="display:flex; align-items:center; gap:8px;">
-                                                                    <span>${String(err.expected_phonetic || '')}</span>
+                                                                    <span>${String(safeExpPhonetic)}</span>
                                                                     <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.3rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽 Google 真人發音">🔊</span>
                                                                 </div>
                                                             </td>
-                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(err.error_type || '')}</td>
+                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
                                                         </tr>`;
                                                     }).join('')}
                                                 </tbody>
@@ -273,7 +290,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         </div>
                                     </div>
                                 `;
-                            } else if (taskStatus === 'ai_error' || taskStatus === 'failed') {
+                            } else if (['ai_error', 'failed'].includes(taskStatus)) {
                                 let errorLogText = '系統尚未完成此作業的 AI 分析。';
                                 if (compRecord.raw_data && compRecord.raw_data.ai_error_log) {
                                     errorLogText = String(compRecord.raw_data.ai_error_log);
@@ -289,7 +306,11 @@ window.UIStudentTimelineTemplates = (() => {
                         }
                     }
 
-                    let iconStr = task.type === 'check' ? '📌' : (task.type === 'link' ? '🔗' : (task.type === 'audio_record' ? '🎙️' : '📁'));
+                    let iconStr = '📁';
+                    if (task.type === 'check') iconStr = '📌';
+                    if (task.type === 'link') iconStr = '🔗';
+                    if (task.type === 'audio_record') iconStr = '🎙️';
+                    
                     let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                     let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', this.checked)" ${checked}>`;
 
@@ -297,17 +318,20 @@ window.UIStudentTimelineTemplates = (() => {
                     let taskTitleDisplay = '';
                     let linkContent = '';
 
-                    const formattedTaskUrl = safeFormatUrl ? String(safeFormatUrl(task.url) || '') : '';
+                    const formattedTaskUrl = safeFormatUrl ? String(safeFormatUrl(task.url) ? safeFormatUrl(task.url) : '') : '';
 
                     if (task.type === 'link') {
-                        let actualUrlText = String(task.url_text || '').trim();
-                        let actualTitle = String(task.title || '').trim();
+                        let safeUrlText = task.url_text ? task.url_text : '';
+                        let actualUrlText = String(safeUrlText).trim();
+                        let safeTitleVal = task.title ? task.title : '';
+                        let actualTitle = String(safeTitleVal).trim();
 
                         if (actualUrlText !== '') {
-                            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${actualTitle || '未命名任務'}</span>`;
+                            let displayTitle = actualTitle ? actualTitle : '未命名任務';
+                            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${displayTitle}</span>`;
                             linkContent = formattedTaskUrl ? `<a href="${formattedTaskUrl}" target="_blank" class="btn-action" style="font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
                         } else {
-                            let fallbackText = actualTitle || '未命名連結';
+                            let fallbackText = actualTitle ? actualTitle : '未命名連結';
                             if (formattedTaskUrl) {
                                 taskTitleDisplay = `<a href="${formattedTaskUrl}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${fallbackText}</a>`;
                             } else {
@@ -320,15 +344,15 @@ window.UIStudentTimelineTemplates = (() => {
                         let materialUrl = '';
                         let materialRange = '';
                         if (task.raw_data) {
-                            originalScript = String(task.raw_data.original_script || '');
-                            materialUrl = String(task.raw_data.material_url || '');
-                            materialRange = String(task.raw_data.material_range || '');
+                            originalScript = String(task.raw_data.original_script ? task.raw_data.original_script : '');
+                            materialUrl = String(task.raw_data.material_url ? task.raw_data.material_url : '');
+                            materialRange = String(task.raw_data.material_range ? task.raw_data.material_range : '');
                         }
 
                         let rangeHtml = materialRange ? `<span style="font-size:0.8rem; background:#E0E7FF; color:#4338CA; padding:2px 8px; border-radius:12px; margin-left:10px; font-weight:800; border:1px solid #C7D2FE; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display:inline-block; vertical-align:middle;">📖 範圍: ${materialRange}</span>` : '';
 
-                        // 🔥 致命雷區修復：將 \vert{}\vert{} 改回正常的 || 運算子，徹底解決 SyntaxError
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(task.title \vert{}\vert{} '語音錄製任務')}</span>${rangeHtml}`;
+                        let displayTitle = task.title ? task.title : '語音錄製任務';
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>${rangeHtml}`;
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -339,11 +363,10 @@ window.UIStudentTimelineTemplates = (() => {
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                             
-                            const pureTaskTitle = String(task.title || '未命名任務').replace(/<[^>]*>?/gm, '').trim();
-                            
+                            let pureTaskTitleVal = task.title ? task.title : '未命名任務';
+                            const pureTaskTitle = String(pureTaskTitleVal).replace(/<[^>]*>?/gm, '').trim();
                             const statusId = `upload-status-${course.id}-${task.id}`;
                             
-                            // 🛡️ 終極脫逃裝甲：加入 .replace(/\\/g, "\\\\") 防禦原生字串內含反斜線吃掉單引號的嚴重漏洞
                             const safeTitleForJS = pureTaskTitle.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
                             const safeScriptForJS = String(originalScript).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
                             const safeUrlForJS = String(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
@@ -361,7 +384,8 @@ window.UIStudentTimelineTemplates = (() => {
                                 audioPlayerHtml = `<button type="button" onclick="window.UIStudentTimelineTemplates.openDriveModal('${retryAudioId}')" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出完整錄音</button>`;
                                 
                                 if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
-                                    const safeRetryAudioUrl = String(retryAudioUrl || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                    const rawRetryUrl = retryAudioUrl ? retryAudioUrl : '';
+                                    const safeRetryAudioUrl = String(rawRetryUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
                                     manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
                                 }
                             }
@@ -377,7 +401,8 @@ window.UIStudentTimelineTemplates = (() => {
                             `;
                         }
                     } else if (task.type === 'drive') {
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(task.title || '未命名任務')}</span>`;
+                        let displayTitle = task.title ? task.title : '未命名任務';
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -388,11 +413,12 @@ window.UIStudentTimelineTemplates = (() => {
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                             
-                            const pureTaskTitle = String(task.title || '未命名任務').replace(/<[^>]*>?/gm, '').trim();
+                            let pureTaskTitleVal = task.title ? task.title : '未命名任務';
+                            const pureTaskTitle = String(pureTaskTitleVal).replace(/<[^>]*>?/gm, '').trim();
                             const safeTitleForJS = pureTaskTitle.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
                             
-                            // 🔥 [終極解析 Bug 修復] Regex 中的 \ 必須放在 / 前面正確跳脫，避免吃掉 / 導致 JS 引擎編譯大崩潰！
-                            const safeNodeTitle = String(node.title || '').replace(/[\/\\:*?"<>|]/g, '_').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            let safeNodeTitleStr = node.title ? node.title : '';
+                            const safeNodeTitle = String(safeNodeTitleStr).replace(/[\/\\:*?"<>\x7C]/g, '_').replace(/'/g, "\\'").replace(/"/g, "&quot;");
 
                             const uniqueId = `file-input-${course.id}-${task.id}`;
                             const statusId = `upload-status-${course.id}-${task.id}`;
@@ -407,13 +433,17 @@ window.UIStudentTimelineTemplates = (() => {
                             `;
                         }
                     } else {
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(task.title || '未命名任務')}</span>`;
+                        let displayTitle = task.title ? task.title : '未命名任務';
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
                     }
 
                     let cleanTaskDesc = task.description ? String(task.description).replace(/<[^>]*>?/gm, '').trim() : '';
                     let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${task.description}</div>` : '';
                     
-                    let showTaskDue = task.due_date && task.due_date !== effectiveBlockDueDate;
+                    let showTaskDue = false;
+                    if (task.due_date) {
+                        if (task.due_date !== effectiveBlockDueDate) showTaskDue = true;
+                    }
                     let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
 
                     let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
@@ -432,7 +462,10 @@ window.UIStudentTimelineTemplates = (() => {
                 };
 
                 reversedNodes.forEach(({ node, weekIndex }) => {
-                    if (!node || !Array.isArray(node.dates) || node.dates.length === 0) return;
+                    if (!node) return;
+                    if (!Array.isArray(node.dates)) return;
+                    if (node.dates.length === 0) return;
+                    
                     const nodeWeekStart = DateUtils ? DateUtils.getWeekStartStr(node.dates[0], weekStartSetting) : '';
                     
                     let badge = '';
@@ -459,9 +492,12 @@ window.UIStudentTimelineTemplates = (() => {
                     }
 
                     const coursesInDate = safeAssignments.filter(a => {
-                        if (!a || !a.target_date || !DateUtils) return false;
+                        if (!a) return false;
+                        if (!a.target_date) return false;
+                        if (!DateUtils) return false;
                         return node.dates.includes(DateUtils.normalizeDateString(a.target_date));
                     });
+                    
                     if (isFutureWeek && coursesInDate.length === 0) return; 
 
                     let totalTasksInDate = 0;
@@ -478,7 +514,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 }
                             }
                             
-                            let aRaw = course.raw_data || {};
+                            let aRaw = course.raw_data ? course.raw_data : {};
                             if (typeof aRaw === 'string') {
                                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
                             }
@@ -512,16 +548,21 @@ window.UIStudentTimelineTemplates = (() => {
                             let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
                             const renderTaskTree = (tasksList, depth = 0) => {
-                                if (!Array.isArray(tasksList) || tasksList.length === 0) return '';
+                                if (!Array.isArray(tasksList)) return '';
+                                if (tasksList.length === 0) return '';
                                 
                                 return tasksList.map((task, idx) => {
                                     if (!task) return '';
                                     const lvl = getLevelStyle(depth);
-                                    const isFirstLeaf = idx === 0 || (tasksList[idx - 1] && tasksList[idx - 1].type === 'group');
-                                    const isLastLeaf = idx === tasksList.length - 1 || (tasksList[idx + 1] && tasksList[idx + 1].type === 'group');
+                                    
+                                    let isFirstLeaf = (idx === 0);
+                                    if (!isFirstLeaf && tasksList[idx - 1] && tasksList[idx - 1].type === 'group') isFirstLeaf = true;
+                                    
+                                    let isLastLeaf = (idx === tasksList.length - 1);
+                                    if (!isLastLeaf && tasksList[idx + 1] && tasksList[idx + 1].type === 'group') isLastLeaf = true;
                                     
                                     if (task.type === 'group') {
-                                        let groupTitle = String(task.title || '未命名作業群組');
+                                        let groupTitle = String(task.title ? task.title : '未命名作業群組');
                                         let subTasksHtml = '';
                                         
                                         if (Array.isArray(task.subTasks) && task.subTasks.length > 0) {
@@ -552,13 +593,15 @@ window.UIStudentTimelineTemplates = (() => {
                             if (Array.isArray(course.tasks) && course.tasks.length > 0) {
                                 tasksHtml = renderTaskTree(course.tasks, 0);
                             }
+                            
+                            let safeCourseTitle = course.title ? course.title : '';
 
                             return `
                                 <div style="background: white; border: 2px solid #F1F5F9; padding: 15px; border-radius: 10px; margin-top:15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: border 0.2s;">
                                     <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; border-bottom:2px solid #F1F5F9; padding-bottom:10px; margin-bottom:10px;">
                                         <div style="flex: 1; min-width:200px; display:flex; justify-content:space-between; align-items:center;">
                                             <div style="font-weight: 900; color: #334155; font-size: 1rem; display:flex; align-items:center; flex-wrap:wrap;">
-                                                📝 <span class="rt-normalize">${String(course.title || '')}</span>
+                                                📝 <span class="rt-normalize">${String(safeCourseTitle)}</span>
                                             </div>
                                             <div>${dueHtml}</div>
                                         </div>
@@ -582,13 +625,15 @@ window.UIStudentTimelineTemplates = (() => {
                             </div>
                         `;
                     }
+                    
+                    let safeNodeTitleStr = node.title ? node.title : '';
 
                     html += `
                         <div id="timeline-node-${weekIndex}" class="timeline-node" data-is-current="${isCurrentWeek}" style="scroll-margin-top: 25px; border: 2px solid ${borderColor}; background-color: ${bgColor}; padding: 15px; border-radius: 12px; margin-bottom: 25px; position: relative;">
                             <div class="node-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap; gap:10px;">
                                 <div class="node-date" style="display:flex; align-items:center; position:relative;">
                                     <div style="position: absolute; left: -65px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; border: 4px solid ${dotColor}; z-index: 1;"></div>
-                                    <span style="font-weight: 800; color: ${headerTextColor}; font-size:1.05rem;">📅 第 ${weekIndex} ${mode === 'weekly' ? '週' : '堂'} - ${String(node.title || '')}</span> ${badge}
+                                    <span style="font-weight: 800; color: ${headerTextColor}; font-size:1.05rem;">📅 第 ${weekIndex} ${mode === 'weekly' ? '週' : '堂'} - ${String(safeNodeTitleStr)}</span> ${badge}
                                 </div>
                                 ${progressBadgeHtml}
                             </div>
