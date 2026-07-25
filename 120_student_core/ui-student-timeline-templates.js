@@ -1,12 +1,12 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V95 串流代理版：接通 Supabase Stream API，徹底摧毀 Drive 播放阻擋)
+ * 🌟 純粹視覺模板層 (V96 有道發音回歸版：接通 Supabase Stream API，徹底摧毀 Drive 播放阻擋)
  * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 1. Google 美式真人發音引擎 (帶有原生備用防線)
+    // 🔊 1. 有道字典真人發音引擎 (帶有原生備用防線)
     let sharedTTS = null;
     const playGoogleTTS = (text) => {
         try {
@@ -35,12 +35,13 @@ window.UIStudentTimelineTemplates = (() => {
             }
             sharedTTS.pause();
             
-            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(safeText)}`;
+            // 🌟 回歸有道字典 API，type=2 代表美式發音
+            sharedTTS.src = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(safeText)}&type=2`;
             
             const playPromise = sharedTTS.play();
             if (playPromise !== undefined) {
                 playPromise.catch(e => {
-                    console.warn("Google TTS 播放被阻擋，無縫切換至原生語音引擎:", e);
+                    console.warn("有道字典 TTS 播放被阻擋，無縫切換至原生語音引擎:", e);
                     fallbackTTS();
                 });
             }
@@ -113,7 +114,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V95 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V96 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -189,7 +190,6 @@ window.UIStudentTimelineTemplates = (() => {
                                         if (driveIdMatch) retryAudioId = driveIdMatch[1];
                                     }
                                     
-                                    // 🌟 V95 核心改裝：將直連網址換成 Supabase Edge Function 代理
                                     if (retryAudioId) {
                                         hasValidAudioFile = true;
                                         let sUrl = '';
@@ -309,7 +309,7 @@ window.UIStudentTimelineTemplates = (() => {
                                                                                 <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
                                                                                     <div style="display:flex; align-items:center; flex-wrap:nowrap;">
                                                                                         <span>${String(safeExpPhonetic)}</span>
-                                                                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽美式示範發音">🔊</span>
+                                                                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽有道示範發音">🔊</span>
                                                                                     </div>
                                                                                 </td>
                                                                                 <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
