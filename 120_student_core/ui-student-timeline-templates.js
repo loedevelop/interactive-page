@@ -1,12 +1,12 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V93 完美連動版：補回 loadedmetadata 監聽，徹底解決切片從頭播的 Bug)
+ * 🌟 純粹視覺模板層 (V94 極限突破版：雙端點繞過 Drive 阻擋、年輕版 Google 美語、暴力切片定位)
  * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 1. Google 美式真人發音引擎 (帶有原生備用防線)
+    // 🔊 1. Google 真人發音引擎 (回歸年輕好聽的 tw-ob 端點)
     let sharedTTS = null;
     const playGoogleTTS = (text) => {
         try {
@@ -35,8 +35,8 @@ window.UIStudentTimelineTemplates = (() => {
             }
             sharedTTS.pause();
             
-            // 🌟 回歸 Google 官方 API，強制美式發音 (en-US)
-            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(safeText)}`;
+            // 🌟 強制使用 tw-ob 客戶端，這就是最初那個比較年輕、自然的美式發音
+            sharedTTS.src = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(safeText)}`;
             
             const playPromise = sharedTTS.play();
             if (playPromise !== undefined) {
@@ -50,7 +50,7 @@ window.UIStudentTimelineTemplates = (() => {
         }
     };
 
-    // 🎧 2. 錯音切片連動引擎 (🌟 V93 核心修復：補回 loadedmetadata 監聽防護)
+    // 🎧 2. 錯音切片連動引擎 (暴力等待載入與強制定位)
     let sliceTimerInterval = null;
     const playStudentAudioSlice = (playerId, startTime, endTime) => {
         try {
@@ -63,14 +63,13 @@ window.UIStudentTimelineTemplates = (() => {
             if (sliceTimerInterval) clearInterval(sliceTimerInterval);
             player.pause();
             
-            // 獨立的播放執行器
             const executePlay = () => {
                 player.currentTime = startTime; 
                 const playPromise = player.play();
                 
                 if (playPromise !== undefined) {
                     playPromise.then(() => {
-                        // 雙重保險，確保跳轉成功
+                        // 雙重保險：確保跳轉真的生效
                         if (Math.abs(player.currentTime - startTime) > 0.5) {
                             player.currentTime = startTime;
                         }
@@ -92,7 +91,7 @@ window.UIStudentTimelineTemplates = (() => {
                 }
             };
 
-            // 🌟 致命遺漏修復：必須等瀏覽器確認音檔長度 (readyState >= 1) 才能跳轉！
+            // 🌟 暴力防呆：如果播放器死在 0:00 (readyState === 0)，強制重新 load()
             if (player.readyState >= 1) {
                 executePlay();
             } else {
@@ -100,8 +99,13 @@ window.UIStudentTimelineTemplates = (() => {
                     executePlay();
                     player.removeEventListener('loadedmetadata', onReady);
                 };
+                const onError = () => {
+                    alert("⚠️ 無法讀取音檔！請確認 Google Drive 檔案權限已設為公開。");
+                    player.removeEventListener('error', onError);
+                };
                 player.addEventListener('loadedmetadata', onReady);
-                player.load(); // 強制觸發載入，防卡死
+                player.addEventListener('error', onError);
+                player.load(); 
             }
         } catch (e) { console.error("切片定位錯誤:", e); }
     };
@@ -117,7 +121,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V93 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V94 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -152,9 +156,7 @@ window.UIStudentTimelineTemplates = (() => {
                     let retryAudioId = '';
                     let retryAudioUrl = '';
                     let taskStatus = '';
-                    let directAudioUrl = ''; 
                     
-                    // 🌟 預防重複宣告的防護：在最外層宣告 inlinePlayerId
                     let inlinePlayerId = '';
                     if (course.id) {
                         if (task.id) {
@@ -196,10 +198,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     
                                     if (retryAudioId) {
                                         hasValidAudioFile = true;
-                                        directAudioUrl = `https://drive.google.com/uc?export=download&id=${retryAudioId}`;
                                     } else if (retryAudioUrl) {
                                         hasValidAudioFile = true;
-                                        directAudioUrl = retryAudioUrl;
                                     }
                                 }
 
@@ -288,7 +288,7 @@ window.UIStudentTimelineTemplates = (() => {
                                                                             let safeErrType = err.error_type ? err.error_type : '';
 
                                                                             let playSliceHtml = '';
-                                                                            if (directAudioUrl !== '') {
+                                                                            if (hasValidAudioFile) {
                                                                                 playSliceHtml = `<span onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${inlinePlayerId}', ${sTime}, ${eTime})" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="定位並播放錯誤發音">🎧</span>`;
                                                                             }
 
@@ -442,8 +442,16 @@ window.UIStudentTimelineTemplates = (() => {
                             let manualSubmitBtnHtml = '';
 
                             if (hasValidAudioFile) {
-                                if (directAudioUrl !== '') {
-                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${directAudioUrl}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
+                                // 🌟 雙重備援直連端點：如果 Drive 阻擋，自動 Fallback 到 lh3.googleusercontent.com 
+                                if (retryAudioId !== '') {
+                                    audioPlayerHtml = `
+                                        <audio id="${inlinePlayerId}" controls preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                            <source src="https://drive.google.com/uc?export=download&id=${retryAudioId}">
+                                            <source src="https://lh3.googleusercontent.com/d/${retryAudioId}">
+                                        </audio>
+                                    `;
+                                } else if (retryAudioUrl !== '') {
+                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${retryAudioUrl}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
                                 }
                                 
                                 let showManualSubmit = false;
@@ -505,7 +513,7 @@ window.UIStudentTimelineTemplates = (() => {
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
                     }
 
-                    // 🌟 錄音範圍極簡化：移除紫色標籤，改為普通灰色文字併入作業說明
+                    // 🌟 錄音範圍：廢除紫色標記，回歸樸素文字並併入說明
                     let cleanTaskDesc = '';
                     if (task.description) {
                         cleanTaskDesc = String(task.description).replace(/<[^>]*>?/gm, '').trim();
