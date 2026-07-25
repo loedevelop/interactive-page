@@ -1,7 +1,8 @@
 /**
  * 📂 檔案路徑：120_student_core/feature-student-audio.js
  * 🌟 學生端輕量指揮官：硬體授權、狀態機切換、5 分鐘防護與 Base64 轉換
- * 🚀 v55 逆向追蹤引擎版：導入 VisualViewport 數學計算，徹底讓 Dock 免疫 Android 全局縮放！
+ * 🚀 V91 真正轉碼版：前端 AudioContext 實時轉碼為 16kHz 標準 WAV，正面幹掉殘廢 WebM！
+ * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.FeatureStudentAudio = (function() {
@@ -15,13 +16,84 @@ window.FeatureStudentAudio = (function() {
     let el = {};
     let onSubmitCallback = null;
 
-    // --- 🚀 核心武裝：Visual Viewport 追蹤引擎 ---
+    // --- 🚀 核心武裝：前端純 JS 轉碼引擎 (轉為 WAV 16kHz Mono) ---
+    async function convertToWav(blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+        
+        let AudioCtxClass = window.AudioContext;
+        if (!AudioCtxClass) AudioCtxClass = window.webkitAudioContext;
+        const audioContext = new AudioCtxClass();
+        const originalBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        const targetSampleRate = 16000;
+        let OfflineCtxClass = window.OfflineAudioContext;
+        if (!OfflineCtxClass) OfflineCtxClass = window.webkitOfflineAudioContext;
+        
+        const offlineCtx = new OfflineCtxClass(
+            1,
+            Math.ceil(originalBuffer.duration * targetSampleRate),
+            targetSampleRate
+        );
+
+        const source = offlineCtx.createBufferSource();
+        source.buffer = originalBuffer;
+        source.connect(offlineCtx.destination);
+        source.start(0);
+
+        const renderedBuffer = await offlineCtx.startRendering();
+
+        const length = renderedBuffer.length * 2 + 44;
+        const buffer = new ArrayBuffer(length);
+        const view = new DataView(buffer);
+        let offset = 0;
+
+        const writeString = (str) => {
+            for (let i = 0; i < str.length; i++) {
+                view.setUint8(offset + i, str.charCodeAt(i));
+            }
+            offset += str.length;
+        };
+
+        writeString('RIFF');
+        view.setUint32(offset, length - 8, true); offset += 4;
+        writeString('WAVE');
+        writeString('fmt ');
+        view.setUint32(offset, 16, true); offset += 4;
+        view.setUint16(offset, 1, true); offset += 2;
+        view.setUint16(offset, 1, true); offset += 2;
+        view.setUint32(offset, targetSampleRate, true); offset += 4;
+        view.setUint32(offset, targetSampleRate * 2, true); offset += 4;
+        view.setUint16(offset, 2, true); offset += 2;
+        view.setUint16(offset, 16, true); offset += 2;
+        writeString('data');
+        view.setUint32(offset, length - 44, true); offset += 4;
+
+        const channelData = renderedBuffer.getChannelData(0);
+        for (let i = 0; i < channelData.length; i++) {
+            let sample = Math.max(-1, Math.min(1, channelData[i]));
+            let intSample = 0;
+            if (sample < 0) {
+                intSample = sample * 32768;
+            } else {
+                intSample = sample * 32767;
+            }
+            view.setInt16(offset, intSample, true);
+            offset += 2;
+        }
+
+        return new Blob([buffer], { type: 'audio/wav' });
+    }
+
     let vvHandler = null;
     let rafId = null;
 
     function setupVisualViewport() {
         const dock = document.getElementById('audio-dock-section');
-        if (!dock || !window.visualViewport) return;
+        let hasVV = false;
+        if (dock) {
+            if (window.visualViewport) hasVV = true;
+        }
+        if (!hasVV) return;
 
         const stabilize = () => {
             if (window.innerWidth > 768) {
@@ -32,30 +104,23 @@ window.FeatureStudentAudio = (function() {
             const vv = window.visualViewport;
             const scale = vv.scale;
 
-            // 只要有縮放，引擎就接管
             if (scale > 1.01) {
                 const invScale = 1 / scale;
                 const vw = vv.width;
                 const vh = vv.height;
                 
-                // Dock 視覺寬度設定為螢幕的 92%
                 const targetWidthVisual = vw * 0.92;
-                // 反推在 Layout Viewport 中的實體寬度
                 const layoutWidth = targetWidthVisual * scale; 
                 
-                // 必須先設置寬度，才能讀取正確的物理高度
                 dock.style.setProperty('width', `${layoutWidth}px`, 'important');
                 const layoutHeight = dock.offsetHeight;
                 const targetHeightVisual = layoutHeight * invScale;
                 
-                // 安全邊緣 (15px padding)
                 const paddingBottomVisual = 15 * invScale;
                 
-                // 🌟 絕對座標計算 (左上角為 0,0 基準，根絕下沉 Bug)
                 const x = vv.offsetLeft + (vw - targetWidthVisual) / 2;
                 const y = vv.offsetTop + vh - targetHeightVisual - paddingBottomVisual;
                 
-                // 暴力寫入：斷開原始 CSS 鎖鏈，以實體螢幕座標強制繪製
                 dock.style.cssText = `
                     position: fixed !important;
                     left: ${x}px !important;
@@ -69,7 +134,6 @@ window.FeatureStudentAudio = (function() {
                     transition: none !important;
                 `;
             } else {
-                // 無縮放時，歸還給純 CSS 處理
                 dock.style.cssText = '';
             }
         };
@@ -79,23 +143,24 @@ window.FeatureStudentAudio = (function() {
             rafId = requestAnimationFrame(stabilize);
         };
 
-        // 綁定事件：不管是雙指縮放(resize)還是單指拖曳滑動(scroll)，Dock 永遠死死跟隨
         window.visualViewport.addEventListener('resize', vvHandler);
         window.visualViewport.addEventListener('scroll', vvHandler);
-        
-        // 初次校準
         setTimeout(vvHandler, 100);
     }
 
     function cleanupVisualViewport() {
-        if (vvHandler && window.visualViewport) {
+        let canClean = false;
+        if (vvHandler) {
+            if (window.visualViewport) canClean = true;
+        }
+        
+        if (canClean) {
             window.visualViewport.removeEventListener('resize', vvHandler);
             window.visualViewport.removeEventListener('scroll', vvHandler);
             vvHandler = null;
             if (rafId) cancelAnimationFrame(rafId);
         }
     }
-    // ---------------------------------------------
 
     function initDOM() {
         el = {
@@ -124,8 +189,8 @@ window.FeatureStudentAudio = (function() {
     }
 
     function formatTime(seconds) {
-        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-        const s = (seconds % 60).toString().padStart(2, '0');
+        const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+        const s = String(seconds % 60).padStart(2, '0');
         return `${m}:${s}`;
     }
 
@@ -147,15 +212,19 @@ window.FeatureStudentAudio = (function() {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
             let mimeType = '';
-            const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
-            for (let type of types) {
-                if (MediaRecorder.isTypeSupported(type)) {
-                    mimeType = type;
+            const types = ['audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'];
+            
+            for (let i = 0; i < types.length; i++) {
+                if (MediaRecorder.isTypeSupported(types[i])) {
+                    mimeType = types[i];
                     break;
                 }
             }
             
-            mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+            let options = {};
+            if (mimeType !== '') options = { mimeType: mimeType };
+            
+            mediaRecorder = new MediaRecorder(stream, options);
             audioChunks = [];
 
             mediaRecorder.ondataavailable = (e) => {
@@ -185,7 +254,12 @@ window.FeatureStudentAudio = (function() {
     }
 
     function pauseRecording() {
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
+        let isRecording = false;
+        if (mediaRecorder) {
+            if (mediaRecorder.state === 'recording') isRecording = true;
+        }
+        
+        if (isRecording) {
             mediaRecorder.pause();
             clearInterval(timerInterval);
             
@@ -198,7 +272,12 @@ window.FeatureStudentAudio = (function() {
     }
 
     function resumeRecording() {
-        if (mediaRecorder && mediaRecorder.state === 'paused') {
+        let isPaused = false;
+        if (mediaRecorder) {
+            if (mediaRecorder.state === 'paused') isPaused = true;
+        }
+        
+        if (isPaused) {
             mediaRecorder.resume();
             timerInterval = setInterval(tickTimer, 1000);
             
@@ -211,7 +290,12 @@ window.FeatureStudentAudio = (function() {
     }
 
     function stopRecording() {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        let isActive = false;
+        if (mediaRecorder) {
+            if (mediaRecorder.state !== 'inactive') isActive = true;
+        }
+        
+        if (isActive) {
             mediaRecorder.stop();
             clearInterval(timerInterval);
             mediaRecorder.stream.getTracks().forEach(track => track.stop());
@@ -219,7 +303,9 @@ window.FeatureStudentAudio = (function() {
     }
 
     function handleRecordingStop() {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+        let mimeType = 'audio/webm';
+        if (mediaRecorder.mimeType) mimeType = mediaRecorder.mimeType;
+        
         audioBlob = new Blob(audioChunks, { type: mimeType });
         
         el.audioPlayback.src = URL.createObjectURL(audioBlob);
@@ -257,7 +343,7 @@ window.FeatureStudentAudio = (function() {
     function closeStudio() {
         stopRecording();
         if (timerInterval) clearInterval(timerInterval);
-        cleanupVisualViewport(); // 🧹 關閉時清空追蹤引擎
+        cleanupVisualViewport(); 
         if (el.modal) el.modal.remove(); 
         onSubmitCallback = null;
     }
@@ -266,35 +352,44 @@ window.FeatureStudentAudio = (function() {
         if (!audioBlob) return;
         
         el.btnSubmit.disabled = true;
-        el.btnSubmit.innerHTML = '📦 處理中...';
+        el.btnSubmit.innerHTML = '⚙️ 音檔轉碼中...';
         
         try {
+            const wavBlob = await convertToWav(audioBlob);
+
             const reader = new FileReader();
             reader.onloadend = async () => {
                 const base64Data = reader.result.split(',')[1];
-                const ext = audioBlob.type.includes('mp4') ? 'mp4' : 'webm';
                 
-                const getIsoTs = window.DateUtils ? window.DateUtils.getTaiwanIsoTimestamp : 
-                               (window.UtilsDate ? window.UtilsDate.getTaiwanIsoTimestamp : () => new Date().toISOString());
-                const timestamp = getIsoTs().replace(/[:.]/g, '-');
+                const ext = 'wav';
+                const finalMimeType = 'audio/wav';
+                
+                let getIsoTs = () => new Date().toISOString();
+                if (window.DateUtils) getIsoTs = window.DateUtils.getTaiwanIsoTimestamp;
+                else if (window.UtilsDate) getIsoTs = window.UtilsDate.getTaiwanIsoTimestamp;
+                
+                const timestamp = String(getIsoTs()).replace(/[:.]/g, '-');
                 const fileName = `Audio_${timestamp}.${ext}`;
                 
-                if (typeof onSubmitCallback === 'function') {
+                let isFunc = false;
+                if (typeof onSubmitCallback === 'function') isFunc = true;
+                
+                if (isFunc) {
                     await onSubmitCallback({
                         base64: base64Data,
                         fileName: fileName,
-                        mimeType: audioBlob.type
+                        mimeType: finalMimeType
                     });
                 }
                 
                 closeStudio();
             };
             reader.onerror = () => { throw new Error('FileReader Error'); };
-            reader.readAsDataURL(audioBlob);
+            reader.readAsDataURL(wavBlob);
             
         } catch (error) {
-            console.error('[FeatureStudentAudio] 繳交封裝失敗:', error);
-            alert('系統處理錯誤，請稍後再試。');
+            console.error('[FeatureStudentAudio] 轉碼繳交失敗:', error);
+            alert('系統音訊處理錯誤，請稍後再試。');
             el.btnSubmit.disabled = false;
             el.btnSubmit.innerHTML = '🚀 繳交';
         }
@@ -309,7 +404,7 @@ window.FeatureStudentAudio = (function() {
             document.body.insertAdjacentHTML('beforeend', htmlString);
             
             initDOM();
-            setupVisualViewport(); // 🚀 啟動追蹤引擎
+            setupVisualViewport(); 
         }
     };
 })();

@@ -1,16 +1,30 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-audio-templates.js
  * 🌟 學生端錄音艙視覺模板工廠：
- * 🚀 v55 乾淨地基版：移除舊有腳本，提供穩定 CSS 供追蹤引擎操作！
+ * 🚀 V91 乾淨地基版：徹底物理消滅 Regex 單豎線，完全免疫介面崩潰地雷！
+ * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.UIAudioTemplates = {
     getRecordingStudioHTML: function(transcriptText, taskTitle, materialUrl, materialRange) {
         
-        function escapeHTML(str) { return str ? String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : ''; }
+        function escapeHTML(str) { 
+            let res = '';
+            if (str) {
+                res = String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+            return res; 
+        }
         
-        const displayTitle = taskTitle || '未命名錄音作業';
-        const hasText = transcriptText && transcriptText.trim() !== '';
+        const displayTitle = taskTitle ? taskTitle : '未命名錄音作業';
+        
+        let hasText = false;
+        if (transcriptText) {
+            if (String(transcriptText).trim() !== '') {
+                hasText = true;
+            }
+        }
+        
         const safeText = hasText ? String(transcriptText).replace(/\n/g, '<br>') : '';
         
         let embedUrl = '';
@@ -18,8 +32,15 @@ window.UIAudioTemplates = {
         let rangeText = '';
         let toggleBtnHtml = '';
 
-        if (materialUrl && materialUrl.trim() !== '') {
-            let rawUrl = materialUrl.trim();
+        let hasMatUrl = false;
+        if (materialUrl) {
+            if (String(materialUrl).trim() !== '') {
+                hasMatUrl = true;
+            }
+        }
+
+        if (hasMatUrl) {
+            let rawUrl = String(materialUrl).trim();
             
             if (rawUrl.startsWith('data:')) {
                 embedUrl = rawUrl;
@@ -38,19 +59,38 @@ window.UIAudioTemplates = {
             } 
             else {
                 embedUrl = rawUrl;
-                if (embedUrl.includes('drive.google.com') || embedUrl.includes('docs.google.com')) {
-                    const idMatch = embedUrl.match(/\/(?:d|folders|file\/d)\/([a-zA-Z0-9_-]+)/) || embedUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-                    if (idMatch && idMatch[1]) {
+                
+                let isDrive = false;
+                if (embedUrl.includes('drive.google.com')) isDrive = true;
+                else if (embedUrl.includes('docs.google.com')) isDrive = true;
+                
+                if (isDrive) {
+                    let idMatch = embedUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                    if (!idMatch) idMatch = embedUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+                    if (!idMatch) idMatch = embedUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                    if (!idMatch) idMatch = embedUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+
+                    let hasId = false;
+                    if (idMatch) {
+                        if (idMatch[1]) {
+                            hasId = true;
+                        }
+                    }
+
+                    if (hasId) {
                         embedUrl = `https://drive.google.com/file/d/${idMatch[1]}/preview`;
                     } else {
                         embedUrl = embedUrl.split('#')[0];
-                        embedUrl = embedUrl.replace(/\/(view|edit).*$/, '/preview');
+                        embedUrl = embedUrl.replace(/\/view.*$/, '/preview').replace(/\/edit.*$/, '/preview');
                     }
-                } else if (embedUrl.toLowerCase().endsWith('.pdf')) {
-                    if (embedUrl.includes('#')) {
-                        embedUrl = embedUrl.split('#')[0] + '#view=FitH';
-                    } else {
-                        embedUrl += '#view=FitH';
+                } else {
+                    const lowerUrl = embedUrl.toLowerCase();
+                    if (lowerUrl.endsWith('.pdf')) {
+                        if (embedUrl.includes('#')) {
+                            embedUrl = embedUrl.split('#')[0] + '#view=FitH';
+                        } else {
+                            embedUrl += '#view=FitH';
+                        }
                     }
                 }
                 
@@ -66,9 +106,18 @@ window.UIAudioTemplates = {
             }
         }
 
-        const showText = hasText && !embedUrl;
+        let showText = false;
+        if (hasText) {
+            if (!embedUrl) {
+                showText = true;
+            }
+        }
 
-        if (showText || embedUrl) {
+        let needToggle = false;
+        if (showText) needToggle = true;
+        else if (embedUrl) needToggle = true;
+
+        if (needToggle) {
             toggleBtnHtml = `
                 <button onclick="
                     const container = document.getElementById('audio-modal-container');
@@ -101,14 +150,21 @@ window.UIAudioTemplates = {
             `;
         }
         
-        if (!showText && !embedUrl) {
+        let showEmpty = false;
+        if (!showText) {
+            if (!embedUrl) {
+                showEmpty = true;
+            }
+        }
+
+        if (showEmpty) {
             bodyHtml += `<div style="padding: 20px; color: #9ca3af; font-style: italic; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; background: #ffffff;">（老師未提供任何教材或原稿，請直接錄音）</div>`;
         }
 
         let upperSectionHtml = '';
         let defaultCollapsed = '';
 
-        if (showText || embedUrl) {
+        if (needToggle) {
             const upperBgColor = embedUrl ? '#323639' : '#ffffff';
             upperSectionHtml = `
                 <div class="audio-upper" style="display: flex; flex-direction: column; overflow: hidden; transition: all 0.4s ease; background-color: ${upperBgColor}; position: relative;">
@@ -175,7 +231,6 @@ window.UIAudioTemplates = {
                 .audio-header-wrap > div { flex-wrap: wrap !important; overflow: visible !important; }
                 .audio-header-title { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; font-size: 1rem !important; }
 
-                /* 🔥 為下方控制列留出緩衝區，才不會擋住 PDF */
                 #audio-modal-container:not(.is-collapsed) .audio-upper {
                     flex: 1 !important;
                     height: 100% !important;

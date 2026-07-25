@@ -1,31 +1,56 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V89 終極防彈版：物理消滅 OR 運算子，徹底免疫介面 LaTeX 渲染 Bug)
+ * 🌟 純粹視覺模板層 (V91 終極防彈修復版：極簡切片圖示、嚴格狀態防呆、字典真人發音)
+ * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 1. Google 真人發音引擎
+    // 🔊 1. 雙引擎真人發音 (字典 API + 原生 Web Speech)
     let sharedTTS = null;
     const playGoogleTTS = (text) => {
         try {
+            const safeText = text ? text : '';
+            if (safeText === '') return;
+
+            const fallbackTTS = () => {
+                let hasSpeech = false;
+                if ('speechSynthesis' in window) hasSpeech = true;
+                
+                if (hasSpeech) {
+                    window.speechSynthesis.cancel();
+                    const utterance = new SpeechSynthesisUtterance(safeText);
+                    utterance.lang = 'en-US';
+                    utterance.rate = 0.9; 
+                    window.speechSynthesis.speak(utterance);
+                } else {
+                    alert("您的瀏覽器不支援語音播放功能。");
+                }
+            };
+
             if (!sharedTTS) {
                 sharedTTS = document.createElement('audio');
                 sharedTTS.id = 'rt-hidden-tts';
                 document.body.appendChild(sharedTTS);
             }
             sharedTTS.pause();
-            const safeText = text ? text : '';
-            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(safeText)}`;
+            
+            // 🌟 串接有道字典真人發音 API
+            sharedTTS.src = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(safeText)}&type=2`;
             
             const playPromise = sharedTTS.play();
             if (playPromise !== undefined) {
-                playPromise.catch(e => console.warn("Google TTS 播放被阻擋:", e));
+                playPromise.catch(e => {
+                    console.warn("外部發音 API 被阻擋，無縫切換至原生語音引擎:", e);
+                    fallbackTTS();
+                });
             }
-        } catch (e) { console.error("TTS 發音發生錯誤:", e); }
+        } catch (e) { 
+            console.error("TTS 發音發生錯誤:", e); 
+        }
     };
 
-    // 🎧 2. 學生背景切片引擎
+    // 🎧 2. 學生背景切片引擎 (導入 Metadata 監聽，解決無法定位問題)
     let sharedSlice = null;
     let sliceTimerInterval = null;
     const playStudentAudioSlice = (driveId, startTime, endTime) => {
@@ -37,43 +62,62 @@ window.UIStudentTimelineTemplates = (() => {
             }
             
             if (sliceTimerInterval) clearInterval(sliceTimerInterval);
-            
             sharedSlice.pause();
-            sharedSlice.src = `https://drive.google.com/uc?export=download&id=${driveId}`;
             
-            const playPromise = sharedSlice.play();
-            if (playPromise !== undefined) {
-                playPromise.then(() => {
-                    if (Math.abs(sharedSlice.currentTime - startTime) > 0.5) {
-                        try { sharedSlice.currentTime = startTime; } catch(e){}
-                    }
-                    
-                    sliceTimerInterval = setInterval(() => {
-                        let shouldStop = false;
-                        if (sharedSlice.currentTime >= endTime) shouldStop = true;
-                        if (sharedSlice.paused) shouldStop = true;
-                        
-                        if (shouldStop) {
-                            sharedSlice.pause();
-                            clearInterval(sliceTimerInterval);
+            const srcUrl = `https://drive.google.com/uc?export=download&id=${driveId}`;
+            if (sharedSlice.src !== srcUrl) {
+                sharedSlice.src = srcUrl;
+                sharedSlice.load(); 
+            }
+
+            const executePlay = () => {
+                sharedSlice.currentTime = startTime; 
+                const playPromise = sharedSlice.play();
+                
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        if (Math.abs(sharedSlice.currentTime - startTime) > 0.5) {
+                            sharedSlice.currentTime = startTime;
                         }
-                    }, 100);
-                }).catch(e => {
-                    console.warn("背景播放被阻擋:", e);
-                    alert("⚠️ 瀏覽器安全性阻擋：請允許網站「自動播放聲音」以聆聽切片。");
-                });
+                        
+                        sliceTimerInterval = setInterval(() => {
+                            let shouldStop = false;
+                            if (sharedSlice.currentTime >= endTime) shouldStop = true;
+                            if (sharedSlice.paused) shouldStop = true;
+                            
+                            if (shouldStop) {
+                                sharedSlice.pause();
+                                clearInterval(sliceTimerInterval);
+                            }
+                        }, 50);
+                    }).catch(e => {
+                        console.warn("背景播放被阻擋:", e);
+                        alert("⚠️ 瀏覽器阻擋了自動播放，請先點擊網頁任意處後再試一次！");
+                    });
+                }
+            };
+
+            // 🌟 等待瀏覽器解析完音檔長度，才進行時間跳轉
+            if (sharedSlice.readyState >= 1) { 
+                executePlay();
+            } else {
+                const onReady = () => {
+                    executePlay();
+                    sharedSlice.removeEventListener('loadedmetadata', onReady);
+                };
+                sharedSlice.addEventListener('loadedmetadata', onReady);
             }
         } catch (e) { console.error("學生切片播放錯誤:", e); }
     };
 
-    // 🖥️ 3. 網頁內建懸浮視窗 Modal 
+    // 🖥️ 3. 網頁內建懸浮視窗 Modal (改用原生 Audio)
     const openDriveModal = (driveId) => {
         try {
             let modal = document.getElementById('rt-custom-audio-modal');
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'rt-custom-audio-modal';
-                modal.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); z-index:99999; display:flex; justify-content:center; align-items:center; backdrop-filter:blur(3px); cursor:pointer;';
+                modal.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:99999; display:flex; justify-content:center; align-items:center; backdrop-filter:blur(3px); cursor:pointer;';
                 
                 modal.onclick = (e) => {
                     if (e.target === modal) {
@@ -85,14 +129,17 @@ window.UIStudentTimelineTemplates = (() => {
             }
 
             modal.innerHTML = `
-                <div style="background:white; padding:20px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); width:90%; max-width:550px; height:80vh; max-height:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
-                    <div style="font-weight:900; color:#334155; margin-bottom:12px; font-size:1.1rem; text-align:center;">
+                <div style="background:white; padding:25px; border-radius:16px; box-shadow:0 15px 35px rgba(0,0,0,0.2); width:90%; max-width:450px; display:flex; flex-direction:column; cursor:default;" onclick="event.stopPropagation()">
+                    <div style="font-weight:900; color:#334155; margin-bottom:15px; font-size:1.2rem; text-align:center;">
                         🎵 完整錄音作業
                     </div>
-                    <iframe src="https://drive.google.com/file/d/${driveId}/preview" style="flex:1; width:100%; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC;"></iframe>
-                    <div style="text-align:center; margin-top:12px; font-size:0.85rem; color:#94A3B8; font-weight:bold;">
-                        👆 點擊視窗外部黑色區域即可關閉 <br>
-                        <span style="font-size:0.75rem; color:#CBD5E1; font-weight:normal;">(註：舊版 WebM 錄音若無法拉動進度條為格式先天限制，新版將轉換格式)</span>
+                    <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:20px; display:flex; flex-direction:column; gap:15px; align-items:center;">
+                        <audio controls autoplay src="https://drive.google.com/uc?export=download&id=${driveId}" style="width:100%; outline:none;"></audio>
+                    </div>
+                    <div style="text-align:center; margin-top:15px; font-size:0.85rem; color:#94A3B8; font-weight:bold; line-height:1.5;">
+                        👆 點擊視窗外部黑色區域即可關閉<br>
+                        <span style="font-size:0.75rem; color:#CBD5E1; font-weight:normal;">若為舊版格式無法拉動進度條：</span><br>
+                        <a href="https://drive.google.com/uc?export=download&id=${driveId}" target="_blank" style="color:#3B82F6; text-decoration:underline;">📥 請點此下載原始音檔</a>
                     </div>
                 </div>
             `;
@@ -111,7 +158,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V89 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V91 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -130,7 +177,11 @@ window.UIStudentTimelineTemplates = (() => {
 
                 const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
                     let canUpload = true;
-                    if (isLateUpload && !allowLateFlag) canUpload = false;
+                    if (isLateUpload) {
+                        if (!allowLateFlag) {
+                            canUpload = false;
+                        }
+                    }
                     
                     const compositeKey = `${course.id}_${task.id}`;
                     const isTaskDone = safeCompletedTasks.includes(compositeKey);
@@ -144,164 +195,208 @@ window.UIStudentTimelineTemplates = (() => {
                     let retryAudioUrl = '';
                     let taskStatus = '';
 
-                    if (window._studentTaskCompletions && Array.isArray(window._studentTaskCompletions)) {
-                        const compRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id));
-                        if (compRecord) {
-                            taskStatus = String(compRecord.status ? compRecord.status : '');
-                            
-                            if (compRecord.raw_data) {
-                                let url1 = compRecord.raw_data.student_audio_url;
-                                let url2 = compRecord.raw_data.audio_url;
-                                retryAudioUrl = String(url1 ? url1 : (url2 ? url2 : ''));
+                    if (window._studentTaskCompletions) {
+                        if (Array.isArray(window._studentTaskCompletions)) {
+                            const compRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id));
+                            if (compRecord) {
+                                taskStatus = String(compRecord.status ? compRecord.status : '');
                                 
-                                if (!retryAudioUrl && Array.isArray(compRecord.raw_data.drive_file_ids) && compRecord.raw_data.drive_file_ids.length > 0) {
-                                    retryAudioId = String(compRecord.raw_data.drive_file_ids[0]);
-                                    retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
-                                } else if (retryAudioUrl) {
-                                    let driveIdMatch = retryAudioUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-                                    if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-                                    if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-                                    if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                                if (compRecord.raw_data) {
+                                    let url1 = compRecord.raw_data.student_audio_url;
+                                    let url2 = compRecord.raw_data.audio_url;
+                                    retryAudioUrl = String(url1 ? url1 : (url2 ? url2 : ''));
                                     
-                                    if (driveIdMatch) retryAudioId = driveIdMatch[1];
-                                }
-                                
-                                if (retryAudioId) {
-                                    hasValidAudioFile = true;
-                                }
-                            }
+                                    let hasDriveIds = false;
+                                    if (Array.isArray(compRecord.raw_data.drive_file_ids)) {
+                                        if (compRecord.raw_data.drive_file_ids.length > 0) {
+                                            hasDriveIds = true;
+                                        }
+                                    }
 
-                            if (taskStatus === 'ai_processing') {
-                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
-                            } else if (['graded', 'completed'].includes(taskStatus)) {
-                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
-                            } else if (['ai_error', 'failed'].includes(taskStatus)) {
-                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
-                            } else if (taskStatus === 'submitted') {
-                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交</span>`;
-                            }
-
-                            if (compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
-                                const ai = compRecord.raw_data.ai_evaluation;
-                                
-                                let pScore = 'N/A';
-                                if (ai.pronunciation_score !== undefined && ai.pronunciation_score !== null) {
-                                    pScore = ai.pronunciation_score;
-                                } else if (ai.score !== undefined && ai.score !== null) {
-                                    pScore = ai.score;
+                                    if (!retryAudioUrl) {
+                                        if (hasDriveIds) {
+                                            retryAudioId = String(compRecord.raw_data.drive_file_ids[0]);
+                                            retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
+                                        }
+                                    } else if (retryAudioUrl) {
+                                        let driveIdMatch = retryAudioUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                                        
+                                        if (driveIdMatch) retryAudioId = driveIdMatch[1];
+                                    }
+                                    
+                                    if (retryAudioId) {
+                                        hasValidAudioFile = true;
+                                    }
                                 }
 
-                                let fluency = 'N/A';
-                                if (ai.fluency_score !== undefined && ai.fluency_score !== null) {
-                                    fluency = ai.fluency_score;
+                                if (taskStatus === 'ai_processing') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
+                                } else if (taskStatus === 'graded') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                                } else if (taskStatus === 'completed') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                                } else if (taskStatus === 'ai_error') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
+                                } else if (taskStatus === 'failed') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
+                                } else if (taskStatus === 'submitted') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交</span>`;
                                 }
 
-                                let feedback = '無綜合評語';
-                                if (ai.comprehensive_feedback) {
-                                    feedback = ai.comprehensive_feedback;
-                                } else if (ai.feedback) {
-                                    feedback = ai.feedback;
+                                // 🌟 狀態優先級防呆：只允許在 graded 狀態印出成績報告
+                                let showAIReport = false;
+                                if (taskStatus === 'graded') showAIReport = true;
+                                else if (taskStatus === 'completed') showAIReport = true;
+
+                                if (showAIReport) {
+                                    if (compRecord.raw_data) {
+                                        if (compRecord.raw_data.ai_evaluation) {
+                                            const ai = compRecord.raw_data.ai_evaluation;
+                                            
+                                            let pScore = 'N/A';
+                                            if (ai.pronunciation_score !== undefined) {
+                                                if (ai.pronunciation_score !== null) pScore = ai.pronunciation_score;
+                                            }
+                                            if (pScore === 'N/A') {
+                                                if (ai.score !== undefined) {
+                                                    if (ai.score !== null) pScore = ai.score;
+                                                }
+                                            }
+
+                                            let fluency = 'N/A';
+                                            if (ai.fluency_score !== undefined) {
+                                                if (ai.fluency_score !== null) fluency = ai.fluency_score;
+                                            }
+
+                                            let feedback = '無綜合評語';
+                                            if (ai.comprehensive_feedback) feedback = ai.comprehensive_feedback;
+                                            else if (ai.feedback) feedback = ai.feedback;
+                                            
+                                            let pScoreColor = '#10B981';
+                                            if (pScore !== 'N/A') {
+                                                const numScore = Number(pScore);
+                                                if (numScore < 80) pScoreColor = '#F59E0B';
+                                                if (numScore < 60) pScoreColor = '#EF4444';
+                                            }
+
+                                            let wordErrorsHtml = '';
+                                            if (ai.word_errors) {
+                                                if (Array.isArray(ai.word_errors)) {
+                                                    if (ai.word_errors.length > 0) {
+                                                        wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
+                                                            <div style="font-weight: 900; color: #EF4444; font-size: 0.9rem; margin-bottom: 8px;">🔍 單字發音診斷：</div>
+                                                            <div style="overflow-x: auto;">
+                                                                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
+                                                                    <thead>
+                                                                        <tr style="background: #FEF2F2; color: #991B1B;">
+                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字</th>
+                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的錯誤發音</th>
+                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">正確音標</th>
+                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        ${ai.word_errors.map(err => {
+                                                                            const safeErrWord = err.word ? err.word : '';
+                                                                            const safeWord = String(safeErrWord).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                                                            
+                                                                            let sTime = 0;
+                                                                            if (err.start_time !== undefined) {
+                                                                                if (err.start_time !== null) sTime = Number(err.start_time);
+                                                                            }
+                                                                            
+                                                                            let eTime = sTime + 1.5;
+                                                                            if (err.end_time !== undefined) {
+                                                                                if (err.end_time !== null) eTime = Number(err.end_time);
+                                                                            }
+
+                                                                            let safeStuPron = err.student_pronunciation ? err.student_pronunciation : '';
+                                                                            let safeExpPhonetic = err.expected_phonetic ? err.expected_phonetic : '';
+                                                                            let safeErrType = err.error_type ? err.error_type : '';
+
+                                                                            // 🌟 新增需求：錯音播放改為極簡圖示，不再浪費版面
+                                                                            let playSliceHtml = '';
+                                                                            if (retryAudioId) {
+                                                                                playSliceHtml = `<span onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${retryAudioId}',${sTime}, ${eTime})" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="播放錯誤發音切片">🎧</span>`;
+                                                                            }
+
+                                                                            return `
+                                                                            <tr style="background: white;">
+                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${String(safeErrWord)}</td>
+                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
+                                                                                    <div style="display:flex; align-items:center; flex-wrap:nowrap;">
+                                                                                        <span>${String(safeStuPron)}</span>${playSliceHtml}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
+                                                                                    <div style="display:flex; align-items:center; flex-wrap:nowrap;">
+                                                                                        <span>${String(safeExpPhonetic)}</span>
+                                                                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽示範發音">🔊</span>
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
+                                                                            </tr>`;
+                                                                        }).join('')}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>`;
+                                                    }
+                                                }
+                                            }
+
+                                            const isCollapsed = localStorage.getItem(`ai_report_collapsed_${compositeKey}`) === 'true';
+                                            const reportDisplay = isCollapsed ? 'none' : 'block';
+                                            const toggleIcon = isCollapsed ? '◀️' : '🔽';
+
+                                            aiFeedbackHtml = `
+                                                <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                                                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                                                        <div style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;" onclick="window.FeatureStudentTimeline.toggleAIReport('${compositeKey}')">
+                                                            <span style="font-size:1.1rem;">🤖</span>
+                                                            <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">AI 批改報告</span>
+                                                            <span id="toggle-icon-${compositeKey}" style="font-size: 0.8rem; margin-left: 4px; color: #8B5CF6;">${toggleIcon}</span>
+                                                        </div>
+                                                        <div style="display: flex; gap: 8px;">
+                                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: ${pScoreColor}; border: 1px solid #E2E8F0;">發音: ${pScore}</span>
+                                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: #3B82F6; border: 1px solid #E2E8F0;">流暢度: ${fluency}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div id="ai-report-body-${compositeKey}" style="display: ${reportDisplay}; margin-top: 12px;">
+                                                        <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
+                                                            <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
+                                                            ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            `;
+                                        }
+                                    }
                                 }
-                                
-                                let pScoreColor = '#10B981';
-                                if (pScore !== 'N/A') {
-                                    const numScore = Number(pScore);
-                                    if (numScore < 80) pScoreColor = '#F59E0B';
-                                    if (numScore < 60) pScoreColor = '#EF4444';
-                                }
 
-                                let wordErrorsHtml = '';
-                                if (ai.word_errors && Array.isArray(ai.word_errors) && ai.word_errors.length > 0) {
-                                    wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
-                                        <div style="font-weight: 900; color: #EF4444; font-size: 0.9rem; margin-bottom: 8px;">🔍 單字發音診斷：</div>
-                                        <div style="overflow-x: auto;">
-                                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
-                                                <thead>
-                                                    <tr style="background: #FEF2F2; color: #991B1B;">
-                                                        <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字</th>
-                                                        <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的錯誤發音</th>
-                                                        <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">正確音標</th>
-                                                        <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    ${ai.word_errors.map(err => {
-                                                        const safeErrWord = err.word ? err.word : '';
-                                                        const safeWord = String(safeErrWord).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                                        const sTime = (err.start_time !== undefined && err.start_time !== null) ? Number(err.start_time) : 0;
-                                                        const eTime = (err.end_time !== undefined && err.end_time !== null) ? Number(err.end_time) : (sTime + 1.5);
-                                                        const formatTime = (secs) => {
-                                                            const m = Math.floor(secs / 60);
-                                                            const s = Math.floor(secs % 60);
-                                                            return `${m}:${s.toString().padStart(2, '0')}`;
-                                                        };
-                                                        const timeLabel = `${formatTime(sTime)}~${formatTime(eTime)}`;
+                                // 🌟 狀態防呆：只有真的出錯，才印出錯誤警告區塊
+                                let showAIError = false;
+                                if (taskStatus === 'ai_error') showAIError = true;
+                                else if (taskStatus === 'failed') showAIError = true;
 
-                                                        let safeStuPron = err.student_pronunciation ? err.student_pronunciation : '';
-                                                        let safeExpPhonetic = err.expected_phonetic ? err.expected_phonetic : '';
-                                                        let safeErrType = err.error_type ? err.error_type : '';
-
-                                                        return `
-                                                        <tr style="background: white;">
-                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${String(safeErrWord)}</td>
-                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
-                                                                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                                                    <span>${String(safeStuPron)}</span>
-                                                                    ${retryAudioId ? `<button type="button" onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${retryAudioId}',${sTime}, ${eTime})" style="background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px; padding:4px 8px; font-size:0.8rem; cursor:pointer; color:#475569; font-weight:bold; white-space:nowrap; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.05)); transition:all 0.1s;" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'" title="背景切片回放，不再彈出視窗">🎧 ${timeLabel} 播放</button>` : ''}
-                                                                </div>
-                                                            </td>
-                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
-                                                                <div style="display:flex; align-items:center; gap:8px;">
-                                                                    <span>${String(safeExpPhonetic)}</span>
-                                                                    <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.3rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽 Google 真人發音">🔊</span>
-                                                                </div>
-                                                            </td>
-                                                            <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
-                                                        </tr>`;
-                                                    }).join('')}
-                                                </tbody>
-                                            </table>
+                                if (showAIError) {
+                                    let errorLogText = '系統尚未完成此作業的 AI 分析。';
+                                    if (compRecord.raw_data) {
+                                        if (compRecord.raw_data.ai_error_log) {
+                                            errorLogText = String(compRecord.raw_data.ai_error_log);
+                                        }
+                                    }
+                                    
+                                    aiFeedbackHtml = `
+                                        <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FEF2F2; border-left: 4px solid #EF4444; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                                            <div style="font-weight: 900; color: #B91C1C; font-size: 0.95rem; margin-bottom: 8px;">❌ AI 分析發生錯誤</div>
+                                            <div style="font-size: 0.85rem; color: #7F1D1D; word-break: break-word; background: #FECACA; padding: 8px; border-radius: 4px;">${errorLogText.replace(/\n/g, '<br>')}</div>
                                         </div>
-                                    </div>`;
+                                    `;
                                 }
-
-                                const isCollapsed = localStorage.getItem(`ai_report_collapsed_${compositeKey}`) === 'true';
-                                const reportDisplay = isCollapsed ? 'none' : 'block';
-                                const toggleIcon = isCollapsed ? '◀️' : '🔽';
-
-                                aiFeedbackHtml = `
-                                    <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-                                            <div style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;" onclick="window.FeatureStudentTimeline.toggleAIReport('${compositeKey}')">
-                                                <span style="font-size:1.1rem;">🤖</span>
-                                                <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">AI 批改報告</span>
-                                                <span id="toggle-icon-${compositeKey}" style="font-size: 0.8rem; margin-left: 4px; color: #8B5CF6;">${toggleIcon}</span>
-                                            </div>
-                                            <div style="display: flex; gap: 8px;">
-                                                <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: ${pScoreColor}; border: 1px solid #E2E8F0;">發音: ${pScore}</span>
-                                                <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: #3B82F6; border: 1px solid #E2E8F0;">流暢度: ${fluency}</span>
-                                            </div>
-                                        </div>
-                                        <div id="ai-report-body-${compositeKey}" style="display: ${reportDisplay}; margin-top: 12px;">
-                                            <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
-                                                <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
-                                                ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            } else if (['ai_error', 'failed'].includes(taskStatus)) {
-                                let errorLogText = '系統尚未完成此作業的 AI 分析。';
-                                if (compRecord.raw_data && compRecord.raw_data.ai_error_log) {
-                                    errorLogText = String(compRecord.raw_data.ai_error_log);
-                                }
-                                
-                                aiFeedbackHtml = `
-                                    <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FEF2F2; border-left: 4px solid #EF4444; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                                        <div style="font-weight: 900; color: #B91C1C; font-size: 0.95rem; margin-bottom: 8px;">❌ AI 分析發生錯誤</div>
-                                        <div style="font-size: 0.85rem; color: #7F1D1D; word-break: break-word; background: #FECACA; padding: 8px; border-radius: 4px;">${errorLogText.replace(/\n/g, '<br>')}</div>
-                                    </div>
-                                `;
                             }
                         }
                     }
@@ -383,7 +478,13 @@ window.UIStudentTimelineTemplates = (() => {
                             if (hasValidAudioFile) {
                                 audioPlayerHtml = `<button type="button" onclick="window.UIStudentTimelineTemplates.openDriveModal('${retryAudioId}')" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出完整錄音</button>`;
                                 
-                                if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
+                                // 🌟 嚴格手動按鈕邏輯：只有在「尚未獲得好成績」時才出現手動提交按鈕
+                                let showManualSubmit = false;
+                                if (taskStatus === 'submitted') showManualSubmit = true;
+                                else if (taskStatus === 'failed') showManualSubmit = true;
+                                else if (taskStatus === 'ai_error') showManualSubmit = true;
+
+                                if (showManualSubmit) {
                                     const rawRetryUrl = retryAudioUrl ? retryAudioUrl : '';
                                     const safeRetryAudioUrl = String(rawRetryUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
                                     manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
