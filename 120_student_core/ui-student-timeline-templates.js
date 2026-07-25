@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V80 終極防彈裝甲版：全域強制轉型防護 + 渲染層 Try-Catch 攔截網)
+ * 🌟 純粹視覺模板層 (V86 終極防彈裝甲版：全域強制轉型防護 + 單引號脫逃裝甲 + 渲染層 Try-Catch 攔截網)
  */
 
 window.UIStudentTimelineTemplates = (() => {
@@ -106,7 +106,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V80 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V86 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -327,7 +327,6 @@ window.UIStudentTimelineTemplates = (() => {
 
                         let rangeHtml = materialRange ? `<span style="font-size:0.8rem; background:#E0E7FF; color:#4338CA; padding:2px 8px; border-radius:12px; margin-left:10px; font-weight:800; border:1px solid #C7D2FE; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display:inline-block; vertical-align:middle;">📖 範圍: ${materialRange}</span>` : '';
 
-                        // 🔥 [已修正] 移除破壞 JS 語法的 \vert{}\vert{} 亂碼，改回 ||
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(task.title \vert{}\vert{} '語音錄製任務')}</span>${rangeHtml}`;
 
                         if (!canUpload) {
@@ -360,7 +359,9 @@ window.UIStudentTimelineTemplates = (() => {
                                 audioPlayerHtml = `<button type="button" onclick="window.UIStudentTimelineTemplates.openDriveModal('${retryAudioId}')" class="btn-action" style="background:#8B5CF6; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);">🎵 彈出完整錄音</button>`;
                                 
                                 if (['submitted', 'failed', 'ai_error'].includes(taskStatus)) {
-                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${retryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
+                                    // 🔥 加入脫逃裝甲防護 URL 內的特殊符號
+                                    const safeRetryAudioUrl = String(retryAudioUrl || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
                                 }
                             }
 
@@ -388,7 +389,9 @@ window.UIStudentTimelineTemplates = (() => {
                             
                             const pureTaskTitle = String(task.title || '未命名任務').replace(/<[^>]*>?/gm, '').trim();
                             const safeTitleForJS = pureTaskTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                            const safeNodeTitle = String(node.title || '').replace(/[\\/:*?"<>|]/g, '_');
+                            
+                            // 🔥 [致命 Bug 修復] 強制加上 .replace(/'/g, "\\'") 脫逃單引號，防止注入 HTML 時引發 Missing ) 語法錯誤
+                            const safeNodeTitle = String(node.title || '').replace(/[\\/:*?"<>|]/g, '_').replace(/'/g, "\\'").replace(/"/g, "&quot;");
 
                             const uniqueId = `file-input-${course.id}-${task.id}`;
                             const statusId = `upload-status-${course.id}-${task.id}`;
