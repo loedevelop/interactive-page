@@ -1,12 +1,12 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V94 極限突破版：雙端點繞過 Drive 阻擋、年輕版 Google 美語、暴力切片定位)
+ * 🌟 純粹視覺模板層 (V95 串流代理版：接通 Supabase Stream API，徹底摧毀 Drive 播放阻擋)
  * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
 window.UIStudentTimelineTemplates = (() => {
     
-    // 🔊 1. Google 真人發音引擎 (回歸年輕好聽的 tw-ob 端點)
+    // 🔊 1. Google 美式真人發音引擎 (帶有原生備用防線)
     let sharedTTS = null;
     const playGoogleTTS = (text) => {
         try {
@@ -35,8 +35,7 @@ window.UIStudentTimelineTemplates = (() => {
             }
             sharedTTS.pause();
             
-            // 🌟 強制使用 tw-ob 客戶端，這就是最初那個比較年輕、自然的美式發音
-            sharedTTS.src = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encodeURIComponent(safeText)}`;
+            sharedTTS.src = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en-US&q=${encodeURIComponent(safeText)}`;
             
             const playPromise = sharedTTS.play();
             if (playPromise !== undefined) {
@@ -50,7 +49,7 @@ window.UIStudentTimelineTemplates = (() => {
         }
     };
 
-    // 🎧 2. 錯音切片連動引擎 (暴力等待載入與強制定位)
+    // 🎧 2. 錯音切片連動引擎
     let sliceTimerInterval = null;
     const playStudentAudioSlice = (playerId, startTime, endTime) => {
         try {
@@ -69,7 +68,6 @@ window.UIStudentTimelineTemplates = (() => {
                 
                 if (playPromise !== undefined) {
                     playPromise.then(() => {
-                        // 雙重保險：確保跳轉真的生效
                         if (Math.abs(player.currentTime - startTime) > 0.5) {
                             player.currentTime = startTime;
                         }
@@ -91,7 +89,6 @@ window.UIStudentTimelineTemplates = (() => {
                 }
             };
 
-            // 🌟 暴力防呆：如果播放器死在 0:00 (readyState === 0)，強制重新 load()
             if (player.readyState >= 1) {
                 executePlay();
             } else {
@@ -99,12 +96,7 @@ window.UIStudentTimelineTemplates = (() => {
                     executePlay();
                     player.removeEventListener('loadedmetadata', onReady);
                 };
-                const onError = () => {
-                    alert("⚠️ 無法讀取音檔！請確認 Google Drive 檔案權限已設為公開。");
-                    player.removeEventListener('error', onError);
-                };
                 player.addEventListener('loadedmetadata', onReady);
-                player.addEventListener('error', onError);
                 player.load(); 
             }
         } catch (e) { console.error("切片定位錯誤:", e); }
@@ -121,7 +113,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V94 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V95 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -156,6 +148,7 @@ window.UIStudentTimelineTemplates = (() => {
                     let retryAudioId = '';
                     let retryAudioUrl = '';
                     let taskStatus = '';
+                    let directAudioUrl = ''; 
                     
                     let inlinePlayerId = '';
                     if (course.id) {
@@ -196,10 +189,23 @@ window.UIStudentTimelineTemplates = (() => {
                                         if (driveIdMatch) retryAudioId = driveIdMatch[1];
                                     }
                                     
+                                    // 🌟 V95 核心改裝：將直連網址換成 Supabase Edge Function 代理
                                     if (retryAudioId) {
                                         hasValidAudioFile = true;
+                                        let sUrl = '';
+                                        if (window.supabaseClient) {
+                                            if (window.supabaseClient.supabaseUrl) {
+                                                sUrl = window.supabaseClient.supabaseUrl;
+                                            }
+                                        }
+                                        if (sUrl !== '') {
+                                            directAudioUrl = `${sUrl}/functions/v1/stream-audio?file_id=${retryAudioId}`;
+                                        } else {
+                                            directAudioUrl = `https://drive.google.com/uc?export=download&id=${retryAudioId}`;
+                                        }
                                     } else if (retryAudioUrl) {
                                         hasValidAudioFile = true;
+                                        directAudioUrl = retryAudioUrl;
                                     }
                                 }
 
@@ -442,16 +448,8 @@ window.UIStudentTimelineTemplates = (() => {
                             let manualSubmitBtnHtml = '';
 
                             if (hasValidAudioFile) {
-                                // 🌟 雙重備援直連端點：如果 Drive 阻擋，自動 Fallback 到 lh3.googleusercontent.com 
-                                if (retryAudioId !== '') {
-                                    audioPlayerHtml = `
-                                        <audio id="${inlinePlayerId}" controls preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                                            <source src="https://drive.google.com/uc?export=download&id=${retryAudioId}">
-                                            <source src="https://lh3.googleusercontent.com/d/${retryAudioId}">
-                                        </audio>
-                                    `;
-                                } else if (retryAudioUrl !== '') {
-                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${retryAudioUrl}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
+                                if (directAudioUrl !== '') {
+                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${directAudioUrl}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
                                 }
                                 
                                 let showManualSubmit = false;
@@ -513,7 +511,6 @@ window.UIStudentTimelineTemplates = (() => {
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
                     }
 
-                    // 🌟 錄音範圍：廢除紫色標記，回歸樸素文字並併入說明
                     let cleanTaskDesc = '';
                     if (task.description) {
                         cleanTaskDesc = String(task.description).replace(/<[^>]*>?/gm, '').trim();
