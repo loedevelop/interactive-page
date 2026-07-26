@@ -1,0 +1,9 @@
+schema_id,semantic_key,excel_col,send_to_ai,display,note
+gept_phrase,item_no,A,N,N,題號（出作業 #11~15 用）
+gept_phrase,page,B,N,N,頁次（出作業整頁用；若無此欄可改映射）
+gept_phrase,display_zh,D,N,Y,中文句（顯示用不送 AI）
+gept_phrase,script,F,Y,N,英文句（AI 朗讀稿）
+gept_vocab,item_no,A,N,N,題號
+gept_vocab,display_zh,B,N,Y,中文釋義
+gept_vocab,pos,C,N,Y,詞性
+gept_vocab,script,E,Y,N,英文詞形串（AI 稿；降維規則日後套用）

@@ -80,6 +80,37 @@ function extractDriveFileId(driveUrl: string): string | null {
   return match?.[1] || null;
 }
 
+function scoreScriptLink(linkTask: any): number {
+  if (!linkTask || linkTask.type !== "link") return -1;
+  const hay = `${linkTask.title || ""} ${linkTask.url_text || ""}`.toLowerCase();
+  if (/audio|文稿|script|reading|朗讀/.test(hay)) return 10;
+  return 1;
+}
+
+function findSiblingScriptLink(assignmentTasks: any[], targetTaskId: string): any | null {
+  let result: any | null = null;
+
+  function search(list: any[], parentGroup: any | null): boolean {
+    if (!Array.isArray(list)) return false;
+    for (const t of list) {
+      if (String(t.id) === String(targetTaskId)) {
+        const siblings = parentGroup?.subTasks || list;
+        const links = siblings.filter((s: any) => s?.type === "link" && s.url && String(s.url).trim());
+        links.sort((a: any, b: any) => scoreScriptLink(b) - scoreScriptLink(a));
+        result = links[0] || null;
+        return true;
+      }
+      if (t.type === "group" && Array.isArray(t.subTasks) && search(t.subTasks, t)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  search(assignmentTasks, null);
+  return result;
+}
+
 async function downloadAudioFromDrive(fileId: string): Promise<Uint8Array> {
   const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
   const audioRes = await fetch(downloadUrl);
@@ -134,16 +165,22 @@ async function gradeWithSpeechace(
 }
 
 function mapSpeechaceToEvaluation(speechaceResult: any, phoneticFormat: string): any {
-  const textScore = speechaceResult.text_score || {};
-  const speechaceScore = textScore.speechace_score || {};
-  const wordList = textScore.word_score_list || [];
+  // v9 API returns speech_score; older responses used text_score
+  const scoreBlock = speechaceResult.speech_score || speechaceResult.text_score || {};
+  const speechaceScore = scoreBlock.speechace_score || {};
+  const wordList = scoreBlock.word_score_list || [];
 
   const pronunciationScore = Math.round(
-    speechaceScore.pronunciation ?? speechaceScore.quality ?? textScore.quality_score ?? 0,
+    speechaceScore.pronunciation ??
+      speechaceScore.quality ??
+      scoreBlock.quality_score ??
+      0,
   );
-  const fluencyScore = Math.round(speechaceScore.fluency ?? textScore.fluency_score ?? 0);
+  const fluencyScore = Math.round(
+    speechaceScore.fluency ?? scoreBlock.fluency_score ?? 0,
+  );
   const completenessScore = Math.round(
-    speechaceScore.completeness ?? textScore.completeness_score ?? 100,
+    speechaceScore.completeness ?? scoreBlock.completeness_score ?? 100,
   );
 
   const wordErrors: any[] = [];
@@ -152,7 +189,7 @@ function mapSpeechaceToEvaluation(speechaceResult: any, phoneticFormat: string):
     if (quality >= 80) return;
 
     let errorType = "mispronunciation";
-    if (w.end_time === 0 && w.start_time === 0) errorType = "omission";
+    if (w.quality_class === "omission") errorType = "omission";
 
     let expectedPhonetic = "";
     if (Array.isArray(w.phone_score_list)) {
@@ -163,13 +200,30 @@ function mapSpeechaceToEvaluation(speechaceResult: any, phoneticFormat: string):
       expectedPhonetic = phones ? `/${phones}/` : "";
     }
 
+    let startTime = Number(w.start_time ?? 0);
+    let endTime = Number(w.end_time ?? 0);
+    if (Array.isArray(w.phone_score_list) && w.phone_score_list.length > 0) {
+      let minExtent = Infinity;
+      let maxExtent = -Infinity;
+      for (const p of w.phone_score_list) {
+        if (!Array.isArray(p.extent) || p.extent.length < 2) continue;
+        minExtent = Math.min(minExtent, Number(p.extent[0]));
+        maxExtent = Math.max(maxExtent, Number(p.extent[1]));
+      }
+      if (Number.isFinite(minExtent) && Number.isFinite(maxExtent)) {
+        startTime = minExtent / 100;
+        endTime = maxExtent / 100;
+      }
+    }
+    if (endTime <= startTime) endTime = startTime + 1.5;
+
     wordErrors.push({
       word: w.word || "",
       error_type: errorType,
       expected_phonetic: expectedPhonetic,
       student_pronunciation: w.extended_word_score ? String(w.extended_word_score) : "[需覆核]",
-      start_time: Number(w.start_time ?? 0),
-      end_time: Number(w.end_time ?? w.start_time ?? 0),
+      start_time: startTime,
+      end_time: endTime,
     });
   });
 
@@ -448,6 +502,25 @@ serve(async (req: Request) => {
         useAiGrammar =
           foundTask.use_ai_grammar === true ||
           (foundTask.raw_data && foundTask.raw_data.use_ai_grammar === true);
+
+        if (!originalScript) {
+          const siblingLink = findSiblingScriptLink(assignmentTasks, record.task_id);
+          if (siblingLink?.url) {
+            const linkUrl = String(siblingLink.url).trim();
+            if (!/^https?:\/\//i.test(linkUrl)) {
+              originalScript = linkUrl;
+            }
+          }
+        }
+
+        if (
+          foundTask &&
+          foundTask.use_ai_grading !== false &&
+          (!foundTask.raw_data || foundTask.raw_data.use_ai_grading !== false) &&
+          (originalScript || findSiblingScriptLink(assignmentTasks, record.task_id))
+        ) {
+          useAiGrading = true;
+        }
       }
     }
 
@@ -469,8 +542,15 @@ serve(async (req: Request) => {
       throw new Error("Fatal: original_script is missing in assignment tasks.");
     }
 
-    const driveUrl =
+    let driveUrl =
       currentRawData.student_audio_url || record.audio_url || currentRawData.audio_url;
+    if (
+      !driveUrl &&
+      Array.isArray(currentRawData.drive_file_ids) &&
+      currentRawData.drive_file_ids.length > 0
+    ) {
+      driveUrl = `https://drive.google.com/file/d/${currentRawData.drive_file_ids[0]}/view`;
+    }
     if (!driveUrl) {
       throw new Error("Fatal: audio_url or student_audio_url is missing.");
     }

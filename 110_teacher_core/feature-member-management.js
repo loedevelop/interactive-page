@@ -386,7 +386,7 @@ export class MemberManager {
             try {
                 if (role === 'student') {
                     // 🌟 傳遞乾淨的 ID 進入指派流程
-                    await this.assignStudent(targetUserId, cleanDriveId, fallbackName);
+                    await this.assignStudent(targetUserId, cleanDriveId, fallbackName, targetEmail);
                 } else if (['co_teacher', 'ta_senior', 'ta_junior'].includes(role)) {
                     await this.assignStaff(targetUserId, role);
                 } else if (role === 'parent') {
@@ -462,9 +462,19 @@ export class MemberManager {
         return data; 
     }
 
-    async assignStudent(userId, driveFolderId, studentName) {
+    async assignStudent(userId, driveFolderId, studentName, studentEmail) {
         let finalDriveId = driveFolderId || null;
         let enrollRawData = {};
+        let resolvedShareEmail = (studentEmail || '').trim();
+
+        if (!resolvedShareEmail) {
+            const { data: profileRow } = await this.supabase
+                .from('profiles')
+                .select('email')
+                .eq('id', userId)
+                .maybeSingle();
+            resolvedShareEmail = (profileRow?.email || '').trim();
+        }
 
         // 🌟 絕對防呆機制：先查詢該學生在「本班」是否已經有註冊紀錄與資料夾 ID 了？
         const { data: existingEnroll } = await this.supabase
@@ -509,7 +519,8 @@ export class MemberManager {
 
                     try {
                         console.log(`[自動建檔] 準備在班級目錄下建立專屬資料夾: ${folderName}`);
-                        const res = await window.ApiService.createGASFolder(folderName, parentFolderId, true);
+                        const shareList = resolvedShareEmail ? [resolvedShareEmail] : [];
+                        const res = await window.ApiService.createGASFolder(folderName, parentFolderId, true, shareList);
                         
                         if (res && res.folderId) {
                             enrollRawData.drive_folder_id = res.folderId; 
@@ -523,6 +534,17 @@ export class MemberManager {
         } else {
             // 如果老師有手動輸入，就尊重老師手動貼上的剝殼後 ID
             enrollRawData.drive_folder_id = finalDriveId;
+        }
+
+        if (finalDriveId && window.ApiService && typeof window.ApiService.ensureGASFolderSharing === 'function') {
+            try {
+                await window.ApiService.ensureGASFolderSharing(finalDriveId, {
+                    permission: 'edit',
+                    shareEmails: resolvedShareEmail ? [resolvedShareEmail] : []
+                });
+            } catch (permErr) {
+                console.warn('⚠️ 學生資料夾權限設定失敗（資料夾仍已建立）:', permErr);
+            }
         }
 
         const payload = {

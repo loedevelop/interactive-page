@@ -1,0 +1,8 @@
+# 內部 Agent prompt / 本地規格（不上 GitHub）
+_hand-off_prompt.md
+_Material_Publish_Spec.md
+docs/AGENT_*.md
+
+# macOS
+.DS_Store
+**/.DS_Store

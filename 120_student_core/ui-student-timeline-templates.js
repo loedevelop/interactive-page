@@ -52,11 +52,50 @@ window.UIStudentTimelineTemplates = (() => {
 
     // 🎧 2. 錯音切片連動引擎
     let sliceTimerInterval = null;
-    const playStudentAudioSlice = (playerId, startTime, endTime) => {
+    let sliceAudioCache = {};
+    const playSliceViaFileId = (fileId, startTime, endTime) => {
+        if (!fileId) return;
+        if (window.FeatureStudentTimeline && typeof window.FeatureStudentTimeline.playStudentAudioSlice === 'function') {
+            window.FeatureStudentTimeline.playStudentAudioSlice(fileId, startTime, endTime);
+            return;
+        }
+        if (!sliceAudioCache[fileId]) {
+            const streamUrl = (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function')
+                ? window.ApiService.getAudioStreamUrl(fileId)
+                : `https://drive.google.com/uc?export=download&id=${fileId}`;
+            sliceAudioCache[fileId] = new Audio(streamUrl);
+        }
+        const audio = sliceAudioCache[fileId];
+        if (sliceTimerInterval) clearInterval(sliceTimerInterval);
+        audio.pause();
+        const run = () => {
+            audio.currentTime = startTime;
+            audio.play().catch(e => {
+                console.warn('切片播放被阻擋:', e);
+                alert('⚠️ 無法播放錯音片段，請先點上方播放器播放一次。');
+            });
+            sliceTimerInterval = setInterval(() => {
+                if (audio.paused || audio.currentTime >= endTime) {
+                    audio.pause();
+                    clearInterval(sliceTimerInterval);
+                }
+            }, 50);
+        };
+        if (audio.readyState >= 1) run();
+        else {
+            audio.addEventListener('loadedmetadata', () => run(), { once: true });
+            audio.load();
+        }
+    };
+    const playStudentAudioSlice = (playerId, startTime, endTime, fallbackFileId) => {
         try {
+            let sTime = Number(startTime) || 0;
+            let eTime = Number(endTime) || 0;
+            if (eTime <= sTime) eTime = sTime + 1.5;
+
             const player = document.getElementById(playerId);
             if (!player) {
-                alert("找不到音檔播放器，請確認作業是否已繳交。");
+                playSliceViaFileId(fallbackFileId, sTime, eTime);
                 return;
             }
             
@@ -64,18 +103,18 @@ window.UIStudentTimelineTemplates = (() => {
             player.pause();
             
             const executePlay = () => {
-                player.currentTime = startTime; 
+                player.currentTime = sTime; 
                 const playPromise = player.play();
                 
                 if (playPromise !== undefined) {
                     playPromise.then(() => {
-                        if (Math.abs(player.currentTime - startTime) > 0.5) {
-                            player.currentTime = startTime;
+                        if (Math.abs(player.currentTime - sTime) > 0.5) {
+                            player.currentTime = sTime;
                         }
                         
                         sliceTimerInterval = setInterval(() => {
                             let shouldStop = false;
-                            if (player.currentTime >= endTime) shouldStop = true;
+                            if (player.currentTime >= eTime) shouldStop = true;
                             if (player.paused) shouldStop = true;
                             
                             if (shouldStop) {
@@ -85,7 +124,8 @@ window.UIStudentTimelineTemplates = (() => {
                         }, 50);
                     }).catch(e => {
                         console.warn("切片播放被阻擋:", e);
-                        alert("⚠️ 瀏覽器阻擋了自動播放，請手動點擊上方播放器播放。");
+                        if (fallbackFileId) playSliceViaFileId(fallbackFileId, sTime, eTime);
+                        else alert("⚠️ 瀏覽器阻擋了自動播放，請先點上方播放器播放一次。");
                     });
                 }
             };
@@ -103,6 +143,417 @@ window.UIStudentTimelineTemplates = (() => {
         } catch (e) { console.error("切片定位錯誤:", e); }
     };
 
+    const resolveWordErrorTiming = (err, aiEval) => {
+        let sTime = Number(err.start_time ?? 0);
+        let eTime = Number(err.end_time ?? 0);
+        if (eTime > sTime) return { sTime, eTime };
+
+        const raw = aiEval && aiEval.provider_raw ? aiEval.provider_raw : null;
+        const scoreBlock = raw ? (raw.speech_score || raw.text_score || {}) : {};
+        const wordList = scoreBlock.word_score_list || [];
+        const target = String(err.word || '').toLowerCase();
+        const matched = wordList.find(w => String(w.word || '').toLowerCase() === target);
+        if (matched && Array.isArray(matched.phone_score_list)) {
+            let minE = Infinity;
+            let maxE = -Infinity;
+            matched.phone_score_list.forEach(p => {
+                if (Array.isArray(p.extent) && p.extent.length >= 2) {
+                    minE = Math.min(minE, Number(p.extent[0]));
+                    maxE = Math.max(maxE, Number(p.extent[1]));
+                }
+            });
+            if (Number.isFinite(minE) && Number.isFinite(maxE)) {
+                sTime = minE / 100;
+                eTime = maxE / 100;
+            }
+        }
+        if (eTime <= sTime) eTime = sTime + 1.5;
+        return { sTime, eTime };
+    };
+
+    const getScoresFromAi = (ai) => {
+        let pScore = 'N/A';
+        let fluency = 'N/A';
+        let completeness = 'N/A';
+        if (!ai) return { pScore, fluency, completeness, pScoreColor: '#64748B', avg: 'N/A' };
+        if (ai.pronunciation_score !== undefined && ai.pronunciation_score !== null) pScore = ai.pronunciation_score;
+        else if (ai.score !== undefined && ai.score !== null) pScore = ai.score;
+        if (ai.fluency_score !== undefined && ai.fluency_score !== null) fluency = ai.fluency_score;
+        if (ai.completeness_score !== undefined && ai.completeness_score !== null) completeness = ai.completeness_score;
+        let pScoreColor = '#10B981';
+        if (pScore !== 'N/A') {
+            const numScore = Number(pScore);
+            if (numScore < 80) pScoreColor = '#F59E0B';
+            if (numScore < 60) pScoreColor = '#EF4444';
+        }
+        let avg = 'N/A';
+        if (pScore !== 'N/A' && fluency !== 'N/A') {
+            avg = Math.round((Number(pScore) + Number(fluency)) / 2);
+        } else if (pScore !== 'N/A') avg = Number(pScore);
+        return { pScore, fluency, completeness, pScoreColor, avg };
+    };
+
+    const formatAttemptDate = (ts) => {
+        if (!ts) return '未知時間';
+        const d = new Date(ts);
+        if (Number.isNaN(d.getTime())) return String(ts);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    const extractDriveFileId = (url) => {
+        if (!url) return '';
+        const str = String(url);
+        let m = str.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (!m) m = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        return m ? m[1] : '';
+    };
+
+    const getWordErrorCount = (ai) => {
+        if (!ai) return 0;
+        if (!ai.word_errors) return 0;
+        if (!Array.isArray(ai.word_errors)) return 0;
+        return ai.word_errors.length;
+    };
+
+    const truncateFeedback = (text, maxLen) => {
+        const str = String(text ? text : '').replace(/\s+/g, ' ').trim();
+        if (str.length <= maxLen) return str;
+        return str.slice(0, maxLen) + '…';
+    };
+
+    const buildLearningTrackHtml = (currentAi, history) => {
+        const safeHistory = Array.isArray(history) ? history : [];
+        const aiAttempts = [];
+        safeHistory.forEach(h => {
+            if (h && h.ai_evaluation) aiAttempts.push(h.ai_evaluation);
+        });
+        aiAttempts.push(currentAi);
+        const totalAttempts = aiAttempts.length;
+        const current = getScoresFromAi(currentAi);
+        const first = getScoresFromAi(aiAttempts[0]);
+
+        let pDeltaStr = '';
+        if (current.pScore !== 'N/A' && first.pScore !== 'N/A' && totalAttempts > 1) {
+            const d = Number(current.pScore) - Number(first.pScore);
+            if (d > 0) pDeltaStr = `(↑${d})`;
+            else if (d < 0) pDeltaStr = `(↓${Math.abs(d)})`;
+            else pDeltaStr = '(持平)';
+        }
+
+        const errorCounts = aiAttempts.map(a => getWordErrorCount(a));
+        const errorTrend = errorCounts.join(' → ');
+
+        const wordFreq = {};
+        aiAttempts.forEach(a => {
+            const list = a && a.word_errors ? a.word_errors : [];
+            list.forEach(e => {
+                const w = String(e.word ? e.word : '').toLowerCase();
+                if (w) wordFreq[w] = (wordFreq[w] ? wordFreq[w] : 0) + 1;
+            });
+        });
+        const recurring = Object.entries(wordFreq).filter(entry => entry[1] >= 2).sort((a, b) => b[1] - a[1]).slice(0, 4);
+        const recurringHtml = recurring.length > 0
+            ? recurring.map(([w, c]) => `<span style="background:#FEE2E2;color:#B91C1C;padding:1px 6px;border-radius:4px;font-weight:800;font-size:0.75rem;">${w}(${c}次)</span>`).join(' ')
+            : '<span style="color:#94A3B8;font-size:0.78rem;">無</span>';
+
+        let fixedSincePrevHtml = '<span style="color:#94A3B8;font-size:0.78rem;">—</span>';
+        let newSincePrevHtml = '<span style="color:#94A3B8;font-size:0.78rem;">—</span>';
+        if (totalAttempts >= 2) {
+            const prevAi = aiAttempts[totalAttempts - 2];
+            const latestAi = aiAttempts[totalAttempts - 1];
+            const prevWords = new Set();
+            const latestWords = new Set();
+            const prevList = prevAi && prevAi.word_errors ? prevAi.word_errors : [];
+            const latestList = latestAi && latestAi.word_errors ? latestAi.word_errors : [];
+            prevList.forEach(e => { const w = String(e.word ? e.word : '').toLowerCase(); if (w) prevWords.add(w); });
+            latestList.forEach(e => { const w = String(e.word ? e.word : '').toLowerCase(); if (w) latestWords.add(w); });
+            const fixedSincePrev = [];
+            const newSincePrev = [];
+            prevWords.forEach(w => { if (!latestWords.has(w)) fixedSincePrev.push(w); });
+            latestWords.forEach(w => { if (!prevWords.has(w)) newSincePrev.push(w); });
+            if (fixedSincePrev.length > 0) {
+                fixedSincePrevHtml = fixedSincePrev.slice(0, 4).map(w => `<span style="background:#D1FAE5;color:#065F46;padding:1px 6px;border-radius:4px;font-weight:800;font-size:0.75rem;">${w}</span>`).join(' ');
+            }
+            if (newSincePrev.length > 0) {
+                newSincePrevHtml = newSincePrev.slice(0, 4).map(w => `<span style="background:#FEE2E2;color:#B91C1C;padding:1px 6px;border-radius:4px;font-weight:800;font-size:0.75rem;">${w}</span>`).join(' ');
+            }
+        }
+
+        const dotsHtml = aiAttempts.map((a, i) => {
+            const s = getScoresFromAi(a);
+            const num = s.pScore !== 'N/A' ? Number(s.pScore) : 0;
+            const size = 8 + Math.round(num / 15);
+            const isLast = i === aiAttempts.length - 1;
+            const dot = `<span title="第${i + 1}次 發音${s.pScore}" style="display:inline-block;width:${size}px;height:${size}px;border-radius:50%;background:${isLast ? '#6366F1' : '#A5B4FC'};border:2px solid white;box-shadow:0 0 0 1px #C7D2FE;flex-shrink:0;"></span>`;
+            const line = isLast ? '' : `<span style="flex:1;height:2px;background:linear-gradient(90deg,#C7D2FE,#E0E7FF);min-width:12px;"></span>`;
+            return dot + line;
+        }).join('');
+
+        let insightLine = '';
+        if (totalAttempts > 1 && current.pScore !== 'N/A' && first.pScore !== 'N/A') {
+            const d = Number(current.pScore) - Number(first.pScore);
+            if (d > 0) insightLine = `發音較首次進步 ${d} 分，持續保持！`;
+            else if (d < 0) insightLine = `發音較首次下降 ${Math.abs(d)} 分，再練一次吧。`;
+            else insightLine = `共 ${totalAttempts} 次練習，發音維持穩定。`;
+        }
+
+        return `
+            <div style="margin-bottom:12px;padding:10px 12px;background:linear-gradient(135deg,#EEF2FF,#FAF5FF);border:1px solid #C7D2FE;border-radius:8px;">
+                <div style="font-weight:900;color:#4338CA;font-size:0.9rem;margin-bottom:8px;">📊 本作業學習軌跡</div>
+                <div style="display:flex;align-items:center;gap:0;margin-bottom:8px;padding:4px 0;">${dotsHtml}</div>
+                <div style="font-size:0.78rem;color:#64748B;margin-bottom:6px;">
+                    批改 <strong style="color:#334155;">${totalAttempts}</strong> 次
+                    · 發音 <strong style="color:${current.pScoreColor};">${first.pScore} → ${current.pScore}</strong> ${pDeltaStr}
+                    · 流暢 ${first.fluency} → ${current.fluency}
+                </div>
+                <div style="font-size:0.78rem;color:#64748B;margin-bottom:4px;">错音數 ${errorTrend}</div>
+                <div style="font-size:0.78rem;color:#64748B;margin-bottom:4px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                        <span style="font-weight:800;">反覆出現</span>
+                        <span style="color:#94A3B8;font-size:0.72rem;">（2 次以上批改都被標記的错音）</span>
+                        ${recurringHtml}
+                    </div>
+                </div>
+                <div style="font-size:0.78rem;color:#64748B;margin-bottom:4px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                        <span style="font-weight:800;">較上次已修正</span>
+                        <span style="color:#94A3B8;font-size:0.72rem;">（上次有错、這次沒再出現）</span>
+                        ${fixedSincePrevHtml}
+                    </div>
+                </div>
+                <div style="font-size:0.78rem;color:#64748B;margin-bottom:4px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                        <span style="font-weight:800;">本次新错音</span>
+                        <span style="color:#94A3B8;font-size:0.72rem;">（這次新被標記、上次沒有）</span>
+                        ${newSincePrevHtml}
+                    </div>
+                </div>
+                ${insightLine ? `<div style="font-size:0.78rem;color:#4338CA;font-weight:700;margin-top:6px;padding-top:6px;border-top:1px dashed #C7D2FE;">💡 ${insightLine}</div>` : ''}
+            </div>`;
+    };
+
+    const renderCurrentRowDetailHtml = (ai, compositeKey, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
+        return `<div style="padding:8px 4px;">${renderEvaluationDetailHtml(ai, inlinePlayerId, fallbackFileId, hasValidAudioFile)}</div>`;
+    };
+
+    const renderHistorySummaryHtml = (ai, compositeKey, historyIndex, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
+        if (!ai) return '';
+        let feedback = ai.comprehensive_feedback ? ai.comprehensive_feedback : (ai.feedback ? ai.feedback : '無綜合評語');
+        const shortFeedback = truncateFeedback(feedback, 140);
+        const errors = ai.word_errors ? ai.word_errors : [];
+        let chipsHtml = '';
+        if (errors.length > 0) {
+            chipsHtml = errors.slice(0, 10).map(err => {
+                const w = err.word ? err.word : '';
+                return `<span style="background:#FEF2F2;color:#991B1B;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:800;border:1px solid #FECACA;">${String(w)}</span>`;
+            }).join(' ');
+            if (errors.length > 10) chipsHtml += `<span style="font-size:0.72rem;color:#94A3B8;">+${errors.length - 10}</span>`;
+        } else {
+            chipsHtml = '<span style="font-size:0.78rem;color:#10B981;font-weight:800;">✓ 無明顯错音</span>';
+        }
+        return `
+            <div style="padding:8px 4px;">
+                <div style="font-size:0.82rem;color:#475569;line-height:1.5;margin-bottom:8px;">${String(shortFeedback).replace(/\n/g, ' ')}</div>
+                <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">${chipsHtml}</div>
+                <button type="button" id="ai-history-full-btn-${compositeKey}-${historyIndex}" onclick="event.stopPropagation(); window.FeatureStudentTimeline.toggleAIHistoryFull('${compositeKey}', ${historyIndex})" style="font-size:0.75rem;padding:3px 10px;border-radius:4px;border:1px solid #C7D2FE;background:white;color:#4338CA;font-weight:800;cursor:pointer;">查看完整報告</button>
+                <div id="ai-history-full-${compositeKey}-${historyIndex}" style="display:none;margin-top:10px;">
+                    ${renderEvaluationDetailHtml(ai, inlinePlayerId, fallbackFileId, hasValidAudioFile)}
+                </div>
+            </div>`;
+    };
+
+    const buildHistoryTableHtml = (compositeKey, gradingHistory, currentAi, inlinePlayerId, defaultFileId, hasValidAudioFile) => {
+        if (!currentAi) return '';
+
+        const aiEntries = [];
+        const safeHistory = Array.isArray(gradingHistory) ? gradingHistory : [];
+        safeHistory.forEach((h, idx) => {
+            if (h && h.ai_evaluation) aiEntries.push({ h, idx });
+        });
+
+        const totalAttempts = aiEntries.length + 1;
+        const currentScores = getScoresFromAi(currentAi);
+        const currentDate = formatAttemptDate(currentAi.graded_at ? currentAi.graded_at : '');
+        const currentErrCount = getWordErrorCount(currentAi);
+
+        let currentDeltaStr = '—';
+        if (aiEntries.length > 0) {
+            const lastHistory = aiEntries[aiEntries.length - 1];
+            const prevScores = getScoresFromAi(lastHistory.h.ai_evaluation);
+            if (currentScores.pScore !== 'N/A' && prevScores.pScore !== 'N/A') {
+                const d = Number(currentScores.pScore) - Number(prevScores.pScore);
+                if (d > 0) currentDeltaStr = `<span style="color:#059669;">+${d}</span>`;
+                else if (d < 0) currentDeltaStr = `<span style="color:#DC2626;">${d}</span>`;
+                else currentDeltaStr = '0';
+            }
+        }
+
+        const openIdxRaw = localStorage.getItem(`ai_history_open_${compositeKey}`);
+        const expandAll = openIdxRaw === 'all';
+        const historyRowSelected = openIdxRaw && openIdxRaw !== 'all' && openIdxRaw !== 'current' && openIdxRaw !== '-1';
+        const isCurrentOpen = expandAll ? true : !historyRowSelected;
+        const openKey = openIdxRaw ? openIdxRaw : 'current';
+        const currentRowIcon = isCurrentOpen ? '▼' : '▶';
+        const currentDetailDisplay = isCurrentOpen ? 'table-row' : 'none';
+        const currentDetailHtml = renderCurrentRowDetailHtml(currentAi, compositeKey, inlinePlayerId, defaultFileId, hasValidAudioFile);
+
+        const currentRowHtml = `
+            <tr style="cursor:pointer;background:${isCurrentOpen ? '#EDE9FE' : 'white'};" onclick="window.FeatureStudentTimeline.toggleAIHistoryRow('${compositeKey}', 'current')">
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;text-align:center;width:24px;"><span id="ai-history-icon-${compositeKey}-current">${currentRowIcon}</span></td>
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:800;color:#6D28D9;white-space:nowrap;">
+                    第 ${totalAttempts} 次
+                    <span style="font-size:0.68rem;background:#8B5CF6;color:white;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:900;">最新</span>
+                </td>
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;color:#64748B;font-size:0.78rem;white-space:nowrap;">${currentDate}</td>
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:900;color:${currentScores.pScoreColor};text-align:center;">${currentScores.pScore}</td>
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:900;color:#3B82F6;text-align:center;">${currentScores.fluency}</td>
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:800;color:#EF4444;text-align:center;">${currentErrCount}</td>
+                <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:800;text-align:center;">${currentDeltaStr}</td>
+            </tr>
+            <tr id="ai-history-detail-${compositeKey}-current" style="display:${currentDetailDisplay};">
+                <td colspan="7" style="padding:0 8px 8px;border:1px solid #E2E8F0;background:#FAF5FF;border-top:none;">
+                    ${currentDetailHtml}
+                </td>
+            </tr>`;
+
+        const displayEntries = aiEntries.slice().reverse();
+        const historyRowsHtml = displayEntries.map(entry => {
+            const h = entry.h;
+            const idx = entry.idx;
+            const attemptNum = idx + 1;
+            const hScores = getScoresFromAi(h.ai_evaluation);
+            const hDate = formatAttemptDate(h.timestamp ? h.timestamp : (h.ai_evaluation.graded_at ? h.ai_evaluation.graded_at : ''));
+            const errCount = getWordErrorCount(h.ai_evaluation);
+
+            let deltaStr = '—';
+            if (idx > 0) {
+                const prevEntry = safeHistory[idx - 1];
+                if (prevEntry && prevEntry.ai_evaluation) {
+                    const prevScores = getScoresFromAi(prevEntry.ai_evaluation);
+                    if (hScores.pScore !== 'N/A' && prevScores.pScore !== 'N/A') {
+                        const d = Number(hScores.pScore) - Number(prevScores.pScore);
+                        if (d > 0) deltaStr = `<span style="color:#059669;">+${d}</span>`;
+                        else if (d < 0) deltaStr = `<span style="color:#DC2626;">${d}</span>`;
+                        else deltaStr = '0';
+                    }
+                }
+            }
+
+            const historyFileId = extractDriveFileId(h.audio_url);
+            const rowFileId = historyFileId ? historyFileId : defaultFileId;
+            const rowHasAudio = historyFileId ? true : hasValidAudioFile;
+            const rowKey = String(idx);
+
+            const isOpen = expandAll ? true : (openKey === rowKey);
+            const rowIcon = isOpen ? '▼' : '▶';
+            const detailDisplay = isOpen ? 'table-row' : 'none';
+            const summaryHtml = renderHistorySummaryHtml(h.ai_evaluation, compositeKey, idx, inlinePlayerId, rowFileId, rowHasAudio);
+
+            return `
+                <tr style="cursor:pointer;background:${isOpen ? '#EEF2FF' : 'white'};" onclick="window.FeatureStudentTimeline.toggleAIHistoryRow('${compositeKey}', '${rowKey}')">
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;text-align:center;width:24px;"><span id="ai-history-icon-${compositeKey}-${idx}">${rowIcon}</span></td>
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:800;color:#64748B;white-space:nowrap;">第 ${attemptNum} 次</td>
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;color:#64748B;font-size:0.78rem;white-space:nowrap;">${hDate}</td>
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:900;color:${hScores.pScoreColor};text-align:center;">${hScores.pScore}</td>
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:900;color:#3B82F6;text-align:center;">${hScores.fluency}</td>
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:800;color:#EF4444;text-align:center;">${errCount}</td>
+                    <td style="padding:6px 8px;border:1px solid #E2E8F0;font-weight:800;text-align:center;">${deltaStr}</td>
+                </tr>
+                <tr id="ai-history-detail-${compositeKey}-${idx}" style="display:${detailDisplay};">
+                    <td colspan="7" style="padding:0 8px 8px;border:1px solid #E2E8F0;background:#F8FAFC;border-top:none;">
+                        ${summaryHtml}
+                    </td>
+                </tr>`;
+        }).join('');
+
+        const toggleAllLabel = expandAll ? '收合全部' : '展開全部摘要';
+
+        return `
+            <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #C7D2FE;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+                    <div style="font-weight:900;color:#6366F1;font-size:0.88rem;">📜 批改紀錄 (${totalAttempts})</div>
+                    <button type="button" id="ai-history-toggle-all-${compositeKey}" onclick="window.FeatureStudentTimeline.toggleAllAIHistorySummaries('${compositeKey}')" style="font-size:0.75rem;padding:2px 10px;border-radius:4px;border:1px solid #C7D2FE;background:white;color:#4338CA;font-weight:800;cursor:pointer;">${toggleAllLabel}</button>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                        <thead>
+                            <tr style="background:#F1F5F9;color:#475569;">
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;width:24px;"></th>
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;">次數</th>
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;">時間</th>
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;text-align:center;">發音</th>
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;text-align:center;">流暢</th>
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;text-align:center;">错音</th>
+                                <th style="padding:6px 8px;border:1px solid #E2E8F0;text-align:center;">變化</th>
+                            </tr>
+                        </thead>
+                        <tbody>${currentRowHtml}${historyRowsHtml}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    };
+
+    const renderWordErrorsHtml = (ai, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
+        if (!ai || !ai.word_errors || !Array.isArray(ai.word_errors) || ai.word_errors.length === 0) return '';
+        return `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
+            <div style="font-weight: 900; color: #EF4444; font-size: 0.9rem; margin-bottom: 8px;">🔍 單字發音診斷：</div>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
+                    <thead>
+                        <tr style="background: #FEF2F2; color: #991B1B;">
+                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字</th>
+                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的錯誤發音</th>
+                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">正確音標</th>
+                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${ai.word_errors.map(err => {
+                            const safeErrWord = err.word ? err.word : '';
+                            const safeWord = String(safeErrWord).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            const timing = resolveWordErrorTiming(err, ai);
+                            const safeStuPron = err.student_pronunciation ? err.student_pronunciation : '';
+                            const safeExpPhonetic = err.expected_phonetic ? err.expected_phonetic : '';
+                            const safeErrType = err.error_type ? err.error_type : '';
+                            const safeFileId = String(fallbackFileId || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            let playSliceHtml = '';
+                            if (hasValidAudioFile) {
+                                playSliceHtml = `<span onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${inlinePlayerId}', ${timing.sTime}, ${timing.eTime}, '${safeFileId}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="定位並播放錯誤發音">🎧</span>`;
+                            }
+                            return `
+                            <tr style="background: white;">
+                                <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${String(safeErrWord)}</td>
+                                <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
+                                    <div style="display:flex; align-items:center; flex-wrap:nowrap;">
+                                        <span>${String(safeStuPron)}</span>${playSliceHtml}
+                                    </div>
+                                </td>
+                                <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
+                                    <div style="display:flex; align-items:center; flex-wrap:nowrap;">
+                                        <span>${String(safeExpPhonetic)}</span>
+                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽有道示範發音">🔊</span>
+                                    </div>
+                                </td>
+                                <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    };
+
+    const renderEvaluationDetailHtml = (ai, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
+        if (!ai) return '';
+        let feedback = ai.comprehensive_feedback ? ai.comprehensive_feedback : (ai.feedback ? ai.feedback : '無綜合評語');
+        const wordErrorsHtml = renderWordErrorsHtml(ai, inlinePlayerId, fallbackFileId, hasValidAudioFile);
+        return `<div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
+            <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
+            ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
+        </div>`;
+    };
+
     function getLevelStyle(depth) {
         const styles = [
             { border: '#94A3B8', bg: '#F8FAFC', text: '#475569' }, 
@@ -114,7 +565,7 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V96 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V103 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -233,97 +684,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     if (compRecord.raw_data) {
                                         if (compRecord.raw_data.ai_evaluation) {
                                             const ai = compRecord.raw_data.ai_evaluation;
-                                            
-                                            let pScore = 'N/A';
-                                            if (ai.pronunciation_score !== undefined) {
-                                                if (ai.pronunciation_score !== null) pScore = ai.pronunciation_score;
-                                            }
-                                            if (pScore === 'N/A') {
-                                                if (ai.score !== undefined) {
-                                                    if (ai.score !== null) pScore = ai.score;
-                                                }
-                                            }
-
-                                            let fluency = 'N/A';
-                                            if (ai.fluency_score !== undefined) {
-                                                if (ai.fluency_score !== null) fluency = ai.fluency_score;
-                                            }
-
-                                            let feedback = '無綜合評語';
-                                            if (ai.comprehensive_feedback) feedback = ai.comprehensive_feedback;
-                                            else if (ai.feedback) feedback = ai.feedback;
-                                            
-                                            let pScoreColor = '#10B981';
-                                            if (pScore !== 'N/A') {
-                                                const numScore = Number(pScore);
-                                                if (numScore < 80) pScoreColor = '#F59E0B';
-                                                if (numScore < 60) pScoreColor = '#EF4444';
-                                            }
-
-                                            let wordErrorsHtml = '';
-                                            if (ai.word_errors) {
-                                                if (Array.isArray(ai.word_errors)) {
-                                                    if (ai.word_errors.length > 0) {
-                                                        wordErrorsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
-                                                            <div style="font-weight: 900; color: #EF4444; font-size: 0.9rem; margin-bottom: 8px;">🔍 單字發音診斷：</div>
-                                                            <div style="overflow-x: auto;">
-                                                                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">
-                                                                    <thead>
-                                                                        <tr style="background: #FEF2F2; color: #991B1B;">
-                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">目標單字</th>
-                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">您的錯誤發音</th>
-                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">正確音標</th>
-                                                                            <th style="padding: 6px 10px; border: 1px solid #FECACA; white-space: nowrap;">錯誤類型</th>
-                                                                        </tr>
-                                                                    </thead>
-                                                                    <tbody>
-                                                                        ${ai.word_errors.map(err => {
-                                                                            const safeErrWord = err.word ? err.word : '';
-                                                                            const safeWord = String(safeErrWord).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                                                            
-                                                                            let sTime = 0;
-                                                                            if (err.start_time !== undefined) {
-                                                                                if (err.start_time !== null) sTime = Number(err.start_time);
-                                                                            }
-                                                                            
-                                                                            let eTime = sTime + 1.5;
-                                                                            if (err.end_time !== undefined) {
-                                                                                if (err.end_time !== null) eTime = Number(err.end_time);
-                                                                            }
-
-                                                                            let safeStuPron = err.student_pronunciation ? err.student_pronunciation : '';
-                                                                            let safeExpPhonetic = err.expected_phonetic ? err.expected_phonetic : '';
-                                                                            let safeErrType = err.error_type ? err.error_type : '';
-
-                                                                            let playSliceHtml = '';
-                                                                            if (hasValidAudioFile) {
-                                                                                playSliceHtml = `<span onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${inlinePlayerId}', ${sTime}, ${eTime})" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="定位並播放錯誤發音">🎧</span>`;
-                                                                            }
-
-                                                                            return `
-                                                                            <tr style="background: white;">
-                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; font-weight: 800; color: #334155;">${String(safeErrWord)}</td>
-                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #EF4444; font-weight: bold;">
-                                                                                    <div style="display:flex; align-items:center; flex-wrap:nowrap;">
-                                                                                        <span>${String(safeStuPron)}</span>${playSliceHtml}
-                                                                                    </div>
-                                                                                </td>
-                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; font-family: monospace; color: #10B981;">
-                                                                                    <div style="display:flex; align-items:center; flex-wrap:nowrap;">
-                                                                                        <span>${String(safeExpPhonetic)}</span>
-                                                                                        <span onclick="window.UIStudentTimelineTemplates.playGoogleTTS('${safeWord}')" style="cursor:pointer; font-size:1.2rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1)); transition:transform 0.1s; margin-left: 8px;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'" title="聆聽有道示範發音">🔊</span>
-                                                                                    </div>
-                                                                                </td>
-                                                                                <td style="padding: 6px 10px; border: 1px solid #FECACA; color: #64748B;">${String(safeErrType)}</td>
-                                                                            </tr>`;
-                                                                        }).join('')}
-                                                                    </tbody>
-                                                                </table>
-                                                            </div>
-                                                        </div>`;
-                                                    }
-                                                }
-                                            }
+                                            const scores = getScoresFromAi(ai);
+                                            const gradingHistory = Array.isArray(compRecord.raw_data.grading_history) ? compRecord.raw_data.grading_history : [];
 
                                             const isCollapsed = localStorage.getItem(`ai_report_collapsed_${compositeKey}`) === 'true';
                                             const reportDisplay = isCollapsed ? 'none' : 'block';
@@ -334,25 +696,28 @@ window.UIStudentTimelineTemplates = (() => {
                                                 disclaimerHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 8px; border-radius:4px; font-weight:900; border:1px solid #FDE68A;">⚠️ ${scoreDisclaimer}</span>`;
                                             }
 
+                                            const progressHtml = buildLearningTrackHtml(ai, gradingHistory);
+                                            const latestAttemptNum = gradingHistory.length + 1;
+                                            const historySectionHtml = buildHistoryTableHtml(compositeKey, gradingHistory, ai, inlinePlayerId, retryAudioId, hasValidAudioFile);
+
                                             aiFeedbackHtml = `
                                                 <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                                                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                                                         <div style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;" onclick="window.FeatureStudentTimeline.toggleAIReport('${compositeKey}')">
                                                             <span style="font-size:1.1rem;">🤖</span>
                                                             <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">AI 批改報告</span>
+                                                            <span style="font-size:0.72rem;background:#EDE9FE;color:#6D28D9;padding:1px 6px;border-radius:4px;font-weight:900;">第 ${latestAttemptNum} 次</span>
                                                             <span id="toggle-icon-${compositeKey}" style="font-size: 0.8rem; margin-left: 4px; color: #8B5CF6;">${toggleIcon}</span>
                                                         </div>
                                                         <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
                                                             ${disclaimerHtml}
-                                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: ${pScoreColor}; border: 1px solid #E2E8F0;">發音: ${pScore}</span>
-                                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: #3B82F6; border: 1px solid #E2E8F0;">流暢度: ${fluency}</span>
+                                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: ${scores.pScoreColor}; border: 1px solid #E2E8F0;">發音: ${scores.pScore}</span>
+                                                            <span style="background: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 900; color: #3B82F6; border: 1px solid #E2E8F0;">流暢度: ${scores.fluency}</span>
                                                         </div>
                                                     </div>
                                                     <div id="ai-report-body-${compositeKey}" style="display: ${reportDisplay}; margin-top: 12px;">
-                                                        <div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
-                                                            <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
-                                                            ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
-                                                        </div>
+                                                        ${progressHtml}
+                                                        ${historySectionHtml}
                                                     </div>
                                                 </div>
                                             `;
@@ -466,11 +831,15 @@ window.UIStudentTimelineTemplates = (() => {
                                 if (taskStatus === 'submitted') showManualSubmit = true;
                                 else if (taskStatus === 'failed') showManualSubmit = true;
                                 else if (taskStatus === 'ai_error') showManualSubmit = true;
+                                else if (taskStatus === 'ai_ready') showManualSubmit = true;
 
                                 if (showManualSubmit) {
                                     const rawRetryUrl = retryAudioUrl ? retryAudioUrl : '';
                                     const safeRetryAudioUrl = String(rawRetryUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">🤖 手動提交批改</button>`;
+                                    const manualSubmitLabel = taskStatus === 'ai_ready'
+                                        ? '🤖 重新提交批改'
+                                        : '🤖 手動提交批改';
+                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">${manualSubmitLabel}</button>`;
                                 }
                             }
 
@@ -479,7 +848,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     ${audioPlayerHtml}
                                     <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
                                     <input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
-                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳音檔</button>
+                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;" title="支援 mp3、wav、m4a、webm 等，上傳後自動 AI 批改">📤 上傳音檔 AI 批改</button>
                                     <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
                                     ${manualSubmitBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>

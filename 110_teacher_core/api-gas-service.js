@@ -62,7 +62,7 @@ window.GasService = (function() {
      * 📂 核心功能 2：呼叫 GAS 建立資料夾
      * (對接 Code.gs 的 create_folder 路由)
      */
-    async createFolder(folderName, parentFolderId = null, requireShare = false) {
+    async createFolder(folderName, parentFolderId = null, requireShare = false, shareEmails = null) {
       try {
         const payload = {
           action: 'create_folder',
@@ -70,6 +70,9 @@ window.GasService = (function() {
           parentFolderId: parentFolderId,
           requireShare: requireShare
         };
+        if (shareEmails) {
+          payload.shareEmails = Array.isArray(shareEmails) ? shareEmails : [shareEmails];
+        }
 
         const response = await fetch(GAS_WEB_APP_URL, {
           method: 'POST',
@@ -165,6 +168,66 @@ window.GasService = (function() {
 
       } catch (error) {
         console.error('[GasService] 檔案上傳發生嚴重錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 🔐 確保資料夾為「知道連結可編輯」，並可選加入學生 Google 信箱
+     */
+    async ensureFolderSharing(folderId, options = {}) {
+      try {
+        const payload = {
+          action: 'ensure_folder_sharing',
+          folderId: folderId,
+          permission: options.permission || 'edit'
+        };
+        const emails = options.shareEmails || options.shareEmail || [];
+        if (emails && emails.length) {
+          payload.shareEmails = Array.isArray(emails) ? emails : [emails];
+        }
+
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'GAS 資料夾權限設定失敗');
+        }
+        return result;
+      } catch (error) {
+        console.error('[GasService] 資料夾權限設定錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 📦 核心功能 5：Excel(_Schema/_Publish) → 00_Material_Masters
+     */
+    async publishMaterial(sourceFileId, targetFolderId) {
+      try {
+        const payload = {
+          action: 'publish_material',
+          sourceFileId: sourceFileId,
+          targetFolderId: targetFolderId
+        };
+
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'GAS 教材發布失敗');
+        }
+        return result;
+      } catch (error) {
+        console.error('[GasService] 教材發布錯誤:', error);
         throw error;
       }
     }

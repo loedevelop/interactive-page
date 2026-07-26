@@ -155,6 +155,8 @@
                 <button id="btn-save-class-name-mode" class="btn btn-primary" style="margin-top: 20px;">💾 儲存顯示模式</button>
                 <span id="name-mode-save-msg" style="margin-left: 10px; font-weight: bold;"></span>
             </div>
+
+            <div id="material-publish-mount"></div>
         </div>
 
         <div id="view-global-resources" class="view-section">
@@ -230,9 +232,10 @@
     <script src="../020_js_core/utils-date.js?v=36"></script> 
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/profile-form.js?v=1"></script>
+    <script src="../020_js_core/task-script-resolver.js?v=1"></script>
 
 <!-<!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/api-gas-service.js?v=50"></script> <!-- 這裡已更新，確保打通 API -->
+    <script src="../110_teacher_core/api-gas-service.js?v=51"></script> <!-- 教材發布 publish_material -->
     <script src="../110_teacher_core/ui-core.js?v=37"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=37"></script>
     <script src="../110_teacher_core/ui-timeline-templates.js?v=48"></script>
@@ -251,7 +254,9 @@
     <script src="../110_teacher_core/feature-resource.js?v=37"></script>
     <script src="../110_teacher_core/feature-profile.js?v=39"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=36"></script>
-    <script src="../110_teacher_core/feature-progress.js?v=36"></script>
+    <script src="../110_teacher_core/feature-progress.js?v=37"></script>
+    <script src="../110_teacher_core/feature-ai-backfill.js?v=1"></script>
+    <script src="../110_teacher_core/feature-material-publish.js?v=1"></script>
 
     <script type="module">
         import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=35'; 

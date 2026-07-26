@@ -68,6 +68,102 @@ window.FeatureStudentTimeline = (() => {
         return mime;
     }
 
+    function findTaskConfig(assignmentId, taskId) {
+        const assignRecord = assignments.find(a => String(a.id) === String(assignmentId));
+        if (!assignRecord) return null;
+        let parsedTasks = [];
+        if (typeof assignRecord.tasks === 'string') {
+            try { parsedTasks = JSON.parse(assignRecord.tasks); } catch (e) { parsedTasks = []; }
+        } else if (Array.isArray(assignRecord.tasks)) {
+            parsedTasks = assignRecord.tasks;
+        }
+        let foundTask = null;
+        const findTaskRecursive = (taskList) => {
+            if (!taskList || !Array.isArray(taskList)) return;
+            for (let i = 0; i < taskList.length; i++) {
+                const t = taskList[i];
+                if (String(t.id) === String(taskId)) {
+                    foundTask = t;
+                    return;
+                }
+                if (t.type === 'group' && t.subTasks) findTaskRecursive(t.subTasks);
+            }
+        };
+        findTaskRecursive(parsedTasks);
+        return foundTask;
+    }
+
+    function taskSupportsAIGrading(task, assignmentId) {
+        if (!task) return false;
+        if (window.TaskScriptResolver && typeof window.TaskScriptResolver.taskSupportsAIGrading === 'function') {
+            const assignRecord = assignments.find(a => String(a.id) === String(assignmentId));
+            const parsedTasks = assignRecord
+                ? window.TaskScriptResolver.parseTasks(assignRecord.tasks)
+                : [];
+            return window.TaskScriptResolver.taskSupportsAIGrading(task, parsedTasks);
+        }
+        const raw = task.raw_data ? task.raw_data : {};
+        if (task.type === 'audio_record') {
+            if (raw.use_ai_grading === false) return false;
+            return true;
+        }
+        if (raw.use_ai_grading === true) return true;
+        if (raw.use_ai_grading !== false && raw.original_script) return true;
+        return false;
+    }
+
+    async function ensureFeatureStudentAudioReady() {
+        if (window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
+            return true;
+        }
+        for (let i = 0; i < 30; i++) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            if (window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl) {
+        const compositeKey = `${assignmentId}_${taskId}`;
+        if (!completedTasks.includes(compositeKey)) completedTasks.push(compositeKey);
+        if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+        const audioUrlStr = audioUrl ? String(audioUrl) : '';
+        const rawPatch = {
+            drive_file_ids: fileId ? [String(fileId)] : [],
+            student_audio_url: audioUrlStr,
+            audio_url: audioUrlStr
+        };
+        let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
+        if (tempRecord) {
+            tempRecord.status = 'ai_processing';
+            const prevRaw = tempRecord.raw_data ? tempRecord.raw_data : {};
+            tempRecord.raw_data = Object.assign({}, prevRaw, rawPatch);
+        } else {
+            window._studentTaskCompletions.push({
+                assignment_id: assignmentId,
+                task_id: taskId,
+                status: 'ai_processing',
+                raw_data: rawPatch
+            });
+        }
+    }
+
+    async function submitAudioToAIGrading(assignmentId, taskId, fileId, audioUrl) {
+        const { userId, classId } = await getAuthContext();
+        if (!window.supabaseClient) throw new Error('系統 API 模組尚未載入');
+        const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
+            p_assignment_id: assignmentId,
+            p_task_id: taskId,
+            p_student_id: userId,
+            p_class_id: classId,
+            p_file_id: fileId,
+            p_audio_url: audioUrl
+        });
+        if (rpcErr) throw rpcErr;
+    }
+
     async function uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, fileBlob, originalFileName) {
         const statusEl = document.getElementById(statusId);
 
@@ -86,8 +182,11 @@ window.FeatureStudentTimeline = (() => {
             }
 
             let wavBlob = fileBlob;
-            if (window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
+            const audioReady = await ensureFeatureStudentAudioReady();
+            if (audioReady && window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
                 wavBlob = await window.FeatureStudentAudio.convertBlobToWav(fileBlob);
+            } else if (!audioReady) {
+                console.warn('錄音轉碼模組尚未就緒，將嘗試直接上傳原始音檔');
             }
 
             const reader = new FileReader();
@@ -126,39 +225,14 @@ window.FeatureStudentTimeline = (() => {
             }
 
             const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
-            const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
-                p_assignment_id: assignmentId,
-                p_task_id: taskId,
-                p_student_id: userId,
-                p_class_id: classId,
-                p_file_id: result.fileId,
-                p_audio_url: audioUrl
-            });
-            if (rpcErr) throw rpcErr;
+            await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
 
             if (statusEl) {
                 statusEl.textContent = '✅ 繳交成功！AI 已接管';
                 statusEl.style.color = '#10B981';
             }
 
-            const compositeKey = `${assignmentId}_${taskId}`;
-            if (!completedTasks.includes(compositeKey)) {
-                completedTasks.push(compositeKey);
-            }
-
-            if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
-            let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
-            if (tempRecord) {
-                tempRecord.status = 'ai_processing';
-            } else {
-                window._studentTaskCompletions.push({
-                    assignment_id: assignmentId,
-                    task_id: taskId,
-                    status: 'ai_processing',
-                    raw_data: {}
-                });
-            }
-
+            applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
             renderCourses();
         } catch (err) {
             alert(`❌ 音檔上傳失敗: ${err.message}`);
@@ -424,24 +498,31 @@ window.FeatureStudentTimeline = (() => {
 
             // 快取音檔，避免重複下載
             if (!_audioCache[fileId]) {
-                _audioCache[fileId] = new Audio(`https://drive.google.com/uc?export=download&id=${fileId}`);
+                const streamUrl = (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function')
+                    ? window.ApiService.getAudioStreamUrl(fileId)
+                    : `https://drive.google.com/uc?export=download&id=${fileId}`;
+                _audioCache[fileId] = new Audio(streamUrl);
             }
             const audio = _audioCache[fileId];
             _currentPlaying = audio;
 
-            audio.currentTime = startTime;
-            audio.play().catch(e => {
-                console.warn('Slice playback blocked', e);
-                alert('播放您的原音失敗，請先確認瀏覽器允許媒體播放。');
-            });
+            const playSlice = () => {
+                audio.currentTime = startTime;
+                audio.play().catch(e => {
+                    console.warn('Slice playback blocked', e);
+                    alert('播放您的原音失敗，請先確認瀏覽器允許媒體播放。');
+                });
+                const durationMs = Math.max(300, (endTime - startTime) * 1000);
+                _pauseTimeout = setTimeout(() => {
+                    if (_currentPlaying === audio) audio.pause();
+                }, durationMs);
+            };
 
-            // 到達 endTime 自動暫停
-            const durationMs = (endTime - startTime) * 1000;
-            _pauseTimeout = setTimeout(() => {
-                if (_currentPlaying === audio) {
-                    audio.pause();
-                }
-            }, durationMs);
+            if (audio.readyState >= 1) playSlice();
+            else {
+                audio.addEventListener('loadedmetadata', () => playSlice(), { once: true });
+                audio.load();
+            }
         },
 
         switchView: (viewId, btnElement) => {
@@ -536,6 +617,22 @@ window.FeatureStudentTimeline = (() => {
             };
 
             updateStatus('⏳ 檢查檔案...', '#F59E0B');
+
+            const taskConfig = findTaskConfig(assignmentId, taskId);
+            const aiGradingEnabled = taskSupportsAIGrading(taskConfig, assignmentId);
+
+            if (aiGradingEnabled && filesArray.length >= 1) {
+                const audioFiles = filesArray.filter(f => isAudioUploadFile(f));
+                if (audioFiles.length === filesArray.length && audioFiles.length > 0) {
+                    const targetFile = audioFiles[0];
+                    if (targetFile.size > 25 * 1024 * 1024) {
+                        throw new Error('音檔超過 25MB，請縮短或壓縮後再上傳。');
+                    }
+                    resetInput();
+                    await uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, targetFile, targetFile.name);
+                    return;
+                }
+            }
 
             let uploadedFileIds = [];
 
@@ -760,40 +857,14 @@ window.FeatureStudentTimeline = (() => {
                         }
 
                         const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
-                        const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
-                            p_assignment_id: assignmentId,
-                            p_task_id: taskId,
-                            p_student_id: userId,
-                            p_class_id: classId,
-                            p_file_id: result.fileId,
-                            p_audio_url: audioUrl
-                        });
-
-                        if (rpcErr) throw rpcErr;
+                        await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
                         
                         if (statusEl) {
                             statusEl.textContent = '✅ 繳交成功！AI 已接管';
                             statusEl.style.color = '#10B981';
                         }
                         
-                        const compositeKey = `${assignmentId}_${taskId}`;
-                        if (!completedTasks.includes(compositeKey)) {
-                            completedTasks.push(compositeKey);
-                        }
-                        
-                        if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
-                        let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
-                        if (tempRecord) {
-                            tempRecord.status = 'ai_processing';
-                        } else {
-                            window._studentTaskCompletions.push({
-                                assignment_id: assignmentId,
-                                task_id: taskId,
-                                status: 'ai_processing',
-                                raw_data: {}
-                            });
-                        }
-                        
+                        applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
                         renderCourses();
 
                     } catch (err) {
@@ -862,6 +933,9 @@ window.FeatureStudentTimeline = (() => {
                     statusEl.style.color = '#10B981';
                 }
 
+                applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl);
+                renderCourses();
+
             } catch (err) {
                 alert(`❌ 重新啟動 AI 失敗: ${err.message}`);
                 if (statusEl) {
@@ -885,12 +959,89 @@ window.FeatureStudentTimeline = (() => {
             
             if (body.style.display === 'none') {
                 body.style.display = 'block';
-                icon.textContent = '🔽';
+                if (icon) icon.textContent = '🔽';
                 localStorage.setItem(`ai_report_collapsed_${compositeKey}`, 'false');
             } else {
                 body.style.display = 'none';
-                icon.textContent = '◀️';
+                if (icon) icon.textContent = '◀️';
                 localStorage.setItem(`ai_report_collapsed_${compositeKey}`, 'true');
+            }
+        },
+
+        toggleAIHistoryRow: (compositeKey, rowKey) => {
+            const detailRow = document.getElementById(`ai-history-detail-${compositeKey}-${rowKey}`);
+            const icon = document.getElementById(`ai-history-icon-${compositeKey}-${rowKey}`);
+            if (!detailRow) return;
+
+            const isOpen = detailRow.style.display !== 'none';
+            const prefix = `ai-history-detail-${compositeKey}-`;
+            document.querySelectorAll(`[id^="${prefix}"]`).forEach(el => {
+                el.style.display = 'none';
+            });
+            document.querySelectorAll(`[id^="ai-history-icon-${compositeKey}-"]`).forEach(el => {
+                el.textContent = '▶';
+            });
+
+            const toggleBtn = document.getElementById(`ai-history-toggle-all-${compositeKey}`);
+            if (toggleBtn) toggleBtn.textContent = '展開全部摘要';
+
+            if (!isOpen) {
+                detailRow.style.display = 'table-row';
+                if (icon) icon.textContent = '▼';
+                localStorage.setItem(`ai_history_open_${compositeKey}`, String(rowKey));
+            } else if (rowKey === 'current') {
+                localStorage.setItem(`ai_history_open_${compositeKey}`, 'current');
+            } else {
+                localStorage.setItem(`ai_history_open_${compositeKey}`, '-1');
+            }
+        },
+
+        toggleAIHistoryFull: (compositeKey, historyIndex) => {
+            const full = document.getElementById(`ai-history-full-${compositeKey}-${historyIndex}`);
+            const btn = document.getElementById(`ai-history-full-btn-${compositeKey}-${historyIndex}`);
+            if (!full) return;
+            if (full.style.display === 'none') {
+                full.style.display = 'block';
+                if (btn) btn.textContent = '收合完整報告';
+            } else {
+                full.style.display = 'none';
+                if (btn) btn.textContent = '查看完整報告';
+            }
+        },
+
+        toggleAllAIHistorySummaries: (compositeKey) => {
+            const toggleBtn = document.getElementById(`ai-history-toggle-all-${compositeKey}`);
+            const detailPrefix = `ai-history-detail-${compositeKey}-`;
+            const rows = document.querySelectorAll(`[id^="${detailPrefix}"]`);
+            let anyOpen = false;
+            rows.forEach(el => {
+                if (el.style.display !== 'none') anyOpen = true;
+            });
+            const expand = !anyOpen;
+
+            rows.forEach(el => {
+                const rowKey = el.id.replace(detailPrefix, '');
+                const icon = document.getElementById(`ai-history-icon-${compositeKey}-${rowKey}`);
+                const full = document.getElementById(`ai-history-full-${compositeKey}-${rowKey}`);
+                const btn = document.getElementById(`ai-history-full-btn-${compositeKey}-${rowKey}`);
+                if (expand) {
+                    el.style.display = 'table-row';
+                    if (icon) icon.textContent = '▼';
+                    if (full) full.style.display = 'none';
+                    if (btn) btn.textContent = '查看完整報告';
+                } else {
+                    el.style.display = 'none';
+                    if (icon) icon.textContent = '▶';
+                    if (full) full.style.display = 'none';
+                    if (btn) btn.textContent = '查看完整報告';
+                }
+            });
+
+            if (toggleBtn) toggleBtn.textContent = expand ? '收合全部' : '展開全部摘要';
+            if (expand) {
+                localStorage.setItem(`ai_history_open_${compositeKey}`, 'all');
+            } else {
+                localStorage.setItem(`ai_history_open_${compositeKey}`, '-1');
             }
         }
     };

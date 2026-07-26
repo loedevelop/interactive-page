@@ -255,14 +255,17 @@ const ApiService = (() => {
     };
 
     // 🌟 核心擴充修復：新增 requireShare 參數，精準控制是否開放權限
-    const createGASFolder = async (folderName, parentFolderId = null, requireShare = false) => {
+    const createGASFolder = async (folderName, parentFolderId = null, requireShare = false, shareEmails = null) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000); 
 
         try {
             const payload = { action: 'create_folder', folderName };
             if (parentFolderId) payload.parentFolderId = parentFolderId;
-            if (requireShare) payload.requireShare = true; 
+            if (requireShare) payload.requireShare = true;
+            if (shareEmails) {
+                payload.shareEmails = Array.isArray(shareEmails) ? shareEmails : [shareEmails];
+            }
 
             const response = await fetch(GAS_API_URL, {
                 method: 'POST',
@@ -282,6 +285,47 @@ const ApiService = (() => {
             clearTimeout(timeoutId);
             if (error.name === 'AbortError') throw new Error('建立資料夾逾時，請檢查網路。');
             console.error("[API Error - createGASFolder]", error);
+            throw error;
+        }
+    };
+
+    const ensureGASFolderSharing = async (folderId, options = {}) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+        try {
+            const cleanFolderId = String(folderId || '').trim();
+            if (!cleanFolderId) throw new Error('缺少資料夾 ID');
+
+            const payload = {
+                action: 'ensure_folder_sharing',
+                folderId: cleanFolderId,
+                permission: options.permission || 'edit'
+            };
+
+            const emails = options.shareEmails || options.shareEmail || [];
+            if (emails && emails.length) {
+                payload.shareEmails = Array.isArray(emails) ? emails : [emails];
+            }
+
+            const response = await fetch(GAS_API_URL, {
+                method: 'POST',
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(payload)
+            });
+
+            clearTimeout(timeoutId);
+            if (!response.ok) throw new Error(`連線異常 (HTTP ${response.status})`);
+            const result = JSON.parse(await response.text());
+
+            if (result.status !== 'success') throw new Error(result.message || '無法設定資料夾權限');
+            return result;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') throw new Error('設定權限逾時，請檢查網路。');
+            console.error("[API Error - ensureGASFolderSharing]", error);
             throw error;
         }
     };
@@ -329,7 +373,7 @@ const ApiService = (() => {
     };
 
     return { 
-        fetchClasses, fetchStudents, fetchClassStaff, fetchAssignments, syncProgress, archiveClass, createGASFolder, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
+        fetchClasses, fetchStudents, fetchClassStaff, fetchAssignments, syncProgress, archiveClass, createGASFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
     };
 })();
 

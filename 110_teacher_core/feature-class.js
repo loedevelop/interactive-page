@@ -108,6 +108,10 @@ window.FeatureClass = (() => {
         const weekStart = raw.week_start_day || 'sunday';
         const weekRadios = document.getElementsByName('week_start_day');
         for (let i = 0; i < weekRadios.length; i++) { weekRadios[i].checked = (weekRadios[i].value === weekStart); }
+
+        if (window.FeatureMaterialPublish && typeof window.FeatureMaterialPublish.mountIntoSettings === 'function') {
+            window.FeatureMaterialPublish.mountIntoSettings(classId);
+        }
     }
 
     function renderClassManager() {

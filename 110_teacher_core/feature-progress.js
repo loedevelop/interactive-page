@@ -118,8 +118,9 @@ window.FeatureProgress = (() => {
 
             const { data: completions, error: compError } = await window.supabaseClient
                 .from('task_completions')
-                .select('student_id, task_id')
-                .eq('class_id', classId);
+                .select('student_id, task_id, assignment_id, status, raw_data, deleted_at')
+                .eq('class_id', classId)
+                .is('deleted_at', null);
             if (compError) throw new Error('讀取完成紀錄失敗: ' + compError.message);
 
             renderGrid(container, students, assignments || [], completions || [], classId);
@@ -232,6 +233,10 @@ window.FeatureProgress = (() => {
             </style>
         `;
 
+        const backfillHtml = (window.FeatureAIBackfill && typeof window.FeatureAIBackfill.renderPanel === 'function')
+            ? window.FeatureAIBackfill.renderPanel(classId, validAssignments, completions, students)
+            : '';
+
         container.innerHTML = `
             ${styleHtml}
             <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E2E8F0; margin-top: 20px;">
@@ -258,6 +263,7 @@ window.FeatureProgress = (() => {
                     </table>
                 </div>
             </div>
+            ${backfillHtml}
         `;
     }
 

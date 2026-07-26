@@ -1,0 +1,3 @@
+enabled,source_sheet,row_start,row_end,output_meta,output_txt,schema_id,note
+Y,C,2,LAST,C.meta.json,C.script.txt,gept_phrase,發布活頁 C 全部可用列
+N,Vocab,2,LAST,Vocab.meta.json,Vocab.script.txt,gept_vocab,範例：改 Y 後發布 vocab

@@ -336,11 +336,16 @@ window.FeatureClassMembers = (() => {
                     <div style="padding: 20px;">
                         
                         <div id="sub-tab-content-student" class="member-tab-content" style="display: block; animation: fadeIn 0.3s;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
                                 <h3 style="margin: 0; color: #1E293B;">👥 課程學生與帳號管理</h3>
-                                <span style="font-size: 0.85rem; color: #64748B; background: #F1F5F9; padding: 4px 10px; border-radius: 20px;">
-                                    當前顯示：${effectiveMode === 'cn_first' ? '🇹🇼 模式 2 (中文全名)' : '🇺🇸 模式 1 (英文名+護照姓)'}
-                                </span>
+                                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                    <button type="button" class="btn" style="background:#ECFDF5; color:#047857; border:1px solid #A7F3D0; padding:6px 14px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer;" onclick="window.FeatureClassMembers.repairStudentDrivePermissions('${classId}')" title="將全班學生資料夾設為「知道連結可編輯」，並加入學生 Google 信箱為編輯者">
+                                        🔧 修復全班 Drive 權限
+                                    </button>
+                                    <span style="font-size: 0.85rem; color: #64748B; background: #F1F5F9; padding: 4px 10px; border-radius: 20px;">
+                                        當前顯示：${effectiveMode === 'cn_first' ? '🇹🇼 模式 2 (中文全名)' : '🇺🇸 模式 1 (英文名+護照姓)'}
+                                    </span>
+                                </div>
                             </div>
                             <div style="overflow-x: auto;">
                                 <table style="width: 100%; border-collapse: collapse; background: white; font-size: 0.95rem;">
@@ -459,6 +464,19 @@ window.FeatureClassMembers = (() => {
                     
                 if (enrollError) throw enrollError;
 
+                if (cleanFolderId && window.ApiService && typeof window.ApiService.ensureGASFolderSharing === 'function') {
+                    const { data: profileRow } = await window.supabaseClient
+                        .from('profiles')
+                        .select('email')
+                        .eq('id', studentId)
+                        .maybeSingle();
+                    const shareEmail = (profileRow?.email || '').trim();
+                    await window.ApiService.ensureGASFolderSharing(cleanFolderId, {
+                        permission: 'edit',
+                        shareEmails: shareEmail ? [shareEmail] : []
+                    });
+                }
+
                 btn.innerHTML = '✅';
                 document.getElementById(`std-drive-${studentId}`).value = safeFormatUrl(cleanFolderId);
 
@@ -468,6 +486,54 @@ window.FeatureClassMembers = (() => {
             } finally {
                 setTimeout(() => { btn.innerHTML = originalText; btn.disabled = false; }, 1000);
             }
+        },
+
+        repairStudentDrivePermissions: async (classId) => {
+            if (!window.ApiService || typeof window.ApiService.ensureGASFolderSharing !== 'function') {
+                alert('❌ 雲端 API 尚未載入，請重新整理頁面後再試。');
+                return;
+            }
+
+            const targetClass = (window.TeacherDB?.classes || []).find(c => c.id === classId);
+            const effectiveMode = targetClass?.raw_data?.name_display_mode || targetClass?.rawData?.name_display_mode || 'en_first';
+            const students = await fetchStudentsForClass(classId, effectiveMode);
+            const withDrive = students.filter(s => s.drive_url && s.email && s.email !== '未設定');
+
+            if (withDrive.length === 0) {
+                alert('⚠️ 本班沒有可修復的學生資料夾（需已有 Drive 連結與 Email）。');
+                return;
+            }
+
+            if (!confirm(`將為 ${withDrive.length} 位學生重新設定 Drive 資料夾權限（知道連結可編輯 + 加入學生信箱）。\n\n請確認 GAS 已重新部署後再執行。繼續？`)) {
+                return;
+            }
+
+            let ok = 0;
+            let fail = 0;
+            const failNames = [];
+
+            for (const student of withDrive) {
+                const folderId = extractFolderId(student.drive_url);
+                if (!folderId) {
+                    fail++;
+                    failNames.push(student.displayName);
+                    continue;
+                }
+                try {
+                    await window.ApiService.ensureGASFolderSharing(folderId, {
+                        permission: 'edit',
+                        shareEmails: [student.email]
+                    });
+                    ok++;
+                } catch (err) {
+                    console.warn('[Drive 權限修復失敗]', student.displayName, err);
+                    fail++;
+                    failNames.push(student.displayName);
+                }
+            }
+
+            const detail = failNames.length ? `\n\n失敗：${failNames.join('、')}` : '';
+            alert(`✅ 修復完成：成功 ${ok} 人，失敗 ${fail} 人。${detail}`);
         },
         
         deleteStudent: async (id, classId) => {
