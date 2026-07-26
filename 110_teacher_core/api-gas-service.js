@@ -230,6 +230,60 @@ window.GasService = (function() {
         console.error('[GasService] 教材發布錯誤:', error);
         throw error;
       }
+    },
+
+    async listMaterialMasters(targetFolderId) {
+      const payload = {
+        action: 'list_material_masters',
+        targetFolderId: targetFolderId
+      };
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (result.status !== 'success') {
+        throw new Error(result.message || '無法列出 00_Material_Masters');
+      }
+      return result.materials || [];
+    },
+
+    async readMaterialFile(targetFolderId, materialFolder, fileName) {
+      const payload = {
+        action: 'read_material_file',
+        targetFolderId: targetFolderId,
+        materialFolder: materialFolder || '',
+        fileName: fileName
+      };
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (result.status !== 'success') {
+        throw new Error(result.message || '無法讀取 meta 檔');
+      }
+      return result;
+    },
+
+    async ensureTeacherWorkspace(teacherName, teacherShortId) {
+      const payload = {
+        action: 'ensure_teacher_workspace',
+        teacherName: teacherName,
+        teacherShortId: teacherShortId
+      };
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (result.status !== 'success') {
+        throw new Error(result.message || '無法建立老師工作區');
+      }
+      return result;
     }
   };
 })();

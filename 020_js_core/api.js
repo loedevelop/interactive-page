@@ -255,7 +255,7 @@ const ApiService = (() => {
     };
 
     // 🌟 核心擴充修復：新增 requireShare 參數，精準控制是否開放權限
-    const createGASFolder = async (folderName, parentFolderId = null, requireShare = false, shareEmails = null) => {
+    const createGASFolder = async (folderName, parentFolderId = null, requireShare = false, shareEmails = null, extraOptions = null) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000); 
 
@@ -265,6 +265,10 @@ const ApiService = (() => {
             if (requireShare) payload.requireShare = true;
             if (shareEmails) {
                 payload.shareEmails = Array.isArray(shareEmails) ? shareEmails : [shareEmails];
+            }
+            if (extraOptions && typeof extraOptions === 'object') {
+                if (extraOptions.rootPath) payload.rootPath = extraOptions.rootPath;
+                if (extraOptions.folderPath) payload.folderPath = extraOptions.folderPath;
             }
 
             const response = await fetch(GAS_API_URL, {

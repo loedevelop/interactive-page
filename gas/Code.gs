@@ -106,6 +106,108 @@ function getOrCreatePath(pathArray) {
   return currentFolder;
 }
 
+function findSubFolder(parentFolder, subFolderName) {
+  if (!parentFolder || !subFolderName) return null;
+  var subFolders = parentFolder.getFoldersByName(String(subFolderName));
+  if (subFolders.hasNext()) return subFolders.next();
+  return null;
+}
+
+function resolveFolderPath(parentFolder, pathArray) {
+  var current = parentFolder;
+  if (!pathArray || !pathArray.length) return current;
+  for (var i = 0; i < pathArray.length; i++) {
+    current = getOrCreateSubFolder(current, pathArray[i]);
+  }
+  return current;
+}
+
+function listMaterialMasters(classFolderId) {
+  var classFolder = DriveApp.getFolderById(classFolderId);
+  var mastersRoot = findSubFolder(classFolder, '00_Material_Masters');
+  if (!mastersRoot) {
+    return { materials: [] };
+  }
+
+  var materials = [];
+  var subFolders = mastersRoot.getFolders();
+  while (subFolders.hasNext()) {
+    var sub = subFolders.next();
+    var manifest = null;
+    var manifestFiles = sub.getFilesByName('_manifest.json');
+    if (manifestFiles.hasNext()) {
+      try {
+        manifest = JSON.parse(manifestFiles.next().getBlob().getDataAsString('UTF-8'));
+      } catch (manifestErr) {
+        manifest = null;
+      }
+    }
+
+    var metaFiles = [];
+    var files = sub.getFiles();
+    while (files.hasNext()) {
+      var file = files.next();
+      var fileName = file.getName();
+      if (fileName.indexOf('.meta.json') !== -1) {
+        metaFiles.push({ name: fileName, fileId: file.getId() });
+      }
+    }
+
+    materials.push({
+      folderName: sub.getName(),
+      folderId: sub.getId(),
+      manifest: manifest,
+      metaFiles: metaFiles
+    });
+  }
+
+  return { materials: materials };
+}
+
+function readMaterialFile(classFolderId, materialFolderName, fileName) {
+  var classFolder = DriveApp.getFolderById(classFolderId);
+  var mastersRoot = findSubFolder(classFolder, '00_Material_Masters');
+  if (!mastersRoot) {
+    throw new Error('找不到 00_Material_Masters，請先發布教材。');
+  }
+
+  var targetFolder = mastersRoot;
+  if (materialFolderName) {
+    var named = findSubFolder(mastersRoot, materialFolderName);
+    if (!named) throw new Error('找不到教材子資料夾：' + materialFolderName);
+    targetFolder = named;
+  }
+
+  var cleanName = String(fileName || '').trim();
+  if (!cleanName) throw new Error('缺少 fileName');
+
+  var matches = targetFolder.getFilesByName(cleanName);
+  if (!matches.hasNext()) {
+    throw new Error('找不到檔案：' + cleanName);
+  }
+
+  var file = matches.next();
+  return {
+    fileName: cleanName,
+    fileId: file.getId(),
+    content: file.getBlob().getDataAsString('UTF-8'),
+    mimeType: file.getMimeType()
+  };
+}
+
+function ensureTeacherWorkspace(teacherName, teacherShortId) {
+  var teachersRoot = getOrCreatePath(['LogOnEnglish', 'Teachers']);
+  var safeName = String(teacherName || 'Teacher').replace(/[\\/:*?"<>|]/g, '_').trim();
+  var shortId = String(teacherShortId || '0000').slice(-4);
+  var teacherFolder = getOrCreateSubFolder(teachersRoot, safeName + '_' + shortId);
+  getOrCreateSubFolder(teacherFolder, '00_My_Resources');
+  getOrCreateSubFolder(teacherFolder, '01_My_Materials');
+  return {
+    folderId: teacherFolder.getId(),
+    folderUrl: teacherFolder.getUrl()
+  };
+}
+
 function doGet(e) {
   try {
     var params = e ? e.parameter : {};
@@ -152,17 +254,34 @@ function doPost(e) {
       var cleanFolderName = folderName.replace(/<[^>]*>?/gm, '').replace(/[\\/:*?"<>|]/g, '_').trim();
       if (!cleanFolderName) cleanFolderName = "未命名資料夾";
 
+      var folderPath = data.folderPath || data.relativePath || null;
+      var rootPath = data.rootPath || null;
       var newFolder;
+
       if (parentFolderId) {
-        newFolder = DriveApp.getFolderById(parentFolderId).createFolder(cleanFolderName);
+        var parentFolder = DriveApp.getFolderById(parentFolderId);
+        if (folderPath && folderPath.length) {
+          var chainParent = resolveFolderPath(parentFolder, folderPath);
+          newFolder = getOrCreateSubFolder(chainParent, cleanFolderName);
+        } else {
+          newFolder = parentFolder.createFolder(cleanFolderName);
+        }
         if (requireShare) {
           ensureFolderPublicAccess(newFolder.getId(), {
             permission: 'edit',
             shareEmails: data.shareEmails || data.shareEmail || []
           });
         }
+      } else if (rootPath && rootPath.length) {
+        var rootFolder = getOrCreatePath(rootPath);
+        if (folderPath && folderPath.length) {
+          var nestedParent = resolveFolderPath(rootFolder, folderPath);
+          newFolder = getOrCreateSubFolder(nestedParent, cleanFolderName);
+        } else {
+          newFolder = rootFolder.createFolder(cleanFolderName);
+        }
       } else {
-        var targetRootFolder = getOrCreatePath(["_LOE", "_std"]);
+        var targetRootFolder = getOrCreatePath(['LogOnEnglish', '_Classes']);
         newFolder = targetRootFolder.createFolder(cleanFolderName);
       }
 
@@ -182,9 +301,20 @@ function doPost(e) {
       var cleanName = studentName.replace(/<[^>]*>?/gm, '').replace(/[\\/:*?"<>|]/g, '_').trim();
       var targetFolderName = cleanName + "_" + studentShortId;
       var parentFolder = DriveApp.getFolderById(pFolderId);
-      var newStudentFolder = parentFolder.createFolder(targetFolderName);
+      var studentsRoot = findSubFolder(parentFolder, '02_Students');
+      var newStudentFolder;
 
-      ensureFolderPublicAccess(newStudentFolder.getId(), { permission: 'edit' });
+      if (studentsRoot) {
+        var studentDir = getOrCreateSubFolder(studentsRoot, targetFolderName);
+        newStudentFolder = getOrCreateSubFolder(studentDir, '01_Submissions');
+      } else {
+        newStudentFolder = getOrCreateSubFolder(parentFolder, targetFolderName);
+      }
+
+      ensureFolderPublicAccess(newStudentFolder.getId(), {
+        permission: 'edit',
+        shareEmails: data.shareEmails || data.shareEmail || []
+      });
 
       var movedCount = 0;
       var actualOldId = oldFolderId;
@@ -269,6 +399,43 @@ function doPost(e) {
         folderUrl: shareResult.folderUrl,
         permission: shareResult.permission,
         addedEditors: shareResult.addedEditors
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'list_material_masters') {
+      var listFolderId = data.targetFolderId ? String(data.targetFolderId).trim() : '';
+      if (!listFolderId) throw new Error('缺少 targetFolderId');
+      var listResult = listMaterialMasters(listFolderId);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        materials: listResult.materials
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'read_material_file') {
+      var readClassFolderId = data.targetFolderId ? String(data.targetFolderId).trim() : '';
+      var readMaterialFolder = data.materialFolder ? String(data.materialFolder).trim() : '';
+      var readFileName = data.fileName ? String(data.fileName).trim() : '';
+      if (!readClassFolderId || !readFileName) {
+        throw new Error('缺少 targetFolderId 或 fileName');
+      }
+      var readResult = readMaterialFile(readClassFolderId, readMaterialFolder, readFileName);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        fileName: readResult.fileName,
+        fileId: readResult.fileId,
+        content: readResult.content
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'ensure_teacher_workspace') {
+      var teacherName = data.teacherName ? String(data.teacherName) : 'Teacher';
+      var teacherShortId = data.teacherShortId ? String(data.teacherShortId) : '0000';
+      var teacherWs = ensureTeacherWorkspace(teacherName, teacherShortId);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        folderId: teacherWs.folderId,
+        folderUrl: teacherWs.folderUrl
       })).setMimeType(ContentService.MimeType.JSON);
     }
 

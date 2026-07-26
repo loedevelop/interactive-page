@@ -333,12 +333,37 @@ window.TimelineTemplates = (() => {
                     const safeStudentDriveUrl = (raw.student_drive_url || '').replace(/"/g, '&quot;');
                     const safeStudentDriveDesc = (raw.student_drive_desc || '').replace(/"/g, '&quot;');
                     const safeStudentLocalDesc = (raw.student_local_desc || '').replace(/"/g, '&quot;');
-                    const safeStudentText = (raw.student_text || '').replace(/"/g, '&quot;');
+                    const safeStudentText = (raw.student_display_text || raw.student_display || raw.student_text || '').replace(/"/g, '&quot;');
+                    let snapshotJsonAttr = '';
+                    if (raw.snapshot_at) {
+                        try {
+                            snapshotJsonAttr = JSON.stringify({
+                                material_ref: raw.material_ref || null,
+                                original_script: raw.original_script || '',
+                                student_display: raw.student_display || raw.student_display_text || '',
+                                student_display_text: raw.student_display_text || raw.student_display || '',
+                                snapshot_at: raw.snapshot_at
+                            }).replace(/"/g, '&quot;');
+                        } catch (_snapErr) {
+                            snapshotJsonAttr = '';
+                        }
+                    }
                     
                     // Base64 快取防呆 (切換頁面時不遺失)
                     const safeStudentLocalB64 = raw.student_local_b64 || '';
                     const safeStudentLocalMime = raw.student_local_mime || '';
                     const safeStudentLocalFilename = (raw.student_local_filename || '').replace(/"/g, '&quot;');
+                    const materialMetaValue = raw.material_ref
+                        ? ((raw.material_ref.material_folder || '') + '::' + (raw.material_ref.published_file || ''))
+                        : '';
+                    const safeMaterialMetaValue = materialMetaValue.replace(/"/g, '&quot;');
+                    const materialMode = (raw.material_ref && raw.material_ref.select_mode) ? raw.material_ref.select_mode : 'item_range';
+                    const materialPage = (raw.material_ref && raw.material_ref.page != null) ? raw.material_ref.page : '';
+                    const materialItemFrom = (raw.material_ref && raw.material_ref.item_from != null) ? raw.material_ref.item_from : '';
+                    const materialItemTo = (raw.material_ref && raw.material_ref.item_to != null) ? raw.material_ref.item_to : '';
+                    const snapshotPreview = raw.snapshot_at
+                        ? ('已凍結 snapshot：' + raw.snapshot_at)
+                        : '尚未套用 Material snapshot';
 
                     let resOptsHtmlForStudentDrive = '';
                     if (classResOpts) {
@@ -358,6 +383,42 @@ window.TimelineTemplates = (() => {
                                 <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#D97706;">
                                     <input type="checkbox" id="node-use-grammar-${pathStr}" style="transform:scale(1.2); accent-color:#D97706;" ${useAiGrammar ? 'checked' : ''}> 📝 AI 批改文法
                                 </label>
+                            </div>
+
+                            <!-- 🌟 Material Snapshot：從 00_Material_Masters 切片 -->
+                            <div style="background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:15px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+                                    <div style="font-weight:900; color:#5B21B6;">📦 00 Material Snapshot（出作業凍結稿）</div>
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')">🔄 載入 meta 清單</button>
+                                </div>
+                                <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+                                    <select id="node-material-meta-select-${pathStr}" class="form-control" style="flex:2; min-width:220px; padding:6px; font-size:0.85rem;">
+                                        ${safeMaterialMetaValue ? `<option value="${safeMaterialMetaValue}" selected>${safeMaterialMetaValue.replace(/::/g, ' / ')}</option>` : ''}
+                                        <option value="" ${safeMaterialMetaValue ? '' : 'selected'}>— 請先按「載入 meta 清單」—</option>
+                                    </select>
+                                    <select id="node-material-mode-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:700;" onchange="window.FeatureTimeline.onMaterialModeChange('${pathStr}')">
+                                        <option value="item_range" ${materialMode === 'item_range' ? 'selected' : ''}># 題號範圍</option>
+                                        <option value="page" ${materialMode === 'page' ? 'selected' : ''}>整頁 page</option>
+                                        <option value="all" ${materialMode === 'all' ? 'selected' : ''}>全部列</option>
+                                    </select>
+                                </div>
+                                <div id="node-material-page-wrap-${pathStr}" style="display:${materialMode === 'page' ? 'flex' : 'none'}; gap:8px; align-items:center; margin-bottom:8px;">
+                                    <span style="font-size:0.85rem; font-weight:800; color:#475569;">page</span>
+                                    <input type="number" id="node-material-page-${pathStr}" class="form-control" style="width:100px; padding:6px;" value="${materialPage}" placeholder="3">
+                                </div>
+                                <div id="node-material-range-wrap-${pathStr}" style="display:${materialMode === 'item_range' ? 'flex' : 'none'}; gap:8px; align-items:center; margin-bottom:8px;">
+                                    <span style="font-size:0.85rem; font-weight:800; color:#475569;">#</span>
+                                    <input type="number" id="node-material-item-from-${pathStr}" class="form-control" style="width:100px; padding:6px;" value="${materialItemFrom}" placeholder="11">
+                                    <span>～</span>
+                                    <input type="number" id="node-material-item-to-${pathStr}" class="form-control" style="width:100px; padding:6px;" value="${materialItemTo}" placeholder="15">
+                                </div>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')">👁 預覽</button>
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#059669; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')">📌 套用 Snapshot</button>
+                                </div>
+                                <div id="node-material-status-${pathStr}" style="font-size:0.8rem; color:#64748B; margin-bottom:6px;"></div>
+                                <div id="node-material-preview-${pathStr}" style="font-size:0.8rem; color:#475569; background:white; border:1px dashed #CBD5E1; border-radius:6px; padding:8px; max-height:160px; overflow:auto;">${snapshotPreview}</div>
+                                <input type="hidden" id="node-material-snapshot-json-${pathStr}" value="${snapshotJsonAttr}">
                             </div>
 
                             <div style="display:flex; flex-direction:column; gap:15px;">

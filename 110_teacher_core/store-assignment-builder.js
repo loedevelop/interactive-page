@@ -85,6 +85,39 @@ window.BuilderStore = (() => {
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
                     if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
 
+                    const snapshotJsonEl = document.getElementById(`node-material-snapshot-json-${pathStr}`);
+                    if (snapshotJsonEl && snapshotJsonEl.value) {
+                        try {
+                            const snap = JSON.parse(snapshotJsonEl.value);
+                            if (snap.original_script) t.raw_data.original_script = sanitizeScript(snap.original_script);
+                            if (snap.student_display || snap.student_display_text) {
+                                const displayText = snap.student_display || snap.student_display_text;
+                                t.raw_data.student_display = displayText;
+                                t.raw_data.student_display_text = displayText;
+                                t.raw_data.student_text = displayText;
+                            }
+                            if (snap.material_ref) t.raw_data.material_ref = snap.material_ref;
+                            if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
+                        } catch (_snapErr) {}
+                    } else {
+                        const metaSelectEl = document.getElementById(`node-material-meta-select-${pathStr}`);
+                        const modeEl = document.getElementById(`node-material-mode-${pathStr}`);
+                        const pageEl = document.getElementById(`node-material-page-${pathStr}`);
+                        const fromEl = document.getElementById(`node-material-item-from-${pathStr}`);
+                        const toEl = document.getElementById(`node-material-item-to-${pathStr}`);
+                        if (metaSelectEl && metaSelectEl.value) {
+                            const parts = metaSelectEl.value.split('::');
+                            t.raw_data.material_ref = {
+                                material_folder: parts[0] || '',
+                                published_file: parts[1] || '',
+                                select_mode: modeEl ? modeEl.value : 'item_range',
+                                page: pageEl && pageEl.value ? Number(pageEl.value) : null,
+                                item_from: fromEl && fromEl.value ? Number(fromEl.value) : null,
+                                item_to: toEl && toEl.value ? Number(toEl.value) : null
+                            };
+                        }
+                    }
+
                     const studentSourceTypeEl = document.getElementById(`node-student-source-type-${pathStr}`);
                     if (studentSourceTypeEl) t.raw_data.student_source_type = studentSourceTypeEl.value;
 
@@ -107,7 +140,11 @@ window.BuilderStore = (() => {
                     if (studentLocalFilenameEl) t.raw_data.student_local_filename = studentLocalFilenameEl.value;
 
                     const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
-                    if (studentTextEl) t.raw_data.student_text = studentTextEl.value;
+                    if (studentTextEl) {
+                        t.raw_data.student_text = studentTextEl.value;
+                        if (!t.raw_data.student_display) t.raw_data.student_display = studentTextEl.value;
+                        if (!t.raw_data.student_display_text) t.raw_data.student_display_text = studentTextEl.value;
+                    }
                 }
             }
         });

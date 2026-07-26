@@ -782,11 +782,16 @@ window.UIStudentTimelineTemplates = (() => {
                         }
                     } else if (task.type === 'audio_record') {
                         
+                        let studioScript = '';
                         let originalScript = '';
                         let materialUrl = '';
                         let materialRange = '';
                         if (task.raw_data) {
                             if (task.raw_data.original_script) originalScript = String(task.raw_data.original_script);
+                            if (task.raw_data.student_display_text) studioScript = String(task.raw_data.student_display_text);
+                            else if (task.raw_data.student_display) studioScript = String(task.raw_data.student_display);
+                            else if (task.raw_data.student_text) studioScript = String(task.raw_data.student_text);
+                            else studioScript = originalScript;
                             if (task.raw_data.material_url) materialUrl = String(task.raw_data.material_url);
                             if (task.raw_data.material_range) materialRange = String(task.raw_data.material_range);
                         }
@@ -808,7 +813,8 @@ window.UIStudentTimelineTemplates = (() => {
                             const statusId = `upload-status-${course.id}-${task.id}`;
                             
                             const safeTitleForJS = pureTaskTitle.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                            const safeScriptForJS = String(originalScript).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
+                            const boothScript = studioScript || originalScript;
+                            const safeScriptForJS = String(boothScript).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
                             const safeUrlForJS = String(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
                             const safeRangeForJS = String(materialRange).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
 
