@@ -209,6 +209,12 @@ window.TeacherUI = (() => {
         if (classListContainer.dataset.booted === '1' && classListContainer.dataset.sidebarSig === nextSig) {
             bindClassListDelegation();
             saveSidebarCache(window.TeacherDB.classes);
+            // 名單未變時仍須同步目前選取班級的高亮（否則標題與側欄會錯開）
+            const headerVisible = classContextHeader && classContextHeader.style.display !== 'none';
+            classListContainer.querySelectorAll('.class-item').forEach(function (el) {
+                const isActive = headerVisible && el.getAttribute('data-class-id') === String(currentClassId || '');
+                el.classList.toggle('active', isActive);
+            });
             return;
         }
 
