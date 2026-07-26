@@ -1,37 +1,4 @@
--- Fix: archived class browse shows no assignments when archive soft-deleted them
-
-CREATE OR REPLACE FUNCTION public.fetch_archived_class_assignments(target_class_id uuid)
-RETURNS json
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  result json;
-BEGIN
-  IF NOT public.can_manage_archived_class(target_class_id) THEN
-    RAISE EXCEPTION '無權限讀取此封存班級';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM public.classes c
-    WHERE c.id = target_class_id AND c.deleted_at IS NOT NULL
-  ) THEN
-    RAISE EXCEPTION '找不到封存班級';
-  END IF;
-
-  -- Include soft-deleted rows: assignments are often marked deleted_at on class archive
-  SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) INTO result
-  FROM (
-    SELECT id, class_id, title, description, target_date, due_date, tasks, raw_data, created_at, deleted_at
-    FROM public.assignments
-    WHERE class_id = target_class_id
-    ORDER BY target_date ASC NULLS LAST, created_at ASC
-  ) a;
-
-  RETURN result;
-END;
-$$;
+-- Fix: restore must bring back soft-deleted enrollments / staff / student profiles
 
 CREATE OR REPLACE FUNCTION public.restore_class_atomic(target_class_id uuid)
 RETURNS json
@@ -53,6 +20,7 @@ BEGIN
     RAISE EXCEPTION '找不到班級';
   END IF;
 
+  -- 若仍在封存中，先恢復班級本體（已恢復的班級此句影響 0 列）
   UPDATE public.classes
   SET deleted_at = NULL
   WHERE id = target_class_id AND deleted_at IS NOT NULL;
@@ -75,6 +43,7 @@ BEGIN
     AND deleted_at IS NOT NULL;
   GET DIAGNOSTICS staff_restored = ROW_COUNT;
 
+  -- 封存時若勾選「連同學生帳號軟刪除」，一併恢復本班相關 profile
   UPDATE public.profiles p
   SET deleted_at = NULL
   WHERE p.deleted_at IS NOT NULL
@@ -103,3 +72,5 @@ BEGIN
   );
 END;
 $$;
+
+GRANT EXECUTE ON FUNCTION public.restore_class_atomic(uuid) TO authenticated;

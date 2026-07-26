@@ -295,9 +295,9 @@ const ApiService = (() => {
 
     const restoreClass = async (classId) => {
         try {
-            const { error } = await window.supabaseClient.rpc('restore_class_atomic', { target_class_id: classId });
+            const { data, error } = await window.supabaseClient.rpc('restore_class_atomic', { target_class_id: classId });
             if (error) throw error;
-            return { success: true };
+            return { success: true, detail: data };
         } catch (error) {
             console.error("[API Error - restoreClass]", error);
             throw new Error('恢復班級失敗：' + error.message);

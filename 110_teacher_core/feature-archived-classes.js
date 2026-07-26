@@ -371,7 +371,7 @@ window.FeatureArchivedClasses = (function () {
         var cls = cachedArchived.find(function (c) { return String(c.id) === String(classId); });
         var restoredName = cls ? cls.name : '班級';
         try {
-            await window.ApiService.restoreClass(classId);
+            var result = await window.ApiService.restoreClass(classId);
             if (window.ApiService.fetchClasses) {
                 window.TeacherDB.classes = await window.ApiService.fetchClasses();
             }
@@ -382,7 +382,13 @@ window.FeatureArchivedClasses = (function () {
                 await renderSection({ force: true });
             }
             if (window.TeacherUI) window.TeacherUI.renderSidebar();
-            window.showFlash('已恢復班級「' + restoredName + '」');
+            var detail = result && result.detail ? result.detail : null;
+            var extra = '';
+            if (detail && typeof detail === 'object') {
+                var n = Number(detail.enrollments_restored || 0);
+                if (n > 0) extra = '（已恢復 ' + n + ' 位學生選課）';
+            }
+            window.showFlash('已恢復班級「' + restoredName + '」' + extra);
         } catch (err) {
             window.showFlash(err.message, 'error');
         }
