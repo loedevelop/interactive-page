@@ -443,7 +443,7 @@ window.FeatureTimeline = (() => {
         getTaskParentArray: (pathArray) => window.BuilderStore.getTaskParentArray(pathArray),
         
         openBuilder: (classId, date, containerId) => {
-            if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法新增或修改作業。');
+            if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法新增或修改作業。', 'error');
             window.BuilderStore.initNew(classId, date, containerId);
             renderBuilderUI();
             setTimeout(() => { 
@@ -460,7 +460,7 @@ window.FeatureTimeline = (() => {
             if (!db || !db.assignments) return;
             const a = db.assignments.find(x => x.id === assignId);
             if (!a) return;
-            if (!checkCanEditTimeline(a.class_id)) return alert('權限不足：您的身分無法修改此作業。');
+            if (!checkCanEditTimeline(a.class_id)) return window.showFlash('權限不足：您的身分無法修改此作業。', 'error');
             
             const cls = db.classes.find(c => c.id === a.class_id) || {};
             let raw = cls.raw_data || {};
@@ -533,7 +533,7 @@ window.FeatureTimeline = (() => {
                 return;
             }
             if (file.size > 15 * 1024 * 1024) { 
-                alert('⚠️ 檔案過大，請選擇 15MB 以下的檔案以確保上傳順暢。');
+                window.showFlash('檔案過大，請選擇 15MB 以下的檔案', 'error');
                 inputEl.value = '';
                 return;
             }
@@ -593,12 +593,12 @@ window.FeatureTimeline = (() => {
                 }
 
                 textarea.value = fullText.trim();
-                alert('✅ PDF 文字萃取成功！請檢查並手動修飾排版。');
+                window.showFlash('PDF 文字萃取成功，請檢查並修飾排版');
 
             } catch (error) {
                 console.error("PDF 解析失敗:", error);
                 textarea.value = originalText;
-                alert('❌ PDF 解析失敗: ' + error.message);
+                window.showFlash('PDF 解析失敗：' + error.message, 'error');
             } finally {
                 inputEl.value = ''; 
                 window.BuilderStore.sync(); 
@@ -629,7 +629,7 @@ window.FeatureTimeline = (() => {
             window.BuilderStore.sync(); 
             const bState = window.BuilderStore.getState();
             const titleText = bState.title.replace(/<[^>]*>?/gm, '').trim();
-            if (!titleText) return alert('⚠️ 請填寫大區塊標題！');
+            if (!titleText) return window.showFlash('⚠️ 請填寫大區塊標題！', 'error');
             if (!db.assignments) db.assignments = [];
             
             const originalText = btnEl.innerHTML;
@@ -721,7 +721,7 @@ window.FeatureTimeline = (() => {
                 window.BuilderStore.clear();
                 renderTimeline(savedClassId, 'target', `assign-block-${savedId}`);
             } catch (err) {
-                alert('❌ 作業儲存失敗: ' + err.message);
+                window.showFlash('作業儲存失敗：' + err.message, 'error');
                 btnEl.innerHTML = originalText; btnEl.disabled = false;
             }
         },
@@ -736,7 +736,7 @@ window.FeatureTimeline = (() => {
             const selectEl = document.getElementById(`history-select-${state.containerId}`);
             if (!selectEl) return;
             const historyId = selectEl.value;
-            if (!historyId) return alert('⚠️ 請先選擇要刪除的歷史紀錄！');
+            if (!historyId) return window.showFlash('⚠️ 請先選擇要刪除的歷史紀錄！', 'error');
             if (!confirm('確定要封存這個歷史作業模板嗎？')) return;
             
             try {
@@ -744,12 +744,12 @@ window.FeatureTimeline = (() => {
                 if (error) throw error;
                 if (!updatedRows || updatedRows.length === 0) throw new Error("資料庫拒絕了修改");
                 db.assignments = db.assignments.filter(a => a.id !== historyId);
-                alert('✅ 已成功封存！');
+                window.showFlash('已成功封存');
                 renderBuilderUI();
-            } catch (err) { alert('❌ 封存失敗: ' + err.message); }
+            } catch (err) { window.showFlash('封存失敗：' + err.message, 'error'); }
         },
         deleteAssignment: async (assignId, classId) => {
-            if(!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法封存作業。');
+            if(!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法封存作業。', 'error');
             if(!confirm('確定要封存此作業區塊嗎？\n(注意：這將會隱藏作業，學生的打勾紀錄仍會保存在系統中)')) return;
             
             const btn = window.event.target;
@@ -764,7 +764,7 @@ window.FeatureTimeline = (() => {
                 db.assignments = db.assignments.filter(a => a.id !== assignId);
                 renderTimeline(classId, 'none');
             } catch (err) {
-                alert('❌ 封存失敗: ' + err.message);
+                window.showFlash('封存失敗：' + err.message, 'error');
                 btn.innerHTML = originalText; btn.disabled = false;
             }
         },
@@ -778,7 +778,7 @@ window.FeatureTimeline = (() => {
             const cls = db.classes.find(c => c.id === classId);
             let raw = cls?.raw_data || {};
             if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = {}; } }
-            if (!raw.line_notify_token) return alert('⚠️ 此班級尚未綁定 LINE Notify Token！\n請先至「⚙️ 班級設定」中進行綁定。');
+            if (!raw.line_notify_token) return window.showFlash('⚠️ 此班級尚未綁定 LINE Notify Token！\n請先至「⚙️ 班級設定」中進行綁定。', 'error');
 
             const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
             const overlayId = 'line-push-modal';
@@ -800,9 +800,9 @@ window.FeatureTimeline = (() => {
                 if (!window.ServiceLineNotify || typeof window.ServiceLineNotify.pushAssignment !== 'function') throw new Error("系統提示：LINE 推播微服務尚未載入。");
                 await window.ServiceLineNotify.pushAssignment(classId, assignId);
                 document.getElementById('line-push-modal').remove();
-                alert('✅ 已成功發送至 LINE 群組！');
+                window.showFlash('已成功發送至 LINE 群組');
             } catch (err) {
-                alert('❌ 推播失敗: ' + err.message);
+                window.showFlash('推播失敗：' + err.message, 'error');
                 btn.innerHTML = originalText; btn.disabled = false;
             }
         },
@@ -832,7 +832,7 @@ window.FeatureTimeline = (() => {
                     } catch (err) {
                         dragged.target_date = oldDate; 
                         renderTimeline(classId, 'none');
-                        alert('❌ 排序更新失敗: ' + err.message);
+                        window.showFlash('排序更新失敗：' + err.message, 'error');
                     }
                 }
             }
@@ -855,7 +855,7 @@ window.FeatureTimeline = (() => {
                 } catch (err) {
                     dragged.target_date = oldDate; 
                     renderTimeline(classId, 'none');
-                    alert('❌ 拖曳更新失敗: ' + err.message);
+                    window.showFlash('拖曳更新失敗：' + err.message, 'error');
                 }
             }
             dragAssignId = null;
@@ -865,7 +865,7 @@ window.FeatureTimeline = (() => {
             if(!db || !db.assignments) return;
             const a = db.assignments.find(x => x.id === assignId);
             if (!a || !TPL) return;
-            if (!checkCanEditTimeline(classId)) return alert('權限不足：您的身分無法搬移此作業。');
+            if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法搬移此作業。', 'error');
 
             const overlay = document.createElement('div');
             overlay.id = 'move-assign-modal';
@@ -876,7 +876,7 @@ window.FeatureTimeline = (() => {
         },
         submitMove: async (assignId, classId, oldDate) => {
             const newDate = document.getElementById('move-target-date').value;
-            if (!newDate) return alert('⚠️ 請選擇目標日期');
+            if (!newDate) return window.showFlash('⚠️ 請選擇目標日期', 'error');
             if (newDate === oldDate) return document.getElementById('move-assign-modal').remove(); 
             
             const btn = document.getElementById('btn-confirm-move');
@@ -894,14 +894,14 @@ window.FeatureTimeline = (() => {
                 document.getElementById('move-assign-modal').remove();
                 window.FeatureTimeline.renderTimeline(classId, 'target', `assign-block-${assignId}`);
             } catch (err) {
-                alert('❌ 改期失敗: ' + err.message);
+                window.showFlash('改期失敗：' + err.message, 'error');
                 btn.innerHTML = originalText; btn.disabled = false;
             }
         },
 
         loadMaterialMetaSelect: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
-            if (!bState) return alert('請先開啟作業編輯器');
+            if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
             const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
             const statusEl = document.getElementById('node-material-status-' + pathStr);
             if (!selectEl) return;
@@ -928,14 +928,14 @@ window.FeatureTimeline = (() => {
                     statusEl.textContent = '❌ ' + err.message;
                     statusEl.style.color = '#DC2626';
                 }
-                alert('❌ 無法載入 Material：' + err.message);
+                window.showFlash('無法載入 Material：' + err.message, 'error');
             }
         },
 
         previewMaterialSnapshot: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
-            if (!bState) return alert('請先開啟作業編輯器');
-            if (!window.MaterialSnapshot) return alert('MaterialSnapshot 模組未載入');
+            if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
+            if (!window.MaterialSnapshot) return window.showFlash('MaterialSnapshot 模組未載入', 'error');
             const previewEl = document.getElementById('node-material-preview-' + pathStr);
             try {
                 const picker = readMaterialPicker(pathStr);
@@ -952,14 +952,14 @@ window.FeatureTimeline = (() => {
                 }
             } catch (err) {
                 if (previewEl) previewEl.textContent = '❌ ' + err.message;
-                alert('❌ 預覽失敗：' + err.message);
+                window.showFlash('預覽失敗：' + err.message, 'error');
             }
         },
 
         applyMaterialSnapshot: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
-            if (!bState) return alert('請先開啟作業編輯器');
-            if (!window.MaterialSnapshot) return alert('MaterialSnapshot 模組未載入');
+            if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
+            if (!window.MaterialSnapshot) return window.showFlash('MaterialSnapshot 模組未載入', 'error');
             try {
                 const picker = readMaterialPicker(pathStr);
                 const sliceOpts = readMaterialSliceInputs(pathStr);
@@ -968,9 +968,9 @@ window.FeatureTimeline = (() => {
                 const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
                 const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, picker);
                 applySnapshotToNode(pathStr, snapshot);
-                alert('✅ 已寫入 Snapshot（請記得儲存作業區塊）');
+                window.showFlash('已寫入 Snapshot（請記得儲存作業區塊）');
             } catch (err) {
-                alert('❌ 套用 Snapshot 失敗：' + err.message);
+                window.showFlash('套用 Snapshot 失敗：' + err.message, 'error');
             }
         },
 

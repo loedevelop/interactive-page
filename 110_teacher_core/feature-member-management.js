@@ -319,7 +319,7 @@ export class MemberManager {
         const fullCN = `${lastNameCN}${firstNameCN}`.trim();
         
         if (!nameEN && !fullCN) {
-            alert("⚠️ 建立帳號失敗：請至少輸入「英文名字」或「中文姓名」。");
+            window.showFlash('建立帳號失敗：請至少輸入「英文名字」或「中文姓名」', 'error');
             return;
         }
 
@@ -349,7 +349,7 @@ export class MemberManager {
                 targetEmail = `${username}+${mutationName}@${domain}`.toLowerCase();
             } else {
                 if (!phone || phone.replace(/[^0-9]/g, "").length < 4) {
-                    alert("⚠️ 此信箱網域不支援別名，系統需轉換為 LogOn 內部網域。請務必填寫「手機號碼」(至少4碼)！");
+                    window.showFlash('此信箱網域不支援別名，請務必填寫「手機號碼」(至少4碼)', 'error');
                     return;
                 }
                 const phoneLast4 = phone.replace(/[^0-9]/g, "").slice(-4);

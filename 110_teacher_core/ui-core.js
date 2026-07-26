@@ -6,6 +6,13 @@
 
 window.TeacherUI = (() => {
     let currentClassId = null;
+    const GLOBAL_VIEW_KEY = 'teacherActiveGlobalView';
+    const SIDEBAR_CACHE_KEY = 'teacherSidebarCache';
+    const GLOBAL_VIEW_NAV = {
+        'view-manage-classes': 'nav-manage-classes',
+        'view-global-resources': 'nav-global-resources',
+        'view-profile': 'nav-profile'
+    };
 
     const classListContainer = document.getElementById('class-list');
     const classContextHeader = document.getElementById('class-context-header');
@@ -60,6 +67,28 @@ window.TeacherUI = (() => {
         return storedRole ? storedRole : 'ta_junior';
     }
 
+    function removeBootGlobalViewShim() {
+        const shim = document.getElementById('boot-global-view-shim');
+        if (shim) shim.remove();
+    }
+
+    function restoreGlobalViewIfSaved() {
+        const savedGlobalView = localStorage.getItem(GLOBAL_VIEW_KEY);
+        if (!savedGlobalView || !GLOBAL_VIEW_NAV[savedGlobalView] || !document.getElementById(savedGlobalView)) {
+            return null;
+        }
+        activateGlobalView(savedGlobalView, GLOBAL_VIEW_NAV[savedGlobalView]);
+        return savedGlobalView;
+    }
+
+    function runGlobalViewDataRefresh(viewId) {
+        if (viewId === 'view-manage-classes' && window.FeatureClass && typeof window.FeatureClass.renderClassManager === 'function') {
+            window.FeatureClass.renderClassManager();
+        } else if (viewId === 'view-global-resources' && window.FeatureResource && typeof window.FeatureResource.renderGlobalResourceView === 'function') {
+            window.FeatureResource.renderGlobalResourceView();
+        }
+    }
+
     function bindClassListDelegation() {
         if (!classListContainer || classListContainer.dataset.clickBound === '1') return;
         classListContainer.dataset.clickBound = '1';
@@ -71,13 +100,47 @@ window.TeacherUI = (() => {
         });
     }
 
+    function getSidebarSignature(classes) {
+        return (classes || []).map(function (cls) {
+            return [
+                cls.id,
+                cls.name || '',
+                cls.icon || '📘',
+                cls.staff_role || cls.currentUserRole || ''
+            ].join('|');
+        }).join(';;');
+    }
+
+    function saveSidebarCache(classes) {
+        if (!classes || !classes.length) return;
+        try {
+            localStorage.setItem(SIDEBAR_CACHE_KEY, JSON.stringify({
+                cachedAt: new Date().toISOString(),
+                classes: classes.map(function (cls) {
+                    return {
+                        id: cls.id,
+                        name: cls.name,
+                        icon: cls.icon || '📘',
+                        staff_role: cls.staff_role || cls.currentUserRole || 'ta_junior'
+                    };
+                })
+            }));
+        } catch (_e) {}
+    }
+
     function preRenderSidebarFromSession(session, activeClassId) {
-        if (!classListContainer || !session.enrollments || session.enrollments.length === 0) return;
+        if (!classListContainer) return;
+        if (classListContainer.dataset.booted === '1') {
+            bindClassListDelegation();
+            return;
+        }
+        if (!session.enrollments || session.enrollments.length === 0) return;
 
         classListContainer.innerHTML = '';
+        const globalView = localStorage.getItem(GLOBAL_VIEW_KEY);
         session.enrollments.forEach(function(en) {
             const div = document.createElement('div');
-            div.className = 'class-item' + (en.id === activeClassId ? ' active' : '');
+            div.className = 'class-item' + (!globalView && en.id === activeClassId ? ' active' : '');
             div.setAttribute('data-class-id', en.id);
             const staffRole = en.staff_role ? en.staff_role : 'ta_junior';
             div.innerHTML = '<span style="width:20px; display:inline-block;">📘</span> <span style="flex-grow:1; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">' + en.name + '</span> ' + getRoleBadgeHtml(staffRole);
@@ -86,6 +149,10 @@ window.TeacherUI = (() => {
             classListContainer.appendChild(div);
         });
         bindClassListDelegation();
+        classListContainer.dataset.booted = '1';
+        classListContainer.dataset.sidebarSig = getSidebarSignature(session.enrollments.map(function (en) {
+            return { id: en.id, name: en.name, icon: '📘', staff_role: en.staff_role };
+        }));
     }
 
     function bootstrapFromSession() {
@@ -120,9 +187,11 @@ window.TeacherUI = (() => {
                 }
             }
 
-            if (classContextHeader && classId) {
+            if (classContextHeader && classId && !localStorage.getItem(GLOBAL_VIEW_KEY)) {
                 classContextHeader.style.display = 'block';
             }
+
+            restoreGlobalViewIfSaved();
 
             return { session: session, classId: classId, staffRole: staffRole };
         } catch (e) {
@@ -132,9 +201,18 @@ window.TeacherUI = (() => {
     
     function renderSidebar() {
         if (!classListContainer) return;
+        if (!window.TeacherDB || !window.TeacherDB.classes || window.TeacherDB.classes.length === 0) {
+            return;
+        }
+
+        const nextSig = getSidebarSignature(window.TeacherDB.classes);
+        if (classListContainer.dataset.booted === '1' && classListContainer.dataset.sidebarSig === nextSig) {
+            bindClassListDelegation();
+            saveSidebarCache(window.TeacherDB.classes);
+            return;
+        }
+
         classListContainer.innerHTML = '';
-        
-        if (!window.TeacherDB || !window.TeacherDB.classes) return;
 
         window.TeacherDB.classes.forEach(cls => {
             const div = document.createElement('div');
@@ -156,10 +234,14 @@ window.TeacherUI = (() => {
             classListContainer.appendChild(div);
         });
         bindClassListDelegation();
+        classListContainer.dataset.booted = '1';
+        classListContainer.dataset.sidebarSig = nextSig;
+        saveSidebarCache(window.TeacherDB.classes);
     }
 
     function activateClassView(classId) {
         currentClassId = classId;
+        localStorage.removeItem(GLOBAL_VIEW_KEY);
         if (classContextHeader) classContextHeader.style.display = 'block';
         
         const currentClass = window.TeacherDB.classes.find(c => c.id === classId);
@@ -212,6 +294,8 @@ window.TeacherUI = (() => {
     }
 
     function activateGlobalView(viewId, navId) {
+        localStorage.setItem(GLOBAL_VIEW_KEY, viewId);
+        removeBootGlobalViewShim();
         document.querySelectorAll('.sidebar .class-item').forEach(el => el.classList.remove('active'));
         if (classContextHeader) classContextHeader.style.display = 'none';
         viewSections.forEach(v => v.classList.remove('active'));
@@ -284,7 +368,7 @@ window.TeacherUI = (() => {
         const boot = bootstrapFromSession();
         const sessionString = localStorage.getItem('LogOnEnglish_Session');
         if (!sessionString) {
-            alert('❌ 尚未登入或連線逾時，請重新登入！');
+            window.showFlash('尚未登入或連線逾時，請重新登入！', 'error');
             window.location.replace(window.buildLoginUrl ? window.buildLoginUrl(false) : '../index.html?_=' + Date.now());
             return;
         }
@@ -325,7 +409,7 @@ window.TeacherUI = (() => {
 
         } catch (e) {
             console.error("❌ 雲端資料同步失敗:", e);
-            alert("雲端資料讀取失敗，請檢查網路連線。");
+            window.showFlash('雲端資料讀取失敗，請檢查網路連線。', 'error');
         }
 
         // 🌟 恢復上次瀏覽的班級 (Active Context)
@@ -345,6 +429,12 @@ window.TeacherUI = (() => {
         }
 
         renderSidebar();
+
+        const savedGlobalView = restoreGlobalViewIfSaved();
+        if (savedGlobalView) {
+            runGlobalViewDataRefresh(savedGlobalView);
+            return;
+        }
 
         if (currentClassId) {
             activateClassView(currentClassId);

@@ -235,7 +235,7 @@ window.FeatureStudentTimeline = (() => {
             applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
             renderCourses();
         } catch (err) {
-            alert(`❌ 音檔上傳失敗: ${err.message}`);
+            window.showFlash('音檔上傳失敗: ' + err.message, 'error');
             if (statusEl) {
                 statusEl.textContent = '❌ 上傳失敗';
                 statusEl.style.color = '#EF4444';
@@ -477,7 +477,7 @@ window.FeatureStudentTimeline = (() => {
             _currentPlaying = new Audio(url);
             _currentPlaying.play().catch(e => {
                 console.warn('TTS Playback blocked', e);
-                alert('播放示範音失敗，您的瀏覽器可能阻擋了自動播放。');
+                window.showFlash('播放示範音失敗，您的瀏覽器可能阻擋了自動播放。', 'error');
             });
         },
 
@@ -486,7 +486,7 @@ window.FeatureStudentTimeline = (() => {
             if (_currentPlaying) _currentPlaying.pause();
             if (_pauseTimeout) clearTimeout(_pauseTimeout);
             if (!fileId) {
-                alert('無法取得原始音檔 ID');
+                window.showFlash('無法取得原始音檔 ID', 'error');
                 return;
             }
 
@@ -510,7 +510,7 @@ window.FeatureStudentTimeline = (() => {
                 audio.currentTime = startTime;
                 audio.play().catch(e => {
                     console.warn('Slice playback blocked', e);
-                    alert('播放您的原音失敗，請先確認瀏覽器允許媒體播放。');
+                    window.showFlash('播放您的原音失敗，請先確認瀏覽器允許媒體播放。', 'error');
                 });
                 const durationMs = Math.max(300, (endTime - startTime) * 1000);
                 _pauseTimeout = setTimeout(() => {
@@ -600,7 +600,7 @@ window.FeatureStudentTimeline = (() => {
                 if (isChecked) completedTasks = completedTasks.filter(id => id !== compositeKey);
                 else completedTasks.push(compositeKey);
                 renderCourses(); 
-                alert(`❌ 進度同步失敗：\n${err.message || err.details}`);
+                window.showFlash('進度同步失敗：\n' + (err.message || err.details), 'error');
             }
         },
         
@@ -756,11 +756,11 @@ window.FeatureStudentTimeline = (() => {
             inputElement.value = '';
 
             if (!isAudioUploadFile(file)) {
-                alert('請上傳音檔格式（支援 mp3, wav, m4a, ogg, aac, webm, flac 等）');
+                window.showFlash('請上傳音檔格式（支援 mp3, wav, m4a, ogg, aac, webm, flac 等）', 'error');
                 return;
             }
             if (file.size > 25 * 1024 * 1024) {
-                alert('檔案超過 25MB，請縮短錄音或壓縮後再上傳。');
+                window.showFlash('檔案超過 25MB，請縮短錄音或壓縮後再上傳。', 'error');
                 return;
             }
 
@@ -868,7 +868,7 @@ window.FeatureStudentTimeline = (() => {
                         renderCourses();
 
                     } catch (err) {
-                        alert(`❌ 錄音上傳失敗: ${err.message}`);
+                        window.showFlash('錄音上傳失敗: ' + err.message, 'error');
                         if (statusEl) {
                             statusEl.textContent = '❌ 上傳失敗';
                             statusEl.style.color = '#EF4444';
@@ -879,7 +879,7 @@ window.FeatureStudentTimeline = (() => {
                     }
                 });
             } else {
-                alert('系統正在載入錄音模組，請稍候重試。');
+                window.showFlash('系統正在載入錄音模組，請稍候重試。', 'error');
             }
         },
         
@@ -937,7 +937,7 @@ window.FeatureStudentTimeline = (() => {
                 renderCourses();
 
             } catch (err) {
-                alert(`❌ 重新啟動 AI 失敗: ${err.message}`);
+                window.showFlash('重新啟動 AI 失敗: ' + err.message, 'error');
                 if (statusEl) {
                     statusEl.textContent = '❌ 提交失敗';
                     statusEl.style.color = '#EF4444';

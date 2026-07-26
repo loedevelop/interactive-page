@@ -336,7 +336,28 @@ window.BuilderStore = (() => {
             });
         },
         copyHistory: (historyAssignment) => {
-            syncState(); 
+            syncState();
+            if (window.AssignmentClone && typeof window.AssignmentClone.cloneAssignmentRecord === 'function') {
+                var cloned = window.AssignmentClone.cloneAssignmentRecord(historyAssignment);
+                bState.title = cloned.title;
+                bState.description = cloned.description;
+                bState.due_date = cloned.due_date;
+                bState.is_published = false;
+                bState.tasks = cloned.tasks;
+
+                var clonedRaw = cloned.raw_data || {};
+                if (clonedRaw.late_policy) {
+                    if (!clonedRaw.late_policy.allow_late) bState.late_mode = 'no_late';
+                    else if (clonedRaw.late_policy.grace_period_hours > 0) bState.late_mode = 'custom';
+                    else bState.late_mode = 'infinite';
+                    bState.late_grace = clonedRaw.late_policy.grace_period_hours || 0;
+                    bState.late_penalty = clonedRaw.late_policy.penalty_percentage || 0;
+                } else {
+                    bState.late_mode = 'infinite'; bState.late_grace = 0; bState.late_penalty = 0;
+                }
+                return;
+            }
+
             bState.title = historyAssignment.title; 
             bState.description = historyAssignment.description;
             bState.due_date = historyAssignment.due_date; 

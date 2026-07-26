@@ -114,14 +114,14 @@ window.FeatureClass = (() => {
         }
     }
 
-    function renderClassManager() {
+    function renderActiveClassList() {
         const container = document.getElementById('manage-class-list-container');
         if (!container) return;
-        
+
         container.innerHTML = '';
-        if (!db.classes || db.classes.length === 0) { 
-            container.innerHTML = '<p style="color:#94A3B8; font-weight: bold; padding: 20px;">目前無任何班級。</p>'; 
-            return; 
+        if (!db.classes || db.classes.length === 0) {
+            container.innerHTML = '<p style="color:#94A3B8; font-weight: bold; padding: 20px;">目前無任何班級。</p>';
+            return;
         }
 
         db.classes.forEach(cls => {
@@ -133,10 +133,68 @@ window.FeatureClass = (() => {
         });
     }
 
-    function ensureNewClassFormHasModeSelector() {
-        const btnAddClass = document.getElementById('btn-add-class');
-        if (!btnAddClass || document.getElementById('new-class-display-mode')) return;
-        btnAddClass.insertAdjacentHTML('beforebegin', TPL.getModeSelectorHtml());
+    function renderClassManager(options) {
+        options = options || {};
+        renderActiveClassList();
+
+        if (window.FeatureArchivedClasses && typeof window.FeatureArchivedClasses.renderSection === 'function') {
+            window.FeatureArchivedClasses.renderSection({
+                force: !!options.forceArchived,
+                background: options.forceArchived !== true
+            });
+        }
+    }
+
+    function closeArchiveConfirm() {
+        if (window.ModalOverlay) window.ModalOverlay.close('class-archive-modal');
+        else {
+            const overlay = document.getElementById('class-archive-modal');
+            if (overlay) overlay.remove();
+        }
+    }
+
+    function openArchiveConfirm(classId) {
+        const cls = db.classes.find(c => c.id === classId);
+        if (!cls) return;
+
+        closeArchiveConfirm();
+        if (!window.ModalOverlay) {
+            window.showFlash('ModalOverlay 未載入', 'error');
+            return;
+        }
+
+        window.ModalOverlay.open({
+            id: 'class-archive-modal',
+            tier: 'A',
+            contentHtml: TPL.getClassArchiveModalHtml(cls, 'class-archive-modal')
+        });
+    }
+
+    function markClassSettingsDirty() {
+        window._classSettingsDirty = true;
+    }
+
+    function bindClassSettingsDirtyTracking() {
+        window._classSettingsDirty = false;
+        const overlay = document.getElementById('class-settings-modal');
+        if (!overlay) return;
+        overlay.querySelectorAll('input, select, textarea').forEach(function (el) {
+            el.addEventListener('change', markClassSettingsDirty);
+            el.addEventListener('input', markClassSettingsDirty);
+        });
+    }
+
+    function closeClassSettings(force) {
+        const overlayId = 'class-settings-modal';
+        if (!force && window._classSettingsDirty) {
+            if (!confirm('有未儲存的變更，確定要關閉嗎？')) return;
+        }
+        window._classSettingsDirty = false;
+        if (window.ModalOverlay) window.ModalOverlay.close(overlayId);
+        else {
+            const el = document.getElementById(overlayId);
+            if (el) el.remove();
+        }
     }
 
     async function openClassSettings(classId) {
@@ -144,14 +202,23 @@ window.FeatureClass = (() => {
         if (!cls) return;
 
         const overlayId = 'class-settings-modal';
-        let existing = document.getElementById(overlayId);
-        if (existing) existing.remove();
+        if (window.ModalOverlay) window.ModalOverlay.close(overlayId);
+        else {
+            const existing = document.getElementById(overlayId);
+            if (existing) existing.remove();
+        }
 
-        const overlay = document.createElement('div');
-        overlay.id = overlayId;
-        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-        overlay.innerHTML = '<div style="background:white; padding:20px; border-radius:8px; font-weight:bold;">⏳ 讀取班級資料中...</div>';
-        document.body.appendChild(overlay);
+        if (!window.ModalOverlay) {
+            window.showFlash('ModalOverlay 未載入', 'error');
+            return;
+        }
+
+        window.ModalOverlay.open({
+            id: overlayId,
+            tier: 'B',
+            contentHtml: '<div style="background:white; padding:20px; border-radius:8px; font-weight:bold;">⏳ 讀取班級資料中...</div>',
+            isDirty: function () { return !!window._classSettingsDirty; }
+        });
 
         try {
             let dbRaw = cls.raw_data || cls.rawData || {};
@@ -167,12 +234,15 @@ window.FeatureClass = (() => {
             let iconInputHTML = `<input type="text" id="edit-class-icon" class="form-control" value="${cls.icon || '📘'}" style="width: 100%; text-align: center;">`;
             if (mainIconSelect) iconInputHTML = `<select id="edit-class-icon" class="form-control" style="width: 100%; text-align: center;">${mainIconSelect.innerHTML}</select>`;
 
+            const overlay = document.getElementById(overlayId);
+            if (!overlay) throw new Error('設定視窗已關閉');
             overlay.innerHTML = TPL.getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy);
             
             if (mainIconSelect) document.getElementById('edit-class-icon').value = cls.icon || '📘';
+            bindClassSettingsDirtyTracking();
         } catch (err) { 
-            alert("載入資料失敗：" + err.message); 
-            document.getElementById(overlayId).remove(); 
+            window.showFlash('載入資料失敗：' + err.message, 'error'); 
+            closeClassSettings(true);
         }
     }
 
@@ -209,7 +279,7 @@ window.FeatureClass = (() => {
             gradingPolicy = window.GradingPolicy.buildPolicyFromForm(gradingPolicyForm);
         }
         
-        if (!newName) return alert("⚠️ 班級名稱不能為空！");
+        if (!newName) return window.showFlash("⚠️ 班級名稱不能為空！", 'error');
 
         btn.innerHTML = '⏳ 儲存中...'; btn.disabled = true;
 
@@ -229,7 +299,7 @@ window.FeatureClass = (() => {
             if (error) throw error;
             if (!updatedRows || updatedRows.length === 0) throw new Error("設定並未真正寫入雲端 (請聯絡管理員檢查)");
 
-            document.getElementById('class-settings-modal').remove();
+            closeClassSettings(true);
             
             if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') {
                 db.classes = await window.ApiService.fetchClasses();
@@ -250,7 +320,7 @@ window.FeatureClass = (() => {
                 }
             }
         } catch (err) { 
-            alert("❌ 儲存失敗：" + err.message); 
+            window.showFlash('儲存失敗：' + err.message, 'error'); 
             btn.innerHTML = '💾 儲存變更'; btn.disabled = false; 
         }
     }
@@ -261,63 +331,84 @@ window.FeatureClass = (() => {
     function askSafeScheduleChange(todayStr) {
         return new Promise((resolve) => {
             const overlayId = 'schedule-safe-modal';
-            let existing = document.getElementById(overlayId);
-            if (existing) existing.remove();
-
-            const overlay = document.createElement('div');
-            overlay.id = overlayId;
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-            overlay.innerHTML = TPL.getSafeScheduleModalHtml(todayStr);
-            document.body.appendChild(overlay);
-
-            document.getElementById('btn-cancel-safe').onclick = () => { overlay.remove(); resolve(null); };
-            document.getElementById('btn-confirm-safe').onclick = () => {
-                const action = document.querySelector('input[name="safe_resolve_mode"]:checked').value;
-                const anchorDate = document.getElementById('safe-anchor-date').value;
-                overlay.remove(); resolve({ action, anchorDate });
-            };
+            if (!window.ModalOverlay) { resolve(null); return; }
+            window.ModalOverlay.close(overlayId);
+            window.ModalOverlay.open({
+                id: overlayId,
+                tier: 'A',
+                contentHtml: TPL.getSafeScheduleModalHtml(todayStr),
+                onCancel: function () { resolve(null); },
+                onMount: function () {
+                    document.getElementById('btn-cancel-safe').onclick = function () {
+                        window.ModalOverlay.close(overlayId);
+                        resolve(null);
+                    };
+                    document.getElementById('btn-confirm-safe').onclick = function () {
+                        const action = document.querySelector('input[name="safe_resolve_mode"]:checked').value;
+                        const anchorDate = document.getElementById('safe-anchor-date').value;
+                        window.ModalOverlay.close(overlayId);
+                        resolve({ action: action, anchorDate: anchorDate });
+                    };
+                }
+            });
         });
     }
 
     function askOrphanResolution(orphanCount, affectedDatesCount, todayStr) {
         return new Promise((resolve) => {
             const overlayId = 'schedule-orphan-modal';
-            let existing = document.getElementById(overlayId);
-            if (existing) existing.remove();
-            
-            const overlay = document.createElement('div');
-            overlay.id = overlayId;
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-            overlay.innerHTML = TPL.getOrphanModalHtml(orphanCount, affectedDatesCount, todayStr);
-            document.body.appendChild(overlay);
-            
-            document.getElementById('btn-cancel-orphan').onclick = () => { overlay.remove(); resolve(null); };
-            document.getElementById('btn-confirm-orphan').onclick = () => {
-                const action = document.querySelector('input[name="orphan_resolve_mode"]:checked').value;
-                const anchorDate = document.getElementById('orphan-anchor-date').value;
-                overlay.remove(); resolve({ action, anchorDate });
-            };
+            if (!window.ModalOverlay) { resolve(null); return; }
+            window.ModalOverlay.close(overlayId);
+            window.ModalOverlay.open({
+                id: overlayId,
+                tier: 'A',
+                contentHtml: TPL.getOrphanModalHtml(orphanCount, affectedDatesCount, todayStr),
+                onCancel: function () { resolve(null); },
+                onMount: function () {
+                    document.getElementById('btn-cancel-orphan').onclick = function () {
+                        window.ModalOverlay.close(overlayId);
+                        resolve(null);
+                    };
+                    document.getElementById('btn-confirm-orphan').onclick = function () {
+                        const action = document.querySelector('input[name="orphan_resolve_mode"]:checked').value;
+                        const anchorDate = document.getElementById('orphan-anchor-date').value;
+                        window.ModalOverlay.close(overlayId);
+                        resolve({ action: action, anchorDate: anchorDate });
+                    };
+                }
+            });
         });
     }
 
     function askWeeklyToDailyResolution(assignCount) {
         return new Promise((resolve) => {
             const overlayId = 'schedule-unpack-modal';
-            let existing = document.getElementById(overlayId);
-            if (existing) existing.remove();
-
-            const overlay = document.createElement('div');
-            overlay.id = overlayId;
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
-            overlay.innerHTML = TPL.getUnpackModalHtml(assignCount);
-            document.body.appendChild(overlay);
-            
-            document.getElementById('btn-cancel-unpack').onclick = () => { overlay.remove(); resolve(null); };
-            document.getElementById('btn-confirm-unpack').onclick = () => {
-                const strategy = document.querySelector('input[name="unpack_strategy"]:checked').value;
-                overlay.remove(); resolve(strategy);
-            };
+            if (!window.ModalOverlay) { resolve(null); return; }
+            window.ModalOverlay.close(overlayId);
+            window.ModalOverlay.open({
+                id: overlayId,
+                tier: 'A',
+                contentHtml: TPL.getUnpackModalHtml(assignCount),
+                onCancel: function () { resolve(null); },
+                onMount: function () {
+                    document.getElementById('btn-cancel-unpack').onclick = function () {
+                        window.ModalOverlay.close(overlayId);
+                        resolve(null);
+                    };
+                    document.getElementById('btn-confirm-unpack').onclick = function () {
+                        const strategy = document.querySelector('input[name="unpack_strategy"]:checked').value;
+                        window.ModalOverlay.close(overlayId);
+                        resolve(strategy);
+                    };
+                }
+            });
         });
+    }
+
+    function ensureNewClassFormHasModeSelector() {
+        const btnAddClass = document.getElementById('btn-add-class');
+        if (!btnAddClass || document.getElementById('new-class-display-mode')) return;
+        btnAddClass.insertAdjacentHTML('beforebegin', TPL.getModeSelectorHtml());
     }
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -334,7 +425,7 @@ window.FeatureClass = (() => {
                 
                 if (!nameInput) return;
                 const name = nameInput.value.trim();
-                if (!name) return alert('⚠️ 請輸入班級名稱！');
+                if (!name) return window.showFlash('⚠️ 請輸入班級名稱！', 'error');
 
                 const btn = this; const originalText = btn.innerHTML;
                 btn.innerHTML = '⏳ 雲端建立資料夾中...'; btn.disabled = true;
@@ -407,9 +498,9 @@ window.FeatureClass = (() => {
                     
                     if (typeof db.save === 'function') db.save();
                     if (window.TeacherUI) window.TeacherUI.renderSidebar();
-                    renderClassManager();
-                    alert(`✅ 成功建立班級：「${name}」！\n(已在 _LogOnEnglish/_Classes 建立 ${classYear} 班級資料夾與標準子目錄)`);
-                } catch (err) { alert('❌ 新增失敗: ' + err.message); } 
+                    renderClassManager({ forceArchived: true });
+                    window.showFlash('已建立班級「' + name + '」');
+                } catch (err) { window.showFlash('新增失敗：' + err.message, 'error'); } 
                 finally { btn.innerHTML = originalText; btn.disabled = false; }
             };
         }
@@ -641,7 +732,7 @@ window.FeatureClass = (() => {
                             await executeSave(finalSessions, assignUpdatesMap);
                         } else await executeSave(finalSessions, new Map());
                     }
-                } catch (err) { btn.innerHTML = originalText; btn.disabled = false; console.error(err); alert("推演或儲存失敗：" + err.message); }
+                } catch (err) { btn.innerHTML = originalText; btn.disabled = false; console.error(err); window.showFlash('推演或儲存失敗：' + err.message, 'error'); }
             };
         }
 
@@ -650,17 +741,15 @@ window.FeatureClass = (() => {
     });
 
     return { 
-        updateClassContent, renderClassManager, editClass: openClassSettings, openClassSettings, saveClassSettings,
-        toggleDeleteConfirm: (classId, show) => {
-            document.getElementById(`class-info-${classId}`).style.display = show ? 'none' : 'flex';
-            document.getElementById(`class-delete-confirm-${classId}`).style.display = show ? 'block' : 'none';
-        },
+        updateClassContent, renderClassManager, editClass: openClassSettings, openClassSettings, saveClassSettings, closeClassSettings,
+        openArchiveConfirm, closeArchiveConfirm,
         executeDelete: async (classId) => {
             const btn = window.event ? window.event.target : document.activeElement;
             const originalText = btn.innerHTML; btn.innerHTML = '⏳ 雲端 RPC 封存中...'; btn.disabled = true;
             try {
                 if (!window.ApiService || typeof window.ApiService.archiveClass !== 'function') throw new Error("API 引擎未就緒。");
-                if (document.getElementById(`del-students-cb-${classId}`).checked) {
+                const delStudentsCb = document.getElementById(`del-students-cb-${classId}`);
+                if (delStudentsCb && delStudentsCb.checked) {
                     const { data: enrollments } = await window.supabaseClient.from('student_enrollments').select('user_id').eq('class_id', classId).is('deleted_at', null);
                     if (enrollments && enrollments.length > 0) await window.supabaseClient.from('profiles').update({ deleted_at: new Date().toISOString() }).in('id', enrollments.map(e => e.user_id));
                 }
@@ -673,14 +762,15 @@ window.FeatureClass = (() => {
                 if (db.assignments) db.assignments = db.assignments.filter(a => a.class_id !== classId);
                 
                 if (typeof db.save === 'function') db.save();
-                renderClassManager(); 
+                closeArchiveConfirm();
+                renderClassManager({ forceArchived: true });
                 if (window.TeacherUI) window.TeacherUI.renderSidebar();
                 
                 if (window.TeacherUI && window.TeacherUI.getCurrentClassId() === classId) {
                     if (db.classes.length > 0) window.TeacherUI.activateClassView(db.classes[0].id);
                     else { const header = document.getElementById('class-context-header'); if (header) header.style.display = 'none'; }
                 }
-            } catch (err) { alert(err.message); btn.innerHTML = originalText; btn.disabled = false; }
+            } catch (err) { window.showFlash(err.message, 'error'); btn.innerHTML = originalText; btn.disabled = false; }
         }
     };
 })();

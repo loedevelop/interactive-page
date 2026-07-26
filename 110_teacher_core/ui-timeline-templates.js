@@ -444,18 +444,18 @@ window.TimelineTemplates = (() => {
                                         <input type="text" id="node-ai-range-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="範圍 (例: A1:B20)" value="${safeAiRange}">
                                         <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#10B981; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
                                             const url = document.getElementById('node-ai-drive-url-${pathStr}').value;
-                                            if(!url) return alert('請先填寫網址！');
+                                            if(!url) return window.showFlash('請先填寫網址！', 'error');
                                             const targetArea = document.getElementById('node-script-${pathStr}');
                                             const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
                                             
                                             if(url.includes('spreadsheets') || url.includes('excel')) {
-                                                if(typeof window.GasService === 'undefined') { alert('系統錯誤：找不到 GasService。'); btn.innerText = '執行萃取'; btn.disabled = false; return; }
+                                                if(typeof window.GasService === 'undefined') { window.showFlash('系統錯誤：找不到 GasService。', 'error'); btn.innerText = '執行萃取'; btn.disabled = false; return; }
                                                 window.GasService.extractSheetData(url, document.getElementById('node-ai-sheet-${pathStr}').value || 'Sheet1', document.getElementById('node-ai-range-${pathStr}').value || 'A1:B20')
-                                                .then(text => { targetArea.value = text; alert('✅ Excel 萃取成功，請人工核對內容！'); })
-                                                .catch(err => alert('❌ 失敗: ' + err.message))
+                                                .then(text => { targetArea.value = text; window.showFlash('Excel 萃取成功，請人工核對內容'); })
+                                                .catch(err => window.showFlash('失敗：' + err.message, 'error'))
                                                 .finally(() => { btn.innerText = '執行萃取'; btn.disabled = false; });
                                             } else {
-                                                alert('⚠️ 若來源為 Drive PDF，受限於權限，請手動將文字貼入下方文字框。');
+                                                window.showFlash('若來源為 Drive PDF，受限於權限，請手動將文字貼入下方文字框。', 'error');
                                                 btn.innerText = '執行萃取'; btn.disabled = false;
                                             }
                                         ">執行萃取</button>
@@ -468,22 +468,22 @@ window.TimelineTemplates = (() => {
                                         <input type="text" id="node-ai-local-range-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="範圍 (Excel用)" value="${safeAiLocalRange}">
                                         <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
                                             const file = document.getElementById('node-ai-local-file-${pathStr}').files[0];
-                                            if (!file) return alert('請先選擇檔案');
+                                            if (!file) return window.showFlash('請先選擇檔案', 'error');
                                             const targetArea = document.getElementById('node-script-${pathStr}');
                                             const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
                                             
                                             if (file.name.endsWith('.pdf')) {
                                                 if(window.FeatureTimeline && window.FeatureTimeline.handlePDFUpload) {
                                                     window.FeatureTimeline.handlePDFUpload(document.getElementById('node-ai-local-file-${pathStr}'), '${pathStr}');
-                                                } else { alert('PDF 解析模組未載入。'); }
+                                                } else { window.showFlash('PDF 解析模組未載入。', 'error'); }
                                                 btn.innerText = '前端解析取字'; btn.disabled = false;
                                             } else if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
                                                 const reader = new FileReader();
-                                                reader.onload = e => { targetArea.value = e.target.result; alert('✅ 讀取成功！'); btn.innerText = '前端解析取字'; btn.disabled = false; };
+                                                reader.onload = e => { targetArea.value = e.target.result; window.showFlash('讀取成功'); btn.innerText = '前端解析取字'; btn.disabled = false; };
                                                 reader.readAsText(file);
                                             } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
                                                 if(typeof XLSX === 'undefined') {
-                                                    alert('❌ 找不到 Excel 解析模組 (SheetJS)，請確認 index.html 是否有正確載入。');
+                                                    window.showFlash('找不到 Excel 解析模組 (SheetJS)，請確認 index.html 是否有正確載入。', 'error');
                                                     btn.innerText = '前端解析取字'; btn.disabled = false;
                                                     return;
                                                 }
@@ -502,13 +502,13 @@ window.TimelineTemplates = (() => {
                                                         
                                                         const json = XLSX.utils.sheet_to_json(worksheet, options);
                                                         targetArea.value = json.map(row => Object.values(row).join(' ')).join('\\n');
-                                                        alert('✅ Local Excel 取字成功！');
-                                                    } catch(err) { alert('❌ Excel 解析失敗: ' + err.message); }
+                                                        window.showFlash('Local Excel 取字成功');
+                                                    } catch(err) { window.showFlash('Excel 解析失敗：' + err.message, 'error'); }
                                                     finally { btn.innerText = '前端解析取字'; btn.disabled = false; }
                                                 };
                                                 reader.readAsArrayBuffer(file);
                                             } else {
-                                                alert('不支援的檔案格式。');
+                                                window.showFlash('不支援的檔案格式。', 'error');
                                                 btn.innerText = '前端解析取字'; btn.disabled = false;
                                             }
                                         ">前端解析取字</button>

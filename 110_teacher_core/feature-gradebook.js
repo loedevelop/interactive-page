@@ -260,7 +260,7 @@ window.FeatureGradebook = (function() {
                 const ctx = window.GradebookStore.getActiveContext();
                 const policy = ctx ? ctx.gradingPolicy : null;
                 if (!window.GradingPolicy.roleCanPublish(policy, _currentRole)) {
-                    alert('您目前的角色無權發布／定案成績。請聯絡主老師調整班級 AI 批改設定。');
+                    window.showFlash('您目前的角色無權發布／定案成績。請聯絡主老師調整班級 AI 批改設定。', 'error');
                     return;
                 }
             }
@@ -286,7 +286,7 @@ window.FeatureGradebook = (function() {
                     loadDataForCurrentClass();
                 }, 800);
             } catch (err) {
-                alert('❌ 儲存失敗：' + err.message);
+                window.showFlash('儲存失敗：' + err.message, 'error');
                 saveBtn.disabled = false;
                 saveBtn.innerHTML = originalText;
             }

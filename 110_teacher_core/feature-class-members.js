@@ -481,7 +481,7 @@ window.FeatureClassMembers = (() => {
                 document.getElementById(`std-drive-${studentId}`).value = safeFormatUrl(cleanFolderId);
 
             } catch (err) {
-                alert('❌ 更新失敗: ' + err.message);
+                window.showFlash('更新失敗：' + err.message, 'error');
                 btn.innerHTML = originalText;
             } finally {
                 setTimeout(() => { btn.innerHTML = originalText; btn.disabled = false; }, 1000);
@@ -490,7 +490,7 @@ window.FeatureClassMembers = (() => {
 
         repairStudentDrivePermissions: async (classId) => {
             if (!window.ApiService || typeof window.ApiService.ensureGASFolderSharing !== 'function') {
-                alert('❌ 雲端 API 尚未載入，請重新整理頁面後再試。');
+                window.showFlash('雲端 API 尚未載入，請重新整理頁面後再試。', 'error');
                 return;
             }
 
@@ -500,7 +500,7 @@ window.FeatureClassMembers = (() => {
             const withDrive = students.filter(s => s.drive_url && s.email && s.email !== '未設定');
 
             if (withDrive.length === 0) {
-                alert('⚠️ 本班沒有可修復的學生資料夾（需已有 Drive 連結與 Email）。');
+                window.showFlash('本班沒有可修復的學生資料夾（需已有 Drive 連結與 Email）', 'error');
                 return;
             }
 
@@ -533,7 +533,7 @@ window.FeatureClassMembers = (() => {
             }
 
             const detail = failNames.length ? `\n\n失敗：${failNames.join('、')}` : '';
-            alert(`✅ 修復完成：成功 ${ok} 人，失敗 ${fail} 人。${detail}`);
+            window.showFlash('修復完成：成功 ' + ok + ' 人，失敗 ' + fail + ' 人。' + detail, fail > 0 ? 'error' : 'success');
         },
         
         deleteStudent: async (id, classId) => {
@@ -545,7 +545,7 @@ window.FeatureClassMembers = (() => {
                 .eq('class_id', classId)
                 .eq('user_id', id);
 
-            if (error) return alert('❌ 退出班級失敗: ' + error.message);
+            if (error) return window.showFlash('退出班級失敗：' + error.message, 'error');
             await renderStudentManager(classId);
         },
 
@@ -558,7 +558,7 @@ window.FeatureClassMembers = (() => {
                 .eq('class_id', classId)
                 .eq('user_id', userId);
 
-            if (error) return alert('❌ 移除教職員失敗: ' + error.message);
+            if (error) return window.showFlash('移除教職員失敗：' + error.message, 'error');
             await renderStudentManager(classId);
         },
 
@@ -571,7 +571,7 @@ window.FeatureClassMembers = (() => {
                 .eq('parent_user_id', parentId)
                 .eq('child_user_id', childId);
 
-            if (error) return alert('❌ 解除綁定失敗: ' + error.message);
+            if (error) return window.showFlash('解除綁定失敗：' + error.message, 'error');
             await renderStudentManager(classId);
         },
 
@@ -634,7 +634,7 @@ window.FeatureClassMembers = (() => {
                     </div>
                 `;
             } catch (err) {
-                alert("❌ 無法載入資料: " + err.message);
+                window.showFlash('無法載入資料：' + err.message, 'error');
                 if (document.getElementById('edit-student-modal')) document.getElementById('edit-student-modal').remove();
             }
         },
@@ -685,7 +685,7 @@ window.FeatureClassMembers = (() => {
                 await renderStudentManager(classId);
 
             } catch (err) {
-                alert("❌ 儲存失敗: " + err.message);
+                window.showFlash('儲存失敗：' + err.message, 'error');
                 btn.innerHTML = '💾 儲存變更';
                 btn.disabled = false;
             }

@@ -16,6 +16,16 @@
         window.location.replace(url);
     }
 
+    function guardFlash(message, thenRedirect) {
+        if (typeof window.showFlash === 'function') {
+            window.showFlash(message, 'error');
+            setTimeout(thenRedirect, 1400);
+        } else {
+            alert(message);
+            thenRedirect();
+        }
+    }
+
     const sessionString = localStorage.getItem('LogOnEnglish_Session');
 
     if (!sessionString) {
@@ -31,8 +41,9 @@
         
         if (currentPath.includes('/admin/')) {
             if (!isGlobalAdmin) {
-                alert('🚫 越權存取：您不具備全域管理員 (Admin) 權限！');
-                redirectToLogin(false);
+                guardFlash('越權存取：您不具備全域管理員 (Admin) 權限！', function () {
+                    redirectToLogin(false);
+                });
                 return;
             }
         }
@@ -45,8 +56,9 @@
             const isStaffFromContext = staffRoleFromContext && ['primary_teacher', 'co_teacher', 'ta_senior', 'ta_junior'].includes(staffRoleFromContext);
 
             if (!isTeacherPersona && !isStaffRole && !isStaffFromContext) {
-                alert('🚫 越權存取：此區域僅限教職員工進入。');
-                redirectToLogin(false);
+                guardFlash('越權存取：此區域僅限教職員工進入。', function () {
+                    redirectToLogin(false);
+                });
                 return;
             }
         }
@@ -63,8 +75,9 @@
         }
 
         if (currentPath.includes('/std-') && session.folder && !currentPath.includes(`/${session.folder}/`)) {
-            alert('您走錯教室囉！即將為您導回專屬教室。');
-            window.location.replace(`${rootPrefix}${session.folder}/index.html`);
+            guardFlash('您走錯教室囉！即將為您導回專屬教室。', function () {
+                window.location.replace(`${rootPrefix}${session.folder}/index.html`);
+            });
             return;
         }
 

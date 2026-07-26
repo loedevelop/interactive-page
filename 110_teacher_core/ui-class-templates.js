@@ -6,6 +6,10 @@
 
 window.ClassTemplates = (() => {
 
+    function escapeHtml(str) {
+        return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    }
+
     function getModeSelectorHtml() {
         return `
             <div style="margin-top: 15px; margin-bottom: 20px; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px dashed #CBD5E1; width: 100%; box-sizing: border-box;">
@@ -26,7 +30,7 @@ window.ClassTemplates = (() => {
             actionButtonsHTML = `
                 <div style="display: flex; gap: 8px;">
                     <button class="btn" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; padding:6px 12px; border-radius:6px; font-size: 0.9rem; font-weight: bold; cursor:pointer;" onclick="window.FeatureClass.openClassSettings('${cls.id}')" title="班級設定">⚙️ 設定</button>
-                    <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:6px 12px; border-radius:6px; font-size: 0.9rem; font-weight: bold; cursor:pointer;" onclick="window.FeatureClass.toggleDeleteConfirm('${cls.id}', true)">📦 封存</button>
+                    <button class="btn-danger" style="background:#FEF2F2; color:#EF4444; border:1px solid #FECACA; padding:6px 12px; border-radius:6px; font-size: 0.9rem; font-weight: bold; cursor:pointer;" onclick="window.FeatureClass.openArchiveConfirm('${cls.id}')">📦 封存</button>
                 </div>
             `;
         } else {
@@ -34,24 +38,42 @@ window.ClassTemplates = (() => {
         }
 
         return `
-            <div id="class-info-${cls.id}" style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 0;">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 0;">
                 <div style="display: flex; align-items: center; flex: 1;">
                     <span style="font-size:1.4rem; margin-right:12px;">${cls.icon || '📘'}</span>
-                    <strong style="font-size:1.15rem; color:#1E293B;">${cls.name}</strong>
+                    <strong style="font-size:1.15rem; color:#1E293B;">${escapeHtml(cls.name)}</strong>
                     <span style="margin-left:10px; font-size:0.8rem; background:#E2E8F0; padding:2px 8px; border-radius:12px; color:#475569;">${cls.staff_role || '未知'}</span>
                 </div>
                 ${actionButtonsHTML}
             </div>
-            
-            <div id="class-delete-confirm-${cls.id}" style="display: none; width: 100%; background: #FEF2F2; border: 1px solid #FCA5A5; padding: 15px; border-radius: 8px; margin-top: 10px; animation: popIn 0.3s ease-out;">
-                <div style="font-weight: 800; color: #DC2626; margin-bottom: 8px;">⚠️ 確定封存此班級？(相關作業與選課紀錄將由資料庫底層 RPC 安全封存)</div>
-                <label style="display:flex; align-items:center; gap:8px; font-size:0.9rem; cursor:pointer; margin-bottom:15px;">
-                    <input type="checkbox" id="del-students-cb-${cls.id}" style="transform:scale(1.2); accent-color: #EF4444;">
+        `;
+    }
+
+    function getClassArchiveModalHtml(cls, overlayId) {
+        const safeName = escapeHtml(cls.name);
+        const icon = cls.icon ? cls.icon : '📘';
+        return `
+            <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 480px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                <h3 style="margin-top: 0; color: #DC2626; border-bottom: 2px solid #FEE2E2; padding-bottom: 10px; margin-bottom: 20px;">📦 封存班級確認</h3>
+
+                <div style="background: #FEF2F2; border: 1px solid #FECACA; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+                    <div style="font-size: 0.9rem; color: #991B1B; margin-bottom: 10px; font-weight: bold;">您即將封存以下班級：</div>
+                    <div style="display: flex; align-items: center; gap: 12px; background: white; padding: 12px 14px; border-radius: 8px; border: 1px solid #FCA5A5;">
+                        <span style="font-size: 1.6rem;">${icon}</span>
+                        <strong style="font-size: 1.25rem; color: #1E293B;">${safeName}</strong>
+                    </div>
+                </div>
+
+                <p style="font-size: 0.95rem; color: #7F1D1D; margin: 0 0 16px; line-height: 1.5;">相關作業與選課紀錄將由資料庫安全封存，班級將從列表中移除且無法再使用。</p>
+
+                <label style="display:flex; align-items:flex-start; gap:8px; font-size:0.9rem; cursor:pointer; margin-bottom:24px;">
+                    <input type="checkbox" id="del-students-cb-${cls.id}" style="transform:scale(1.2); accent-color: #EF4444; margin-top: 3px;">
                     <span style="color:#7F1D1D; font-weight: bold;">進階：連同此班級的專屬學生帳號一併「軟刪除」停權</span>
                 </label>
-                <div style="display:flex; gap:10px;">
-                    <button class="btn-danger" style="background:#EF4444; color:white; padding:8px 16px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="window.FeatureClass.executeDelete('${cls.id}')">✔️ 確認封存</button>
-                    <button class="btn" style="background:white; color:#64748B; padding:8px 16px; border:1px solid #CBD5E1; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="window.FeatureClass.toggleDeleteConfirm('${cls.id}', false)">❌ 取消</button>
+
+                <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #FEE2E2; padding-top: 20px;">
+                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="window.FeatureClass.closeArchiveConfirm()">取消</button>
+                    <button id="btn-confirm-archive-${cls.id}" class="btn-danger" style="background:#EF4444; color:white; padding:8px 20px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="window.FeatureClass.executeDelete('${cls.id}')">✔️ 確認封存「${safeName}」</button>
                 </div>
             </div>
         `;
@@ -169,7 +191,7 @@ window.ClassTemplates = (() => {
                 </div>
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
-                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="document.getElementById('${overlayId}').remove()">取消</button>
+                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="window.FeatureClass.closeClassSettings()">取消</button>
                     <button id="btn-save-class-settings" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;" onclick="window.FeatureClass.saveClassSettings('${cls.id}')">💾 儲存變更</button>
                 </div>
             </div>
@@ -302,6 +324,7 @@ window.ClassTemplates = (() => {
     return {
         getModeSelectorHtml,
         getClassManagerItemHtml,
+        getClassArchiveModalHtml,
         getClassSettingsModalHtml,
         getSafeScheduleModalHtml,
         getOrphanModalHtml,

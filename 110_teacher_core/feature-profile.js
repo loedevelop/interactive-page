@@ -316,7 +316,7 @@ window.FeatureProfile = (() => {
 
                     // 智慧防呆：至少要有一種姓名可以作為保底
                     if (!nameEN && !fullCN) {
-                        return alert("⚠️ 儲存失敗：請至少填寫「英文名字」或「中文姓名」！");
+                        return window.showFlash('儲存失敗：請至少填寫「英文名字」或「中文姓名」', 'error');
                     }
 
                     const newPhone = document.getElementById('prof-input-phone').value.trim();

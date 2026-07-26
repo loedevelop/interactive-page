@@ -321,10 +321,10 @@ window.FeatureResource = (() => {
         const isGlobal = document.getElementById('modal-res-is-global').checked;
         const im = { 'drive_folder':'📁', 'drive_file':'📄', 'youtube_video':'▶️', 'website_link':'🔗' };
         
-        if (!newName || !newUrl) return alert('⚠️ 請填寫資源名稱與網址！');
+        if (!newName || !newUrl) return window.showFlash('⚠️ 請填寫資源名稱與網址！', 'error');
 
         const checks = Array.from(document.querySelectorAll('.modal-target-class-cb:checked')).map(c => c.value);
-        if (!isGlobal && checks.length === 0) return alert('⚠️ 請至少勾選一個要派發的班級，或設為全域資源！');
+        if (!isGlobal && checks.length === 0) return window.showFlash('⚠️ 請至少勾選一個要派發的班級，或設為全域資源！', 'error');
 
         btn.innerHTML = '⏳ 處理中...';
         btn.disabled = true;
@@ -354,7 +354,7 @@ window.FeatureResource = (() => {
             if (insertErr) throw new Error("寫入修改失敗: " + insertErr.message);
 
             document.getElementById('edit-resource-modal').remove();
-            alert('✅ 資源修改成功！');
+            window.showFlash('資源修改成功');
             
             // 同步刷新畫面
             await renderGlobalResourceView();
@@ -362,7 +362,7 @@ window.FeatureResource = (() => {
             if (currentClassId) await renderClassResources(currentClassId);
 
         } catch (err) {
-            alert('❌ 儲存失敗: ' + err.message);
+            window.showFlash('儲存失敗：' + err.message, 'error');
             btn.innerHTML = '💾 儲存修改';
             btn.disabled = false;
         }
@@ -415,7 +415,7 @@ window.FeatureResource = (() => {
         const type = document.getElementById('add-class-res-type').value;
         const im = { 'drive_folder':'📁', 'drive_file':'📄', 'youtube_video':'▶️', 'website_link':'🔗' };
         
-        if (!name || !url) return alert('⚠️ 請填寫資源名稱與網址！');
+        if (!name || !url) return window.showFlash('⚠️ 請填寫資源名稱與網址！', 'error');
 
         btn.innerHTML = '⏳ 處理中...';
         btn.disabled = true;
@@ -440,11 +440,11 @@ window.FeatureResource = (() => {
             if (insertErr) throw new Error(insertErr.message);
 
             document.getElementById('add-class-resource-modal').remove();
-            alert('✅ 本班資源建立成功！');
+            window.showFlash('本班資源建立成功');
             await renderClassResources(classId);
 
         } catch (err) {
-            alert('❌ 儲存失敗: ' + err.message);
+            window.showFlash('儲存失敗：' + err.message, 'error');
             btn.innerHTML = '💾 儲存並加入'; btn.disabled = false;
         }
     }
@@ -466,9 +466,9 @@ window.FeatureResource = (() => {
                 const globalCb = document.getElementById('res-is-global-cb');
                 const isGlobal = globalCb ? globalCb.checked : false;
 
-                if (!name || !url) return alert('⚠️ 請填寫資源名稱與網址！');
+                if (!name || !url) return window.showFlash('⚠️ 請填寫資源名稱與網址！', 'error');
                 const checks = Array.from(document.querySelectorAll('.target-class-cb:checked')).map(c => c.value);
-                if (!isGlobal && checks.length === 0) return alert('⚠️ 請至少勾選一個要派發的班級，或是勾選「全域資源」！');
+                if (!isGlobal && checks.length === 0) return window.showFlash('⚠️ 請至少勾選一個要派發的班級，或是勾選「全域資源」！', 'error');
 
                 const btn = this;
                 const originalText = btn.innerHTML;
@@ -499,14 +499,14 @@ window.FeatureResource = (() => {
                     const { error: insertErr } = await window.supabaseClient.from('resources').insert(insertPayload);
                     if (insertErr) throw new Error(insertErr.message);
 
-                    alert('✅ 資源建立與派發成功！');
+                    window.showFlash('資源建立與派發成功');
                     document.getElementById('res-input-name').value = ''; document.getElementById('res-input-url').value = '';
                     if (globalCb) { globalCb.checked = false; document.getElementById('global-cb-label').style.background = '#F8FAFC'; document.getElementById('global-cb-label').style.borderColor = '#E2E8F0'; }
                     document.querySelectorAll('.target-class-cb').forEach(c => { c.checked = false; c.disabled = false; c.parentElement.style.opacity = '1'; c.parentElement.style.background = '#F8FAFC'; c.parentElement.style.borderColor = '#CBD5E1'; });
                     
                     await renderGlobalResourceView();
 
-                } catch (err) { alert('❌ 失敗: ' + err.message); } 
+                } catch (err) { window.showFlash('失敗：' + err.message, 'error'); } 
                 finally { btn.innerHTML = originalText; btn.disabled = false; }
             };
         }
@@ -526,13 +526,13 @@ window.FeatureResource = (() => {
                 const nowTs = window.UtilsDate.getTaiwanIsoTimestamp();
                 const { error } = await window.supabaseClient.from('resources').update({ deleted_at: nowTs }).eq('url', resUrl).is('deleted_at', null);
                 if (error) throw error;
-                alert('🗑️ 資源已成功刪除！');
+                window.showFlash('資源已成功刪除');
                 await renderGlobalResourceView();
                 
                 // 確保班級視圖也能同步更新
                 const currentClassId = window.TeacherUI ? window.TeacherUI.getCurrentClassId() : null;
                 if (currentClassId) await renderClassResources(currentClassId);
-            } catch (err) { alert('❌ 刪除失敗: ' + err.message); }
+            } catch (err) { window.showFlash('刪除失敗：' + err.message, 'error'); }
         }
     };
 })();

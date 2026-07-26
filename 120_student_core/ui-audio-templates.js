@@ -50,7 +50,7 @@ window.UIAudioTemplates = {
                             var w = window.open();
                             w.document.write('<iframe src=&quot;${embedUrl}&quot; frameborder=&quot;0&quot; style=&quot;border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;&quot; allowfullscreen></iframe>');
                         } catch(e) {
-                            alert('瀏覽器阻擋了彈出視窗，請允許後重試。');
+                            window.showFlash('瀏覽器阻擋了彈出視窗，請允許後重試。', 'error');
                         }
                     " style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 12px; border-radius: 6px; cursor:pointer; font-weight: bold; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 6px; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.1); white-space: nowrap; flex-shrink: 0;" onmouseover="this.style.backgroundColor='rgba(255,255,255,0.3)'" onmouseout="this.style.backgroundColor='rgba(255,255,255,0.2)'">
                         ↗️ 另開視窗

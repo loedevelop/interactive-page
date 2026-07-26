@@ -249,7 +249,7 @@ window.FeatureStudentAudio = (function() {
 
         } catch (err) {
             console.error('[FeatureStudentAudio] 麥克風存取錯誤:', err);
-            alert('無法存取麥克風，請檢查瀏覽器隱私權與硬體設定。');
+            window.showFlash('無法存取麥克風，請檢查瀏覽器隱私權與硬體設定。', 'error');
         }
     }
 
@@ -389,7 +389,7 @@ window.FeatureStudentAudio = (function() {
             
         } catch (error) {
             console.error('[FeatureStudentAudio] 轉碼繳交失敗:', error);
-            alert('系統音訊處理錯誤，請稍後再試。');
+            window.showFlash('系統音訊處理錯誤，請稍後再試。', 'error');
             el.btnSubmit.disabled = false;
             el.btnSubmit.innerHTML = '🚀 繳交';
         }

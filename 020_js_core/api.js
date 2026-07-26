@@ -16,6 +16,19 @@ const ApiService = (() => {
         }
     };
 
+    const normalizeRpcJsonArray = (data) => {
+        if (Array.isArray(data)) return data;
+        if (typeof data === 'string') {
+            try {
+                const parsed = JSON.parse(data);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_e) {
+                return [];
+            }
+        }
+        return [];
+    };
+
     const fetchClasses = async () => {
         try {
             const sessionStr = localStorage.getItem('LogOnEnglish_Session');
@@ -241,6 +254,78 @@ const ApiService = (() => {
         }
     };
 
+    const fetchArchivedClasses = async () => {
+        try {
+            const { data, error } = await window.supabaseClient.rpc('list_archived_classes');
+            if (error) throw error;
+            const rows = normalizeRpcJsonArray(data);
+            return rows.map(function (row) {
+                const parsedRaw = safeParseJSON(row.raw_data);
+                return Object.assign({}, row, { raw_data: parsedRaw, rawData: parsedRaw });
+            });
+        } catch (error) {
+            console.error("[API Error - fetchArchivedClasses]", error);
+            throw new Error('無法載入封存班級：' + error.message);
+        }
+    };
+
+    const fetchArchivedClassAssignments = async (classId) => {
+        try {
+            if (!classId) throw new Error('缺少 classId');
+            const { data, error } = await window.supabaseClient.rpc('fetch_archived_class_assignments', { target_class_id: classId });
+            if (error) throw error;
+            const rows = normalizeRpcJsonArray(data);
+            return rows.map(function (task) {
+                const parsedRaw = safeParseJSON(task.raw_data);
+                let tasks = task.tasks;
+                if (typeof tasks === 'string') {
+                    try { tasks = JSON.parse(tasks); } catch (_e) { tasks = []; }
+                }
+                return Object.assign({}, task, {
+                    tasks: tasks,
+                    raw_data: parsedRaw,
+                    rawData: parsedRaw
+                });
+            });
+        } catch (error) {
+            console.error("[API Error - fetchArchivedClassAssignments]", error);
+            throw new Error('無法載入封存班作業：' + error.message);
+        }
+    };
+
+    const restoreClass = async (classId) => {
+        try {
+            const { error } = await window.supabaseClient.rpc('restore_class_atomic', { target_class_id: classId });
+            if (error) throw error;
+            return { success: true };
+        } catch (error) {
+            console.error("[API Error - restoreClass]", error);
+            throw new Error('恢復班級失敗：' + error.message);
+        }
+    };
+
+    const purgeClassPermanent = async (classId) => {
+        try {
+            const { error } = await window.supabaseClient.rpc('purge_class_permanent', { target_class_id: classId });
+            if (error) throw error;
+            return { success: true };
+        } catch (error) {
+            console.error("[API Error - purgeClassPermanent]", error);
+            throw new Error('永久刪除失敗：' + error.message);
+        }
+    };
+
+    const insertAssignment = async (payload) => {
+        try {
+            const { data, error } = await window.supabaseClient.from('assignments').insert([payload]).select().single();
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error("[API Error - insertAssignment]", error);
+            throw new Error('建立作業失敗：' + error.message);
+        }
+    };
+
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
     const SUPABASE_PROJECT_URL = 'https://ueigcfdpnsohmkavbzmw.supabase.co';
 
@@ -377,7 +462,10 @@ const ApiService = (() => {
     };
 
     return { 
-        fetchClasses, fetchStudents, fetchClassStaff, fetchAssignments, syncProgress, archiveClass, createGASFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
+        fetchClasses, fetchArchivedClasses, fetchArchivedClassAssignments,
+        fetchStudents, fetchClassStaff, fetchAssignments, syncProgress,
+        archiveClass, restoreClass, purgeClassPermanent, insertAssignment,
+        createGASFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
     };
 })();
 

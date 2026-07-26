@@ -151,7 +151,8 @@
     <script type="module" src="../020_js_core/supabase-client.js?v=55"></script>
     <script src="../020_js_core/profile-form.js?v=1"></script>
     <script src="../020_js_core/persona-routing.js?v=9"></script>
-    <script src="../020_js_core/auth-guard.js?v=58"></script>
+    <script src="../020_js_core/ui-flash.js?v=2"></script>
+    <script src="../020_js_core/auth-guard.js?v=59"></script>
     <script src="../020_js_core/store.js?v=55"></script>
     
     <script src="../020_js_core/api.js?v=56"></script> 
@@ -159,12 +160,12 @@
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/task-script-resolver.js?v=1"></script>
 
-    <script src="../120_student_core/ui-audio-templates.js?v=56"></script>
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=103"></script>
+    <script src="../120_student_core/ui-audio-templates.js?v=57"></script>
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=104"></script>
 
-    <script defer src="../120_student_core/feature-student-audio.js?v=57"></script>
+    <script defer src="../120_student_core/feature-student-audio.js?v=58"></script>
     <script defer src="../120_student_core/feature-student-resource.js?v=55"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=72"></script> 
+    <script defer src="../120_student_core/feature-student-timeline.js?v=73"></script> 
     
     <script defer>
         function switchClass(newClassId) {
@@ -281,7 +282,7 @@
         async function openProfileModal() {
             try {
                 const { data: { user } } = await window.supabaseClient.auth.getUser();
-                if (!user) return alert("連線逾時，請重新登入！");
+                if (!user) return window.showFlash('連線逾時，請重新登入！', 'error');
 
                 const { data: profile, error } = await window.supabaseClient
                     .from('profiles')
@@ -328,7 +329,7 @@
                 document.getElementById('profile-modal').style.display = 'flex';
             } catch (e) {
                 console.error("讀取個資失敗", e);
-                alert("資料讀取失敗，請稍後再試。");
+                window.showFlash('資料讀取失敗，請稍後再試。', 'error');
             }
         }
 
@@ -341,7 +342,7 @@
             const fullCN = (nameFields.lastNameCN + nameFields.firstNameCN).trim();
 
             if (!nameFields.nameEN && !fullCN) {
-                alert('❌ 請至少填寫英文名字或中文姓名！');
+                window.showFlash('請至少填寫英文名字或中文姓名！', 'error');
                 return;
             }
 
@@ -383,14 +384,14 @@
                     await window.ProfileForm.updatePasswordIfProvided(newPwd);
                 }
 
-                alert('✅ 個人資料已成功更新！');
+                window.showFlash('個人資料已成功更新！');
                 document.getElementById('dynamic-student-title').innerText = 'LogOnEnglish | ' + finalName + ' 🚀';
                 document.title = finalName + ' 的專屬教室 | LogOnEnglish';
                 document.getElementById('profile-modal').style.display = 'none';
 
             } catch (err) {
                 console.error(err);
-                alert('❌ 儲存失敗：' + err.message);
+                window.showFlash('儲存失敗：' + err.message, 'error');
             } finally {
                 btn.innerHTML = originalBtnText;
                 btn.disabled = false;

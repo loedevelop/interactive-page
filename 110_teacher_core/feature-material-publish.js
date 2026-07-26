@@ -60,13 +60,13 @@ window.FeatureMaterialPublish = (function () {
 
         const raw = inputEl.value.trim();
         if (!raw) {
-            alert('請貼上 Drive 上的 Excel／試算表連結或 File ID');
+            window.showFlash('請貼上 Drive 上的 Excel／試算表連結或 File ID', 'error');
             return;
         }
 
         const targetFolderId = getClassDriveFolderId(classId);
         if (!targetFolderId) {
-            alert('此班級尚未設定 Drive 資料夾');
+            window.showFlash('此班級尚未設定 Drive 資料夾', 'error');
             return;
         }
 
@@ -97,7 +97,7 @@ window.FeatureMaterialPublish = (function () {
         } catch (err) {
             statusEl.textContent = '❌ 發布失敗：' + (err.message || err);
             statusEl.style.color = '#DC2626';
-            alert('❌ 發布失敗：' + (err.message || err));
+            window.showFlash('發布失敗：' + (err.message || err), 'error');
         } finally {
             if (btn) { btn.disabled = false; btn.textContent = '🚀 發布到 00'; }
         }

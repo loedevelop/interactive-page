@@ -191,7 +191,7 @@ window.FeatureAIBackfill = (function () {
         if (fail > 0) {
             msg += '\n\n失敗 ' + fail + ' 筆：\n' + errors.slice(0, 5).join('\n');
         }
-        alert(msg);
+        window.showFlash(msg, fail > 0 ? 'error' : 'success');
 
         if (window.FeatureProgress && typeof window.FeatureProgress.refresh === 'function') {
             window.FeatureProgress.refresh(classId);
@@ -274,13 +274,13 @@ window.FeatureAIBackfill = (function () {
             ? cachedContext.jobs.find(function (j) { return j.key === jobKey; })
             : null;
         if (!job) {
-            alert('資料已過期，請重新整理進度表');
+            window.showFlash('資料已過期，請重新整理進度表', 'error');
             return;
         }
 
         const studentIds = job.eligible.map(function (e) { return e.student.id; });
         if (studentIds.length === 0) {
-            alert('沒有可補批的學生');
+            window.showFlash('沒有可補批的學生', 'error');
             return;
         }
 
@@ -293,7 +293,7 @@ window.FeatureAIBackfill = (function () {
         try {
             await triggerBackfill(classId, jobKey, studentIds);
         } catch (err) {
-            alert('❌ 補啟失敗：' + (err.message || err));
+            window.showFlash('補啟失敗：' + (err.message || err), 'error');
         }
     }
 

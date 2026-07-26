@@ -28,12 +28,78 @@
             display: none;
         }
     </style>
+    <script>
+        (function () {
+            var KEY = 'teacherActiveGlobalView';
+            var NAV = {
+                'view-manage-classes': 'nav-manage-classes',
+                'view-global-resources': 'nav-global-resources',
+                'view-profile': 'nav-profile'
+            };
+            var saved = localStorage.getItem(KEY);
+            if (!saved || !NAV[saved]) return;
+            var style = document.createElement('style');
+            style.id = 'boot-global-view-shim';
+            style.textContent =
+                '#class-context-header{display:none!important}' +
+                '.view-section{display:none!important}' +
+                '.tab-btn.active{border-bottom-color:transparent!important;color:inherit!important}' +
+                '#' + saved + '{display:block!important}' +
+                '.bottom-nav .class-item.active{background:transparent!important;color:inherit!important;box-shadow:none!important}' +
+                '#' + NAV[saved] + '{background:var(--primary)!important;color:white!important;box-shadow:var(--shadow)!important}';
+            document.head.appendChild(style);
+        })();
+    </script>
 </head>
 <body>
     <div class="sidebar">
         <div class="sidebar-logo">LogOnTeacher</div>
         <div class="nav-section-title">我的班級 (My Classes)</div>
         <div id="class-list"></div>
+        <script>
+            (function () {
+                function roleBadge(role) {
+                    if (role === 'admin') return '<span style="font-size:0.7rem;background:#EF4444;color:white;padding:2px 6px;border-radius:10px;margin-left:5px;">Admin</span>';
+                    if (role === 'primary_teacher') return '<span style="font-size:0.7rem;background:#FF8C00;color:white;padding:2px 6px;border-radius:10px;margin-left:5px;">主</span>';
+                    if (role === 'co_teacher') return '<span style="font-size:0.7rem;background:#4CAF50;color:white;padding:2px 6px;border-radius:10px;margin-left:5px;">協</span>';
+                    if (role === 'ta_senior' || role === 'ta_junior') return '<span style="font-size:0.7rem;background:#9E9E9E;color:white;padding:2px 6px;border-radius:10px;margin-left:5px;">TA</span>';
+                    return '';
+                }
+                var container = document.getElementById('class-list');
+                if (!container || container.dataset.booted === '1') return;
+                var items = [];
+                try {
+                    var cache = JSON.parse(localStorage.getItem('teacherSidebarCache') || 'null');
+                    if (cache && Array.isArray(cache.classes) && cache.classes.length) items = cache.classes;
+                } catch (_e) {}
+                if (!items.length) {
+                    try {
+                        var session = JSON.parse(localStorage.getItem('LogOnEnglish_Session') || '{}');
+                        if (session.enrollments && session.enrollments.length) {
+                            items = session.enrollments.map(function (en) {
+                                return { id: en.id, name: en.name, icon: '📘', staff_role: en.staff_role };
+                            });
+                        }
+                    } catch (_e2) {}
+                }
+                if (!items.length) return;
+                var globalView = localStorage.getItem('teacherActiveGlobalView');
+                var activeId = localStorage.getItem('activeClassId');
+                var sigParts = [];
+                items.forEach(function (cls) {
+                    sigParts.push([cls.id, cls.name || '', cls.icon || '📘', cls.staff_role || ''].join('|'));
+                    var div = document.createElement('div');
+                    div.className = 'class-item' + (!globalView && cls.id === activeId ? ' active' : '');
+                    div.setAttribute('data-class-id', cls.id);
+                    div.style.display = 'flex';
+                    div.style.alignItems = 'center';
+                    div.innerHTML = '<span style="width:20px;display:inline-block;">' + (cls.icon || '📘') + '</span> <span style="flex-grow:1;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">' + cls.name + '</span> ' + roleBadge(cls.staff_role);
+                    container.appendChild(div);
+                });
+                container.dataset.booted = '1';
+                container.dataset.sidebarSig = sigParts.join(';;');
+            })();
+        </script>
         <div class="bottom-nav">
             <div class="nav-section-title">全域管理 (Global)</div>
             <div class="class-item" id="nav-global-resources">📚 教學資源 (跨班派發)</div>
@@ -192,6 +258,7 @@
             </div>
             
             <div class="settings-card"><h3>🏫 現有班級清單</h3><div id="manage-class-list-container"></div></div>
+            <div class="settings-card"><h3>📦 已封存班級</h3><div id="archived-class-list-container"></div></div>
         </div>
 
         <div id="view-profile" class="view-section">
@@ -226,38 +293,42 @@
     <script src="../020_js_core/config.js?v=36"></script>
     <script src="../020_js_core/supabase-client.js?v=37"></script>
     <script src="../020_js_core/persona-routing.js?v=9"></script>
-    <script src="../020_js_core/auth-guard.js?v=38"></script>
+    <script src="../020_js_core/ui-flash.js?v=2"></script>
+    <script src="../020_js_core/auth-guard.js?v=39"></script>
     <script src="../020_js_core/store.js?v=37"></script>  
-    <script src="../020_js_core/api.js?v=36"></script> 
+    <script src="../020_js_core/api.js?v=38"></script> 
     <script src="../020_js_core/utils-date.js?v=36"></script> 
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/profile-form.js?v=1"></script>
     <script src="../020_js_core/task-script-resolver.js?v=1"></script>
     <script src="../020_js_core/material-snapshot.js?v=1"></script>
+    <script src="../020_js_core/modal-overlay.js?v=1"></script>
+    <script src="../020_js_core/assignment-clone.js?v=1"></script>
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
     <script src="../110_teacher_core/api-gas-service.js?v=51"></script> <!-- 教材發布 publish_material -->
-    <script src="../110_teacher_core/ui-core.js?v=38"></script>
-    <script src="../110_teacher_core/ui-class-templates.js?v=37"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=49"></script>
-    <script src="../110_teacher_core/store-assignment-builder.js?v=45"></script> 
+    <script src="../110_teacher_core/ui-core.js?v=44"></script>
+    <script src="../110_teacher_core/ui-class-templates.js?v=39"></script>
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=50"></script>
+    <script src="../110_teacher_core/store-assignment-builder.js?v=46"></script> 
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
     <script src="../110_teacher_core/api-gradebook.js?v=18"></script> 
     <script src="../110_teacher_core/ui-gradebook-templates.js?v=21"></script>
-    <script src="../110_teacher_core/feature-gradebook.js?v=24"></script>
+    <script src="../110_teacher_core/feature-gradebook.js?v=25"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=39"></script>
+    <script src="../110_teacher_core/feature-class.js?v=43"></script>
+    <script src="../110_teacher_core/feature-archived-classes.js?v=6"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=36"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=71"></script>
+    <script src="../110_teacher_core/feature-timeline.js?v=72"></script>
     <script src="../110_teacher_core/feature-resource.js?v=37"></script>
     <script src="../110_teacher_core/feature-profile.js?v=39"></script>
-    <script src="../110_teacher_core/feature-class-members.js?v=36"></script>
+    <script src="../110_teacher_core/feature-class-members.js?v=37"></script>
     <script src="../110_teacher_core/feature-progress.js?v=37"></script>
     <script src="../110_teacher_core/feature-ai-backfill.js?v=1"></script>
-    <script src="../110_teacher_core/feature-material-publish.js?v=1"></script>
+    <script src="../110_teacher_core/feature-material-publish.js?v=2"></script>
 
     <script type="module">
         import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=36'; 

@@ -24,7 +24,7 @@ window.UIStudentTimelineTemplates = (() => {
                     utterance.rate = 0.9; 
                     window.speechSynthesis.speak(utterance);
                 } else {
-                    alert("您的瀏覽器不支援語音播放功能。");
+                    window.showFlash('您的瀏覽器不支援語音播放功能。', 'error');
                 }
             };
 
@@ -72,7 +72,7 @@ window.UIStudentTimelineTemplates = (() => {
             audio.currentTime = startTime;
             audio.play().catch(e => {
                 console.warn('切片播放被阻擋:', e);
-                alert('⚠️ 無法播放錯音片段，請先點上方播放器播放一次。');
+                window.showFlash('無法播放錯音片段，請先點上方播放器播放一次。', 'error');
             });
             sliceTimerInterval = setInterval(() => {
                 if (audio.paused || audio.currentTime >= endTime) {
@@ -125,7 +125,7 @@ window.UIStudentTimelineTemplates = (() => {
                     }).catch(e => {
                         console.warn("切片播放被阻擋:", e);
                         if (fallbackFileId) playSliceViaFileId(fallbackFileId, sTime, eTime);
-                        else alert("⚠️ 瀏覽器阻擋了自動播放，請先點上方播放器播放一次。");
+                        else window.showFlash('瀏覽器阻擋了自動播放，請先點上方播放器播放一次。', 'error');
                     });
                 }
             };
