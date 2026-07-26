@@ -253,9 +253,9 @@
                 <div style="display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; align-items: end; margin-top: 15px;">
                     <div class="form-group"><label>圖示</label><select id="new-class-icon" class="form-control"><option value="📘">📘</option><option value="🚀">🚀</option><option value="☕">☕</option></select></div>
                     <div class="form-group"><label>班級名稱</label><input type="text" id="new-class-name" class="form-control" placeholder="例如：多益密集文法班"></div>
-                    <div class="form-group"><label>學期起始日（Drive 後綴）</label><input type="date" id="new-class-start-date" class="form-control"></div>
+                    <div class="form-group"><label>學期起始日</label><input type="date" id="new-class-start-date" class="form-control"></div>
                 </div>
-                <p style="color:#94A3B8;font-size:0.85rem;margin:8px 0 0;">Google Drive 資料夾將命名為：<strong>班級名稱_開課日</strong>（例如 <code>多益文法_20260301</code>）</p>
+                <p style="color:#94A3B8;font-size:0.85rem;margin:8px 0 0;">Drive 資料夾 = <strong>班級名稱_開課日</strong>（例 <code>YuanChang_2026_20260801</code>）。此日期會寫入班級設定；之後在「排程與結算設定」修改並儲存時，會同步改 Drive 名稱。</p>
                 <button id="btn-add-class" class="btn btn-primary btn-block">✅ 建立新班級</button>
             </div>
             
@@ -321,7 +321,7 @@
     <script src="../110_teacher_core/feature-gradebook.js?v=25"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=45"></script>
+    <script src="../110_teacher_core/feature-class.js?v=46"></script>
     <script src="../110_teacher_core/feature-archived-classes.js?v=8"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=36"></script>
     <script src="../110_teacher_core/feature-timeline.js?v=72"></script>

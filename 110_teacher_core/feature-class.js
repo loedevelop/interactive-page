@@ -624,7 +624,8 @@ window.FeatureClass = (() => {
                             db.assignments = db.assignments.filter(a => !a.deleted_at);
                         }
 
-                        if ((isNewClassSetup || oldSDate !== sDate) && safeRawDataForCheck.drive_folder_id) {
+                        // 每次儲存排程都依「班名 + 學期起始日」同步 Drive 名稱（舊班可一次改對）
+                        if (safeRawDataForCheck.drive_folder_id || safeRawDataForCheck.class_folder_id) {
                             try {
                                 btn.innerHTML = '⏳ 同步 Drive 資料夾名稱...';
                                 await syncClassDriveFolderName(safeRawDataForCheck, c.name, sDate);

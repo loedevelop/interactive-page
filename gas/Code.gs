@@ -218,8 +218,22 @@ function readMaterialFile(classFolderId, materialFolderName, fileName) {
   };
 }
 
+/** 老師工作區根目錄：統一 _Teachers（若有舊名 Teachers 則改名對齊） */
+function resolveTeachersRootFolder() {
+  var root = resolveDriveRootFolder();
+  var preferred = root.getFoldersByName('_Teachers');
+  if (preferred.hasNext()) return preferred.next();
+  var legacy = root.getFoldersByName('Teachers');
+  if (legacy.hasNext()) {
+    var oldFolder = legacy.next();
+    oldFolder.setName('_Teachers');
+    return oldFolder;
+  }
+  return root.createFolder('_Teachers');
+}
+
 function ensureTeacherWorkspace(teacherName, teacherShortId) {
-  var teachersRoot = getOrCreatePath([DRIVE_ROOT, 'Teachers']);
+  var teachersRoot = resolveTeachersRootFolder();
   var safeName = String(teacherName || 'Teacher').replace(/[\\/:*?"<>|]/g, '_').trim();
   var shortId = String(teacherShortId || '0000').slice(-4);
   var teacherFolder = getOrCreateSubFolder(teachersRoot, safeName + '_' + shortId);
