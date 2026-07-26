@@ -2,24 +2,34 @@
  * 📂 檔案：gas/Code.gs (Google Apps Script)
  * 🌟 SaaS 隱私隔離與單點權限開放版 + stream_audio 音檔代理 + extract_sheet + publish_material
  * ⚠️ 部署：貼至 GAS 專案 → 部署為網路應用程式 → 「任何人」可存取
- * ⚠️ Drive 鐵律：所有自動建立的路徑必須在 _LOE 底下（不可另建 LogOnEnglish 等根目錄）
+ * ⚠️ Drive 鐵律：所有自動建立的路徑必須在 _LogOnEnglish 底下（單一根目錄）
  */
 
-var DRIVE_ROOT = '_LOE';
+var DRIVE_ROOT = '_LogOnEnglish';
 
-/** 正規化並強制所有路徑落在 _LOE 下；缺省為既有 _LOE/_std */
+/** 正規化並強制所有路徑落在 _LogOnEnglish 下；缺省為 _LogOnEnglish/_std */
 function normalizeDrivePath(pathArray) {
   if (!pathArray || !pathArray.length) {
     return [DRIVE_ROOT, '_std'];
   }
   var parts = pathArray.slice();
-  if (parts[0] === 'LogOnEnglish') {
+  if (parts[0] === 'LogOnEnglish' || parts[0] === '_LOE') {
     parts[0] = DRIVE_ROOT;
   }
   if (parts[0] !== DRIVE_ROOT) {
-    throw new Error('系統僅允許在 _LOE 資料夾下建立內容');
+    throw new Error('系統僅允許在 _LogOnEnglish 資料夾下建立內容');
   }
   return parts;
+}
+
+/** 解析 Drive 根資料夾：優先 _LogOnEnglish，其次沿用既有 _LOE，否則新建 _LogOnEnglish */
+function resolveDriveRootFolder() {
+  var parent = DriveApp.getRootFolder();
+  var preferred = parent.getFoldersByName(DRIVE_ROOT);
+  if (preferred.hasNext()) return preferred.next();
+  var legacy = parent.getFoldersByName('_LOE');
+  if (legacy.hasNext()) return legacy.next();
+  return parent.createFolder(DRIVE_ROOT);
 }
 
 function getOrCreateSubFolder(parentFolder, subFolderName) {
@@ -111,15 +121,10 @@ function extractSheetText(fileId, sheetName, rangeStr) {
 }
 
 function getOrCreatePath(pathArray) {
-  var currentFolder = DriveApp.getRootFolder();
-  for (var i = 0; i < pathArray.length; i++) {
-    var folderName = pathArray[i];
-    var folders = currentFolder.getFoldersByName(folderName);
-    if (folders.hasNext()) {
-      currentFolder = folders.next();
-    } else {
-      currentFolder = currentFolder.createFolder(folderName);
-    }
+  var parts = normalizeDrivePath(pathArray);
+  var currentFolder = resolveDriveRootFolder();
+  for (var i = 1; i < parts.length; i++) {
+    currentFolder = getOrCreateSubFolder(currentFolder, parts[i]);
   }
   return currentFolder;
 }
@@ -214,7 +219,7 @@ function readMaterialFile(classFolderId, materialFolderName, fileName) {
 }
 
 function ensureTeacherWorkspace(teacherName, teacherShortId) {
-  var teachersRoot = getOrCreatePath(normalizeDrivePath([DRIVE_ROOT, 'Teachers']));
+  var teachersRoot = getOrCreatePath([DRIVE_ROOT, 'Teachers']);
   var safeName = String(teacherName || 'Teacher').replace(/[\\/:*?"<>|]/g, '_').trim();
   var shortId = String(teacherShortId || '0000').slice(-4);
   var teacherFolder = getOrCreateSubFolder(teachersRoot, safeName + '_' + shortId);
@@ -291,7 +296,7 @@ function doPost(e) {
           });
         }
       } else if (rootPath && rootPath.length) {
-        var rootFolder = getOrCreatePath(normalizeDrivePath(rootPath));
+        var rootFolder = getOrCreatePath(rootPath);
         if (folderPath && folderPath.length) {
           var nestedParent = resolveFolderPath(rootFolder, folderPath);
           newFolder = getOrCreateSubFolder(nestedParent, cleanFolderName);
@@ -299,7 +304,7 @@ function doPost(e) {
           newFolder = getOrCreateSubFolder(rootFolder, cleanFolderName);
         }
       } else {
-        var targetRootFolder = getOrCreatePath(normalizeDrivePath(null));
+        var targetRootFolder = getOrCreatePath(null);
         newFolder = getOrCreateSubFolder(targetRootFolder, cleanFolderName);
       }
 
