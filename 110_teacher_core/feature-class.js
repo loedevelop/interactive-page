@@ -343,7 +343,7 @@ window.FeatureClass = (() => {
                     const { data: { user }, error: authError } = await window.supabaseClient.auth.getUser();
                     if (authError || !user) throw new Error('無法取得授權狀態');
                     
-                    // 🌟 核心防護層：LogOnEnglish/_Classes/{班名}_{年} + 標準子資料夾
+                    // 🌟 核心防護層：_LOE/_Classes/{班名}_{年} + 標準子資料夾（Drive 根目錄僅 _LOE）
                     let folderId = "";
                     let classYear = getTaiwanTodayString().slice(0, 4);
                     try {
@@ -366,7 +366,7 @@ window.FeatureClass = (() => {
                         const safeBaseName = name.replace(/[\\/:*?"<>|]/g, '_').trim();
                         const classFolderName = `${safeBaseName}_${classYear}`;
                         const folderRes = await window.ApiService.createGASFolder(classFolderName, null, false, null, {
-                            rootPath: ['LogOnEnglish', '_Classes']
+                            rootPath: ['_LOE', '_Classes']
                         });
                         if (teacherWsPromise) await teacherWsPromise;
                         if (!folderRes || !folderRes.folderId) {
@@ -408,7 +408,7 @@ window.FeatureClass = (() => {
                     if (typeof db.save === 'function') db.save();
                     if (window.TeacherUI) window.TeacherUI.renderSidebar();
                     renderClassManager();
-                    alert(`✅ 成功建立班級：「${name}」！\n(已在 LogOnEnglish/_Classes 建立 ${classYear} 班級資料夾與標準子目錄)`);
+                    alert(`✅ 成功建立班級：「${name}」！\n(已在 _LOE/_Classes 建立 ${classYear} 班級資料夾與標準子目錄)`);
                 } catch (err) { alert('❌ 新增失敗: ' + err.message); } 
                 finally { btn.innerHTML = originalText; btn.disabled = false; }
             };
