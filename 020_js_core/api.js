@@ -378,6 +378,40 @@ const ApiService = (() => {
         }
     };
 
+    const renameGASFolder = async (folderId, folderName) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+        try {
+            const cleanFolderId = String(folderId || '').trim();
+            const cleanName = String(folderName || '').trim();
+            if (!cleanFolderId || !cleanName) throw new Error('缺少資料夾 ID 或新名稱');
+
+            const response = await fetch(GAS_API_URL, {
+                method: 'POST',
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                    action: 'rename_folder',
+                    folderId: cleanFolderId,
+                    folderName: cleanName
+                })
+            });
+
+            clearTimeout(timeoutId);
+            if (!response.ok) throw new Error(`連線異常 (HTTP ${response.status})`);
+            const result = JSON.parse(await response.text());
+            if (result.status !== 'success') throw new Error(result.message || '雲端無法重新命名資料夾');
+            return result;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') throw new Error('重新命名逾時，請檢查網路。');
+            console.error('[API Error - renameGASFolder]', error);
+            throw error;
+        }
+    };
+
     const ensureGASFolderSharing = async (folderId, options = {}) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -465,7 +499,7 @@ const ApiService = (() => {
         fetchClasses, fetchArchivedClasses, fetchArchivedClassAssignments,
         fetchStudents, fetchClassStaff, fetchAssignments, syncProgress,
         archiveClass, restoreClass, purgeClassPermanent, insertAssignment,
-        createGASFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
+        createGASFolder, renameGASFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
     };
 })();
 

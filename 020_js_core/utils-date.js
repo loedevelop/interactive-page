@@ -104,6 +104,19 @@ window.UtilsDate = (() => {
         return today > target;
     }
 
+    /** 日期 → Drive 後綴 YYYYMMDD（缺省用台灣今日） */
+    function dateToFolderSuffix(dateStr) {
+        const norm = normalizeDateString(dateStr);
+        if (!norm) return getTaiwanTodayString().replace(/-/g, '');
+        return norm.replace(/-/g, '');
+    }
+
+    /** Drive 班級資料夾名：{老師自設班名}_{開課日期 YYYYMMDD} */
+    function buildClassDriveFolderName(displayName, startDateStr) {
+        const safe = String(displayName || '班級').replace(/[\\/:*?"<>|]/g, '_').trim();
+        return safe + '_' + dateToFolderSuffix(startDateStr);
+    }
+
     return {
         toLocalISODate,
         getTaiwanTodayString,
@@ -112,6 +125,8 @@ window.UtilsDate = (() => {
         getWeekStartStr,
         parseLocalDate,
         getTaiwanIsoTimestamp,
-        isPastDue
+        isPastDue,
+        dateToFolderSuffix,
+        buildClassDriveFolderName
     };
 })();

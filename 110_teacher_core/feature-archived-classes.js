@@ -241,13 +241,21 @@ window.FeatureArchivedClasses = (function () {
             var user = userRes.data.user;
             if (!user) throw new Error('無法取得登入狀態');
 
-            var classYear = window.UtilsDate ? window.UtilsDate.getTaiwanTodayString().slice(0, 4) : String(new Date().getFullYear());
             var safeBaseName = String(cls.name || '班級').replace(/[\\/:*?"<>|]/g, '_').trim();
             var newName = safeBaseName + '_copy';
             var folderId = '';
+            var cloneStartDate = window.UtilsDate && window.UtilsDate.normalizeDateString
+                ? window.UtilsDate.normalizeDateString(cls.start_date || cls.startDate || '')
+                : '';
+            if (!cloneStartDate && window.UtilsDate) {
+                cloneStartDate = window.UtilsDate.getTaiwanTodayString();
+            }
 
             if (window.ApiService && typeof window.ApiService.createGASFolder === 'function') {
-                var folderRes = await window.ApiService.createGASFolder(newName + '_' + classYear, null, false, null, {
+                var driveFolderName = window.UtilsDate && window.UtilsDate.buildClassDriveFolderName
+                    ? window.UtilsDate.buildClassDriveFolderName(newName, cloneStartDate)
+                    : newName + '_' + String(cloneStartDate).replace(/-/g, '');
+                var folderRes = await window.ApiService.createGASFolder(driveFolderName, null, false, null, {
                     rootPath: ['_LogOnEnglish', '_Classes']
                 });
                 folderId = folderRes.folderId;
@@ -266,6 +274,8 @@ window.FeatureArchivedClasses = (function () {
                 icon: cls.icon || '📘',
                 calc_mode: cls.calc_mode || 'single',
                 meet_days: cls.meet_days || [],
+                start_date: cloneStartDate || null,
+                end_date: cls.end_date || cls.endDate || null,
                 raw_data: rawCopy
             }]).select().single();
             if (classError) throw classError;
@@ -279,7 +289,7 @@ window.FeatureArchivedClasses = (function () {
             for (var i = 0; i < assignments.length; i++) {
                 var a = assignments[i];
                 var cloned = window.AssignmentClone.cloneAssignmentRecord(a);
-                var payload = window.AssignmentClone.buildInsertPayload(cloned, newClass.id, a.target_date || classYear + '-01-01');
+                var payload = window.AssignmentClone.buildInsertPayload(cloned, newClass.id, a.target_date || cloneStartDate || '2026-01-01');
                 await window.ApiService.insertAssignment(payload);
             }
 

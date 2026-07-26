@@ -48,6 +48,31 @@ window.FeatureClass = (() => {
         return dStr;
     }
 
+    function parseClassRawData(clsOrRaw) {
+        let raw = clsOrRaw;
+        if (clsOrRaw && (clsOrRaw.raw_data != null || clsOrRaw.rawData != null)) {
+            raw = clsOrRaw.raw_data != null ? clsOrRaw.raw_data : clsOrRaw.rawData;
+        }
+        if (typeof raw === 'string') {
+            try { raw = JSON.parse(raw); } catch (_e) { raw = {}; }
+        }
+        return raw || {};
+    }
+
+    async function syncClassDriveFolderName(classRecord, displayName, startDateStr) {
+        const raw = parseClassRawData(classRecord);
+        const folderId = raw.drive_folder_id || raw.class_folder_id;
+        if (!folderId) return null;
+        if (!window.ApiService || typeof window.ApiService.renameGASFolder !== 'function') {
+            throw new Error('雲端重新命名 API 未就緒');
+        }
+        if (!window.UtilsDate || typeof window.UtilsDate.buildClassDriveFolderName !== 'function') {
+            throw new Error('命名工具未載入');
+        }
+        const targetName = window.UtilsDate.buildClassDriveFolderName(displayName, startDateStr);
+        return window.ApiService.renameGASFolder(folderId, targetName);
+    }
+
     function generateDates(startStr, endStr, meetDaysArray) {
         if (!startStr || !endStr || !meetDaysArray || meetDaysArray.length === 0) return [];
         
@@ -309,6 +334,14 @@ window.FeatureClass = (() => {
 
             if (typeof db.save === 'function') db.save();
             renderClassManager();
+
+            try {
+                const startForDrive = normalizeDateString(cls.startDate || cls.start_date || getTaiwanTodayString());
+                await syncClassDriveFolderName({ raw_data: mergedRawData }, newName, startForDrive);
+            } catch (driveErr) {
+                console.warn('Drive 資料夾同步命名略過:', driveErr);
+                window.showFlash('班級已儲存，但 Drive 資料夾重新命名失敗：' + driveErr.message, 'error');
+            }
             
             if (window.TeacherUI) {
                 window.TeacherUI.renderSidebar();
@@ -407,8 +440,14 @@ window.FeatureClass = (() => {
 
     function ensureNewClassFormHasModeSelector() {
         const btnAddClass = document.getElementById('btn-add-class');
-        if (!btnAddClass || document.getElementById('new-class-display-mode')) return;
-        btnAddClass.insertAdjacentHTML('beforebegin', TPL.getModeSelectorHtml());
+        if (!btnAddClass) return;
+        if (!document.getElementById('new-class-display-mode')) {
+            btnAddClass.insertAdjacentHTML('beforebegin', TPL.getModeSelectorHtml());
+        }
+        const startInput = document.getElementById('new-class-start-date');
+        if (startInput && !startInput.value) {
+            startInput.value = getTaiwanTodayString();
+        }
     }
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -427,6 +466,13 @@ window.FeatureClass = (() => {
                 const name = nameInput.value.trim();
                 if (!name) return window.showFlash('⚠️ 請輸入班級名稱！', 'error');
 
+                const startInput = document.getElementById('new-class-start-date');
+                let startDate = startInput && startInput.value
+                    ? normalizeDateString(startInput.value)
+                    : getTaiwanTodayString();
+                if (!startDate) startDate = getTaiwanTodayString();
+                if (startInput) startInput.value = startDate;
+
                 const btn = this; const originalText = btn.innerHTML;
                 btn.innerHTML = '⏳ 雲端建立資料夾中...'; btn.disabled = true;
 
@@ -434,9 +480,8 @@ window.FeatureClass = (() => {
                     const { data: { user }, error: authError } = await window.supabaseClient.auth.getUser();
                     if (authError || !user) throw new Error('無法取得授權狀態');
                     
-                    // 🌟 核心防護層：_LogOnEnglish/_Classes/{班名}_{年} + 標準子資料夾
+                    // 🌟 _LogOnEnglish/_Classes/{班名}_{開課日 YYYYMMDD} + 標準子資料夾
                     let folderId = "";
-                    let classYear = getTaiwanTodayString().slice(0, 4);
                     try {
                         if (!window.ApiService || typeof window.ApiService.createGASFolder !== 'function') {
                             throw new Error("系統 API 模組未就緒");
@@ -454,8 +499,9 @@ window.FeatureClass = (() => {
                             }
                         } catch (_wsInitErr) {}
 
-                        const safeBaseName = name.replace(/[\\/:*?"<>|]/g, '_').trim();
-                        const classFolderName = `${safeBaseName}_${classYear}`;
+                        const classFolderName = window.UtilsDate && window.UtilsDate.buildClassDriveFolderName
+                            ? window.UtilsDate.buildClassDriveFolderName(name, startDate)
+                            : (name.replace(/[\\/:*?"<>|]/g, '_').trim() + '_' + startDate.replace(/-/g, ''));
                         const folderRes = await window.ApiService.createGASFolder(classFolderName, null, false, null, {
                             rootPath: ['_LogOnEnglish', '_Classes']
                         });
@@ -485,7 +531,14 @@ window.FeatureClass = (() => {
                         drive_layout: 'v2'
                     };
                     
-                    const payload = { name: name, icon: iconInput ? iconInput.value : "📘", calc_mode: 'single', meet_days: [], raw_data: initialRawData };
+                    const payload = {
+                        name: name,
+                        icon: iconInput ? iconInput.value : "📘",
+                        calc_mode: 'single',
+                        meet_days: [],
+                        start_date: startDate,
+                        raw_data: initialRawData
+                    };
                     const { data: newClass, error: classError } = await window.supabaseClient.from('classes').insert([payload]).select().single();
                     if (classError) throw classError;
                     
@@ -569,6 +622,16 @@ window.FeatureClass = (() => {
                                 if (target) Object.assign(target, upd.payload); 
                             });
                             db.assignments = db.assignments.filter(a => !a.deleted_at);
+                        }
+
+                        if ((isNewClassSetup || oldSDate !== sDate) && safeRawDataForCheck.drive_folder_id) {
+                            try {
+                                btn.innerHTML = '⏳ 同步 Drive 資料夾名稱...';
+                                await syncClassDriveFolderName(safeRawDataForCheck, c.name, sDate);
+                            } catch (driveErr) {
+                                console.warn('Drive 資料夾重新命名失敗:', driveErr);
+                                window.showFlash('排程已儲存，但 Drive 資料夾重新命名失敗：' + driveErr.message, 'error');
+                            }
                         }
 
                         const mergedRawData = Object.assign({}, safeRawDataForCheck, { week_start_day: weekStartVal, custom_sessions: finalCustomSessions });

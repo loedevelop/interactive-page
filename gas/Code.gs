@@ -315,6 +315,27 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
+    if (action === 'rename_folder') {
+      var renameFolderId = data.folderId ? String(data.folderId).trim() : '';
+      var renameFolderName = data.folderName ? String(data.folderName) : '';
+      if (!renameFolderId || !renameFolderName) {
+        throw new Error('缺少 folderId 或 folderName');
+      }
+      var cleanRename = renameFolderName.replace(/<[^>]*>?/gm, '').replace(/[\\/:*?"<>|]/g, '_').trim();
+      if (!cleanRename) cleanRename = '未命名資料夾';
+      var renameTarget = DriveApp.getFolderById(renameFolderId);
+      if (renameTarget.isTrashed()) {
+        throw new Error('資料夾已在垃圾桶，無法重新命名');
+      }
+      renameTarget.setName(cleanRename);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        folderId: renameTarget.getId(),
+        folderName: renameTarget.getName(),
+        folderUrl: renameTarget.getUrl()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     if (action === 'migrate_student_data') {
       var pFolderId = data.parentFolderId;
       var studentName = data.studentName ? data.studentName : "學生";

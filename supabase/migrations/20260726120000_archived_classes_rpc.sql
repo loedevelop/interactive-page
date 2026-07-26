@@ -89,7 +89,6 @@ BEGIN
     SELECT id, class_id, title, description, target_date, due_date, tasks, raw_data, created_at, deleted_at
     FROM public.assignments
     WHERE class_id = target_class_id
-      AND deleted_at IS NULL
     ORDER BY target_date ASC NULLS LAST, created_at ASC
   ) a;
 
@@ -115,6 +114,11 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION '找不到可恢復的封存班級';
   END IF;
+
+  UPDATE public.assignments
+  SET deleted_at = NULL
+  WHERE class_id = target_class_id
+    AND deleted_at IS NOT NULL;
 
   RETURN json_build_object('status', 'success', 'class_id', target_class_id);
 END;
