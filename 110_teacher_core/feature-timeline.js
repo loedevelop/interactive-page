@@ -103,26 +103,49 @@ window.FeatureTimeline = (() => {
         });
     }
 
+    function refreshMaterialSliceFieldVisibility() {
+        const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        if (!bState || !Array.isArray(bState.tasks)) return;
+        walkAudioRecordNodes(bState.tasks, [], function (_task, pathStr) {
+            toggleMaterialSliceFields(pathStr);
+        });
+    }
+
     function hydrateMaterialSnapshotUI() {
         const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
         if (!bState || !Array.isArray(bState.tasks)) return;
 
+        const pendingMeta = [];
         walkAudioRecordNodes(bState.tasks, [], function (task, pathStr) {
             toggleMaterialSliceFields(pathStr);
             const raw = task.raw_data || {};
             if (!raw.material_ref || !raw.material_ref.published_file) return;
 
             const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
-            const statusEl = document.getElementById('node-material-status-' + pathStr);
             if (!selectEl) return;
 
-            const savedVal = (raw.material_ref.material_folder || '') + '::' + (raw.material_ref.published_file || '');
-            if (statusEl) {
-                statusEl.textContent = '⏳ 還原 meta 清單…';
-                statusEl.style.color = '#3B82F6';
-            }
+            pendingMeta.push({
+                pathStr: pathStr,
+                savedVal: (raw.material_ref.material_folder || '') + '::' + (raw.material_ref.published_file || ''),
+                raw: raw,
+                selectEl: selectEl,
+                statusEl: document.getElementById('node-material-status-' + pathStr)
+            });
+        });
 
-            loadMaterialMetaOptions(bState.classId).then(function (options) {
+        if (pendingMeta.length === 0) return;
+
+        pendingMeta.forEach(function (item) {
+            if (item.statusEl) {
+                item.statusEl.textContent = '⏳ 還原 meta 清單…';
+                item.statusEl.style.color = '#3B82F6';
+            }
+        });
+
+        loadMaterialMetaOptions(bState.classId).then(function (options) {
+            pendingMeta.forEach(function (item) {
+                const selectEl = item.selectEl;
+                if (!selectEl) return;
                 if (options.length === 0) {
                     selectEl.innerHTML = '<option value="">（尚無 meta 檔，請先到 ⚙️ 教材發布）</option>';
                 } else {
@@ -130,23 +153,25 @@ window.FeatureTimeline = (() => {
                         const val = opt.folderName + '::' + opt.fileName;
                         return '<option value="' + val.replace(/"/g, '&quot;') + '">' + opt.label + '</option>';
                     }).join('');
-                    selectEl.value = savedVal;
-                    if (!selectEl.value && savedVal) {
-                        selectEl.innerHTML = '<option value="' + savedVal.replace(/"/g, '&quot;') + '" selected>'
-                            + savedVal.replace(/::/g, ' / ').replace(/</g, '&lt;') + '</option>' + selectEl.innerHTML;
-                        selectEl.value = savedVal;
+                    selectEl.value = item.savedVal;
+                    if (!selectEl.value && item.savedVal) {
+                        selectEl.innerHTML = '<option value="' + item.savedVal.replace(/"/g, '&quot;') + '" selected>'
+                            + item.savedVal.replace(/::/g, ' / ').replace(/</g, '&lt;') + '</option>' + selectEl.innerHTML;
+                        selectEl.value = item.savedVal;
                     }
                 }
-                if (statusEl) {
-                    statusEl.textContent = raw.snapshot_at
-                        ? ('✅ 已還原 snapshot（' + raw.snapshot_at + '）')
+                if (item.statusEl) {
+                    item.statusEl.textContent = item.raw.snapshot_at
+                        ? ('✅ 已還原 snapshot（' + item.raw.snapshot_at + '）')
                         : ('✅ 已載入 ' + options.length + ' 個 meta 檔');
-                    statusEl.style.color = '#059669';
+                    item.statusEl.style.color = '#059669';
                 }
-            }).catch(function (err) {
-                if (statusEl) {
-                    statusEl.textContent = '⚠️ meta 清單載入失敗：' + err.message;
-                    statusEl.style.color = '#D97706';
+            });
+        }).catch(function (err) {
+            pendingMeta.forEach(function (item) {
+                if (item.statusEl) {
+                    item.statusEl.textContent = '⚠️ meta 清單載入失敗：' + err.message;
+                    item.statusEl.style.color = '#D97706';
                 }
             });
         });
@@ -408,7 +433,7 @@ window.FeatureTimeline = (() => {
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : TPL.getHistoryDropdownHtml(allAssignsForHistory, bState.containerId);
 
         container.innerHTML = TPL.getBuilderFormHtml(bState, classResOpts, tasksContainerHtml, historyHtml);
-        setTimeout(hydrateMaterialSnapshotUI, 0);
+        setTimeout(refreshMaterialSliceFieldVisibility, 0);
     }
 
     return {
@@ -468,6 +493,7 @@ window.FeatureTimeline = (() => {
             renderBuilderUI();
             
             setTimeout(() => {
+                hydrateMaterialSnapshotUI();
                 const editorEl = document.getElementById(`${cId}-editor`);
                 const viewContainer = document.querySelector('.view-section.active');
                 if (editorEl && viewContainer) {

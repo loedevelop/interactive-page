@@ -351,31 +351,33 @@ window.FeatureClass = (() => {
                             throw new Error("系統 API 模組未就緒");
                         }
 
+                        let teacherWsPromise = null;
                         try {
                             if (window.GasService && typeof window.GasService.ensureTeacherWorkspace === 'function') {
                                 const teacherLabel = (user.user_metadata && user.user_metadata.full_name)
                                     || (user.email ? user.email.split('@')[0] : 'Teacher');
                                 const teacherShortId = user.id.slice(-4);
-                                await window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId);
+                                teacherWsPromise = window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId).catch(function (wsErr) {
+                                    console.warn('老師工作區建立略過:', wsErr);
+                                });
                             }
-                        } catch (wsErr) {
-                            console.warn('老師工作區建立略過:', wsErr);
-                        }
+                        } catch (_wsInitErr) {}
 
                         const safeBaseName = name.replace(/[\\/:*?"<>|]/g, '_').trim();
                         const classFolderName = `${safeBaseName}_${classYear}`;
                         const folderRes = await window.ApiService.createGASFolder(classFolderName, null, false, null, {
                             rootPath: ['LogOnEnglish', '_Classes']
                         });
+                        if (teacherWsPromise) await teacherWsPromise;
                         if (!folderRes || !folderRes.folderId) {
                             throw new Error('班級根資料夾建立失敗');
                         }
 
                         const classRootId = folderRes.folderId;
                         const standardSubs = ['00_Material_Masters', '01_Class_Resources', '02_Students'];
-                        for (const subName of standardSubs) {
-                            await window.ApiService.createGASFolder(subName, classRootId);
-                        }
+                        await Promise.all(standardSubs.map(function (subName) {
+                            return window.ApiService.createGASFolder(subName, classRootId);
+                        }));
                         folderId = classRootId;
                     } catch (folderErr) {
                         // 建立資料夾失敗，則強力阻擋開班，確保資料絕對完整

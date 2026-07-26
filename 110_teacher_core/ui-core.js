@@ -60,6 +60,17 @@ window.TeacherUI = (() => {
         return storedRole ? storedRole : 'ta_junior';
     }
 
+    function bindClassListDelegation() {
+        if (!classListContainer || classListContainer.dataset.clickBound === '1') return;
+        classListContainer.dataset.clickBound = '1';
+        classListContainer.addEventListener('click', (e) => {
+            const item = e.target.closest('.class-item[data-class-id]');
+            if (!item) return;
+            const classId = item.getAttribute('data-class-id');
+            if (classId) activateClassView(classId);
+        });
+    }
+
     function preRenderSidebarFromSession(session, activeClassId) {
         if (!classListContainer || !session.enrollments || session.enrollments.length === 0) return;
 
@@ -67,12 +78,14 @@ window.TeacherUI = (() => {
         session.enrollments.forEach(function(en) {
             const div = document.createElement('div');
             div.className = 'class-item' + (en.id === activeClassId ? ' active' : '');
+            div.setAttribute('data-class-id', en.id);
             const staffRole = en.staff_role ? en.staff_role : 'ta_junior';
             div.innerHTML = '<span style="width:20px; display:inline-block;">📘</span> <span style="flex-grow:1; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">' + en.name + '</span> ' + getRoleBadgeHtml(staffRole);
             div.style.display = 'flex';
             div.style.alignItems = 'center';
             classListContainer.appendChild(div);
         });
+        bindClassListDelegation();
     }
 
     function bootstrapFromSession() {
@@ -138,10 +151,11 @@ window.TeacherUI = (() => {
             div.innerHTML = `<span style="width:20px; display:inline-block;">${classIcon}</span> <span style="flex-grow:1; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${cls.name}</span> ${roleBadge}`;
             div.style.display = 'flex';
             div.style.alignItems = 'center';
+            div.setAttribute('data-class-id', cls.id);
 
-            div.addEventListener('click', () => activateClassView(cls.id));
             classListContainer.appendChild(div);
         });
+        bindClassListDelegation();
     }
 
     function activateClassView(classId) {
