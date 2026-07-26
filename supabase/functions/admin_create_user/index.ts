@@ -62,14 +62,14 @@ serve(async (req) => {
             oldRawData = {};
         }
 
-        // 安全合併：保留既有欄位 (如 drive_url)，補齊缺失的姓名結構以防其他模組崩潰
+        // 帳號已存在：老師這次送出的姓名欄位一律覆寫（修正打錯名後改不回來）
         const mergedRawData = {
             ...oldRawData,
-            nameEN: rawData.nameEN || oldRawData.nameEN || "",
-            lastNameCN: rawData.lastNameCN || oldRawData.lastNameCN || "",
-            firstNameCN: rawData.firstNameCN || oldRawData.firstNameCN || "",
-            passportLast: rawData.passportLast || oldRawData.passportLast || "",
-            passportFirst: rawData.passportFirst || oldRawData.passportFirst || ""
+            nameEN: rawData.nameEN != null ? String(rawData.nameEN) : (oldRawData.nameEN || ""),
+            lastNameCN: rawData.lastNameCN != null ? String(rawData.lastNameCN) : (oldRawData.lastNameCN || ""),
+            firstNameCN: rawData.firstNameCN != null ? String(rawData.firstNameCN) : (oldRawData.firstNameCN || ""),
+            passportLast: rawData.passportLast != null ? String(rawData.passportLast) : (oldRawData.passportLast || ""),
+            passportFirst: rawData.passportFirst != null ? String(rawData.passportFirst) : (oldRawData.passportFirst || ""),
         };
         
         // 確保不會洗掉已有的專屬 Drive 連結
@@ -77,14 +77,17 @@ serve(async (req) => {
             mergedRawData.drive_url = rawData.drive_url;
         }
 
-        // 靜默更新舊帳號的 raw_data (絕對不碰 default_role)
+        const profilePatch: Record<string, unknown> = { raw_data: mergedRawData, name: name };
+        if (phone) profilePatch.phone = phone;
+
         const { error: updateErr } = await supabaseAdmin
             .from("profiles")
-            .update({ raw_data: mergedRawData })
+            .update(profilePatch)
             .eq("id", existingProfile.id);
 
         if (updateErr) {
-            console.error("更新舊帳號 raw_data 失敗:", updateErr);
+            console.error("更新舊帳號資料失敗:", updateErr);
+            throw new Error(`更新既有帳號姓名失敗: ${updateErr.message}`);
         }
 
         return new Response(

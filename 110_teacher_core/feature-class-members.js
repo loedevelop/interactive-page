@@ -658,30 +658,51 @@ window.FeatureClassMembers = (() => {
             else if (fullCN) fallbackName = fullCN;
 
             try {
-                const { data: profile } = await window.supabaseClient.from('profiles').select('raw_data').eq('id', studentId).maybeSingle();
-                
-                let raw = profile?.raw_data || {};
-                if (typeof raw === 'string') {
-                    try { raw = JSON.parse(raw); } catch(e){}
+                // 經 SECURITY DEFINER RPC 寫入，避免老師無法 update 他人 profiles
+                const { data: rpcData, error: rpcError } = await window.supabaseClient.rpc(
+                    'staff_update_member_profile',
+                    {
+                        target_user_id: studentId,
+                        target_class_id: classId,
+                        new_display_name: fallbackName,
+                        p_name_en: nameEN,
+                        p_passport_last: passLast,
+                        p_passport_first: passFirst,
+                        p_last_cn: lastCN,
+                        p_first_cn: firstCN
+                    }
+                );
+
+                if (rpcError) throw rpcError;
+                if (!rpcData || (typeof rpcData === 'object' && rpcData.status && rpcData.status !== 'success')) {
+                    throw new Error((rpcData && rpcData.message) || '姓名寫入失敗');
                 }
 
-                const mergedRawData = {
-                    ...raw,
-                    nameEN: nameEN,
-                    passportLast: passLast,
-                    passportFirst: passFirst,
-                    lastNameCN: lastCN,
-                    firstNameCN: firstCN
-                };
-
-                const { error } = await window.supabaseClient
-                    .from('profiles')
-                    .update({ name: fallbackName, raw_data: mergedRawData })
-                    .eq('id', studentId);
-
-                if (error) throw error;
+                // 同步改名 Drive 學生資料夾（v2：drive_folder_id 指向 01_Submissions，需改父層）
+                try {
+                    const { data: enroll } = await window.supabaseClient
+                        .from('student_enrollments')
+                        .select('raw_data, drive_url, drive_link')
+                        .eq('class_id', classId)
+                        .eq('user_id', studentId)
+                        .maybeSingle();
+                    let enrollRaw = enroll?.raw_data || {};
+                    if (typeof enrollRaw === 'string') {
+                        try { enrollRaw = JSON.parse(enrollRaw); } catch (_e) { enrollRaw = {}; }
+                    }
+                    const leafId = enrollRaw.drive_folder_id || enroll?.drive_url || enroll?.drive_link || '';
+                    if (leafId && window.ApiService && typeof window.ApiService.renameGASParentFolder === 'function') {
+                        const shortId = String(studentId).slice(-4);
+                        const safeName = fallbackName.replace(/[\\/:*?"<>|]/g, '_').trim() || '未命名學生';
+                        await window.ApiService.renameGASParentFolder(leafId, `${safeName}_${shortId}`);
+                    }
+                } catch (driveErr) {
+                    console.warn('學生 Drive 資料夾改名略過:', driveErr);
+                    window.showFlash('姓名已更新，但 Drive 資料夾改名失敗：' + driveErr.message, 'error');
+                }
 
                 document.getElementById('edit-student-modal').remove();
+                if (window.showFlash) window.showFlash('已更新成員姓名');
                 await renderStudentManager(classId);
 
             } catch (err) {

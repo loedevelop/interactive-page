@@ -490,8 +490,8 @@ window.FeatureClass = (() => {
                         let teacherWsPromise = null;
                         try {
                             if (window.GasService && typeof window.GasService.ensureTeacherWorkspace === 'function') {
-                                const teacherLabel = (user.user_metadata && user.user_metadata.full_name)
-                                    || (user.email ? user.email.split('@')[0] : 'Teacher');
+                                // 規格：email @ 前綴 + uid 後 4 碼（例 2logonenglish_e002）
+                                const teacherLabel = (user.email ? user.email.split('@')[0] : 'Teacher');
                                 const teacherShortId = user.id.slice(-4);
                                 teacherWsPromise = window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId).catch(function (wsErr) {
                                     console.warn('老師工作區建立略過:', wsErr);

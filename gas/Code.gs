@@ -350,6 +350,33 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
+    // 學生 v2：drive_folder_id 指向 01_Submissions，改名應改父層「姓名_短ID」
+    if (action === 'rename_parent_folder') {
+      var childFolderId = data.folderId ? String(data.folderId).trim() : '';
+      var parentNewName = data.folderName ? String(data.folderName) : '';
+      if (!childFolderId || !parentNewName) {
+        throw new Error('缺少 folderId 或 folderName');
+      }
+      var cleanParentName = parentNewName.replace(/<[^>]*>?/gm, '').replace(/[\\/:*?"<>|]/g, '_').trim();
+      if (!cleanParentName) cleanParentName = '未命名資料夾';
+      var childFolder = DriveApp.getFolderById(childFolderId);
+      if (childFolder.isTrashed()) {
+        throw new Error('資料夾已在垃圾桶，無法重新命名');
+      }
+      var parents = childFolder.getParents();
+      if (!parents.hasNext()) {
+        throw new Error('找不到上層資料夾，無法重新命名');
+      }
+      var parentFolder = parents.next();
+      parentFolder.setName(cleanParentName);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        folderId: parentFolder.getId(),
+        folderName: parentFolder.getName(),
+        folderUrl: parentFolder.getUrl()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     if (action === 'migrate_student_data') {
       var pFolderId = data.parentFolderId;
       var studentName = data.studentName ? data.studentName : "學生";
