@@ -516,14 +516,26 @@ export class MemberManager {
                     const shortId = userId.substring(userId.length - 4);
                     const safeName = (studentName || '未命名學生').replace(/[\\/:*?"<>|]/g, '_').trim();
                     const folderName = `${safeName}_${shortId}`;
+                    const useV2Layout = classRaw.drive_layout === 'v2';
 
                     try {
-                        console.log(`[自動建檔] 準備在班級目錄下建立專屬資料夾: ${folderName}`);
+                        console.log(`[自動建檔] 準備建立學生資料夾: ${folderName}${useV2Layout ? ' → 02_Students/.../01_Submissions' : ''}`);
                         const shareList = resolvedShareEmail ? [resolvedShareEmail] : [];
-                        const res = await window.ApiService.createGASFolder(folderName, parentFolderId, true, shareList);
+                        const createOptions = useV2Layout
+                            ? { folderPath: ['02_Students', folderName] }
+                            : null;
+                        const leafFolderName = useV2Layout ? '01_Submissions' : folderName;
+                        const res = await window.ApiService.createGASFolder(
+                            leafFolderName,
+                            parentFolderId,
+                            true,
+                            shareList,
+                            createOptions
+                        );
                         
                         if (res && res.folderId) {
-                            enrollRawData.drive_folder_id = res.folderId; 
+                            enrollRawData.drive_folder_id = res.folderId;
+                            if (useV2Layout) enrollRawData.drive_layout = 'v2';
                             finalDriveId = res.folderId; 
                         }
                     } catch (e) {

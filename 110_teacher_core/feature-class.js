@@ -343,15 +343,40 @@ window.FeatureClass = (() => {
                     const { data: { user }, error: authError } = await window.supabaseClient.auth.getUser();
                     if (authError || !user) throw new Error('無法取得授權狀態');
                     
-                    // 🌟 核心防護層：強制呼叫 GAS 建立班級公海資料夾
+                    // 🌟 核心防護層：LogOnEnglish/_Classes/{班名}_{年} + 標準子資料夾
                     let folderId = "";
+                    let classYear = getTaiwanTodayString().slice(0, 4);
                     try {
                         if (!window.ApiService || typeof window.ApiService.createGASFolder !== 'function') {
                             throw new Error("系統 API 模組未就緒");
                         }
-                        const safeFolderName = `${name}_作業收件匣`;
-                        const folderRes = await window.ApiService.createGASFolder(safeFolderName);
-                        if (folderRes && folderRes.folderId) folderId = folderRes.folderId;
+
+                        try {
+                            if (window.GasService && typeof window.GasService.ensureTeacherWorkspace === 'function') {
+                                const teacherLabel = (user.user_metadata && user.user_metadata.full_name)
+                                    || (user.email ? user.email.split('@')[0] : 'Teacher');
+                                const teacherShortId = user.id.slice(-4);
+                                await window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId);
+                            }
+                        } catch (wsErr) {
+                            console.warn('老師工作區建立略過:', wsErr);
+                        }
+
+                        const safeBaseName = name.replace(/[\\/:*?"<>|]/g, '_').trim();
+                        const classFolderName = `${safeBaseName}_${classYear}`;
+                        const folderRes = await window.ApiService.createGASFolder(classFolderName, null, false, null, {
+                            rootPath: ['LogOnEnglish', '_Classes']
+                        });
+                        if (!folderRes || !folderRes.folderId) {
+                            throw new Error('班級根資料夾建立失敗');
+                        }
+
+                        const classRootId = folderRes.folderId;
+                        const standardSubs = ['00_Material_Masters', '01_Class_Resources', '02_Students'];
+                        for (const subName of standardSubs) {
+                            await window.ApiService.createGASFolder(subName, classRootId);
+                        }
+                        folderId = classRootId;
                     } catch (folderErr) {
                         // 建立資料夾失敗，則強力阻擋開班，確保資料絕對完整
                         throw new Error(`Google Drive 資料夾建立失敗，系統為保證資料完整性已終止開班程序。(${folderErr.message})`);
@@ -363,7 +388,8 @@ window.FeatureClass = (() => {
                         name_display_mode: modeSelector ? modeSelector.value : "default", 
                         week_start_day: 'sunday',
                         late_submission_defaults: { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 },
-                        drive_folder_id: folderId // 🌟 確實將資料夾 ID 寫入 JSONB
+                        drive_folder_id: folderId,
+                        drive_layout: 'v2'
                     };
                     
                     const payload = { name: name, icon: iconInput ? iconInput.value : "📘", calc_mode: 'single', meet_days: [], raw_data: initialRawData };
@@ -380,7 +406,7 @@ window.FeatureClass = (() => {
                     if (typeof db.save === 'function') db.save();
                     if (window.TeacherUI) window.TeacherUI.renderSidebar();
                     renderClassManager();
-                    alert(`✅ 成功建立班級：「${name}」！\n(系統已在背景自動建立專屬雲端收件匣)`);
+                    alert(`✅ 成功建立班級：「${name}」！\n(已在 LogOnEnglish/_Classes 建立 ${classYear} 班級資料夾與標準子目錄)`);
                 } catch (err) { alert('❌ 新增失敗: ' + err.message); } 
                 finally { btn.innerHTML = originalText; btn.disabled = false; }
             };
