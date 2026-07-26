@@ -1,4 +1,4 @@
--- Fix: restore must bring back soft-deleted enrollments / staff / student profiles
+-- Fix: restore_class_atomic permission fails in Dashboard SQL Editor (auth.uid() is null)
 
 CREATE OR REPLACE FUNCTION public.restore_class_atomic(target_class_id uuid)
 RETURNS json
@@ -12,7 +12,10 @@ DECLARE
   assign_restored int := 0;
   profile_restored int := 0;
 BEGIN
-  IF NOT (public.is_admin() OR public.is_primary_teacher_of_class(target_class_id)) THEN
+  -- Dashboard SQL Editor 沒有 JWT（auth.uid() 為 null），允許以 postgres 角色維修
+  -- 前端／已登入使用者仍須為 admin 或該班 primary_teacher
+  IF auth.uid() IS NOT NULL
+     AND NOT (public.is_admin() OR public.is_primary_teacher_of_class(target_class_id)) THEN
     RAISE EXCEPTION '無權限恢復此班級';
   END IF;
 
@@ -20,7 +23,6 @@ BEGIN
     RAISE EXCEPTION '找不到班級';
   END IF;
 
-  -- 若仍在封存中，先恢復班級本體（已恢復的班級此句影響 0 列）
   UPDATE public.classes
   SET deleted_at = NULL
   WHERE id = target_class_id AND deleted_at IS NOT NULL;
@@ -43,7 +45,6 @@ BEGIN
     AND deleted_at IS NOT NULL;
   GET DIAGNOSTICS staff_restored = ROW_COUNT;
 
-  -- 封存時若勾選「連同學生帳號軟刪除」，一併恢復本班相關 profile
   UPDATE public.profiles p
   SET deleted_at = NULL
   WHERE p.deleted_at IS NOT NULL

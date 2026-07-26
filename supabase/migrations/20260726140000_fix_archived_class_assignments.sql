@@ -45,7 +45,9 @@ DECLARE
   assign_restored int := 0;
   profile_restored int := 0;
 BEGIN
-  IF NOT (public.is_admin() OR public.is_primary_teacher_of_class(target_class_id)) THEN
+  -- Dashboard SQL Editor 沒有 JWT（auth.uid() 為 null），允許以維修身分執行
+  IF auth.uid() IS NOT NULL
+     AND NOT (public.is_admin() OR public.is_primary_teacher_of_class(target_class_id)) THEN
     RAISE EXCEPTION '無權限恢復此班級';
   END IF;
 
