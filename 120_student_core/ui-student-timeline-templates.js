@@ -661,7 +661,8 @@ window.UIStudentTimelineTemplates = (() => {
                                 } else if (taskStatus === 'graded') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
                                 } else if (taskStatus === 'completed') {
-                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                                    // 自我勾選完成 ≠ 老師／AI 批改
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#F1F5F9; color:#475569; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #CBD5E1;">✅ 已完成</span>`;
                                 } else if (taskStatus === 'ai_error') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
                                 } else if (taskStatus === 'failed') {
@@ -672,8 +673,10 @@ window.UIStudentTimelineTemplates = (() => {
 
                                 let showAIReport = false;
                                 if (taskStatus === 'graded') showAIReport = true;
-                                else if (taskStatus === 'completed') showAIReport = true;
                                 else if (taskStatus === 'ai_ready') showAIReport = true;
+                                else if (taskStatus === 'completed' && compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
+                                    showAIReport = true;
+                                }
 
                                 let scoreDisclaimer = '';
                                 if (window.GradingPolicy && window.GradingPolicy.studentScoreDisclaimer) {

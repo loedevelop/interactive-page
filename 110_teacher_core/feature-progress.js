@@ -110,7 +110,7 @@ window.FeatureProgress = (() => {
 
             const { data: assignments, error: assignError } = await window.supabaseClient
                 .from('assignments')
-                .select('id, title, target_date, tasks')
+                .select('id, title, target_date, due_date, tasks, raw_data, is_published, class_id')
                 .eq('class_id', classId)
                 .is('deleted_at', null)
                 .order('target_date', { ascending: false });
@@ -120,7 +120,8 @@ window.FeatureProgress = (() => {
                 .from('task_completions')
                 .select('student_id, task_id, assignment_id, status, raw_data, deleted_at')
                 .eq('class_id', classId)
-                .is('deleted_at', null);
+                .is('deleted_at', null)
+                .neq('status', 'incomplete');
             if (compError) throw new Error('讀取完成紀錄失敗: ' + compError.message);
 
             renderGrid(container, students, assignments || [], completions || [], classId);
@@ -176,17 +177,19 @@ window.FeatureProgress = (() => {
         validAssignments.forEach(a => {
             // 安全處理大區塊標題
             let safeGroupTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '未命名';
+            // 作業區塊：提醒欄 + 各小項
+            const colSpan = a.actionableTasks.length + 1;
             
-            topHeaderHtml += `<th colspan="${a.actionableTasks.length}" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:var(--primary-dark); font-weight:900; text-align:center; min-width:150px; white-space:normal; word-break:break-word; line-height:1.4;">📅 ${a.target_date}<br>${safeGroupTitle}</th>`;
+            topHeaderHtml += `<th colspan="${colSpan}" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:var(--primary-dark); font-weight:900; text-align:center; min-width:150px; white-space:normal; word-break:break-word; line-height:1.4;">📅 ${a.target_date || ''}<br>${safeGroupTitle}</th>`;
+
+            // 左側獨立提醒欄（點學生列 → 產出該生該作業提醒圖）
+            subHeaderHtml += `<th class="progress-remind-col" style="border:1px solid #BFDBFE; padding:8px 6px; background:#EFF6FF; color:#1D4ED8; font-size:1.35rem; font-weight:800; text-align:center; min-width:56px; width:56px; line-height:1.2;" title="點學生列產出此作業提醒圖">📬</th>`;
             
             a.actionableTasks.forEach((t, idx) => {
-                allTaskIds.push(t.id);
-                // 移除 HTML 標籤
+                allTaskIds.push({ taskId: t.id, assignmentId: a.id });
                 let cleanTitle = t.title ? t.title.replace(/<[^>]*>?/gm, '') : '未命名';
-                // 安全跳脫引號，避免 title 屬性被提早閉合產生 injection 破圖
                 let safeTitleAttr = cleanTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                 
-                // 拔除字串截斷，改用 CSS 控制合理寬度並允許換行
                 subHeaderHtml += `<th style="border:1px solid #CBD5E1; padding:8px 10px; background:#F1F5F9; color:#475569; font-size:0.85rem; font-weight:800; white-space:normal; word-break:break-word; text-align:center; min-width:120px; max-width:200px; line-height:1.4;" title="${safeTitleAttr}">${idx + 1}. ${cleanTitle}</th>`;
             });
         });
@@ -196,15 +199,22 @@ window.FeatureProgress = (() => {
             let stdDoneCount = 0;
             const totalTasks = allTaskIds.length;
             let rowHtml = '';
-            
-            allTaskIds.forEach(taskId => {
-                const isDone = completions.some(c => c.student_id === std.id && c.task_id === taskId);
-                if (isDone) {
-                    stdDoneCount++;
-                    rowHtml += `<td id="cell-${std.id}-${taskId}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${taskId}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; font-size:1.2rem; background:#ECFDF5; user-select:none; transition:0.2s;" title="點擊取消">✅</td>`;
-                } else {
-                    rowHtml += `<td id="cell-${std.id}-${taskId}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${taskId}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; color:#CBD5E1; font-size:0.8rem; background:#FFF; user-select:none; transition:0.2s;" title="點擊打勾">—</td>`;
-                }
+
+            validAssignments.forEach(a => {
+                const safeAssignId = String(a.id).replace(/'/g, "\\'");
+                const safeStudentId = String(std.id).replace(/'/g, "\\'");
+                const safeName = String(std.name || '').replace(/"/g, '&quot;');
+                rowHtml += `<td class="progress-remind-col" onclick="event.stopPropagation(); window.FeatureReminderImage.openSingle('${classId}', '${safeAssignId}', '${safeStudentId}')" style="border:1px solid #BFDBFE; text-align:center; background:#EFF6FF; color:#1D4ED8; font-size:1.35rem; padding:8px 6px; min-width:56px; width:56px; user-select:none; cursor:default;" title="產出 ${safeName} 此作業提醒圖">📬</td>`;
+
+                a.actionableTasks.forEach(t => {
+                    const isDone = completions.some(c => c.student_id === std.id && c.task_id === t.id);
+                    if (isDone) {
+                        stdDoneCount++;
+                        rowHtml += `<td id="cell-${std.id}-${t.id}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${t.id}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; font-size:1.2rem; background:#ECFDF5; user-select:none; transition:0.2s;" title="點擊取消">✅</td>`;
+                    } else {
+                        rowHtml += `<td id="cell-${std.id}-${t.id}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${t.id}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; color:#CBD5E1; font-size:0.8rem; background:#FFF; user-select:none; transition:0.2s;" title="點擊打勾">—</td>`;
+                    }
+                });
             });
 
             const percentage = totalTasks > 0 ? Math.round((stdDoneCount / totalTasks) * 100) : 0;
@@ -212,8 +222,8 @@ window.FeatureProgress = (() => {
 
             tbodyHtml += `
                 <tr>
-                    <td style="border:1px solid #CBD5E1; padding:10px; background:white; position:sticky; left:0; z-index:2; font-weight:800; color:#1E293B; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${sIndex + 1}. ${std.name}</td>
-                    <td id="percent-${std.id}" data-done="${stdDoneCount}" data-total="${totalTasks}" style="border:1px solid #CBD5E1; padding:10px; background:white; position:sticky; left:120px; z-index:2; text-align:center; font-weight:900; color:${percentColor}; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${percentage}%<br><span style="font-size:0.7rem; color:#94A3B8;">(${stdDoneCount}/${totalTasks})</span></td>
+                    <td class="progress-sticky-name" style="border:1px solid #CBD5E1; padding:10px; background:white; font-weight:800; color:#1E293B; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${sIndex + 1}. ${std.name}</td>
+                    <td class="progress-sticky-pct" id="percent-${std.id}" data-done="${stdDoneCount}" data-total="${totalTasks}" style="border:1px solid #CBD5E1; padding:10px; background:white; text-align:center; font-weight:900; color:${percentColor}; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${percentage}%<br><span style="font-size:0.7rem; color:#94A3B8;">(${stdDoneCount}/${totalTasks})</span></td>
                     ${rowHtml}
                 </tr>
             `;
@@ -223,13 +233,26 @@ window.FeatureProgress = (() => {
             <style>
                 .progress-table-wrapper { overflow-x: auto; overflow-y: auto; max-height: 65vh; border-radius: 8px; border: 1px solid #CBD5E1; box-shadow: 0 4px 6px rgba(0,0,0,0.05); background: white; }
                 .progress-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; }
-                .progress-table th { position: sticky; top: 0; z-index: 3; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-                .progress-table th:nth-child(1) { position: sticky; left: 0; z-index: 4; width: 120px; }
-                .progress-table th:nth-child(2) { position: sticky; left: 120px; z-index: 4; width: 80px; }
+                .progress-table thead tr:first-child th { position: sticky; top: 0; z-index: 3; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+                .progress-table thead tr:nth-child(2) th { position: sticky; top: 52px; z-index: 3; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+                .progress-table .progress-sticky-name {
+                    position: sticky; left: 0; z-index: 4;
+                    min-width: 120px; width: 120px; background: #F8FAFC;
+                }
+                .progress-table .progress-sticky-pct {
+                    position: sticky; left: 120px; z-index: 4;
+                    min-width: 80px; width: 80px; background: #F8FAFC;
+                }
+                .progress-table thead .progress-sticky-name,
+                .progress-table thead .progress-sticky-pct { z-index: 6; background: #F8FAFC; }
+                .progress-table tbody .progress-sticky-name,
+                .progress-table tbody .progress-sticky-pct { background: white; z-index: 2; }
                 .progress-table tbody tr:hover td { background: #F8FAFC !important; }
-                .progress-table tbody td:nth-child(1), .progress-table tbody td:nth-child(2) { background: white; }
-                .progress-table tbody tr:hover td:nth-child(1), .progress-table tbody tr:hover td:nth-child(2) { background: #F1F5F9; }
+                .progress-table tbody tr:hover .progress-sticky-name,
+                .progress-table tbody tr:hover .progress-sticky-pct { background: #F1F5F9 !important; }
+                .progress-table tbody tr:hover .progress-remind-col { background: #DBEAFE !important; }
                 .progress-table td:hover { filter: brightness(0.95); }
+                .progress-table .progress-remind-col { filter: none !important; }
             </style>
         `;
 
@@ -245,7 +268,8 @@ window.FeatureProgress = (() => {
                         📈 班級進度總表
                         <span id="sync-indicator" style="display:none; font-size:0.8rem; background:#F59E0B; color:white; padding:2px 8px; border-radius:12px; margin-left:10px; animation: pulse 1.5s infinite;">同步中...</span>
                     </h3>
-                    <div style="display:flex; gap:10px;">
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="button" id="btn-open-class-reminders" class="btn btn-action" onclick="window.FeatureReminderImage.openPopup('${classId}')" style="background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; font-weight:800;">📬 家長提醒圖</button>
                         <button class="btn btn-action" onclick="window.FeatureProgress.refresh('${classId}')" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1;">🔄 重新整理資料</button>
                     </div>
                 </div>
@@ -253,8 +277,8 @@ window.FeatureProgress = (() => {
                     <table class="progress-table">
                         <thead>
                             <tr>
-                                <th rowspan="2" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:#1E293B;">學生姓名</th>
-                                <th rowspan="2" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:#1E293B;">總達成率</th>
+                                <th rowspan="2" class="progress-sticky-name" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:#1E293B;">學生姓名</th>
+                                <th rowspan="2" class="progress-sticky-pct" style="border:1px solid #CBD5E1; padding:10px; background:#F8FAFC; color:#1E293B;">總達成率</th>
                                 ${topHeaderHtml}
                             </tr>
                             <tr>${subHeaderHtml}</tr>
@@ -265,6 +289,10 @@ window.FeatureProgress = (() => {
             </div>
             ${backfillHtml}
         `;
+
+        if (window.FeatureReminderImage && typeof window.FeatureReminderImage.refreshEntryBadge === 'function') {
+            window.FeatureReminderImage.refreshEntryBadge(classId);
+        }
     }
 
     // ==========================================

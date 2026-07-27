@@ -1,0 +1,47 @@
+---
+description: 全站 Popup 必須走 ModalOverlay（A/B/C 關閉分級），禁止自建 overlay
+alwaysApply: true
+---
+
+# Popup 中央控管（ModalOverlay）
+
+## 鐵律
+
+- **禁止** `document.createElement('div')` 自製全螢幕遮罩當 popup
+- **必須**使用 `window.ModalOverlay.open({ id, tier, contentHtml, ... })`
+- 入口檔：`020_js_core/modal-overlay.js`（老師／學生頁皆需載入）
+
+## tier（必填）
+
+| tier | 點灰色背景 | 用途 |
+|------|------------|------|
+| `A` | 直接關閉 | 確認、說明、唯讀列表（含家長提醒圖） |
+| `B` | dirty 時先 confirm | 表單編輯 |
+| `C` | 不關閉 | 錄音／上傳／RPC 進行中 |
+
+```js
+ModalOverlay.open({
+  id: 'my-modal',
+  tier: 'A', // 必填
+  contentHtml: '...',
+  onClose: function () { /* 清理狀態 */ }
+});
+ModalOverlay.close('my-modal');
+```
+
+## 反例（禁止）
+
+```js
+const overlay = document.createElement('div');
+overlay.style.cssText = 'position:fixed;inset:0;...';
+document.body.appendChild(overlay); // ❌ 會讓關閉準則破功
+```
+
+## 審查清單
+
+新增或修改任何 popup 時確認：
+
+1. 有傳 `tier: 'A'|'B'|'C'`
+2. 關閉鈕呼叫 `ModalOverlay.close(id)`（不要只 `el.remove()`）
+3. B 級有 `isDirty`
+4. C 級絕不綁 backdrop 關閉

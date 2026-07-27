@@ -166,7 +166,8 @@ window.FeatureStudentMessages = (() => {
                 .select('assignment_id, task_id')
                 .eq('student_id', userId)
                 .in('assignment_id', assignmentIds)
-                .is('deleted_at', null),
+                .is('deleted_at', null)
+                .neq('status', 'incomplete'),
             classIds.length
                 ? window.supabaseClient
                     .from('classes')

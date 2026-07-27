@@ -342,7 +342,8 @@ window.FeatureStudentTimeline = (() => {
                 .select('assignment_id, task_id, status, raw_data')
                 .eq('student_id', userId)
                 .eq('class_id', classId)
-                .is('deleted_at', null);
+                .is('deleted_at', null)
+                .neq('status', 'incomplete');
 
             if (compErr) throw compErr;
             window._studentTaskCompletions = compData || [];
@@ -592,63 +593,119 @@ window.FeatureStudentTimeline = (() => {
         jumpToAssignment,
 
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
+            const compositeKey = `${assignmentId}_${taskId}`;
+            let prevCompletion = null;
+            if (window._studentTaskCompletions) {
+                prevCompletion = window._studentTaskCompletions.find(c =>
+                    String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId)
+                ) || null;
+            }
+
             try {
                 const { userId, classId } = await getAuthContext();
-                const compositeKey = `${assignmentId}_${taskId}`;
                 
                 if (isChecked && !completedTasks.includes(compositeKey)) {
                     completedTasks.push(compositeKey);
                     if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
-                    window._studentTaskCompletions.push({ assignment_id: assignmentId, task_id: taskId, status: 'completed', raw_data: {} });
+                    if (!prevCompletion) {
+                        window._studentTaskCompletions.push({
+                            assignment_id: assignmentId,
+                            task_id: taskId,
+                            status: 'completed',
+                            raw_data: {}
+                        });
+                    }
                 }
                 else if (!isChecked) {
                     completedTasks = completedTasks.filter(id => id !== compositeKey);
                     if (window._studentTaskCompletions) {
-                        window._studentTaskCompletions = window._studentTaskCompletions.filter(c => !(String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId)));
+                        window._studentTaskCompletions = window._studentTaskCompletions.filter(c =>
+                            !(String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId))
+                        );
                     }
                 }
-                renderCourses(); 
-                
-                const nowTimestamp = window.UtilsDate.getTaiwanIsoTimestamp();
+                renderCourses();
 
-                if (isChecked) {
-                    const payload = { 
-                        assignment_id: assignmentId, 
-                        task_id: taskId, 
-                        student_id: userId, 
-                        class_id: classId,
-                        deleted_at: null
-                    };
-                    if (fileIds && fileIds.length > 0) {
-                        payload.raw_data = { drive_file_ids: fileIds };
+                const rawData = (fileIds && fileIds.length > 0)
+                    ? { drive_file_ids: fileIds }
+                    : null;
+
+                // 優先走 RPC（避開 soft-delete RETURNING 的 RLS 邊角）
+                const { error: rpcErr } = await window.supabaseClient.rpc('student_set_task_completion', {
+                    p_assignment_id: assignmentId,
+                    p_task_id: taskId,
+                    p_class_id: classId,
+                    p_completed: !!isChecked,
+                    p_raw_data: rawData
+                });
+
+                if (rpcErr) {
+                    const rpcMsg = String(rpcErr.message || rpcErr.details || '');
+                    const rpcMissing = /Could not find the function|does not exist|PGRST202|404/i.test(rpcMsg);
+                    if (!rpcMissing) throw rpcErr;
+
+                    // RPC 尚未部署時，退回直接寫表
+                    if (isChecked) {
+                        const payload = {
+                            assignment_id: assignmentId,
+                            task_id: taskId,
+                            student_id: userId,
+                            class_id: classId,
+                            status: 'completed',
+                            deleted_at: null
+                        };
+                        if (rawData) payload.raw_data = rawData;
+
+                        const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('task_completions')
+                            .update(payload)
+                            .eq('task_id', taskId)
+                            .eq('student_id', userId)
+                            .eq('class_id', classId)
+                            .select();
+                        if (updateErr) throw updateErr;
+
+                        if (!updatedRows || updatedRows.length === 0) {
+                            const { error: insertErr } = await window.supabaseClient.from('task_completions')
+                                .insert([payload]);
+                            if (insertErr) throw insertErr;
+                        }
+                    } else {
+                        // 取消勾選＝未完成（保留列，不刪除）
+                        const { error } = await window.supabaseClient.from('task_completions')
+                            .update({ status: 'incomplete', deleted_at: null })
+                            .eq('task_id', taskId)
+                            .eq('student_id', userId)
+                            .eq('class_id', classId);
+                        if (error) throw error;
                     }
-
-                    const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('task_completions')
-                        .update(payload)
-                        .match({ task_id: taskId, student_id: userId, class_id: classId })
-                        .select();
-                        
-                    if (updateErr) throw updateErr;
-
-                    if (!updatedRows || updatedRows.length === 0) {
-                        const { error: insertErr } = await window.supabaseClient.from('task_completions')
-                            .insert([payload]);
-                        if (insertErr) throw insertErr;
-                    }
-
-                } else {
-                    const { error } = await window.supabaseClient.from('task_completions')
-                        .update({ deleted_at: nowTimestamp })
-                        .match({ task_id: taskId, student_id: userId, class_id: classId })
-                        .is('deleted_at', null);
-                        
-                    if (error) throw error;
                 }
             } catch (err) {
                 console.error("同步進度失敗：", err);
-                const compositeKey = `${assignmentId}_${taskId}`;
-                if (isChecked) completedTasks = completedTasks.filter(id => id !== compositeKey);
-                else completedTasks.push(compositeKey);
+                if (isChecked) {
+                    completedTasks = completedTasks.filter(id => id !== compositeKey);
+                    if (window._studentTaskCompletions) {
+                        window._studentTaskCompletions = window._studentTaskCompletions.filter(c =>
+                            !(String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId))
+                        );
+                    }
+                } else {
+                    if (!completedTasks.includes(compositeKey)) completedTasks.push(compositeKey);
+                    if (prevCompletion) {
+                        if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+                        const exists = window._studentTaskCompletions.some(c =>
+                            String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId)
+                        );
+                        if (!exists) window._studentTaskCompletions.push(prevCompletion);
+                    } else {
+                        if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+                        window._studentTaskCompletions.push({
+                            assignment_id: assignmentId,
+                            task_id: taskId,
+                            status: 'completed',
+                            raw_data: {}
+                        });
+                    }
+                }
                 renderCourses(); 
                 window.showFlash('進度同步失敗：\n' + (err.message || err.details), 'error');
             }
