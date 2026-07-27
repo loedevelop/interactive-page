@@ -490,8 +490,24 @@ window.FeatureClass = (() => {
                         let teacherWsPromise = null;
                         try {
                             if (window.GasService && typeof window.GasService.ensureTeacherWorkspace === 'function') {
-                                // 規格：email @ 前綴 + uid 後 4 碼（例 2logonenglish_e002）
-                                const teacherLabel = (user.email ? user.email.split('@')[0] : 'Teacher');
+                                // 與學生相同：{顯示姓名}_{uid後4碼}
+                                let teacherLabel = '';
+                                try {
+                                    const sessionStr = localStorage.getItem('LogOnEnglish_Session');
+                                    if (sessionStr) {
+                                        const sessionObj = JSON.parse(sessionStr);
+                                        teacherLabel = (sessionObj.username || sessionObj.name || '').trim();
+                                    }
+                                } catch (_sessErr) {}
+                                if (!teacherLabel) {
+                                    const { data: profileRow } = await window.supabaseClient
+                                        .from('profiles')
+                                        .select('name')
+                                        .eq('id', user.id)
+                                        .maybeSingle();
+                                    teacherLabel = (profileRow && profileRow.name) ? String(profileRow.name).trim() : '';
+                                }
+                                if (!teacherLabel) teacherLabel = 'Teacher';
                                 const teacherShortId = user.id.slice(-4);
                                 teacherWsPromise = window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId).catch(function (wsErr) {
                                     console.warn('老師工作區建立略過:', wsErr);
