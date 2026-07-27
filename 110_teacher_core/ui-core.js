@@ -162,12 +162,14 @@ window.TeacherUI = (() => {
         try {
             const session = JSON.parse(sessionString);
             let classId = null;
-            if (session.activeContext && session.activeContext.classId) {
+            // 優先用老師上次點選的班級（activeClassId），避免登入時寫死的 activeContext 蓋掉
+            const savedActiveId = localStorage.getItem('activeClassId');
+            if (savedActiveId) {
+                classId = savedActiveId;
+            } else if (session.activeContext && session.activeContext.classId) {
                 classId = session.activeContext.classId;
             } else if (session.class_id) {
                 classId = session.class_id;
-            } else {
-                classId = localStorage.getItem('activeClassId');
             }
 
             const staffRole = resolveStaffRoleFromSession(session, classId);
@@ -265,10 +267,21 @@ window.TeacherUI = (() => {
 
         localStorage.setItem('activeClassId', classId);
         localStorage.setItem('activeRole', staffRole);
+        // 同步寫回 Session，否則重整會優先讀舊的 activeContext.classId 而跳回登入時的班
+        try {
+            const sessionString = localStorage.getItem('LogOnEnglish_Session');
+            if (sessionString) {
+                const sessionObj = JSON.parse(sessionString);
+                if (!sessionObj.activeContext) sessionObj.activeContext = {};
+                sessionObj.activeContext.classId = classId;
+                sessionObj.activeContext.staffRole = staffRole;
+                localStorage.setItem('LogOnEnglish_Session', JSON.stringify(sessionObj));
+            }
+        } catch (_sessionSyncErr) {}
 
         applyStaffRoleUI(staffRole);
 
-        document.querySelectorAll('.bottom-nav .class-item').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.sidebar .class-item, .bottom-nav .class-item').forEach(el => el.classList.remove('active'));
         
         renderSidebar();
         viewSections.forEach(v => v.classList.remove('active'));
@@ -421,14 +434,15 @@ window.TeacherUI = (() => {
         // 🌟 恢復上次瀏覽的班級 (Active Context)
         if (window.TeacherDB.classes.length > 0) {
             let preferredClassId = null;
-            if (boot && boot.classId) {
+            const savedActiveId = localStorage.getItem('activeClassId');
+            if (savedActiveId && window.TeacherDB.classes.some(function (c) { return c.id === savedActiveId; })) {
+                preferredClassId = savedActiveId;
+            } else if (boot && boot.classId) {
                 preferredClassId = boot.classId;
             } else if (session.activeContext && session.activeContext.classId) {
                 preferredClassId = session.activeContext.classId;
             } else if (session.class_id) {
                 preferredClassId = session.class_id;
-            } else {
-                preferredClassId = localStorage.getItem('activeClassId');
             }
             const classExists = window.TeacherDB.classes.some(function(c) { return c.id === preferredClassId; });
             currentClassId = classExists ? preferredClassId : window.TeacherDB.classes[0].id;
