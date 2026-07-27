@@ -75,8 +75,7 @@ window.FeatureReminderImage = (() => {
     }
 
     function collectTaskRows(tasks, depth, out) {
-        if (!Array.isArray(tasks)) return;
-        tasks.forEach(function (t) {
+        normalizeTasks(tasks).forEach(function (t) {
             if (!t) return;
             if (t.type === 'group') {
                 out.push({ kind: 'group', title: stripHtml(t.title) || '未命名群組', depth: depth });
@@ -87,10 +86,16 @@ window.FeatureReminderImage = (() => {
         });
     }
 
+    function normalizeTasks(tasks) {
+        if (typeof tasks === 'string') {
+            try { tasks = JSON.parse(tasks); } catch (_e) { return []; }
+        }
+        return Array.isArray(tasks) ? tasks : [];
+    }
+
     function countLeafTasks(tasks) {
         let n = 0;
-        if (!Array.isArray(tasks)) return 0;
-        tasks.forEach(function (t) {
+        normalizeTasks(tasks).forEach(function (t) {
             if (t && t.type === 'group') n += countLeafTasks(t.subTasks);
             else if (t) n += 1;
         });
@@ -99,15 +104,24 @@ window.FeatureReminderImage = (() => {
 
     function countDoneForStudent(tasks, assignId, studentId, doneSet) {
         let done = 0;
-        if (!Array.isArray(tasks)) return 0;
-        tasks.forEach(function (t) {
+        const sid = String(studentId);
+        const aid = String(assignId);
+        normalizeTasks(tasks).forEach(function (t) {
             if (t && t.type === 'group') {
                 done += countDoneForStudent(t.subTasks, assignId, studentId, doneSet);
-            } else if (t && doneSet.has(studentId + '_' + assignId + '_' + t.id)) {
+            } else if (t && t.id != null && t.id !== '' && doneSet.has(sid + '_' + aid + '_' + String(t.id))) {
                 done += 1;
             }
         });
         return done;
+    }
+
+    function isStudentAssignmentComplete(assignment, studentId, doneSet) {
+        const tasks = normalizeTasks(assignment && assignment.tasks);
+        const total = countLeafTasks(tasks);
+        if (total <= 0) return false;
+        const done = countDoneForStudent(tasks, assignment.id, studentId, doneSet);
+        return done >= total;
     }
 
     async function resolveGlobalProfNameMode() {
@@ -149,6 +163,35 @@ window.FeatureReminderImage = (() => {
         return String(fallback || '同學').split(/\s+/)[0] || '同學';
     }
 
+    /**
+     * 統一成台灣日曆 YYYY-MM-DD。
+     * 不可只切 ISO 前 10 碼：UTC 午夜可能變成「前一天」，導致漏列／錯列補交。
+     */
+    function toDateKey(value) {
+        if (value == null || value === '') return '';
+        if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+            return new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Taipei',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).format(value);
+        }
+        const s = String(value).trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const ms = Date.parse(s);
+        if (!isNaN(ms)) {
+            return new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Taipei',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).format(new Date(ms));
+        }
+        const m = s.match(/(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : '';
+    }
+
     /** 台灣今日 YYYY-MM-DD */
     function getTaiwanTodayStr() {
         try {
@@ -173,24 +216,9 @@ window.FeatureReminderImage = (() => {
         return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
     }
 
-    /** 截止日前兩日（與 scan_due_reminders 的 due_soon 一致） */
+    /** 截止日前兩日（文案用） */
     function getDueSoonDateStr() {
         return getTaiwanDateOffsetStr(2);
-    }
-
-    /** 截止日翌日＝第一則補交提醒日 */
-    function getOverdueFirstDateStr() {
-        return getTaiwanDateOffsetStr(-1);
-    }
-
-    function resolveAllowLate(assignment, classRaw) {
-        const aRaw = parseRaw(assignment.raw_data || assignment.rawData);
-        if (aRaw.late_policy && typeof aRaw.late_policy === 'object') {
-            return aRaw.late_policy.allow_late === true;
-        }
-        if (typeof aRaw.allow_late === 'boolean') return aRaw.allow_late;
-        const defaults = (classRaw && classRaw.late_submission_defaults) || {};
-        return defaults.allow_late === true;
     }
 
     function getAllClasses() {
@@ -199,15 +227,38 @@ window.FeatureReminderImage = (() => {
         return db.classes.slice();
     }
 
-    function getPublishedAssignments(classId) {
-        const db = window.TeacherDB;
-        if (!db || !Array.isArray(db.assignments)) return [];
-        return db.assignments.filter(function (a) {
-            return a.class_id === classId
-                && a.is_published
-                && a.due_date
-                && countLeafTasks(a.tasks || []) > 0;
+    /** 從 DB 拉已發佈作業（不依賴 TeacherDB 快取） */
+    async function fetchPublishedAssignmentsByClass(classIds) {
+        const map = {};
+        (classIds || []).forEach(function (id) { map[id] = []; });
+        if (!classIds.length || !window.supabaseClient) return map;
+
+        const { data, error } = await window.supabaseClient
+            .from('assignments')
+            .select('id, title, due_date, target_date, tasks, raw_data, class_id, is_published')
+            .in('class_id', classIds)
+            .eq('is_published', true)
+            .is('deleted_at', null);
+        if (error) throw new Error('讀取作業失敗：' + error.message);
+
+        (data || []).forEach(function (a) {
+            if (countLeafTasks(a.tasks || []) <= 0) return;
+            if (!map[a.class_id]) map[a.class_id] = [];
+            map[a.class_id].push(a);
         });
+        return map;
+    }
+
+    /**
+     * 群體提醒與學生「訊息」對齊：
+     * - due_soon：截止＝今天+2、未完成
+     * - makeup：已過截止、未完成（Jay 的 7/20、7/19 都應出現）
+     * 個人單則可含灰色地帶，仍用同一 buildCardHtml。
+     */
+    function resolveItemKind(dueDateKey, todayStr, dueSoonDate) {
+        if (dueDateKey && dueDateKey === dueSoonDate) return 'due_soon';
+        if (dueDateKey && dueDateKey < todayStr) return 'makeup';
+        return 'manual';
     }
 
     async function fetchStudentsByClass(classIds, nameModeByClassId) {
@@ -248,13 +299,13 @@ window.FeatureReminderImage = (() => {
             .from('task_completions')
             .select('student_id, task_id, assignment_id, status')
             .in('class_id', classIds)
-            .is('deleted_at', null)
-            .neq('status', 'incomplete');
+            .is('deleted_at', null);
         if (error) throw new Error('讀取完成紀錄失敗：' + error.message);
 
         const set = new Set();
         (completions || []).forEach(function (c) {
-            set.add(c.student_id + '_' + c.assignment_id + '_' + c.task_id);
+            if (!c || c.status === 'incomplete') return;
+            set.add(String(c.student_id) + '_' + String(c.assignment_id) + '_' + String(c.task_id));
         });
         return set;
     }
@@ -274,53 +325,36 @@ window.FeatureReminderImage = (() => {
             nameModeByClassId[cls.id] = resolveNameModeForClass(raw, globalProfMode);
         });
 
-        const [studentsByClass, doneSet] = await Promise.all([
+        const [studentsByClass, doneSet, assignmentsByClass] = await Promise.all([
             fetchStudentsByClass(classIds, nameModeByClassId),
-            fetchGlobalDoneSet(classIds)
+            fetchGlobalDoneSet(classIds),
+            fetchPublishedAssignmentsByClass(classIds)
         ]);
 
         const todayStr = getTaiwanTodayStr();
         const dueSoonDate = getDueSoonDateStr();
-        const overdueFirstDate = getOverdueFirstDateStr(); // 昨日＝過期當天提醒日
         let items = [];
 
         classes.forEach(function (cls) {
             const className = cls.name || cls.title || '未命名班級';
-            const classRaw = parseRaw(cls.raw_data || cls.rawData);
             const students = studentsByClass[cls.id] || [];
-            const assignments = getPublishedAssignments(cls.id);
-            // 同班今天是否有「將到」作業（作為舊補交第二波的觸發錨點）
-            const hasDueSoonToday = assignments.some(function (a) {
-                return a.due_date === dueSoonDate;
-            });
+            const assignments = assignmentsByClass[cls.id] || [];
 
             assignments.forEach(function (assignment) {
-                const dueDate = assignment.due_date;
-                if (!dueDate) return;
-                const allowLate = resolveAllowLate(assignment, classRaw);
+                const dueDate = toDateKey(assignment.due_date) || toDateKey(assignment.target_date) || '';
+                const kind = resolveItemKind(dueDate, todayStr, dueSoonDate);
+                // 群體只列將到／已過截止（與學生訊息同範圍）；灰色地帶留給個人提醒
+                if (kind !== 'due_soon' && kind !== 'makeup') return;
 
                 students.forEach(function (student) {
-                    const total = countLeafTasks(assignment.tasks || []);
-                    const done = countDoneForStudent(assignment.tasks || [], assignment.id, student.id, doneSet);
-                    if (total > 0 && done >= total) return;
-
-                    let kind = null;
-                    if (dueDate === dueSoonDate) {
-                        kind = 'due_soon';
-                    } else if (allowLate && dueDate < todayStr) {
-                        // 第一波：截止日翌日；第二波：同班有將到作業的日子
-                        if (dueDate === overdueFirstDate || hasDueSoonToday) {
-                            kind = 'makeup';
-                        }
-                    }
-                    if (!kind) return;
+                    if (isStudentAssignmentComplete(assignment, student.id, doneSet)) return;
 
                     items.push({
                         kind: kind,
                         student: student,
                         assignment: assignment,
                         className: className,
-                        dueDate: dueDate
+                        dueDate: dueDate || '未設定'
                     });
                 });
             });
@@ -364,7 +398,7 @@ window.FeatureReminderImage = (() => {
         const done = countDoneForStudent(assignment.tasks || [], assignId, student.id, doneSet);
         const assignTitle = stripHtml(assignment.title) || '未命名作業';
         const clsName = stripHtml(className) || '未命名班級';
-        const dueText = dueDate && String(dueDate).trim() ? String(dueDate).trim() : '未設定';
+        const dueText = toDateKey(dueDate) || (dueDate && String(dueDate).trim() ? String(dueDate).trim() : '未設定');
         const firstName = student.englishFirstName || String(student.name || '同學').split(/\s+/)[0] || '同學';
         const progressHtml = '<span style="font-weight:700;color:#475569;">目前完成進度 ' + done + ' / ' + total + '</span>';
         const headline = kind === 'makeup'
@@ -660,7 +694,7 @@ window.FeatureReminderImage = (() => {
 
             if (items.length === 0) {
                 setStatus('');
-                renderEmptyList('目前沒有「將到（截止前兩天）」或「提醒補交」的未完成項目。');
+                renderEmptyList('目前沒有「將到（截止前兩天）」或「已過截止且未完成」的項目。');
                 refreshEntryBadge(filterClassId);
                 return;
             }
@@ -762,17 +796,11 @@ window.FeatureReminderImage = (() => {
             };
 
             const doneSet = await fetchGlobalDoneSet([classId]);
-            // 與群體同一欄位優先序：due_date；缺則退 target_date
-            const dueDate = assignment.due_date || assignment.target_date || '';
+            // 與群體同一正規化／卡片入口
+            const dueDate = toDateKey(assignment.due_date) || toDateKey(assignment.target_date) || '';
             const todayStr = getTaiwanTodayStr();
             const dueSoonDate = getDueSoonDateStr();
-
-            let kind = 'manual';
-            if (dueDate && dueDate < todayStr) {
-                kind = 'makeup';
-            } else if (dueDate && dueDate === dueSoonDate) {
-                kind = 'due_soon';
-            }
+            const kind = resolveItemKind(dueDate, todayStr, dueSoonDate);
 
             const item = {
                 kind: kind,
