@@ -140,6 +140,10 @@ function findSubFolder(parentFolder, subFolderName) {
 var CLASS_MATERIALS_FOLDER = '00_Class_Materials';
 var CLASS_MATERIALS_FOLDER_LEGACY = '00_Material_Masters';
 
+/** 班級資源夾：標準名 01_Class_Resources；舊名 01_Materials 自動改名合併 */
+var CLASS_RESOURCES_FOLDER = '01_Class_Resources';
+var CLASS_RESOURCES_FOLDER_LEGACY = '01_Materials';
+
 function resolveClassMaterialsFolder(classFolder, createIfMissing) {
   if (!classFolder) return null;
   var preferred = findSubFolder(classFolder, CLASS_MATERIALS_FOLDER);
@@ -153,6 +157,26 @@ function resolveClassMaterialsFolder(classFolder, createIfMissing) {
   }
   if (createIfMissing) {
     return getOrCreateSubFolder(classFolder, CLASS_MATERIALS_FOLDER);
+  }
+  return null;
+}
+
+function resolveClassResourcesFolder(classFolder, createIfMissing) {
+  if (!classFolder) return null;
+  var preferred = findSubFolder(classFolder, CLASS_RESOURCES_FOLDER);
+  if (preferred) {
+    // 若舊夾還在，不再自動搬檔（避免重複）；僅使用標準夾
+    return preferred;
+  }
+  var legacy = findSubFolder(classFolder, CLASS_RESOURCES_FOLDER_LEGACY);
+  if (legacy) {
+    try {
+      legacy.setName(CLASS_RESOURCES_FOLDER);
+    } catch (_renameErr) {}
+    return legacy;
+  }
+  if (createIfMissing) {
+    return getOrCreateSubFolder(classFolder, CLASS_RESOURCES_FOLDER);
   }
   return null;
 }
@@ -564,7 +588,14 @@ function doPost(e) {
         throw new Error("找不到指定的資料夾，或權限不足 (Folder ID: " + folderId + ")");
       }
 
-      folder = getOrCreateSubFolder(folder, subFolderName);
+      // 班級資源／舊 01_Materials：統一收納到 01_Class_Resources
+      if (!subFolderName
+          || subFolderName === CLASS_RESOURCES_FOLDER
+          || subFolderName === CLASS_RESOURCES_FOLDER_LEGACY) {
+        folder = resolveClassResourcesFolder(folder, true);
+      } else {
+        folder = getOrCreateSubFolder(folder, subFolderName);
+      }
 
       var existingFiles = folder.getFilesByName(cleanFileName);
       while (existingFiles.hasNext()) {

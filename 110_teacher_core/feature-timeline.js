@@ -1,11 +1,11 @@
 /**
  * 📂 檔案路徑：110_teacher_core/feature-timeline.js
  * 🌟 v69 方案 A 收納版：
- * 1. 確保學生端上傳的教材絕對存入 01_Materials 子資料夾。
+ * 1. 確保學生端上傳的教材絕對存入 01_Class_Resources 子資料夾。
  * 2. 貫徹鐵律：學生的教材 PDF 絕對只做 Base64 轉換，不做任何文字解析。
  */
 
-console.log("🚀 FeatureTimeline v69 載入成功！(強制收納 01_Materials 與無解析上傳鐵律)");
+console.log("🚀 FeatureTimeline v69 載入成功！(強制收納 01_Class_Resources 與無解析上傳鐵律)");
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
@@ -659,7 +659,7 @@ window.FeatureTimeline = (() => {
                                     throw new Error('系統錯誤：找不到 GasService 模組或函數');
                                 }
 
-                                // 🌟 方案 A 實作：強制指定傳入 01_Materials
+                                // 🌟 強制收納至 01_Class_Resources（舊名 01_Materials 由 GAS 自動改名）
                                 const fileUrl = await window.GasService.uploadStudentLocalFile(
                                     raw.student_local_b64,
                                     raw.student_local_filename,
@@ -667,7 +667,7 @@ window.FeatureTimeline = (() => {
                                     targetFolderId,
                                     bState.editId || '',
                                     t.id,
-                                    '01_Materials'
+                                    '01_Class_Resources'
                                 );
 
                                 // 🚀 上傳成功，轉化為 Drive 模式存檔

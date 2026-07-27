@@ -136,10 +136,10 @@ window.GasService = (function() {
     },
 
     /**
-     * 🚀 擴充功能 4：呼叫 GAS 上傳學生端 Local 檔案 (強制收納 01_Materials)
+     * 🚀 擴充功能 4：呼叫 GAS 上傳學生端 Local 檔案 (強制收納 01_Class_Resources)
      * (對接 Code.gs 的 upload_file 路由)
      */
-    async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '', subFolderName = '01_Materials') {
+    async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '', subFolderName = '01_Class_Resources') {
       try {
         const payload = {
           action: 'upload_file',
