@@ -18,7 +18,7 @@ window.FeatureStudentMessages = (() => {
 
     function formatKindBadge(kind, row, progressCtx) {
         if (kind === 'due_soon') {
-            return '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:1rem;font-weight:700;">即將到期</span>';
+            return '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:1rem;font-weight:700;">即將截止</span>';
         }
         if (kind === 'overdue_late') {
             const allowLate = resolveAllowLate(row, progressCtx);
