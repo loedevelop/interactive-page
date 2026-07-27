@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS public.user_notifications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   class_id uuid REFERENCES public.classes(id) ON DELETE SET NULL,
-  assignment_id bigint REFERENCES public.assignments(id) ON DELETE SET NULL,
+  assignment_id uuid REFERENCES public.assignments(id) ON DELETE SET NULL,
   kind text NOT NULL,
   title text NOT NULL,
   body text NOT NULL DEFAULT '',
@@ -58,7 +58,7 @@ CREATE POLICY "admin_select_reminder_logs"
   USING (public.is_admin());
 
 -- 作業是否「已有繳交紀錄」（粗規則：任一 task_completion 且未軟刪）
-CREATE OR REPLACE FUNCTION public.assignment_has_any_completion(p_assignment_id bigint, p_student_id uuid)
+CREATE OR REPLACE FUNCTION public.assignment_has_any_completion(p_assignment_id uuid, p_student_id uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -314,7 +314,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.assignment_has_any_completion(bigint, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.assignment_has_any_completion(uuid, uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.build_recent_assignment_status_text(uuid, uuid, int) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.scan_due_reminders(date) TO service_role;
 GRANT EXECUTE ON FUNCTION public.scan_due_reminders(date) TO authenticated;
