@@ -485,9 +485,19 @@ window.FeatureStudentTimeline = (() => {
                 const pendingId = sessionStorage.getItem('pendingJumpAssignmentId');
                 if (pendingId) {
                     sessionStorage.removeItem('pendingJumpAssignmentId');
+                    const progressTab = document.querySelector('.tab-link[data-view="progress"]');
+                    if (progressTab && typeof window.FeatureStudentTimeline.switchView === 'function') {
+                        window.FeatureStudentTimeline.switchView('progress', progressTab);
+                    }
                     setTimeout(function () {
                         if (!jumpToAssignment(pendingId)) scrollToCurrentWeek();
                     }, 150);
+                    return;
+                }
+                const messagesTab = document.querySelector('.tab-link[data-view="messages"]')
+                    || document.getElementById('tab-student-messages');
+                if (messagesTab) {
+                    window.FeatureStudentTimeline.switchView('messages', messagesTab);
                 }
             });
         },

@@ -128,7 +128,7 @@ window.ClassTemplates = (() => {
                     <div style="display: flex; flex-direction: column; gap: 10px;">
                         <label style="cursor: pointer; font-weight: bold; color: #92400E; display: flex; align-items: center;">
                             <input type="checkbox" id="edit-allow-late" ${lateDefaults.allow_late ? 'checked' : ''} style="transform: scale(1.2); margin-right: 8px;" onchange="document.getElementById('late-settings-details').style.display = this.checked ? 'block' : 'none'">
-                            允許遲交作業
+                            接受遲交作業
                         </label>
                         <div id="late-settings-details" style="display: ${lateDefaults.allow_late ? 'block' : 'none'}; padding-left: 25px; margin-top: 5px;">
                             <div style="display: flex; gap: 15px;">

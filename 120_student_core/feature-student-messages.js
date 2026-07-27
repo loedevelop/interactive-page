@@ -1,16 +1,14 @@
 /**
  * 📂 120_student_core/feature-student-messages.js
- * 學生端訊息活頁：到期提醒／可遲交已過期，點擊導向作業
+ * 學生端訊息活頁：到期／過期提醒；點擊整則導向作業
  */
 window.FeatureStudentMessages = (() => {
-    let loaded = false;
-
     function formatKindBadge(kind) {
         if (kind === 'due_soon') {
-            return '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:800;">即將到期</span>';
+            return '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">即將到期</span>';
         }
         if (kind === 'overdue_late') {
-            return '<span style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:800;">可遲交催繳</span>';
+            return '<span style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">已過截止日</span>';
         }
         return '';
     }
@@ -23,6 +21,31 @@ window.FeatureStudentMessages = (() => {
         } catch (_e) {
             return String(iso);
         }
+    }
+
+    function escapeHtml(s) {
+        return String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    /** 標題優先用 payload 三行；否則用 title */
+    function renderTitleBlock(row) {
+        const p = row.payload || {};
+        if (p.class_name || p.progress_label || p.block_label) {
+            return `
+                <div style="font-weight:800;color:#334155;font-size:1rem;line-height:1.45;">
+                    ${escapeHtml(p.class_name || '')}
+                </div>
+                <div style="font-weight:700;color:#475569;font-size:0.95rem;margin-top:4px;">
+                    ${escapeHtml(p.progress_label || '')}
+                </div>
+                <div style="font-weight:800;color:#1E293B;font-size:1rem;margin-top:6px;">
+                    📝 ${escapeHtml(p.block_label || p.assignment_title || '')}
+                </div>`;
+        }
+        return `<div style="font-weight:800;color:#334155;font-size:1rem;white-space:pre-wrap;line-height:1.45;">${escapeHtml(row.title || '通知')}</div>`;
     }
 
     async function fetchMessages() {
@@ -48,8 +71,8 @@ window.FeatureStudentMessages = (() => {
         if (!rows.length) {
             box.innerHTML = `
                 <div class="card" style="padding:24px;">
-                    <h3 style="margin-top:0;">📬 訊息</h3>
-                    <p style="color:#64748B;font-weight:600;">目前沒有提醒訊息。</p>
+                    <h3 style="margin-top:0;font-size:1.15rem;font-weight:900;color:#334155;">📬 訊息</h3>
+                    <p style="color:#64748B;font-weight:600;font-size:1rem;">目前沒有提醒訊息。</p>
                 </div>`;
             return;
         }
@@ -58,31 +81,30 @@ window.FeatureStudentMessages = (() => {
         const items = rows.map(function (row) {
             const unreadDot = row.read_at
                 ? ''
-                : '<span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;display:inline-block;margin-right:6px;"></span>';
-            const title = String(row.title || '通知').replace(/</g, '&lt;');
-            const preview = String(row.body || '').replace(/</g, '&lt;').slice(0, 160);
+                : '<span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;display:inline-block;margin-right:6px;vertical-align:middle;"></span>';
             return `
                 <button type="button"
                     class="student-msg-item"
                     data-msg-id="${row.id}"
                     data-assignment-id="${row.assignment_id || ''}"
                     data-class-id="${row.class_id || ''}"
-                    style="display:block;width:100%;text-align:left;border:2px solid #E2E8F0;background:${row.read_at ? '#fff' : '#FFFBEB'};border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;">
-                    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <div style="font-weight:900;color:#334155;">${unreadDot}${title}</div>
+                    style="display:block;width:100%;text-align:left;border:2px solid #E2E8F0;background:${row.read_at ? '#fff' : '#FFFBEB'};border-radius:12px;padding:16px;margin-bottom:12px;cursor:pointer;font-family:inherit;">
+                    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:200px;">
+                            <div style="margin-bottom:2px;">${unreadDot}</div>
+                            ${renderTitleBlock(row)}
+                        </div>
                         ${formatKindBadge(row.kind)}
                     </div>
-                    <div style="font-size:0.8rem;color:#94A3B8;margin-top:4px;">${formatTime(row.created_at)}</div>
-                    <div style="font-size:0.9rem;color:#64748B;margin-top:8px;white-space:pre-wrap;line-height:1.45;">${preview}${preview.length >= 160 ? '…' : ''}</div>
-                    <div style="font-size:0.8rem;color:#2563EB;font-weight:800;margin-top:8px;">點此前往作業 →</div>
+                    <div style="font-size:0.85rem;color:#94A3B8;margin-top:10px;font-weight:600;">${formatTime(row.created_at)}</div>
                 </button>`;
         }).join('');
 
         box.innerHTML = `
             <div class="card" style="padding:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-                    <h3 style="margin:0;">📬 訊息 ${unread ? `<span style="font-size:0.85rem;color:#B45309;">（${unread} 則未讀）</span>` : ''}</h3>
-                    <button type="button" id="btn-refresh-student-messages" class="btn-profile" style="padding:6px 12px;">重新整理</button>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+                    <h3 style="margin:0;font-size:1.15rem;font-weight:900;color:#334155;">📬 訊息 ${unread ? `<span style="font-size:0.95rem;color:#B45309;font-weight:800;">（${unread} 則未讀）</span>` : ''}</h3>
+                    <button type="button" id="btn-refresh-student-messages" class="btn-profile" style="padding:6px 12px;font-size:0.9rem;">重新整理</button>
                 </div>
                 ${items}
             </div>`;
@@ -149,15 +171,14 @@ window.FeatureStudentMessages = (() => {
     async function render() {
         const box = document.getElementById('student-messages-container');
         if (!box) return;
-        box.innerHTML = '<div class="card" style="padding:20px;color:#64748B;font-weight:700;">⏳ 載入訊息中…</div>';
+        box.innerHTML = '<div class="card" style="padding:20px;color:#64748B;font-weight:700;font-size:1rem;">⏳ 載入訊息中…</div>';
         try {
             const rows = await fetchMessages();
             renderList(rows);
-            loaded = true;
             updateTabBadge(rows);
         } catch (err) {
             console.error(err);
-            box.innerHTML = `<div class="card" style="padding:20px;color:#B91C1C;font-weight:700;">載入失敗：${String(err.message || err)}</div>`;
+            box.innerHTML = `<div class="card" style="padding:20px;color:#B91C1C;font-weight:700;font-size:1rem;">載入失敗：${escapeHtml(err.message || err)}</div>`;
         }
     }
 

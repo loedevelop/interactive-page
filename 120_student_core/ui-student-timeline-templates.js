@@ -1036,7 +1036,7 @@ window.UIStudentTimelineTemplates = (() => {
                             let cleanBlockDesc = course.description ? String(course.description).replace(/<[^>]*>?/gm, '').trim() : '';
                             let blockDescHtml = cleanBlockDesc !== '' ? `<div class="rt-normalize" style="font-size:0.95rem; color:#64748B; margin-top:8px;">${course.description}</div>` : '';
                             
-                            let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (允許遲交)' : '';
+                            let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (接受遲交)' : '';
                             let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
                             const renderTaskTree = (tasksList, depth = 0) => {
