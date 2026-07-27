@@ -8,7 +8,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 serve(async (req) => {
@@ -20,9 +20,13 @@ serve(async (req) => {
     const cronSecret = Deno.env.get("CRON_SECRET") || "";
     const authHeader = req.headers.get("Authorization") || "";
     const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const cronHeader = req.headers.get("x-cron-secret") || "";
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-    if (!bearer || (bearer !== serviceKey && (!cronSecret || bearer !== cronSecret))) {
+    // Authorization 必須是 JWT（service_role）；純文字 CRON_SECRET 請放 x-cron-secret，否則閘道會 Invalid JWT
+    const okService = !!(bearer && serviceKey && bearer === serviceKey);
+    const okCron = !!(cronSecret && cronHeader && cronHeader === cronSecret);
+    if (!okService && !okCron) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
