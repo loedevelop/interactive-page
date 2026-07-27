@@ -7,6 +7,11 @@ window.FeatureReminderImage = (() => {
     const RENDER_HOST_ID = 'reminder-image-render-host';
     const LIST_ID = 'reminder-image-list';
     const STATUS_ID = 'reminder-image-status';
+    const SUMMARY_ID = 'reminder-image-summary';
+    const READ_STORAGE_PREFIX = 'TeacherReminderRead_';
+
+    let sessionUserId = null;
+    let sessionReadMap = null;
 
     function stripHtml(s) {
         return String(s || '').replace(/<[^>]*>?/gm, '').trim();
@@ -25,6 +30,48 @@ window.FeatureReminderImage = (() => {
             try { return JSON.parse(raw); } catch (_e) { return {}; }
         }
         return raw || {};
+    }
+
+    function getItemKey(item) {
+        return item.student.id + '_' + item.assignment.id;
+    }
+
+    function loadReadMap(userId) {
+        if (!userId) return {};
+        try {
+            const raw = localStorage.getItem(READ_STORAGE_PREFIX + userId);
+            return raw ? JSON.parse(raw) : {};
+        } catch (_e) {
+            return {};
+        }
+    }
+
+    function saveReadMap(userId, map) {
+        if (!userId) return;
+        try {
+            localStorage.setItem(READ_STORAGE_PREFIX + userId, JSON.stringify(map));
+        } catch (_e) { /* 忽略容量錯誤 */ }
+    }
+
+    function isItemRead(readMap, itemKey) {
+        return !!(readMap && readMap[itemKey]);
+    }
+
+    function countUnread(items, readMap) {
+        if (!items.length) return 0;
+        return items.filter(function (item) {
+            return !isItemRead(readMap, getItemKey(item));
+        }).length;
+    }
+
+    async function getCurrentUserId() {
+        if (!window.supabaseClient) return null;
+        try {
+            const { data: { user } } = await window.supabaseClient.auth.getUser();
+            return user ? user.id : null;
+        } catch (_e) {
+            return null;
+        }
     }
 
     function collectTaskRows(tasks, depth, out) {
@@ -289,16 +336,33 @@ window.FeatureReminderImage = (() => {
         if (el) el.remove();
         const host = document.getElementById(RENDER_HOST_ID);
         if (host) host.innerHTML = '';
+        sessionUserId = null;
+        sessionReadMap = null;
+        refreshEntryBadge();
     }
 
-    function buildShellHtml(classCount, total) {
+    function buildSummaryText(classCount, total, unread) {
+        let text = '全部班級（' + classCount + ' 班）— 共 ' + total + ' 則';
+        if (unread > 0) {
+            text += '，<span style="color:#B45309;font-weight:800;">' + unread + ' 則未讀</span>';
+        }
+        text += '。點一下標記已讀；右鍵圖片 → <strong>複製圖片</strong>，貼至 LINE 家長群';
+        return text;
+    }
+
+    function updatePopupSummary(classCount, total, unread) {
+        const el = document.getElementById(SUMMARY_ID);
+        if (el) el.innerHTML = buildSummaryText(classCount, total, unread);
+    }
+
+    function buildShellHtml(classCount, total, unread) {
         return ''
             + '<div style="background:white;padding:24px;border-radius:14px;width:95%;max-width:720px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 40px rgba(0,0,0,0.25);">'
             + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;border-bottom:2px solid #F1F5F9;padding-bottom:12px;flex-shrink:0;">'
             + '<div>'
             + '<h3 style="margin:0;color:#334155;font-size:1.15rem;font-weight:900;">📬 家長提醒圖</h3>'
-            + '<p style="margin:6px 0 0;color:#64748B;font-size:0.95rem;font-weight:600;">'
-            + '全部班級（' + classCount + ' 班）— 共 ' + total + ' 則。右鍵圖片 → <strong>複製圖片</strong>，貼至 LINE 家長群</p>'
+            + '<p id="' + SUMMARY_ID + '" style="margin:6px 0 0;color:#64748B;font-size:0.95rem;font-weight:600;">'
+            + buildSummaryText(classCount, total, unread) + '</p>'
             + '<p id="' + STATUS_ID + '" style="margin:4px 0 0;color:#B45309;font-size:0.9rem;font-weight:700;"></p>'
             + '</div>'
             + '<button type="button" onclick="window.FeatureReminderImage.closeModal()" style="border:none;background:#F1F5F9;color:#475569;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:800;flex-shrink:0;">✕ 關閉</button>'
@@ -324,22 +388,93 @@ window.FeatureReminderImage = (() => {
         list.innerHTML = '<div style="padding:40px 16px;text-align:center;color:#64748B;font-weight:700;font-size:1rem;">⏳ 載入並產生提醒圖中…</div>';
     }
 
-    function appendImageItem(dataUrl, caption) {
+    function markItemReadDom(wrap) {
+        if (!wrap || wrap.dataset.read === '1') return;
+        wrap.dataset.read = '1';
+        const bar = wrap.querySelector('.reminder-unread-bar');
+        if (bar) bar.remove();
+        wrap.style.borderColor = '#E2E8F0';
+        wrap.style.background = '#fff';
+    }
+
+    function markItemRead(itemKey) {
+        if (!sessionUserId || !itemKey) return;
+        if (!sessionReadMap) sessionReadMap = loadReadMap(sessionUserId);
+        if (sessionReadMap[itemKey]) return;
+
+        sessionReadMap[itemKey] = new Date().toISOString();
+        saveReadMap(sessionUserId, sessionReadMap);
+
+        const wrap = document.querySelector('.reminder-img-item[data-item-key="' + itemKey + '"]');
+        markItemReadDom(wrap);
+
+        if (window._reminderPopupMeta) {
+            const meta = window._reminderPopupMeta;
+            const unread = countUnread(meta.items, sessionReadMap);
+            updatePopupSummary(meta.classCount, meta.items.length, unread);
+        }
+        refreshEntryBadge();
+    }
+
+    function appendImageItem(dataUrl, caption, itemKey, isRead) {
         const list = document.getElementById(LIST_ID);
         if (!list) return;
 
         const wrap = document.createElement('div');
         wrap.className = 'reminder-img-item';
-        wrap.style.cssText = 'border:2px solid #E2E8F0;border-radius:12px;padding:16px;margin-bottom:14px;background:#fff;';
-        wrap.innerHTML = ''
+        wrap.dataset.itemKey = itemKey;
+        wrap.dataset.read = isRead ? '1' : '0';
+        wrap.style.cssText = 'position:relative;overflow:hidden;border:2px solid '
+            + (isRead ? '#E2E8F0' : '#FDE68A') + ';border-radius:12px;padding:16px;margin-bottom:14px;background:'
+            + (isRead ? '#fff' : '#FFFBEB') + ';cursor:pointer;';
+
+        const unreadBar = isRead
+            ? ''
+            : '<div class="reminder-unread-bar" style="position:absolute;top:0;left:0;right:0;height:4px;background:#F59E0B;border-radius:10px 10px 0 0;z-index:1;"></div>';
+
+        wrap.innerHTML = unreadBar
             + '<img src="' + dataUrl + '" alt="' + escapeHtml(caption) + '" draggable="true" '
             + 'style="width:100%;max-width:560px;display:block;border-radius:8px;border:1px solid #E2E8F0;cursor:context-menu;" />'
-            + '<div style="font-size:0.85rem;color:#94A3B8;margin-top:8px;font-weight:600;">' + escapeHtml(caption) + ' · 右鍵圖片 → 複製圖片</div>';
+            + '<div style="font-size:0.85rem;color:#94A3B8;margin-top:8px;font-weight:600;">'
+            + escapeHtml(caption) + ' · 點一下標記已讀 · 右鍵圖片 → 複製圖片</div>';
+
+        wrap.addEventListener('click', function () {
+            markItemRead(itemKey);
+        });
+
         list.appendChild(wrap);
+    }
+
+    function updateEntryButton(unread, total) {
+        const btn = document.getElementById('btn-open-all-reminders');
+        if (!btn) return;
+        if (total > 0 && unread > 0) {
+            btn.textContent = '開啟全部提醒（' + unread + ' 則未讀）';
+        } else {
+            btn.textContent = '開啟全部提醒';
+        }
+    }
+
+    async function refreshEntryBadge() {
+        try {
+            const userId = await getCurrentUserId();
+            if (!userId || !window.TeacherDB) {
+                updateEntryButton(0, 0);
+                return;
+            }
+            const { items } = await buildAllReminderItems();
+            const readMap = loadReadMap(userId);
+            const unread = countUnread(items, readMap);
+            updateEntryButton(unread, items.length);
+        } catch (_e) {
+            updateEntryButton(0, 0);
+        }
     }
 
     async function openPopup() {
         closeModal();
+        sessionUserId = null;
+        sessionReadMap = null;
 
         const overlay = document.createElement('div');
         overlay.id = OVERLAY_ID;
@@ -348,19 +483,27 @@ window.FeatureReminderImage = (() => {
         document.body.appendChild(overlay);
 
         try {
-            const { items, classCount, doneSet } = await buildAllReminderItems();
+            sessionUserId = await getCurrentUserId();
+            sessionReadMap = loadReadMap(sessionUserId);
 
-            overlay.innerHTML = buildShellHtml(classCount, items.length);
+            const { items, classCount, doneSet } = await buildAllReminderItems();
+            const unread = countUnread(items, sessionReadMap);
+
+            window._reminderPopupMeta = { items: items, classCount: classCount };
+
+            overlay.innerHTML = buildShellHtml(classCount, items.length, unread);
             renderLoading();
 
             if (items.length === 0) {
                 setStatus('');
                 renderEmptyList('目前沒有可提醒的作業（需已發佈且含作業細項）。');
+                updateEntryButton(0, 0);
                 return;
             }
 
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
+                const itemKey = getItemKey(item);
                 setStatus('產生中 ' + (i + 1) + ' / ' + items.length + '…');
 
                 const cardHtml = buildCardHtml(
@@ -378,18 +521,25 @@ window.FeatureReminderImage = (() => {
                     const list = document.getElementById(LIST_ID);
                     if (list) list.innerHTML = '';
                 }
-                appendImageItem(dataUrl, caption);
+                appendImageItem(dataUrl, caption, itemKey, isItemRead(sessionReadMap, itemKey));
             }
 
             setStatus('已全部產生完成');
+            refreshEntryBadge();
         } catch (err) {
             closeModal();
             if (window.showFlash) window.showFlash(err.message, 'error');
         }
     }
 
+    window.addEventListener('DOMContentLoaded', function () {
+        setTimeout(refreshEntryBadge, 800);
+    });
+
     return {
         openPopup: openPopup,
-        closeModal: closeModal
+        closeModal: closeModal,
+        refreshEntryBadge: refreshEntryBadge,
+        markItemRead: markItemRead
     };
 })();

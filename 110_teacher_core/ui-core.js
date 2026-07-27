@@ -118,6 +118,9 @@ window.TeacherUI = (() => {
     function runGlobalViewDataRefresh(viewId) {
         if (viewId === 'view-manage-classes' && window.FeatureClass && typeof window.FeatureClass.renderClassManager === 'function') {
             window.FeatureClass.renderClassManager();
+        }
+        if (viewId === 'view-manage-classes' && window.FeatureReminderImage && typeof window.FeatureReminderImage.refreshEntryBadge === 'function') {
+            window.FeatureReminderImage.refreshEntryBadge();
         } else if (viewId === 'view-global-resources' && window.FeatureResource && typeof window.FeatureResource.renderGlobalResourceView === 'function') {
             window.FeatureResource.renderGlobalResourceView();
         }
