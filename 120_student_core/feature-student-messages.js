@@ -117,14 +117,30 @@ window.FeatureStudentMessages = (() => {
         return m ? m[1] : '';
     }
 
+    function getProgressDateKey(row) {
+        const p = row.payload || {};
+        if (p.target_date) return String(p.target_date);
+        if (p.progress_date) return String(p.progress_date);
+        const label = p.progress_label || '';
+        const m = String(label).match(/(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : '';
+    }
+
     function sortRowsByDueDateDesc(rows) {
         return (rows || []).slice().sort(function (a, b) {
             const da = getDueDateKey(a);
             const db = getDueDateKey(b);
-            if (da && db && da !== db) return db.localeCompare(da); // 新到舊
+            // 1) 到期日新 → 上
+            if (da && db && da !== db) return db.localeCompare(da);
             if (da && !db) return -1;
             if (!da && db) return 1;
-            // 同截止日：通知時間新到舊
+            // 2) 相同到期日：進度日較近（新）→ 上
+            const pa = getProgressDateKey(a);
+            const pb = getProgressDateKey(b);
+            if (pa && pb && pa !== pb) return pb.localeCompare(pa);
+            if (pa && !pb) return -1;
+            if (!pa && pb) return 1;
+            // 3) 再退回通知時間新到舊
             return String(b.created_at || '').localeCompare(String(a.created_at || ''));
         });
     }
