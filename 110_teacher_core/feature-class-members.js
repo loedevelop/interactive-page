@@ -116,6 +116,14 @@ window.FeatureClassMembers = (() => {
                 const p = Array.isArray(s.profiles) ? s.profiles[0] : (s.profiles || {});
                 let enrollRaw = s.raw_data || {};
                 if (typeof enrollRaw === 'string') { try { enrollRaw = JSON.parse(enrollRaw); } catch(e){} }
+
+                // 第二 Email（Drive 授權用），存於 profiles.raw_data.emailSecondary
+                let secondaryEmail = '';
+                try {
+                    let raw = p.raw_data || {};
+                    if (typeof raw === 'string') raw = JSON.parse(raw);
+                    secondaryEmail = (raw?.emailSecondary || '').trim();
+                } catch (_e) {}
                 
                 // 🌟 修補遺漏：將 s.drive_url 加入判斷鏈
                 const rawDriveVal = enrollRaw.drive_folder_id || s.drive_url || s.drive_link || (p.raw_data ? p.raw_data.drive_url : '') || '';
@@ -125,6 +133,7 @@ window.FeatureClassMembers = (() => {
                     class_id: classId,
                     displayName: calculateDisplayName(p, effectiveMode),
                     email: p.email || '未設定',
+                    emailSecondary: secondaryEmail,
                     password: p.password || '系統預設',
                     drive_url: safeFormatUrl(rawDriveVal) 
                 };
@@ -467,13 +476,24 @@ window.FeatureClassMembers = (() => {
                 if (cleanFolderId && window.ApiService && typeof window.ApiService.ensureGASFolderSharing === 'function') {
                     const { data: profileRow } = await window.supabaseClient
                         .from('profiles')
-                        .select('email')
+                        .select('email, raw_data')
                         .eq('id', studentId)
                         .maybeSingle();
                     const shareEmail = (profileRow?.email || '').trim();
+                    let shareEmailSecondary = '';
+                    try {
+                        let raw = profileRow?.raw_data || {};
+                        if (typeof raw === 'string') raw = JSON.parse(raw);
+                        shareEmailSecondary = (raw?.emailSecondary || '').trim();
+                    } catch (_e) {}
+                    const shareEmails = [...new Set(
+                        [shareEmail, shareEmailSecondary]
+                            .map(e => String(e || '').trim().toLowerCase())
+                            .filter(e => e && e.indexOf('@') !== -1)
+                    )];
                     await window.ApiService.ensureGASFolderSharing(cleanFolderId, {
                         permission: 'edit',
-                        shareEmails: shareEmail ? [shareEmail] : []
+                        shareEmails: shareEmails
                     });
                 }
 
@@ -522,7 +542,11 @@ window.FeatureClassMembers = (() => {
                 try {
                     await window.ApiService.ensureGASFolderSharing(folderId, {
                         permission: 'edit',
-                        shareEmails: [student.email]
+                        shareEmails: [...new Set(
+                            [student.email, student.emailSecondary]
+                                .map(e => String(e || '').trim().toLowerCase())
+                                .filter(e => e && e.indexOf('@') !== -1)
+                        )]
                     });
                     ok++;
                 } catch (err) {
@@ -627,6 +651,13 @@ window.FeatureClassMembers = (() => {
                             </div>
                         </div>
 
+                        <div class="form-group" style="margin-top: 0; margin-bottom: 20px;">
+                            <label style="display:block; font-weight:bold; margin-bottom:5px; font-size: 0.9rem;">
+                                第二 Email（Drive 授權用） <span style="color:#94a3b8; font-size:0.85em; font-weight:normal;">(可選)</span>
+                            </label>
+                            <input type="email" id="modal-emailSecondary" class="form-control" value="${parsedRaw.emailSecondary || ''}" style="width:100%;">
+                        </div>
+
                         <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
                             <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;" onclick="document.getElementById('edit-student-modal').remove()">取消</button>
                             <button id="modal-save-btn" class="btn btn-primary" style="padding: 8px 20px;" onclick="window.FeatureClassMembers.submitEditModal('${studentId}', '${classId}')">💾 儲存變更</button>
@@ -649,6 +680,8 @@ window.FeatureClassMembers = (() => {
             const passFirst = document.getElementById('modal-passFirst').value.trim();
             const lastCN = document.getElementById('modal-lastCN').value.trim();
             const firstCN = document.getElementById('modal-firstCN').value.trim();
+            const modalEmailSecondaryEl = document.getElementById('modal-emailSecondary');
+            const emailSecondary = modalEmailSecondaryEl ? modalEmailSecondaryEl.value.trim().toLowerCase() : '';
 
             const fullCN = `${lastCN}${firstCN}`;
             let fallbackName = "未命名";
@@ -669,7 +702,8 @@ window.FeatureClassMembers = (() => {
                         p_passport_last: passLast,
                         p_passport_first: passFirst,
                         p_last_cn: lastCN,
-                        p_first_cn: firstCN
+                        p_first_cn: firstCN,
+                        p_email_secondary: emailSecondary || null
                     }
                 );
 
@@ -695,6 +729,27 @@ window.FeatureClassMembers = (() => {
                         const shortId = String(studentId).slice(-4);
                         const safeName = fallbackName.replace(/[\\/:*?"<>|]/g, '_').trim() || '未命名學生';
                         await window.ApiService.renameGASParentFolder(leafId, `${safeName}_${shortId}`);
+                    }
+
+                    // 同步更新第二 Email 的 Drive 授權（避免僅改 raw_data 後權限未落地）
+                    if (leafId && window.ApiService && typeof window.ApiService.ensureGASFolderSharing === 'function') {
+                        const { data: pRow } = await window.supabaseClient
+                            .from('profiles')
+                            .select('email')
+                            .eq('id', studentId)
+                            .maybeSingle();
+
+                        const firstEmail = (pRow?.email || '').trim();
+                        const shareEmails = [...new Set(
+                            [firstEmail, emailSecondary]
+                                .map(e => String(e || '').trim().toLowerCase())
+                                .filter(e => e && e.indexOf('@') !== -1)
+                        )];
+
+                        await window.ApiService.ensureGASFolderSharing(leafId, {
+                            permission: 'edit',
+                            shareEmails: shareEmails
+                        });
                     }
                 } catch (driveErr) {
                     console.warn('學生 Drive 資料夾改名略過:', driveErr);

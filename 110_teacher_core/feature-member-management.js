@@ -111,6 +111,10 @@ export class MemberManager {
                         <div class="form-group" style="margin-top: 0;">
                             <label>📧 聯絡信箱 (Email) <span style="color:red;">*</span></label>
                             <input type="email" id="memberEmail" class="form-control" required placeholder="例如：name@example.com">
+                            <div id="studentSecondaryEmailGroup" style="margin-top: 10px; display:none;">
+                                <label>📧 第二 Email（Drive 授權用）</label>
+                                <input type="email" id="memberSecondaryEmail" class="form-control" placeholder="選填：例如 student.edu@school.edu（避免 .edu 跳出申請存取）">
+                            </div>
                             <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; color: #475569; margin-top: 8px; font-size: 0.9rem;">
                                 <input type="checkbox" id="isSharedEmail" style="transform: scale(1.1);">
                                 <span>🔗 此為共用信箱 (系統將結合姓名自動變異生成獨立的分身帳號)</span>
@@ -222,10 +226,12 @@ export class MemberManager {
             const childGroup = document.getElementById('childSelectionGroup');
             const childSelect = document.getElementById('childUserId');
             const driveGroup = document.getElementById('studentDriveGroup');
+            const secondaryEmailGroup = document.getElementById('studentSecondaryEmailGroup');
 
             childGroup.style.display = 'none';
             childSelect.removeAttribute('required');
             driveGroup.style.display = 'none';
+            if (secondaryEmailGroup) secondaryEmailGroup.style.display = 'none';
 
             if (selectedRole === 'parent') {
                 childGroup.style.display = 'block';
@@ -233,6 +239,7 @@ export class MemberManager {
                 await this.fetchClassStudents(); 
             } else if (selectedRole === 'student') {
                 driveGroup.style.display = 'block';
+                if (secondaryEmailGroup) secondaryEmailGroup.style.display = 'block';
             }
         });
 
@@ -326,6 +333,8 @@ export class MemberManager {
         const fallbackName = document.getElementById('sysDisplayName').value.trim() || fullCN || nameEN;
         
         let targetEmail = document.getElementById('memberEmail').value.trim().toLowerCase();
+        const memberSecondaryEmailEl = document.getElementById('memberSecondaryEmail');
+        let memberSecondaryEmail = memberSecondaryEmailEl ? memberSecondaryEmailEl.value.trim().toLowerCase() : '';
         const phone = document.getElementById('memberPhone').value.trim();
         const role = document.getElementById('memberRole').value;
         const childUserId = document.getElementById('childUserId').value;
@@ -358,6 +367,11 @@ export class MemberManager {
             isMutated = true;
         }
 
+        if (role === 'student' && memberSecondaryEmail && memberSecondaryEmail.indexOf('@') === -1) {
+            window.showFlash('第二 Email 格式不正確（請輸入有效 email 或留空）。', 'error');
+            return;
+        }
+
         const rawDataPayload = {
             nameEN: nameEN,
             passportLast: passportLast,
@@ -365,6 +379,9 @@ export class MemberManager {
             lastNameCN: lastNameCN,
             firstNameCN: firstNameCN
         };
+        if (role === 'student' && memberSecondaryEmail) {
+            rawDataPayload.emailSecondary = memberSecondaryEmail;
+        }
 
         btn.disabled = true;
         btn.innerHTML = '⏳ 資料驗證與建檔中...';
@@ -386,7 +403,7 @@ export class MemberManager {
             try {
                 if (role === 'student') {
                     // 🌟 傳遞乾淨的 ID 進入指派流程
-                    await this.assignStudent(targetUserId, cleanDriveId, fallbackName, targetEmail);
+                    await this.assignStudent(targetUserId, cleanDriveId, fallbackName, targetEmail, memberSecondaryEmail);
                 } else if (['co_teacher', 'ta_senior', 'ta_junior'].includes(role)) {
                     await this.assignStaff(targetUserId, role);
                 } else if (role === 'parent') {
@@ -462,19 +479,36 @@ export class MemberManager {
         return data; 
     }
 
-    async assignStudent(userId, driveFolderId, studentName, studentEmail) {
+    async assignStudent(userId, driveFolderId, studentName, studentEmail, studentDriveSecondaryEmail) {
         let finalDriveId = driveFolderId || null;
         let enrollRawData = {};
-        let resolvedShareEmail = (studentEmail || '').trim();
+        let resolvedFirstEmail = (studentEmail || '').trim();
+        let resolvedSecondEmail = (studentDriveSecondaryEmail || '').trim();
 
-        if (!resolvedShareEmail) {
+        // 第二 Email 僅用於 Drive 權限；登入驗證仍以 profiles.email（第一 Email）為準
+        if (!resolvedFirstEmail || !resolvedSecondEmail) {
             const { data: profileRow } = await this.supabase
                 .from('profiles')
-                .select('email')
+                .select('email, raw_data')
                 .eq('id', userId)
                 .maybeSingle();
-            resolvedShareEmail = (profileRow?.email || '').trim();
+
+            if (!resolvedFirstEmail) resolvedFirstEmail = (profileRow?.email || '').trim();
+
+            if (!resolvedSecondEmail) {
+                let raw = profileRow?.raw_data || {};
+                if (typeof raw === 'string') {
+                    try { raw = JSON.parse(raw); } catch(_e) {}
+                }
+                resolvedSecondEmail = (raw?.emailSecondary || '').trim();
+            }
         }
+
+        const shareEmails = [...new Set(
+            [resolvedFirstEmail, resolvedSecondEmail]
+                .map(e => String(e || '').trim().toLowerCase())
+                .filter(e => e && e.indexOf('@') !== -1)
+        )];
 
         // 🌟 絕對防呆機制：先查詢該學生在「本班」是否已經有註冊紀錄與資料夾 ID 了？
         const { data: existingEnroll } = await this.supabase
@@ -520,7 +554,7 @@ export class MemberManager {
 
                     try {
                         console.log(`[自動建檔] 準備建立學生資料夾: ${folderName}${useV2Layout ? ' → 02_Students/.../01_Submissions' : ''}`);
-                        const shareList = resolvedShareEmail ? [resolvedShareEmail] : [];
+                        const shareList = shareEmails;
                         const createOptions = useV2Layout
                             ? { folderPath: ['02_Students', folderName] }
                             : null;
@@ -552,7 +586,7 @@ export class MemberManager {
             try {
                 await window.ApiService.ensureGASFolderSharing(finalDriveId, {
                     permission: 'edit',
-                    shareEmails: resolvedShareEmail ? [resolvedShareEmail] : []
+                    shareEmails: shareEmails
                 });
             } catch (permErr) {
                 console.warn('⚠️ 學生資料夾權限設定失敗（資料夾仍已建立）:', permErr);

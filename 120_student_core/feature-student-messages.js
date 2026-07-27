@@ -3,12 +3,17 @@
  * 學生端訊息活頁：到期／過期提醒；點擊整則導向作業
  */
 window.FeatureStudentMessages = (() => {
-    function formatKindBadge(kind) {
+    function formatKindBadge(kind, payload) {
         if (kind === 'due_soon') {
             return '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">即將到期</span>';
         }
         if (kind === 'overdue_late') {
-            return '<span style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">已過截止日</span>';
+            const allowLate = payload && payload.allow_late === true;
+            const leftBadge = allowLate
+                ? '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">提醒補交</span>'
+                : '<span style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">缺交</span>';
+            const rightBadge = '<span style="background:#F1F5F9;color:#475569;border:1px solid #CBD5E1;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">已過截止日</span>';
+            return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">${leftBadge}${rightBadge}</div>`;
         }
         return '';
     }
@@ -30,20 +35,62 @@ window.FeatureStudentMessages = (() => {
             .replace(/>/g, '&gt;');
     }
 
+    function countLeafTasks(tasksList) {
+        let total = 0;
+        if (!Array.isArray(tasksList)) return 0;
+        tasksList.forEach(function (t) {
+            if (t && t.type === 'group') {
+                total += countLeafTasks(t.subTasks);
+            } else if (t) {
+                total += 1;
+            }
+        });
+        return total;
+    }
+
+    function countDoneTasks(tasksList, assignmentId, completedSet) {
+        let done = 0;
+        if (!Array.isArray(tasksList)) return 0;
+        tasksList.forEach(function (t) {
+            if (t && t.type === 'group') {
+                done += countDoneTasks(t.subTasks, assignmentId, completedSet);
+            } else if (t && completedSet.has(assignmentId + '_' + t.id)) {
+                done += 1;
+            }
+        });
+        return done;
+    }
+
+    function getProgressForRow(row, progressCtx) {
+        const assignmentId = row.assignment_id;
+        if (!assignmentId || !progressCtx) return null;
+        const tasks = progressCtx.assignmentTasks[assignmentId];
+        if (!tasks) return null;
+        const total = countLeafTasks(tasks);
+        const done = countDoneTasks(tasks, assignmentId, progressCtx.completedSet);
+        return { done: done, total: total };
+    }
+
     /** 標題優先用 payload 三行；否則用 title */
-    function renderTitleBlock(row) {
+    function renderTitleBlock(row, progressCtx) {
         const p = row.payload || {};
+        const progress = getProgressForRow(row, progressCtx);
+        const progressHtml = progress
+            ? `<div style="font-weight:700;color:#64748B;font-size:0.95rem;margin-top:6px;">目前完成進度 ${progress.done} / ${progress.total}</div>`
+            : '';
+
         if (p.class_name || p.progress_label || p.block_label) {
             return `
                 <div style="font-weight:800;color:#334155;font-size:1rem;line-height:1.45;">
-                    ${escapeHtml(p.class_name || '')}
+                    📚 ${escapeHtml(p.class_name || '')}
                 </div>
                 <div style="font-weight:700;color:#475569;font-size:0.95rem;margin-top:4px;">
                     ${escapeHtml(p.progress_label || '')}
                 </div>
                 <div style="font-weight:800;color:#1E293B;font-size:1rem;margin-top:6px;">
                     📝 ${escapeHtml(p.block_label || p.assignment_title || '')}
-                </div>`;
+                </div>
+                ${progressHtml}`;
         }
         return `<div style="font-weight:800;color:#334155;font-size:1rem;white-space:pre-wrap;line-height:1.45;">${escapeHtml(row.title || '通知')}</div>`;
     }
@@ -61,10 +108,45 @@ window.FeatureStudentMessages = (() => {
             .limit(100);
 
         if (error) throw error;
-        return data || [];
+        return { rows: data || [], userId: user.id };
     }
 
-    function renderList(rows) {
+    async function fetchProgressContext(rows, userId) {
+        const assignmentIds = [...new Set(
+            (rows || []).map(function (r) { return r.assignment_id; }).filter(Boolean)
+        )];
+        if (!assignmentIds.length) {
+            return { assignmentTasks: {}, completedSet: new Set() };
+        }
+
+        const [assignRes, compRes] = await Promise.all([
+            window.supabaseClient
+                .from('assignments')
+                .select('id, tasks')
+                .in('id', assignmentIds),
+            window.supabaseClient
+                .from('task_completions')
+                .select('assignment_id, task_id')
+                .eq('student_id', userId)
+                .in('assignment_id', assignmentIds)
+                .is('deleted_at', null)
+        ]);
+
+        const assignmentTasks = {};
+        (assignRes.data || []).forEach(function (a) {
+            assignmentTasks[a.id] = a.tasks || [];
+        });
+
+        const completedSet = new Set(
+            (compRes.data || []).map(function (c) {
+                return c.assignment_id + '_' + c.task_id;
+            })
+        );
+
+        return { assignmentTasks: assignmentTasks, completedSet: completedSet };
+    }
+
+    function renderList(rows, progressCtx) {
         const box = document.getElementById('student-messages-container');
         if (!box) return;
 
@@ -79,22 +161,22 @@ window.FeatureStudentMessages = (() => {
 
         const unread = rows.filter(function (r) { return !r.read_at; }).length;
         const items = rows.map(function (row) {
-            const unreadDot = row.read_at
+            const unreadBar = row.read_at
                 ? ''
-                : '<span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;display:inline-block;margin-right:6px;vertical-align:middle;"></span>';
+                : '<div style="position:absolute;top:0;left:0;right:0;height:4px;background:#F59E0B;border-radius:10px 10px 0 0;"></div>';
             return `
                 <button type="button"
                     class="student-msg-item"
                     data-msg-id="${row.id}"
                     data-assignment-id="${row.assignment_id || ''}"
                     data-class-id="${row.class_id || ''}"
-                    style="display:block;width:100%;text-align:left;border:2px solid #E2E8F0;background:${row.read_at ? '#fff' : '#FFFBEB'};border-radius:12px;padding:16px;margin-bottom:12px;cursor:pointer;font-family:inherit;">
+                    style="display:block;width:100%;text-align:left;position:relative;overflow:hidden;border:2px solid #E2E8F0;background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;cursor:pointer;font-family:inherit;">
+                    ${unreadBar}
                     <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">
                         <div style="flex:1;min-width:200px;">
-                            <div style="margin-bottom:2px;">${unreadDot}</div>
-                            ${renderTitleBlock(row)}
+                            ${renderTitleBlock(row, progressCtx)}
                         </div>
-                        ${formatKindBadge(row.kind)}
+                        ${formatKindBadge(row.kind, row.payload)}
                     </div>
                     <div style="font-size:0.85rem;color:#94A3B8;margin-top:10px;font-weight:600;">${formatTime(row.created_at)}</div>
                 </button>`;
@@ -173,8 +255,9 @@ window.FeatureStudentMessages = (() => {
         if (!box) return;
         box.innerHTML = '<div class="card" style="padding:20px;color:#64748B;font-weight:700;font-size:1rem;">⏳ 載入訊息中…</div>';
         try {
-            const rows = await fetchMessages();
-            renderList(rows);
+            const { rows, userId } = await fetchMessages();
+            const progressCtx = await fetchProgressContext(rows, userId);
+            renderList(rows, progressCtx);
             updateTabBadge(rows);
         } catch (err) {
             console.error(err);
@@ -192,7 +275,7 @@ window.FeatureStudentMessages = (() => {
 
     async function refreshBadgeOnly() {
         try {
-            const rows = await fetchMessages();
+            const { rows } = await fetchMessages();
             updateTabBadge(rows);
         } catch (_e) {}
     }

@@ -70,6 +70,10 @@ serve(async (req) => {
             firstNameCN: rawData.firstNameCN != null ? String(rawData.firstNameCN) : (oldRawData.firstNameCN || ""),
             passportLast: rawData.passportLast != null ? String(rawData.passportLast) : (oldRawData.passportLast || ""),
             passportFirst: rawData.passportFirst != null ? String(rawData.passportFirst) : (oldRawData.passportFirst || ""),
+            // 第二 Email 僅用於 Drive 權限；若前端沒有提供或為空，維持既有值
+            ...(rawData?.emailSecondary != null && String(rawData.emailSecondary).trim() !== '' ? {
+              emailSecondary: String(rawData.emailSecondary).trim()
+            } : (oldRawData.emailSecondary != null ? { emailSecondary: String(oldRawData.emailSecondary).trim() } : {}))
         };
         
         // 確保不會洗掉已有的專屬 Drive 連結
