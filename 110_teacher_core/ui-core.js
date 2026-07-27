@@ -8,6 +8,7 @@ window.TeacherUI = (() => {
     let currentClassId = null;
     const GLOBAL_VIEW_KEY = 'teacherActiveGlobalView';
     const SIDEBAR_CACHE_KEY = 'teacherSidebarCache';
+    const CLASS_TAB_KEY = 'teacherActiveClassTab';
     const GLOBAL_VIEW_NAV = {
         'view-manage-classes': 'nav-manage-classes',
         'view-global-resources': 'nav-global-resources',
@@ -25,6 +26,39 @@ window.TeacherUI = (() => {
         if (staffRole === 'co_teacher') return '<span style="font-size:0.7rem; background:#4CAF50; color:white; padding:2px 6px; border-radius:10px; margin-left:5px;">協</span>';
         if (staffRole === 'ta_senior' || staffRole === 'ta_junior') return '<span style="font-size:0.7rem; background:#9E9E9E; color:white; padding:2px 6px; border-radius:10px; margin-left:5px;">TA</span>';
         return '';
+    }
+
+    function isTabBtnVisible(btn) {
+        return !!(btn && btn.style.display !== 'none');
+    }
+
+    function findTabBtnByTarget(targetId) {
+        if (!targetId) return null;
+        return Array.from(tabBtns).find(function (btn) {
+            return btn.getAttribute('data-target') === targetId;
+        }) || null;
+    }
+
+    /** 換班／重整：維持上次班級活頁；若該活頁因權限隱藏則退回課程進度 */
+    function resolveClassTabBtn() {
+        const savedTarget = localStorage.getItem(CLASS_TAB_KEY);
+        const savedBtn = findTabBtnByTarget(savedTarget);
+        if (isTabBtnVisible(savedBtn)) return savedBtn;
+
+        const currentActive = document.querySelector('.tab-btn.active');
+        if (isTabBtnVisible(currentActive)) return currentActive;
+
+        const progressBtn = findTabBtnByTarget('view-progress');
+        if (isTabBtnVisible(progressBtn)) return progressBtn;
+
+        return Array.from(tabBtns).find(isTabBtnVisible) || null;
+    }
+
+    function persistClassTab(targetId) {
+        if (!targetId) return;
+        try {
+            localStorage.setItem(CLASS_TAB_KEY, targetId);
+        } catch (_e) {}
     }
 
     function applyStaffRoleUI(staffRole) {
@@ -285,18 +319,13 @@ window.TeacherUI = (() => {
         
         renderSidebar();
         viewSections.forEach(v => v.classList.remove('active'));
-        
-        let activeTab = document.querySelector('.tab-btn.active');
-        if (activeTab && activeTab.style.display === 'none') {
-            activeTab.classList.remove('active');
-            activeTab = document.querySelector('.tab-btn[data-target="view-progress"]');
-        } else if (!activeTab) {
-            activeTab = tabBtns.length > 0 ? tabBtns[0] : null;
-        }
+        tabBtns.forEach(b => b.classList.remove('active'));
 
+        let activeTab = resolveClassTabBtn();
         if (activeTab) {
             activeTab.classList.add('active');
             const targetId = activeTab.getAttribute('data-target');
+            persistClassTab(targetId);
             if (targetId && document.getElementById(targetId)) {
                 document.getElementById(targetId).classList.add('active');
             }
@@ -336,6 +365,7 @@ window.TeacherUI = (() => {
             btn.classList.add('active');
             
             const targetId = btn.getAttribute('data-target');
+            persistClassTab(targetId);
             if (targetId && document.getElementById(targetId)) {
                 document.getElementById(targetId).classList.add('active');
             }
