@@ -3,12 +3,25 @@
  * 學生端訊息活頁：到期／過期提醒；點擊整則導向作業
  */
 window.FeatureStudentMessages = (() => {
-    function formatKindBadge(kind, payload) {
+    /** 優先用即時作業／班級設定；舊訊息 payload 常缺 allow_late */
+    function resolveAllowLate(row, progressCtx) {
+        const meta = progressCtx && progressCtx.allowLateByAssignment
+            ? progressCtx.allowLateByAssignment[row.assignment_id]
+            : null;
+        if (typeof meta === 'boolean') return meta;
+
+        if (row.payload && typeof row.payload.allow_late === 'boolean') {
+            return row.payload.allow_late;
+        }
+        return false;
+    }
+
+    function formatKindBadge(kind, row, progressCtx) {
         if (kind === 'due_soon') {
             return '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">即將到期</span>';
         }
         if (kind === 'overdue_late') {
-            const allowLate = payload && payload.allow_late === true;
+            const allowLate = resolveAllowLate(row, progressCtx);
             const leftBadge = allowLate
                 ? '<span style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">提醒補交</span>'
                 : '<span style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;padding:2px 8px;border-radius:999px;font-size:0.85rem;font-weight:800;">缺交</span>';
@@ -115,26 +128,58 @@ window.FeatureStudentMessages = (() => {
         const assignmentIds = [...new Set(
             (rows || []).map(function (r) { return r.assignment_id; }).filter(Boolean)
         )];
+        const classIds = [...new Set(
+            (rows || []).map(function (r) { return r.class_id; }).filter(Boolean)
+        )];
         if (!assignmentIds.length) {
-            return { assignmentTasks: {}, completedSet: new Set() };
+            return { assignmentTasks: {}, completedSet: new Set(), allowLateByAssignment: {} };
         }
 
-        const [assignRes, compRes] = await Promise.all([
+        const [assignRes, compRes, classRes] = await Promise.all([
             window.supabaseClient
                 .from('assignments')
-                .select('id, tasks')
+                .select('id, class_id, tasks, raw_data')
                 .in('id', assignmentIds),
             window.supabaseClient
                 .from('task_completions')
                 .select('assignment_id, task_id')
                 .eq('student_id', userId)
                 .in('assignment_id', assignmentIds)
-                .is('deleted_at', null)
+                .is('deleted_at', null),
+            classIds.length
+                ? window.supabaseClient
+                    .from('classes')
+                    .select('id, raw_data')
+                    .in('id', classIds)
+                : Promise.resolve({ data: [] })
         ]);
 
+        const classAllowLate = {};
+        (classRes.data || []).forEach(function (c) {
+            let raw = c.raw_data || {};
+            if (typeof raw === 'string') {
+                try { raw = JSON.parse(raw); } catch (_e) { raw = {}; }
+            }
+            const defaults = raw.late_submission_defaults || {};
+            classAllowLate[c.id] = defaults.allow_late === true;
+        });
+
         const assignmentTasks = {};
+        const allowLateByAssignment = {};
         (assignRes.data || []).forEach(function (a) {
             assignmentTasks[a.id] = a.tasks || [];
+            let aRaw = a.raw_data || {};
+            if (typeof aRaw === 'string') {
+                try { aRaw = JSON.parse(aRaw); } catch (_e) { aRaw = {}; }
+            }
+            // 作業有明確 late_policy 就用作業；否則退回班級預設
+            if (aRaw.late_policy && typeof aRaw.late_policy === 'object') {
+                allowLateByAssignment[a.id] = aRaw.late_policy.allow_late === true;
+            } else if (typeof aRaw.allow_late === 'boolean') {
+                allowLateByAssignment[a.id] = aRaw.allow_late === true;
+            } else {
+                allowLateByAssignment[a.id] = classAllowLate[a.class_id] === true;
+            }
         });
 
         const completedSet = new Set(
@@ -143,7 +188,11 @@ window.FeatureStudentMessages = (() => {
             })
         );
 
-        return { assignmentTasks: assignmentTasks, completedSet: completedSet };
+        return {
+            assignmentTasks: assignmentTasks,
+            completedSet: completedSet,
+            allowLateByAssignment: allowLateByAssignment
+        };
     }
 
     function renderList(rows, progressCtx) {
@@ -176,7 +225,7 @@ window.FeatureStudentMessages = (() => {
                         <div style="flex:1;min-width:200px;">
                             ${renderTitleBlock(row, progressCtx)}
                         </div>
-                        ${formatKindBadge(row.kind, row.payload)}
+                        ${formatKindBadge(row.kind, row, progressCtx)}
                     </div>
                     <div style="font-size:0.85rem;color:#94A3B8;margin-top:10px;font-weight:600;">${formatTime(row.created_at)}</div>
                 </button>`;
