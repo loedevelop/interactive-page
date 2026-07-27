@@ -27,7 +27,7 @@ window.FeatureMaterialPublish = (function () {
     function renderPanel(classId) {
         const folderId = getClassDriveFolderId(classId);
         const folderHint = folderId
-            ? '已偵測班級 Drive 資料夾，發布目標：00_Material_Masters/…'
+            ? '已偵測班級 Drive 資料夾，發布目標：00_Class_Materials/…'
             : '⚠️ 此班級尚未設定 Drive 資料夾，請先到課程基本資料建立。';
 
         return `
@@ -35,7 +35,7 @@ window.FeatureMaterialPublish = (function () {
                 <h3 style="margin:0 0 8px; color:#5B21B6;">📦 教材發布（Excel → txt / meta）</h3>
                 <p style="margin:0 0 12px; color:#64748B; font-size:0.9rem; line-height:1.5;">
                     請在 Excel 建立 <code>_Config</code>、<code>_Schema</code>、<code>_Publish</code> 設定活頁（模板見 <code>material_templates/</code>）。
-                    上傳至 Drive 後貼檔案 ID 或網址，發布至 <strong>00_Material_Masters</strong>。
+                    上傳至 Drive 後貼檔案 ID 或網址，發布至 <strong>00_Class_Materials</strong>。
                 </p>
                 <p style="margin:0 0 12px; color:${folderId ? '#047857' : '#B45309'}; font-size:0.85rem;">${esc(folderHint)}</p>
                 <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
@@ -77,7 +77,7 @@ window.FeatureMaterialPublish = (function () {
         }
 
         if (btn) { btn.disabled = true; btn.textContent = '⏳ 發布中…'; }
-        statusEl.textContent = '正在讀取 _Schema / _Publish 並寫入 00_Material_Masters…';
+        statusEl.textContent = '正在讀取 _Schema / _Publish 並寫入 00_Class_Materials…';
         statusEl.style.color = '#3B82F6';
 
         try {

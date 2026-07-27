@@ -205,7 +205,7 @@ window.GasService = (function() {
     },
 
     /**
-     * 📦 核心功能 5：Excel(_Schema/_Publish) → 00_Material_Masters
+     * 📦 核心功能 5：Excel(_Schema/_Publish) → 00_Class_Materials
      */
     async publishMaterial(sourceFileId, targetFolderId) {
       try {
@@ -244,7 +244,7 @@ window.GasService = (function() {
       });
       const result = await response.json();
       if (result.status !== 'success') {
-        throw new Error(result.message || '無法列出 00_Material_Masters');
+        throw new Error(result.message || '無法列出 00_Class_Materials');
       }
       return result.materials || [];
     },

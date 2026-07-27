@@ -906,7 +906,7 @@ window.FeatureTimeline = (() => {
             const statusEl = document.getElementById('node-material-status-' + pathStr);
             if (!selectEl) return;
             if (statusEl) {
-                statusEl.textContent = '⏳ 載入 00_Material_Masters…';
+                statusEl.textContent = '⏳ 載入 00_Class_Materials…';
                 statusEl.style.color = '#3B82F6';
             }
             try {

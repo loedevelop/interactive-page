@@ -511,7 +511,7 @@ window.FeatureClass = (() => {
                         }
 
                         const classRootId = folderRes.folderId;
-                        const standardSubs = ['00_Material_Masters', '01_Class_Resources', '02_Students'];
+                        const standardSubs = ['00_Class_Materials', '01_Class_Resources', '02_Students'];
                         await Promise.all(standardSubs.map(function (subName) {
                             return window.ApiService.createGASFolder(subName, classRootId);
                         }));

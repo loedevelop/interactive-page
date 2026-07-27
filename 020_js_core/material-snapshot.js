@@ -1,6 +1,6 @@
 /**
  * 📂 020_js_core/material-snapshot.js
- * 從 00_Material_Masters 的 *.meta.json 切片並合成 assignment snapshot
+ * 從 00_Class_Materials 的 *.meta.json 切片並合成 assignment snapshot
  */
 window.MaterialSnapshot = (function () {
     'use strict';

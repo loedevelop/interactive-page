@@ -385,7 +385,7 @@ window.TimelineTemplates = (() => {
                                 </label>
                             </div>
 
-                            <!-- 🌟 Material Snapshot：從 00_Material_Masters 切片 -->
+                            <!-- 🌟 Material Snapshot：從 00_Class_Materials 切片 -->
                             <div style="background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
                                     <div style="font-weight:900; color:#5B21B6;">📦 00 Material Snapshot（出作業凍結稿）</div>

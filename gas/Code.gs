@@ -136,6 +136,27 @@ function findSubFolder(parentFolder, subFolderName) {
   return null;
 }
 
+/** 班級教材母稿夾：標準名 00_Class_Materials；若仍為舊名 00_Material_Masters 則自動改名對齊 */
+var CLASS_MATERIALS_FOLDER = '00_Class_Materials';
+var CLASS_MATERIALS_FOLDER_LEGACY = '00_Material_Masters';
+
+function resolveClassMaterialsFolder(classFolder, createIfMissing) {
+  if (!classFolder) return null;
+  var preferred = findSubFolder(classFolder, CLASS_MATERIALS_FOLDER);
+  if (preferred) return preferred;
+  var legacy = findSubFolder(classFolder, CLASS_MATERIALS_FOLDER_LEGACY);
+  if (legacy) {
+    try {
+      legacy.setName(CLASS_MATERIALS_FOLDER);
+    } catch (_renameErr) {}
+    return legacy;
+  }
+  if (createIfMissing) {
+    return getOrCreateSubFolder(classFolder, CLASS_MATERIALS_FOLDER);
+  }
+  return null;
+}
+
 function resolveFolderPath(parentFolder, pathArray) {
   var current = parentFolder;
   if (!pathArray || !pathArray.length) return current;
@@ -147,7 +168,7 @@ function resolveFolderPath(parentFolder, pathArray) {
 
 function listMaterialMasters(classFolderId) {
   var classFolder = DriveApp.getFolderById(classFolderId);
-  var mastersRoot = findSubFolder(classFolder, '00_Material_Masters');
+  var mastersRoot = resolveClassMaterialsFolder(classFolder, false);
   if (!mastersRoot) {
     return { materials: [] };
   }
@@ -189,9 +210,9 @@ function listMaterialMasters(classFolderId) {
 
 function readMaterialFile(classFolderId, materialFolderName, fileName) {
   var classFolder = DriveApp.getFolderById(classFolderId);
-  var mastersRoot = findSubFolder(classFolder, '00_Material_Masters');
+  var mastersRoot = resolveClassMaterialsFolder(classFolder, false);
   if (!mastersRoot) {
-    throw new Error('找不到 00_Material_Masters，請先發布教材。');
+    throw new Error('找不到 00_Class_Materials，請先發布教材。');
   }
 
   var targetFolder = mastersRoot;
@@ -767,7 +788,7 @@ function publishMaterialFromWorkbook(sourceFileId, targetFolderId) {
     }
 
     var root = DriveApp.getFolderById(targetFolderId);
-    var materialRoot = getOrCreateSubFolder(root, '00_Material_Masters');
+    var materialRoot = resolveClassMaterialsFolder(root, true);
     var materialFolder = getOrCreateSubFolder(materialRoot, cfg.material_folder);
 
     var outputs = [];

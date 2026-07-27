@@ -15,7 +15,7 @@
 2. 將本資料夾內 CSV **分別複製貼上**到對應活頁（或由「資料 → 自文字」匯入）
 3. 依您的 GEPT-2 版面調整 `_Schema` 的 `excel_col`
 4. 在 `_Publish` 填要發布的來源活頁（如 `C`）、列範圍、`LAST`
-5. 存檔後上傳至 Google Drive（建議：`00_Material_Masters/_draft/`）
+5. 存檔後上傳至 Google Drive（建議：`00_Class_Materials/_draft/`）
 6. 在 LogOn 老師端 **📦 教材發布** 貼上 Drive 檔案 ID 或網址 → 按 **發布**
 
 ## `_Config` 欄位

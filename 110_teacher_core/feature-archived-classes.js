@@ -259,7 +259,7 @@ window.FeatureArchivedClasses = (function () {
                     rootPath: ['_LogOnEnglish', '_Classes']
                 });
                 folderId = folderRes.folderId;
-                var subs = ['00_Material_Masters', '01_Class_Resources', '02_Students'];
+                var subs = ['00_Class_Materials', '01_Class_Resources', '02_Students'];
                 await Promise.all(subs.map(function (sub) {
                     return window.ApiService.createGASFolder(sub, folderId);
                 }));
