@@ -23,6 +23,21 @@ window.FeatureStudentTimeline = (() => {
         }
     };
 
+    const jumpToAssignment = (assignmentId) => {
+        if (!assignmentId) return false;
+        const el = document.getElementById('assign-block-' + assignmentId)
+            || document.querySelector('.student-assign-block[data-assignment-id="' + assignmentId + '"]');
+        if (!el) return false;
+        el.style.borderColor = '#F59E0B';
+        el.style.boxShadow = '0 0 0 3px rgba(245, 158, 11, 0.35)';
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(function () {
+            el.style.borderColor = '#F1F5F9';
+            el.style.boxShadow = '0 2px 5px rgba(0,0,0,0.02)';
+        }, 2600);
+        return true;
+    };
+
     async function getAuthContext() {
         if (!window.supabaseClient) throw new Error("系統連線尚未準備完成");
         const { data: { user }, error } = await window.supabaseClient.auth.getUser();
@@ -463,7 +478,18 @@ window.FeatureStudentTimeline = (() => {
                     tabContainer.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.05)';
                 }
             }
-            fetchData();
+            fetchData().then(function () {
+                if (window.FeatureStudentMessages && typeof window.FeatureStudentMessages.refreshBadgeOnly === 'function') {
+                    window.FeatureStudentMessages.refreshBadgeOnly();
+                }
+                const pendingId = sessionStorage.getItem('pendingJumpAssignmentId');
+                if (pendingId) {
+                    sessionStorage.removeItem('pendingJumpAssignmentId');
+                    setTimeout(function () {
+                        if (!jumpToAssignment(pendingId)) scrollToCurrentWeek();
+                    }, 150);
+                }
+            });
         },
 
         // 🚀 v63: 播放 Google 真人發音引擎 (解決機器音問題)
@@ -529,17 +555,31 @@ window.FeatureStudentTimeline = (() => {
             document.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
             document.querySelectorAll('.tab-link').forEach(b => b.classList.remove('active'));
             document.getElementById(`view-${viewId}`).classList.add('active');
-            btnElement.classList.add('active');
+            if (btnElement) btnElement.classList.add('active');
             
             if (viewId === 'progress') {
                 renderCourses();
-                setTimeout(scrollToCurrentWeek, 100);
+                setTimeout(function () {
+                    const pendingId = sessionStorage.getItem('pendingJumpAssignmentId');
+                    if (pendingId) {
+                        sessionStorage.removeItem('pendingJumpAssignmentId');
+                        if (!jumpToAssignment(pendingId)) scrollToCurrentWeek();
+                    } else {
+                        scrollToCurrentWeek();
+                    }
+                }, 100);
             } else if (viewId === 'resources') {
                 if (window.FeatureStudentResource && currentClassConfig) {
                     window.FeatureStudentResource.init(currentClassConfig);
                 }
+            } else if (viewId === 'messages') {
+                if (window.FeatureStudentMessages && typeof window.FeatureStudentMessages.render === 'function') {
+                    window.FeatureStudentMessages.render();
+                }
             }
         },
+
+        jumpToAssignment,
 
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             try {

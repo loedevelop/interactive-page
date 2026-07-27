@@ -1007,7 +1007,12 @@ window.UIStudentTimelineTemplates = (() => {
                             }
                             
                             let isLateUpload = false;
-                            let allowLateFlag = aRaw.allow_late !== false;
+                            let allowLateFlag = false;
+                            if (aRaw.late_policy && typeof aRaw.late_policy === 'object') {
+                                allowLateFlag = aRaw.late_policy.allow_late === true;
+                            } else if (aRaw.allow_late === true) {
+                                allowLateFlag = true;
+                            }
                             
                             if (effectiveBlockDueDate && DateUtils) {
                                 isLateUpload = DateUtils.isPastDue(effectiveBlockDueDate);
@@ -1084,7 +1089,7 @@ window.UIStudentTimelineTemplates = (() => {
                             let safeCourseTitle = course.title ? course.title : '';
 
                             return `
-                                <div style="background: white; border: 2px solid #F1F5F9; padding: 15px; border-radius: 10px; margin-top:15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: border 0.2s;">
+                                <div id="assign-block-${course.id}" data-assignment-id="${course.id}" class="student-assign-block" style="background: white; border: 2px solid #F1F5F9; padding: 15px; border-radius: 10px; margin-top:15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: border 0.2s; scroll-margin-top: 80px;">
                                     <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; border-bottom:2px solid #F1F5F9; padding-bottom:10px; margin-bottom:10px;">
                                         <div style="flex: 1; min-width:200px; display:flex; justify-content:space-between; align-items:center;">
                                             <div style="font-weight: 900; color: #334155; font-size: 1rem; display:flex; align-items:center; flex-wrap:wrap;">
