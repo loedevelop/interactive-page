@@ -119,16 +119,9 @@ window.TaskScriptResolver = (function () {
         const raw = task.raw_data || {};
         if (raw.use_ai_grading === false || task.use_ai_grading === false) return false;
 
+        // audio_record = 線上錄音／AI；drive = 上傳到資料夾（除非明確 use_ai_grading）
         if (task.type === 'audio_record') return true;
-        if (task.type === 'drive') {
-            const title = String(task.title || '').replace(/<[^>]*>?/gm, '').toLowerCase();
-            if (/recording|錄音|朗讀/.test(title)) return true;
-        }
         if (raw.use_ai_grading === true || task.use_ai_grading === true) return true;
-        if (getOriginalScriptFromTask(task)) return true;
-
-        const tasks = parseTasks(tasksInput);
-        if (tasks.length > 0 && findSiblingScriptLink(tasks, task.id)) return true;
         return false;
     }
 

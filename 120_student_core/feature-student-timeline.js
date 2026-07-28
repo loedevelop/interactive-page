@@ -133,12 +133,8 @@ window.FeatureStudentTimeline = (() => {
         }
         const raw = task.raw_data ? task.raw_data : {};
         if (raw.use_ai_grading === false) return false;
+        // 僅 audio_record（線上錄音／AI）才預設開 AI；drive = 上傳到資料夾
         if (task.type === 'audio_record') return true;
-        // drive + Recording 標題：預設走 AI（需有文稿）
-        if (task.type === 'drive') {
-            const title = String(task.title || '').replace(/<[^>]*>?/gm, '').toLowerCase();
-            if (/recording|錄音|朗讀/.test(title)) return true;
-        }
         if (raw.use_ai_grading === true) return true;
         if (raw.use_ai_grading !== false && raw.original_script) return true;
         return false;

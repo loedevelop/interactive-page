@@ -587,18 +587,7 @@ window.UIStudentTimelineTemplates = (() => {
             .replace(/\r/g, '');
     }
 
-    /** drive 類型但標題像 Recording → 視為錄音任務（與 audio_record 同 UI） */
-    function isRecordingLikeTask(task) {
-        if (!task) return false;
-        if (task.type === 'audio_record') return true;
-        if (task.type === 'drive') {
-            const title = stripHtml(task.title || '').toLowerCase();
-            return /recording|錄音|朗讀/.test(title);
-        }
-        return false;
-    }
-
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V108 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V109 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -787,7 +776,7 @@ window.UIStudentTimelineTemplates = (() => {
                     let iconStr = '📁';
                     if (task.type === 'check') iconStr = '📌';
                     if (task.type === 'link') iconStr = '🔗';
-                    if (task.type === 'audio_record' || isRecordingLikeTask(task)) iconStr = '🎙️';
+                    if (task.type === 'audio_record') iconStr = '🎙️';
                     
                     let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                     const safeCourseId = escapeJsSingleQuoted(course.id);
@@ -817,7 +806,7 @@ window.UIStudentTimelineTemplates = (() => {
                                 taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(fallbackText)} (無網址)</span>`;
                             }
                         }
-                    } else if (task.type === 'audio_record' || isRecordingLikeTask(task)) {
+                    } else if (task.type === 'audio_record') {
                         
                         let studioScript = '';
                         let originalScript = '';
