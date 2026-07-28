@@ -206,10 +206,10 @@ window.TimelineTemplates = (() => {
 
                 let addResourceHtml = classResOpts ? `
                     <select class="form-control" style="width:auto; padding:4px 10px; font-size:0.9rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink('${pathStr}', this.value); this.value=''; }">
-                        <option value="" disabled selected>+ 📚 班級與全域資源</option>
+                        <option value="" disabled selected>+ 📚 全域／班群／班級資源</option>
                         ${classResOpts}
                     </select>
-                ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:0.9rem; padding:4px 10px;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>`;
+                ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:0.9rem; padding:4px 10px;" title="請先至資源管理新增並派發資源">+ 📚 尚無任何可用資源</button>`;
 
                 let gLateMode = t.late_mode || 'infinite';
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
@@ -357,6 +357,8 @@ window.TimelineTemplates = (() => {
                         ? ((raw.material_ref.material_folder || '') + '::' + (raw.material_ref.published_file || ''))
                         : '';
                     const safeMaterialMetaValue = materialMetaValue.replace(/"/g, '&quot;');
+                    const materialRootKind = (raw.material_ref && raw.material_ref.materials_root_kind === 'teacher')
+                        ? 'teacher' : 'class';
                     const materialMode = (raw.material_ref && raw.material_ref.select_mode) ? raw.material_ref.select_mode : 'item_range';
                     const materialPage = (raw.material_ref && raw.material_ref.page != null) ? raw.material_ref.page : '';
                     const materialItemFrom = (raw.material_ref && raw.material_ref.item_from != null) ? raw.material_ref.item_from : '';
@@ -385,13 +387,17 @@ window.TimelineTemplates = (() => {
                                 </label>
                             </div>
 
-                            <!-- 🌟 Material Snapshot：從 00_Class_Materials 切片 -->
+                            <!-- 🌟 Material Snapshot：從 00 或 老師 01 切片 -->
                             <div style="background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-                                    <div style="font-weight:900; color:#5B21B6;">📦 00 Material Snapshot（出作業凍結稿）</div>
+                                    <div style="font-weight:900; color:#5B21B6;">📦 Material Snapshot（出作業凍結稿）</div>
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')">🔄 載入 meta 清單</button>
                                 </div>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+                                    <select id="node-material-root-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:800;" onchange="window.FeatureTimeline.onMaterialRootChange('${pathStr}')">
+                                        <option value="class" ${materialRootKind === 'class' ? 'selected' : ''}>🏫 班級 00</option>
+                                        <option value="teacher" ${materialRootKind === 'teacher' ? 'selected' : ''}>👤 老師個人 01</option>
+                                    </select>
                                     <select id="node-material-meta-select-${pathStr}" class="form-control" style="flex:2; min-width:220px; padding:6px; font-size:0.85rem;">
                                         ${safeMaterialMetaValue ? `<option value="${safeMaterialMetaValue}" selected>${safeMaterialMetaValue.replace(/::/g, ' / ')}</option>` : ''}
                                         <option value="" ${safeMaterialMetaValue ? '' : 'selected'}>— 請先按「載入 meta 清單」—</option>
@@ -654,10 +660,10 @@ window.TimelineTemplates = (() => {
 
         let addResourceHtml = classResOpts ? `
             <select class="form-control" style="width:auto; padding:6px 12px; font-size:1rem; font-weight:800; border:1px solid #94A3B8; color:#475569; border-radius:8px; cursor:pointer; background: white;" onchange="if(this.value) { window.FeatureTimeline.addResourceTaskAsLink(null, this.value); this.value=''; }">
-                <option value="" disabled selected>+ 📚 班級與全域資源</option>
+                <option value="" disabled selected>+ 📚 全域／班群／班級資源</option>
                 ${classResOpts}
             </select>
-        ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至全域資源庫新增並派發資源">+ 📚 尚無任何可用資源</button>`;
+        ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至資源管理新增並派發資源">+ 📚 尚無任何可用資源</button>`;
 
         return `
             <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">

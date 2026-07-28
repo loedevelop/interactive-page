@@ -120,6 +120,10 @@ window.TaskScriptResolver = (function () {
         if (raw.use_ai_grading === false || task.use_ai_grading === false) return false;
 
         if (task.type === 'audio_record') return true;
+        if (task.type === 'drive') {
+            const title = String(task.title || '').replace(/<[^>]*>?/gm, '').toLowerCase();
+            if (/recording|錄音|朗讀/.test(title)) return true;
+        }
         if (raw.use_ai_grading === true || task.use_ai_grading === true) return true;
         if (getOriginalScriptFromTask(task)) return true;
 

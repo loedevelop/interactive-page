@@ -30,24 +30,50 @@
     </style>
     <script>
         (function () {
-            var KEY = 'teacherActiveGlobalView';
-            var NAV = {
+            var GLOBAL_KEY = 'teacherActiveGlobalView';
+            var TAB_KEY = 'teacherActiveClassTab';
+            var GLOBAL_NAV = {
                 'view-manage-classes': 'nav-manage-classes',
                 'view-global-resources': 'nav-global-resources',
                 'view-profile': 'nav-profile'
             };
-            var saved = localStorage.getItem(KEY);
-            if (!saved || !NAV[saved]) return;
-            var style = document.createElement('style');
-            style.id = 'boot-global-view-shim';
-            style.textContent =
-                '#class-context-header{display:none!important}' +
+            var CLASS_TABS = {
+                'view-progress': 1,
+                'view-progress-report': 1,
+                'view-gradebook': 1,
+                'view-resources': 1,
+                'view-students': 1,
+                'view-settings': 1
+            };
+
+            var savedGlobal = localStorage.getItem(GLOBAL_KEY);
+            if (savedGlobal && GLOBAL_NAV[savedGlobal]) {
+                var gStyle = document.createElement('style');
+                gStyle.id = 'boot-global-view-shim';
+                gStyle.textContent =
+                    '#class-context-header{display:none!important}' +
+                    '.view-section{display:none!important}' +
+                    '.tab-btn.active{border-bottom-color:transparent!important;color:inherit!important}' +
+                    '#' + savedGlobal + '{display:block!important}' +
+                    '.bottom-nav .class-item.active{background:transparent!important;color:inherit!important;box-shadow:none!important}' +
+                    '#' + GLOBAL_NAV[savedGlobal] + '{background:var(--primary)!important;color:white!important;box-shadow:var(--shadow)!important}';
+                document.head.appendChild(gStyle);
+                return;
+            }
+
+            // 班級活頁：重整前先還原，避免閃回「課程進度」
+            var savedTab = localStorage.getItem(TAB_KEY);
+            if (!savedTab || !CLASS_TABS[savedTab] || savedTab === 'view-progress') return;
+            var tStyle = document.createElement('style');
+            tStyle.id = 'boot-class-tab-shim';
+            tStyle.textContent =
                 '.view-section{display:none!important}' +
-                '.tab-btn.active{border-bottom-color:transparent!important;color:inherit!important}' +
-                '#' + saved + '{display:block!important}' +
-                '.bottom-nav .class-item.active{background:transparent!important;color:inherit!important;box-shadow:none!important}' +
-                '#' + NAV[saved] + '{background:var(--primary)!important;color:white!important;box-shadow:var(--shadow)!important}';
-            document.head.appendChild(style);
+                '#' + savedTab + '{display:block!important}' +
+                '.tab-btn.active{color:#94A3B8!important}' +
+                '.tab-btn.active::after{display:none!important}' +
+                '.tab-btn[data-target="' + savedTab + '"]{color:var(--primary)!important}' +
+                '.tab-btn[data-target="' + savedTab + '"]::after{content:\"\";display:block;position:absolute;bottom:-2px;left:0;width:100%;height:4px;background:var(--primary);border-radius:4px 4px 0 0}';
+            document.head.appendChild(tStyle);
         })();
     </script>
 </head>
@@ -102,8 +128,8 @@
         </script>
         <div class="bottom-nav">
             <div class="nav-section-title">全域管理 (Global)</div>
-            <div class="class-item" id="nav-global-resources">📚 教學資源 (跨班派發)</div>
-            <div class="class-item" id="nav-manage-classes">⚙️ 班級主檔管理</div>
+            <div class="class-item" id="nav-global-resources">📚 資源管理</div>
+            <div class="class-item" id="nav-manage-classes">⚙️ 班群管理</div>
             <div class="class-item" id="nav-profile">👤 系統帳號設定</div>
         </div>
     </div>
@@ -226,26 +252,25 @@
         </div>
 
         <div id="view-global-resources" class="view-section">
-            <div class="top-bar"><div class="breadcrumb">📚 全域教學資源庫</div></div>
+            <div class="top-bar"><div class="breadcrumb">📚 資源管理</div></div>
             
-            <!-- ⚠️ 成功搶救回來的表單：建立新資源並派發 -->
             <div class="settings-card">
-                <h3 id="form-title">📤 建立新資源並派發</h3>
+                <h3 id="form-title">📤 建制並派發　全域資源／班群資源／班級資源</h3>
                 <input type="hidden" id="res-existing-id" value="">
                 <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px; margin-top: 15px;">
-                    <div class="form-group"><label>類型</label><select id="res-input-type" class="form-control"><option value="drive_folder">📁 Drive 資料夾</option><option value="drive_file">📄 Drive 單一檔案</option><option value="youtube_video">▶️ YouTube</option><option value="website_link">🔗 外部網址</option></select></div>
+                    <div class="form-group"><label>類型</label><select id="res-input-type" class="form-control"><option value="global_drive">🌐 全域資料夾（Google Drive 最頂層）</option><option value="teacher_drive">📂 老師個人資料夾（Google Drive 最頂層）</option><option value="drive_folder" selected>📁 Drive 資料夾</option><option value="drive_file">📄 Drive 單一檔案</option><option value="youtube_video">▶️ YouTube</option><option value="website_link">🔗 外部網址</option></select></div>
                     <div class="form-group"><label>名稱</label><input type="text" id="res-input-name" class="form-control"></div>
                 </div>
                 <div class="form-group"><label>網址</label><input type="url" id="res-input-url" class="form-control"></div>
-                <div class="form-group"><label>派發班級</label><div class="checkbox-group" id="global-class-checkboxes"></div></div>
+                <div class="form-group"><label>派發範圍</label><div class="checkbox-group" id="global-class-checkboxes"></div></div>
                 <button id="btn-dispatch-resource" class="btn btn-primary btn-block">🚀 確認派發</button>
             </div>
             
-            <div class="settings-card"><h3>📂 資源母體庫</h3><div class="resource-grid" id="global-resource-library"></div></div>
+            <div class="settings-card"><h3>📂 資源庫</h3><div class="resource-grid" id="global-resource-library"></div></div>
         </div>
 
         <div id="view-manage-classes" class="view-section">
-            <div class="top-bar"><div class="breadcrumb">⚙️ 班級主檔管理</div></div>
+            <div class="top-bar"><div class="breadcrumb">⚙️ 班群管理</div></div>
 
             <div class="settings-card" style="border:2px solid #BFDBFE;background:#F8FAFC;">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
@@ -313,16 +338,17 @@
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/profile-form.js?v=1"></script>
     <script src="../020_js_core/task-script-resolver.js?v=1"></script>
-    <script src="../020_js_core/material-snapshot.js?v=2"></script>
+    <script src="../020_js_core/material-snapshot.js?v=3"></script>
     <script src="../020_js_core/modal-overlay.js?v=2"></script>
     <script src="../020_js_core/assignment-clone.js?v=1"></script>
+    <script src="../020_js_core/message-layout-template.js?v=11"></script>
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/api-gas-service.js?v=53"></script> <!-- 教材發布 publish_material -->
-    <script src="../110_teacher_core/ui-core.js?v=48"></script>
-    <script src="../110_teacher_core/ui-class-templates.js?v=42"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=54"></script>
-    <script src="../110_teacher_core/store-assignment-builder.js?v=46"></script> 
+    <script src="../110_teacher_core/api-gas-service.js?v=56"></script> <!-- 教材發布 publish_material -->
+    <script src="../110_teacher_core/ui-core.js?v=50"></script>
+    <script src="../110_teacher_core/ui-class-templates.js?v=47"></script>
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=56"></script>
+    <script src="../110_teacher_core/store-assignment-builder.js?v=47"></script> 
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
@@ -331,18 +357,19 @@
     <script src="../110_teacher_core/feature-gradebook.js?v=25"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=49"></script>
+    <script src="../110_teacher_core/feature-class.js?v=50"></script>
     <script src="../110_teacher_core/feature-archived-classes.js?v=10"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=36"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="../110_teacher_core/feature-reminder-image.js?v=19"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=74"></script>
-    <script src="../110_teacher_core/feature-resource.js?v=37"></script>
-    <script src="../110_teacher_core/feature-profile.js?v=39"></script>
+    <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
+    <script src="../110_teacher_core/feature-reminder-image.js?v=30"></script>
+    <script src="../110_teacher_core/feature-timeline.js?v=76"></script>
+    <script src="../110_teacher_core/feature-resource.js?v=44"></script>
+    <script src="../110_teacher_core/feature-profile.js?v=40"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=40"></script>
     <script src="../110_teacher_core/feature-progress.js?v=41"></script>
     <script src="../110_teacher_core/feature-ai-backfill.js?v=1"></script>
-    <script src="../110_teacher_core/feature-material-publish.js?v=3"></script>
+    <script src="../110_teacher_core/feature-material-publish.js?v=4"></script>
 
     <script type="module">
         import { MemberManager } from '../110_teacher_core/feature-member-management.js?v=36'; 

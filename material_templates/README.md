@@ -15,14 +15,15 @@
 2. 將本資料夾內 CSV **分別複製貼上**到對應活頁（或由「資料 → 自文字」匯入）
 3. 依您的 GEPT-2 版面調整 `_Schema` 的 `excel_col`
 4. 在 `_Publish` 填要發布的來源活頁（如 `C`）、列範圍、`LAST`
-5. 存檔後上傳至 Google Drive（建議：`00_Class_Materials/_draft/`）
-6. 在 LogOn 老師端 **📦 教材發布** 貼上 Drive 檔案 ID 或網址 → 按 **發布**
+5. 存檔後上傳至 Google Drive（建議：班級 `00_Class_Materials/_draft/` 或老師 `01_My_Materials/_draft/`）
+6. 在 LogOn 老師端 **📦 教材發布** 選擇目標（🏫 班級 00 或 👤 老師個人 01）→ 貼 Drive 檔案 ID／網址 → **發布**
+7. 出錄音作業時在 Material Snapshot 選相同來源 → 載入 meta → 切片 → **套用 Snapshot**（寫入 AI 批改文稿）
 
 ## `_Config` 欄位
 
 | key | 範例 | 說明 |
 |-----|------|------|
-| material_folder | GEPT-2_vocab | 寫入 00 下的子資料夾名 |
+| material_folder | GEPT-2_vocab | 寫入 00／01 母稿根下的子資料夾名 |
 | last_row_column | A | 計算 `LAST` 時以哪一欄為準 |
 
 ## `_Schema` 欄位

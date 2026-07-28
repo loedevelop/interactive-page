@@ -146,6 +146,17 @@ window.ClassTemplates = (() => {
                     </div>
                 </div>
 
+                <div style="background: #F0FDF4; padding: 15px; border-radius: 8px; border: 1px solid #BBF7D0; margin-bottom: 20px;">
+                    <label style="display:block; font-weight:bold; color:#047857; margin-bottom:8px;">📬 提醒訊息欄位版面</label>
+                    <p style="margin:0 0 12px; font-size:0.85rem; color:#065F46; font-weight:600; line-height:1.5;">
+                        用磁性列決定要哪些欄、同列誰左誰右／靠近或隔開；不是繪圖。左／右貼邊＝靠齊，緊鄰＝4 空白，重疊＝接著顯示。
+                    </p>
+                    <button type="button" class="btn" style="background:#10B981; color:white; border:none; padding:8px 14px; border-radius:6px; font-weight:bold; cursor:pointer;"
+                        onclick="window.FeatureMessageLayoutEditor && window.FeatureMessageLayoutEditor.open('${cls.id}')">
+                        🎨 開啟欄位編排
+                    </button>
+                </div>
+
                 <div style="background: #EEF2FF; padding: 15px; border-radius: 8px; border: 1px solid #C7D2FE; margin-bottom: 25px;">
                     <label style="display:block; font-weight:bold; color:#4338CA; margin-bottom:10px;">🤖 AI 批改成績設定（必選）</label>
                     <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">

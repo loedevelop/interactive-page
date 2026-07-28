@@ -205,14 +205,16 @@ window.GasService = (function() {
     },
 
     /**
-     * 📦 核心功能 5：Excel(_Schema/_Publish) → 00_Class_Materials
+     * 📦 核心功能 5：Excel(_Schema/_Publish) → 班級 00 或老師 01
+     * @param {string} rootKind 'class' | 'teacher'
      */
-    async publishMaterial(sourceFileId, targetFolderId) {
+    async publishMaterial(sourceFileId, targetFolderId, rootKind = 'class') {
       try {
         const payload = {
           action: 'publish_material',
           sourceFileId: sourceFileId,
-          targetFolderId: targetFolderId
+          targetFolderId: targetFolderId,
+          rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
         };
 
         const response = await fetch(GAS_WEB_APP_URL, {
@@ -232,10 +234,11 @@ window.GasService = (function() {
       }
     },
 
-    async listMaterialMasters(targetFolderId) {
+    async listMaterialMasters(targetFolderId, rootKind = 'class') {
       const payload = {
         action: 'list_material_masters',
-        targetFolderId: targetFolderId
+        targetFolderId: targetFolderId,
+        rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
       };
       const response = await fetch(GAS_WEB_APP_URL, {
         method: 'POST',
@@ -244,17 +247,18 @@ window.GasService = (function() {
       });
       const result = await response.json();
       if (result.status !== 'success') {
-        throw new Error(result.message || '無法列出 00_Class_Materials');
+        throw new Error(result.message || '無法列出教材母稿');
       }
       return result.materials || [];
     },
 
-    async readMaterialFile(targetFolderId, materialFolder, fileName) {
+    async readMaterialFile(targetFolderId, materialFolder, fileName, rootKind = 'class') {
       const payload = {
         action: 'read_material_file',
         targetFolderId: targetFolderId,
         materialFolder: materialFolder || '',
-        fileName: fileName
+        fileName: fileName,
+        rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
       };
       const response = await fetch(GAS_WEB_APP_URL, {
         method: 'POST',
@@ -282,6 +286,23 @@ window.GasService = (function() {
       const result = await response.json();
       if (result.status !== 'success') {
         throw new Error(result.message || '無法建立老師工作區');
+      }
+      return result;
+    },
+
+    async listChildFolders(parentFolderId) {
+      const payload = {
+        action: 'list_child_folders',
+        parentFolderId: parentFolderId
+      };
+      const response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (result.status !== 'success') {
+        throw new Error(result.message || '無法列出子資料夾');
       }
       return result;
     }

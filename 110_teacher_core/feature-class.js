@@ -490,28 +490,23 @@ window.FeatureClass = (() => {
                         let teacherWsPromise = null;
                         try {
                             if (window.GasService && typeof window.GasService.ensureTeacherWorkspace === 'function') {
-                                // 與學生相同：{顯示姓名}_{uid後4碼}
-                                let teacherLabel = '';
-                                try {
-                                    const sessionStr = localStorage.getItem('LogOnEnglish_Session');
-                                    if (sessionStr) {
-                                        const sessionObj = JSON.parse(sessionStr);
-                                        teacherLabel = (sessionObj.username || sessionObj.name || '').trim();
-                                    }
-                                } catch (_sessErr) {}
-                                if (!teacherLabel) {
-                                    const { data: profileRow } = await window.supabaseClient
-                                        .from('profiles')
-                                        .select('name')
-                                        .eq('id', user.id)
-                                        .maybeSingle();
-                                    teacherLabel = (profileRow && profileRow.name) ? String(profileRow.name).trim() : '';
-                                }
-                                if (!teacherLabel) teacherLabel = 'Teacher';
+                                // 規格：{email @ 前面}_{uid後4碼} → 綁定老師工作區「最頂層」（非 00／01）
+                                const teacherLabel = (user.email ? String(user.email).split('@')[0] : '') || 'Teacher';
                                 const teacherShortId = user.id.slice(-4);
-                                teacherWsPromise = window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId).catch(function (wsErr) {
-                                    console.warn('老師工作區建立略過:', wsErr);
-                                });
+                                teacherWsPromise = window.GasService.ensureTeacherWorkspace(teacherLabel, teacherShortId)
+                                    .then(async function (ws) {
+                                        if (window.FeatureResource && typeof window.FeatureResource.persistTeacherDriveRoot === 'function') {
+                                            await window.FeatureResource.persistTeacherDriveRoot(
+                                                user.id,
+                                                ws.folderId,
+                                                ws.folderUrl
+                                            );
+                                        }
+                                        return ws;
+                                    })
+                                    .catch(function (wsErr) {
+                                        console.warn('老師工作區建立略過:', wsErr);
+                                    });
                             }
                         } catch (_wsInitErr) {}
 

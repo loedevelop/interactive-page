@@ -29,12 +29,21 @@ window.TeacherUI = (() => {
     }
 
     function isTabBtnVisible(btn) {
-        return !!(btn && btn.style.display !== 'none');
+        if (!btn) return false;
+        if (btn.style.display === 'none') return false;
+        try {
+            if (window.getComputedStyle(btn).display === 'none') return false;
+        } catch (_e) {}
+        return true;
+    }
+
+    function getClassTabButtons() {
+        return Array.from(document.querySelectorAll('#class-context-header .tab-btn[data-target]'));
     }
 
     function findTabBtnByTarget(targetId) {
         if (!targetId) return null;
-        return Array.from(tabBtns).find(function (btn) {
+        return getClassTabButtons().find(function (btn) {
             return btn.getAttribute('data-target') === targetId;
         }) || null;
     }
@@ -45,13 +54,13 @@ window.TeacherUI = (() => {
         const savedBtn = findTabBtnByTarget(savedTarget);
         if (isTabBtnVisible(savedBtn)) return savedBtn;
 
-        const currentActive = document.querySelector('.tab-btn.active');
+        const currentActive = document.querySelector('#class-context-header .tab-btn.active');
         if (isTabBtnVisible(currentActive)) return currentActive;
 
         const progressBtn = findTabBtnByTarget('view-progress');
         if (isTabBtnVisible(progressBtn)) return progressBtn;
 
-        return Array.from(tabBtns).find(isTabBtnVisible) || null;
+        return getClassTabButtons().find(isTabBtnVisible) || null;
     }
 
     function persistClassTab(targetId) {
@@ -59,6 +68,29 @@ window.TeacherUI = (() => {
         try {
             localStorage.setItem(CLASS_TAB_KEY, targetId);
         } catch (_e) {}
+    }
+
+    function removeBootClassTabShim() {
+        const shim = document.getElementById('boot-class-tab-shim');
+        if (shim) shim.remove();
+    }
+
+    function applyResolvedClassTab() {
+        removeBootClassTabShim();
+        const allTabs = getClassTabButtons();
+        const allViews = document.querySelectorAll('.view-section');
+        allViews.forEach(function (v) { v.classList.remove('active'); });
+        allTabs.forEach(function (b) { b.classList.remove('active'); });
+
+        const activeTab = resolveClassTabBtn();
+        if (!activeTab) return null;
+
+        activeTab.classList.add('active');
+        const targetId = activeTab.getAttribute('data-target');
+        persistClassTab(targetId);
+        const viewEl = targetId ? document.getElementById(targetId) : null;
+        if (viewEl) viewEl.classList.add('active');
+        return targetId;
     }
 
     function applyStaffRoleUI(staffRole) {
@@ -321,18 +353,7 @@ window.TeacherUI = (() => {
         document.querySelectorAll('.sidebar .class-item, .bottom-nav .class-item').forEach(el => el.classList.remove('active'));
         
         renderSidebar();
-        viewSections.forEach(v => v.classList.remove('active'));
-        tabBtns.forEach(b => b.classList.remove('active'));
-
-        let activeTab = resolveClassTabBtn();
-        if (activeTab) {
-            activeTab.classList.add('active');
-            const targetId = activeTab.getAttribute('data-target');
-            persistClassTab(targetId);
-            if (targetId && document.getElementById(targetId)) {
-                document.getElementById(targetId).classList.add('active');
-            }
-        }
+        const activeTargetId = applyResolvedClassTab();
         
         if (window.FeatureClass && typeof window.FeatureClass.updateClassContent === 'function') {
             window.FeatureClass.updateClassContent(currentClassId);
@@ -342,6 +363,9 @@ window.TeacherUI = (() => {
         if (window.RenderMemberManagerForm) window.RenderMemberManagerForm(currentClassId, staffRole);
         if (window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
         if (window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') window.FeatureResource.renderClassResources(currentClassId);
+        if (activeTargetId === 'view-gradebook' && window.FeatureGradebook && typeof window.FeatureGradebook.loadDataForCurrentClass === 'function') {
+            window.FeatureGradebook.loadDataForCurrentClass();
+        }
     }
 
     function activateGlobalView(viewId, navId) {
@@ -361,8 +385,9 @@ window.TeacherUI = (() => {
 
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
-            if (btn.style.display === 'none') return;
+            if (!isTabBtnVisible(btn)) return;
 
+            removeBootClassTabShim();
             tabBtns.forEach(b => b.classList.remove('active'));
             viewSections.forEach(v => v.classList.remove('active'));
             btn.classList.add('active');
@@ -384,7 +409,7 @@ window.TeacherUI = (() => {
 
             if (targetId === 'view-resources' && window.FeatureResource && typeof window.FeatureResource.renderResourceMap === 'function') window.FeatureResource.renderResourceMap(currentClassId);
             if (targetId === 'view-resources' && window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') window.FeatureResource.renderClassResources(currentClassId);
-            if (targetId === 'view-progress' && window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
+            if (targetId === 'view-progress' && window.FeatureTimeline) window.FeatureTimeline.renderTimeline(currentClassId);
             if (targetId === 'view-progress-report' && window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
         });
     });
@@ -493,14 +518,20 @@ window.TeacherUI = (() => {
             activateClassView(currentClassId);
         } else {
             const defaultTitle = document.getElementById('current-class-title');
-            if (defaultTitle) defaultTitle.textContent = "尚無班級，請點擊「班級主檔管理」建立或請管理員派發。";
+            if (defaultTitle) defaultTitle.textContent = "尚無班級，請點擊「班群管理」建立或請管理員派發。";
             if (classContextHeader) classContextHeader.style.display = 'none';
         }
     }
 
     function switchTab(tabTargetName) {
-        const targetBtn = Array.from(tabBtns).find(btn => btn.getAttribute('data-target') === `view-${tabTargetName}` || btn.getAttribute('data-target') === tabTargetName);
-        if (targetBtn && targetBtn.style.display !== 'none') {
+        // 相容舊呼叫 timeline → 實際是 view-progress
+        let key = tabTargetName;
+        if (key === 'timeline') key = 'progress';
+        const targetBtn = getClassTabButtons().find(function (btn) {
+            const t = btn.getAttribute('data-target');
+            return t === 'view-' + key || t === key || t === tabTargetName;
+        });
+        if (targetBtn && isTabBtnVisible(targetBtn)) {
             targetBtn.click();
         }
     }

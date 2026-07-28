@@ -242,6 +242,8 @@ window.FeatureReminderImage = (() => {
         if (error) throw new Error('讀取作業失敗：' + error.message);
 
         (data || []).forEach(function (a) {
+            // 群體提醒需要真正的截止日；缺 due_date 者不納入群體（個人單則仍可開）
+            if (!toDateKey(a.due_date)) return;
             if (countLeafTasks(a.tasks || []) <= 0) return;
             if (!map[a.class_id]) map[a.class_id] = [];
             map[a.class_id].push(a);
@@ -251,9 +253,8 @@ window.FeatureReminderImage = (() => {
 
     /**
      * 群體提醒與學生「訊息」對齊：
-     * - due_soon：截止＝今天+2、未完成
-     * - makeup：已過截止、未完成（Jay 的 7/20、7/19 都應出現）
-     * 個人單則可含灰色地帶，仍用同一 buildCardHtml。
+     * - due_soon／makeup 一律依 assignments.due_date（截止日），不用 target_date
+     * - target_date 只當「進度日」顯示
      */
     function resolveItemKind(dueDateKey, todayStr, dueSoonDate) {
         if (dueDateKey && dueDateKey === dueSoonDate) return 'due_soon';
@@ -337,11 +338,17 @@ window.FeatureReminderImage = (() => {
 
         classes.forEach(function (cls) {
             const className = cls.name || cls.title || '未命名班級';
+            const classRaw = parseRaw(cls.raw_data || cls.rawData);
+            const messageLayout = window.MessageLayoutTemplate
+                ? window.MessageLayoutTemplate.fromClassRaw(classRaw)
+                : null;
             const students = studentsByClass[cls.id] || [];
             const assignments = assignmentsByClass[cls.id] || [];
 
             assignments.forEach(function (assignment) {
-                const dueDate = toDateKey(assignment.due_date) || toDateKey(assignment.target_date) || '';
+                // 截止日只用 due_date；絕不可用 target_date（那是進度日）
+                const dueDate = toDateKey(assignment.due_date);
+                if (!dueDate) return;
                 const kind = resolveItemKind(dueDate, todayStr, dueSoonDate);
                 // 群體只列將到／已過截止（與學生訊息同範圍）；灰色地帶留給個人提醒
                 if (kind !== 'due_soon' && kind !== 'makeup') return;
@@ -354,14 +361,16 @@ window.FeatureReminderImage = (() => {
                         student: student,
                         assignment: assignment,
                         className: className,
-                        dueDate: dueDate || '未設定'
+                        dueDate: dueDate,
+                        progressDate: toDateKey(assignment.target_date) || '',
+                        messageLayout: messageLayout
                     });
                 });
             });
         });
 
         items.sort(function (a, b) {
-            // 將到在前，補交在後；同類型依截止日新→舊
+            // 將到在前，補交在後；同類型依截止日新→舊；同截止日依進度日新→舊
             if (a.kind !== b.kind) {
                 if (a.kind === 'due_soon') return -1;
                 if (b.kind === 'due_soon') return 1;
@@ -369,6 +378,9 @@ window.FeatureReminderImage = (() => {
             const da = a.dueDate || '';
             const dbd = b.dueDate || '';
             if (da !== dbd) return dbd.localeCompare(da);
+            const pa = a.progressDate || '';
+            const pb = b.progressDate || '';
+            if (pa !== pb) return pb.localeCompare(pa);
             const ca = a.className.localeCompare(b.className, 'zh-Hant');
             if (ca !== 0) return ca;
             return a.student.name.localeCompare(b.student.name, 'zh-Hant');
@@ -388,7 +400,7 @@ window.FeatureReminderImage = (() => {
         };
     }
 
-    function buildCardHtml(student, assignment, dueDate, doneSet, kind, className) {
+    function buildCardHtml(student, assignment, dueDate, doneSet, kind, className, messageLayout) {
         const assignId = assignment.id;
         const lineStyle = 'font-weight:700;color:#334155;font-size:16px;line-height:1.5;';
         const titleStyle = 'font-weight:900;color:#334155;font-size:18px;line-height:1.5;';
@@ -398,26 +410,34 @@ window.FeatureReminderImage = (() => {
         const done = countDoneForStudent(assignment.tasks || [], assignId, student.id, doneSet);
         const assignTitle = stripHtml(assignment.title) || '未命名作業';
         const clsName = stripHtml(className) || '未命名班級';
-        const dueText = toDateKey(dueDate) || (dueDate && String(dueDate).trim() ? String(dueDate).trim() : '未設定');
+        // 截止日＝due_date；進度日＝target_date（兩者不可互換）
+        const dueText = toDateKey(dueDate) || toDateKey(assignment.due_date) || '未設定';
+        const progressDay = toDateKey(assignment.target_date) || '未設定';
         const firstName = student.englishFirstName || String(student.name || '同學').split(/\s+/)[0] || '同學';
         const progressHtml = '<span style="font-weight:700;color:#475569;">目前完成進度 ' + done + ' / ' + total + '</span>';
-        const headline = kind === 'makeup'
-            ? ('⏰ 溫馨提醒 ' + escapeHtml(firstName) + ' 記得補交哦！')
-            : (kind === 'due_soon'
-                ? ('⏰ 溫馨提醒 ' + escapeHtml(firstName) + ' 還有兩天哦！')
-                : ('⏰ 溫馨提醒 ' + escapeHtml(firstName) + ' 請記得完成哦！'));
+
+        const Tpl = window.MessageLayoutTemplate;
+        const layout = messageLayout || (Tpl ? Tpl.defaultLayout() : null);
+        const showStudentNameField = Tpl ? Tpl.isEnabled(layout, 'student_name') : false;
+
+        // 用語依狀況：補交 vs 要交
+        const phraseText = kind === 'makeup' ? '記得補交哦！' : '記得要交哦！';
+        const labelText = '❤️ 溫馨提醒：';
 
         let tasksHtml = '';
         if (taskRows.length === 0) {
             tasksHtml = '<div style="color:#94A3B8;font-size:16px;">（此作業尚無細項）</div>';
         } else {
+            const sid = String(student.id);
+            const aid = String(assignId);
             taskRows.forEach(function (row) {
                 if (row.kind === 'group') {
                     const pad = row.depth * 14;
                     tasksHtml += '<div style="margin-top:6px;margin-left:' + pad + 'px;font-weight:800;color:#475569;font-size:16px;">🗂️ ' + escapeHtml(row.title) + '</div>';
                     return;
                 }
-                const isDone = doneSet.has(student.id + '_' + assignId + '_' + row.id);
+                const isDone = row.id != null && row.id !== ''
+                    && doneSet.has(sid + '_' + aid + '_' + String(row.id));
                 const icon = isDone ? '✅' : '⬜';
                 const pad = row.depth * 14;
                 const color = isDone ? '#065F46' : '#334155';
@@ -428,21 +448,47 @@ window.FeatureReminderImage = (() => {
             });
         }
 
-        // 與群體提醒同一版型：左截止日、右進度（單則／灰色地帶也一律如此）
-        const dueRow = ''
-            + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:4px;font-size:16px;font-weight:700;color:#475569;">'
-            + '<span>⏰ 截止日：<span style="color:#B45309;">' + escapeHtml(dueText) + '</span></span>'
-            + progressHtml
-            + '</div>';
+        // 若關閉「學生英文名字」欄，把名字夾在用語前（舊版語感）
+        const phraseDisplay = showStudentNameField
+            ? phraseText
+            : (escapeHtml(firstName) + ' ' + phraseText);
+
+        let kindBadgeHtml = '';
+        if (kind === 'due_soon') {
+            kindBadgeHtml = '<span style="display:inline-block;background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:14px;font-weight:700;vertical-align:middle;">即將截止</span>';
+        } else if (kind === 'makeup') {
+            kindBadgeHtml = '<span style="display:inline-block;background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;padding:2px 8px;border-radius:999px;font-size:14px;font-weight:700;vertical-align:middle;">提醒補交</span>'
+                + '<span style="display:inline-block;margin-left:6px;background:#F1F5F9;color:#475569;border:1px solid #CBD5E1;padding:2px 8px;border-radius:999px;font-size:14px;font-weight:700;vertical-align:middle;">已過截止日</span>';
+        }
+
+        const fieldHtml = {
+            headline_label: '<div style="' + titleStyle + '">' + labelText + '</div>',
+            headline_phrase: '<div style="' + titleStyle + '">' + phraseDisplay + '</div>',
+            student_name: '<div style="font-weight:900;color:#334155;font-size:22px;line-height:1.4;">' + escapeHtml(firstName) + '</div>',
+            class_name: '<div style="' + lineStyle + '">📚 ' + escapeHtml(clsName) + '</div>',
+            progress_date: '<div style="' + lineStyle + '">進度 ' + escapeHtml(progressDay) + '</div>',
+            assignment_title: '<div style="' + lineStyle + '">📝 ' + escapeHtml(assignTitle) + '</div>',
+            due_date: '<div style="' + lineStyle + '">⏰ 截止日：<span style="color:#B45309;">' + escapeHtml(dueText) + '</span></div>',
+            completion_progress: '<div style="' + lineStyle + '">' + progressHtml + '</div>',
+            kind_badge: kindBadgeHtml ? ('<div style="display:inline-block;vertical-align:middle;">' + kindBadgeHtml + '</div>') : '',
+            icon_heart: Tpl ? Tpl.iconHeartHtml() : '❤️',
+            icon_hearts: Tpl ? Tpl.iconHeartsHtml() : '❤️❤️❤️',
+            task_list: '<div style="margin-top:4px;">' + tasksHtml + '</div>'
+        };
+
+        let body = '';
+        if (Tpl && layout) {
+            body = Tpl.composeRowsHtml(layout, 'reminder', fieldHtml);
+        }
+        if (!body) {
+            body = fieldHtml.headline_label + fieldHtml.headline_phrase + fieldHtml.student_name
+                + fieldHtml.class_name + fieldHtml.assignment_title
+                + fieldHtml.progress_date + fieldHtml.due_date + fieldHtml.completion_progress + fieldHtml.task_list;
+        }
 
         return ''
             + '<div class="reminder-card-root" style="width:560px;background:#FFFFFF;border-radius:12px;border:2px solid #E2E8F0;padding:20px 22px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',\'Microsoft JhengHei\',sans-serif;box-sizing:border-box;">'
-            + '<div style="' + titleStyle + '">' + headline + '</div>'
-            + '<div style="' + lineStyle + 'margin-top:4px;">📝 ' + escapeHtml(clsName) + ' ' + escapeHtml(assignTitle) + '</div>'
-            + dueRow
-            + '<div style="border-top:2px dashed #E2E8F0;padding-top:12px;margin-top:12px;">'
-            + tasksHtml
-            + '</div>'
+            + body
             + '</div>';
     }
 
@@ -710,7 +756,8 @@ window.FeatureReminderImage = (() => {
                     item.dueDate,
                     doneSet,
                     item.kind,
-                    item.className
+                    item.className,
+                    item.messageLayout
                 );
                 const dataUrl = await cardToDataUrl(cardHtml);
 
@@ -796,18 +843,23 @@ window.FeatureReminderImage = (() => {
             };
 
             const doneSet = await fetchGlobalDoneSet([classId]);
-            // 與群體同一正規化／卡片入口
-            const dueDate = toDateKey(assignment.due_date) || toDateKey(assignment.target_date) || '';
+            // 截止日只用 due_date；進度日是 target_date（個人與群體同一規則）
+            const dueDate = toDateKey(assignment.due_date) || '';
             const todayStr = getTaiwanTodayStr();
             const dueSoonDate = getDueSoonDateStr();
             const kind = resolveItemKind(dueDate, todayStr, dueSoonDate);
 
+            const messageLayout = window.MessageLayoutTemplate
+                ? window.MessageLayoutTemplate.fromClassRaw(classRaw)
+                : null;
             const item = {
                 kind: kind,
                 student: student,
                 assignment: assignment,
                 className: className,
-                dueDate: dueDate || '未設定'
+                dueDate: dueDate || '未設定',
+                progressDate: toDateKey(assignment.target_date) || '',
+                messageLayout: messageLayout
             };
             const itemKey = 'single_' + getItemKey(item);
             const unread = isItemRead(sessionReadMap, itemKey) ? 0 : 1;
@@ -829,7 +881,8 @@ window.FeatureReminderImage = (() => {
                 item.dueDate,
                 doneSet,
                 kind,
-                className
+                className,
+                messageLayout
             );
             const dataUrl = await cardToDataUrl(cardHtml);
             appendImageItem(dataUrl, itemKey, isItemRead(sessionReadMap, itemKey));

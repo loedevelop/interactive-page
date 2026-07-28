@@ -245,8 +245,10 @@ window.FeatureProfile = (() => {
                         ${nameModeSectionHtml}
 
                         <div style="margin-bottom: 20px;">
-                            <label style="display:block; font-weight:800; color:#475569; margin-bottom:5px;">專屬 Google Drive 連結 (唯讀)</label>
-                            <input type="text" class="form-control" value="${window.ProfileForm ? window.ProfileForm.getDriveDisplay(rawData) : '尚未綁定雲端硬碟'}" disabled style="width:100%; max-width: 400px; background:#F1F5F9; color:#94A3B8; cursor:not-allowed;">
+                            <label style="display:block; font-weight:800; color:#475569; margin-bottom:5px;">專屬 Google Drive 連結（老師工作區最頂層，唯讀）</label>
+                            <input type="text" id="prof-drive-display" class="form-control" value="${window.ProfileForm ? window.ProfileForm.getDriveDisplay(rawData) : '尚未綁定雲端硬碟'}" disabled style="width:100%; max-width: 520px; background:#F1F5F9; color:#94A3B8; cursor:not-allowed;">
+                            <p style="margin:6px 0 0; font-size:0.8rem; color:#64748B;">應指向 <code>_Teachers/{email前綴}_{uid後4}</code> 根目錄，不是 00／01 子資料夾。</p>
+                            <button type="button" id="btn-rebind-teacher-drive" class="btn" style="margin-top:10px; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; padding:8px 14px; border-radius:8px; font-weight:800; cursor:pointer;">🔄 重新綁定老師個人資料夾（最頂層）</button>
                         </div>
 
                         <div style="margin-bottom: 25px;">
@@ -300,6 +302,30 @@ window.FeatureProfile = (() => {
 
                 if (window.ProfileForm) {
                     window.ProfileForm.bindPasswordToggle('prof-password-toggle', 'prof-password');
+                }
+
+                const rebindBtn = document.getElementById('btn-rebind-teacher-drive');
+                if (rebindBtn) {
+                    rebindBtn.onclick = async function () {
+                        if (!window.FeatureResource || typeof window.FeatureResource.ensureAndBindTeacherPersonalDrive !== 'function') {
+                            return window.showFlash('FeatureResource 未載入', 'error');
+                        }
+                        const btn = this;
+                        const original = btn.innerHTML;
+                        btn.disabled = true;
+                        btn.innerHTML = '⏳ 綁定中…';
+                        try {
+                            const url = await window.FeatureResource.ensureAndBindTeacherPersonalDrive();
+                            const displayEl = document.getElementById('prof-drive-display');
+                            if (displayEl) displayEl.value = url || '尚未綁定雲端硬碟';
+                            window.showFlash('已綁定老師個人資料夾最頂層');
+                        } catch (err) {
+                            window.showFlash('綁定失敗：' + (err.message || err), 'error');
+                        } finally {
+                            btn.disabled = false;
+                            btn.innerHTML = original;
+                        }
+                    };
                 }
 
                 // 💾 儲存點擊邏輯

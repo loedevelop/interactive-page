@@ -107,7 +107,9 @@ window.BuilderStore = (() => {
                         const toEl = document.getElementById(`node-material-item-to-${pathStr}`);
                         if (metaSelectEl && metaSelectEl.value) {
                             const parts = metaSelectEl.value.split('::');
+                            const rootEl = document.getElementById(`node-material-root-${pathStr}`);
                             t.raw_data.material_ref = {
+                                materials_root_kind: (rootEl && rootEl.value === 'teacher') ? 'teacher' : 'class',
                                 material_folder: parts[0] || '',
                                 published_file: parts[1] || '',
                                 select_mode: modeEl ? modeEl.value : 'item_range',

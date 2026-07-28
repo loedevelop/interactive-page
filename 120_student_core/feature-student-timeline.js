@@ -44,7 +44,21 @@ window.FeatureStudentTimeline = (() => {
         if (error || !user) throw new Error("授權無效或已登出");
         const classId = sessionStorage.getItem('currentClassId');
         if (!classId) throw new Error("尚未選擇班級");
+        if (!isUuid(classId)) {
+            throw new Error('班級 ID 異常（' + classId + '）。請重新選擇班級或清除瀏覽器快取後再登入。');
+        }
         return { userId: user.id, classId };
+    }
+
+    function isUuid(value) {
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+    }
+
+    function assertAssignmentUuid(assignmentId, label) {
+        if (!isUuid(assignmentId)) {
+            throw new Error((label || '作業 ID') + ' 格式錯誤：' + String(assignmentId)
+                + '。請強制重新整理頁面後再試；若仍失敗請聯絡老師檢查作業設定。');
+        }
     }
 
     async function ensureJsPDFLoaded() {
@@ -118,13 +132,29 @@ window.FeatureStudentTimeline = (() => {
             return window.TaskScriptResolver.taskSupportsAIGrading(task, parsedTasks);
         }
         const raw = task.raw_data ? task.raw_data : {};
-        if (task.type === 'audio_record') {
-            if (raw.use_ai_grading === false) return false;
-            return true;
+        if (raw.use_ai_grading === false) return false;
+        if (task.type === 'audio_record') return true;
+        // drive + Recording 標題：預設走 AI（需有文稿）
+        if (task.type === 'drive') {
+            const title = String(task.title || '').replace(/<[^>]*>?/gm, '').toLowerCase();
+            if (/recording|錄音|朗讀/.test(title)) return true;
         }
         if (raw.use_ai_grading === true) return true;
         if (raw.use_ai_grading !== false && raw.original_script) return true;
         return false;
+    }
+
+    function resolveTaskScriptText(assignmentId, taskId, taskConfig) {
+        const assignRecord = assignments.find(a => String(a.id) === String(assignmentId));
+        const parsedTasks = assignRecord && window.TaskScriptResolver
+            ? window.TaskScriptResolver.parseTasks(assignRecord.tasks)
+            : [];
+        if (window.TaskScriptResolver && typeof window.TaskScriptResolver.resolveScriptSource === 'function') {
+            const resolved = window.TaskScriptResolver.resolveScriptSource(parsedTasks, taskId);
+            if (resolved && resolved.scriptText) return String(resolved.scriptText).trim();
+        }
+        const raw = (taskConfig && taskConfig.raw_data) ? taskConfig.raw_data : {};
+        return String((taskConfig && taskConfig.original_script) || raw.original_script || '').trim();
     }
 
     async function ensureFeatureStudentAudioReady() {
@@ -166,11 +196,12 @@ window.FeatureStudentTimeline = (() => {
     }
 
     async function submitAudioToAIGrading(assignmentId, taskId, fileId, audioUrl) {
+        assertAssignmentUuid(assignmentId, '作業 ID');
         const { userId, classId } = await getAuthContext();
         if (!window.supabaseClient) throw new Error('系統 API 模組尚未載入');
         const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
             p_assignment_id: assignmentId,
-            p_task_id: taskId,
+            p_task_id: String(taskId),
             p_student_id: userId,
             p_class_id: classId,
             p_file_id: fileId,
@@ -191,6 +222,13 @@ window.FeatureStudentTimeline = (() => {
         document.body.style.pointerEvents = 'none';
 
         try {
+            assertAssignmentUuid(assignmentId, '作業 ID');
+            const taskConfig = findTaskConfig(assignmentId, taskId);
+            const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
+            if (!scriptText) {
+                throw new Error('此錄音任務尚未設定「批改文稿」。請通知老師在作業編輯器套用 Material Snapshot 或貼上 AI 文稿後再上傳。');
+            }
+
             if (statusEl) {
                 statusEl.textContent = '⚙️ 音檔轉碼中...';
                 statusEl.style.color = '#3B82F6';
@@ -495,10 +533,14 @@ window.FeatureStudentTimeline = (() => {
                     }, 150);
                     return;
                 }
-                const messagesTab = document.querySelector('.tab-link[data-view="messages"]')
+                const allowed = { progress: 1, messages: 1, resources: 1, personal: 1, class: 1 };
+                let savedView = '';
+                try { savedView = localStorage.getItem('studentActiveView') || ''; } catch (_e) {}
+                if (!allowed[savedView]) savedView = 'messages';
+                const tab = document.querySelector('.tab-link[data-view="' + savedView + '"]')
                     || document.getElementById('tab-student-messages');
-                if (messagesTab) {
-                    window.FeatureStudentTimeline.switchView('messages', messagesTab);
+                if (tab) {
+                    window.FeatureStudentTimeline.switchView(savedView, tab);
                 }
             });
         },
@@ -565,8 +607,10 @@ window.FeatureStudentTimeline = (() => {
         switchView: (viewId, btnElement) => {
             document.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
             document.querySelectorAll('.tab-link').forEach(b => b.classList.remove('active'));
-            document.getElementById(`view-${viewId}`).classList.add('active');
+            const viewEl = document.getElementById(`view-${viewId}`);
+            if (viewEl) viewEl.classList.add('active');
             if (btnElement) btnElement.classList.add('active');
+            try { localStorage.setItem('studentActiveView', viewId); } catch (_e) {}
             
             if (viewId === 'progress') {
                 renderCourses();
@@ -602,6 +646,7 @@ window.FeatureStudentTimeline = (() => {
             }
 
             try {
+                assertAssignmentUuid(assignmentId, '作業 ID');
                 const { userId, classId } = await getAuthContext();
                 
                 if (isChecked && !completedTasks.includes(compositeKey)) {

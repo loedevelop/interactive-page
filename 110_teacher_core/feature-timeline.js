@@ -29,28 +29,79 @@ window.FeatureTimeline = (() => {
         return raw.drive_folder_id || raw.class_folder_id || '';
     }
 
-    function collectMaterialMetaOptions(materials) {
+    function normalizeMaterialsRootKind(rootKind) {
+        return String(rootKind || 'class').trim().toLowerCase() === 'teacher' ? 'teacher' : 'class';
+    }
+
+    function readMaterialsRootKind(pathStr) {
+        const el = document.getElementById('node-material-root-' + pathStr);
+        return normalizeMaterialsRootKind(el ? el.value : 'class');
+    }
+
+    async function resolveMaterialsRootFolderId(classId, rootKind) {
+        const kind = normalizeMaterialsRootKind(rootKind);
+        if (kind === 'teacher') {
+            if (!window.FeatureResource || typeof window.FeatureResource.getTeacherPersonalDriveFolderId !== 'function') {
+                throw new Error('FeatureResource 未載入');
+            }
+            let folderId = await window.FeatureResource.getTeacherPersonalDriveFolderId(true);
+            if (!folderId && typeof window.FeatureResource.ensureAndBindTeacherPersonalDrive === 'function') {
+                await window.FeatureResource.ensureAndBindTeacherPersonalDrive();
+                folderId = await window.FeatureResource.getTeacherPersonalDriveFolderId(false);
+            }
+            if (!folderId) throw new Error('尚未綁定老師個人資料夾');
+            return folderId;
+        }
+        const classFolderId = getClassDriveFolderId(classId);
+        if (!classFolderId) throw new Error('此班級尚未設定 Drive 資料夾');
+        return classFolderId;
+    }
+
+    function collectMaterialMetaOptions(materials, rootKind) {
+        const kind = normalizeMaterialsRootKind(rootKind);
+        const prefix = kind === 'teacher' ? '👤老師 ' : '🏫班級 ';
         const options = [];
         (materials || []).forEach(function (pack) {
             (pack.metaFiles || []).forEach(function (mf) {
                 options.push({
+                    rootKind: kind,
                     folderName: pack.folderName,
                     fileName: mf.name,
-                    label: (pack.folderName ? pack.folderName + ' / ' : '') + mf.name
+                    label: prefix + (pack.folderName ? pack.folderName + ' / ' : '') + mf.name
                 });
             });
         });
         return options;
     }
 
-    async function loadMaterialMetaOptions(classId) {
-        const folderId = getClassDriveFolderId(classId);
-        if (!folderId) throw new Error('此班級尚未設定 Drive 資料夾');
+    async function loadMaterialMetaOptions(classId, rootKind) {
+        const kind = normalizeMaterialsRootKind(rootKind);
         if (!window.GasService || typeof window.GasService.listMaterialMasters !== 'function') {
             throw new Error('GasService 尚未載入');
         }
-        const materials = await window.GasService.listMaterialMasters(folderId);
-        return collectMaterialMetaOptions(materials);
+        const folderId = await resolveMaterialsRootFolderId(classId, kind);
+        const materials = await window.GasService.listMaterialMasters(folderId, kind);
+        return collectMaterialMetaOptions(materials, kind);
+    }
+
+    function fillMaterialMetaSelect(selectEl, options, selectedVal) {
+        if (!selectEl) return;
+        if (!options || options.length === 0) {
+            selectEl.innerHTML = '<option value="">（尚無 meta 檔，請先到 ⚙️ 教材發布）</option>';
+            return;
+        }
+        selectEl.innerHTML = '<option value="">— 選擇 meta 檔 —</option>' + options.map(function (opt) {
+            const val = opt.folderName + '::' + opt.fileName;
+            return '<option value="' + val.replace(/"/g, '&quot;') + '">' + opt.label + '</option>';
+        }).join('');
+        if (selectedVal) {
+            selectEl.value = selectedVal;
+            if (!selectEl.value) {
+                selectEl.innerHTML = '<option value="' + selectedVal.replace(/"/g, '&quot;') + '" selected>'
+                    + selectedVal.replace(/::/g, ' / ').replace(/</g, '&lt;') + '</option>' + selectEl.innerHTML;
+                selectEl.value = selectedVal;
+            }
+        }
     }
 
     function readMaterialSliceInputs(pathStr) {
@@ -75,6 +126,7 @@ window.FeatureTimeline = (() => {
         }
         const parts = selectEl.value.split('::');
         return {
+            materials_root_kind: readMaterialsRootKind(pathStr),
             material_folder: parts[0] || '',
             published_file: parts[1] || '',
             metaFile: parts[1] || ''
@@ -140,35 +192,24 @@ window.FeatureTimeline = (() => {
                 item.statusEl.textContent = '⏳ 還原 meta 清單…';
                 item.statusEl.style.color = '#3B82F6';
             }
+            const rootEl = document.getElementById('node-material-root-' + item.pathStr);
+            if (rootEl && item.raw.material_ref && item.raw.material_ref.materials_root_kind) {
+                rootEl.value = normalizeMaterialsRootKind(item.raw.material_ref.materials_root_kind);
+            }
         });
 
-        loadMaterialMetaOptions(bState.classId).then(function (options) {
-            pendingMeta.forEach(function (item) {
-                const selectEl = item.selectEl;
-                if (!selectEl) return;
-                if (options.length === 0) {
-                    selectEl.innerHTML = '<option value="">（尚無 meta 檔，請先到 ⚙️ 教材發布）</option>';
-                } else {
-                    selectEl.innerHTML = '<option value="">— 選擇 meta 檔 —</option>' + options.map(function (opt) {
-                        const val = opt.folderName + '::' + opt.fileName;
-                        return '<option value="' + val.replace(/"/g, '&quot;') + '">' + opt.label + '</option>';
-                    }).join('');
-                    selectEl.value = item.savedVal;
-                    if (!selectEl.value && item.savedVal) {
-                        selectEl.innerHTML = '<option value="' + item.savedVal.replace(/"/g, '&quot;') + '" selected>'
-                            + item.savedVal.replace(/::/g, ' / ').replace(/</g, '&lt;') + '</option>' + selectEl.innerHTML;
-                        selectEl.value = item.savedVal;
-                    }
-                }
+        // 依各節點選定來源分別載入（多數情況相同，仍依 path 處理）
+        pendingMeta.forEach(function (item) {
+            const kind = readMaterialsRootKind(item.pathStr);
+            loadMaterialMetaOptions(bState.classId, kind).then(function (options) {
+                fillMaterialMetaSelect(item.selectEl, options, item.savedVal);
                 if (item.statusEl) {
                     item.statusEl.textContent = item.raw.snapshot_at
                         ? ('✅ 已還原 snapshot（' + item.raw.snapshot_at + '）')
                         : ('✅ 已載入 ' + options.length + ' 個 meta 檔');
                     item.statusEl.style.color = '#059669';
                 }
-            });
-        }).catch(function (err) {
-            pendingMeta.forEach(function (item) {
+            }).catch(function (err) {
                 if (item.statusEl) {
                     item.statusEl.textContent = '⚠️ meta 清單載入失敗：' + err.message;
                     item.statusEl.style.color = '#D97706';
@@ -388,7 +429,7 @@ window.FeatureTimeline = (() => {
         }
     }
 
-    function renderBuilderUI() {
+    async function renderBuilderUI() {
         const TPL = window.TimelineTemplates;
         if (!window.BuilderStore) return;
         const bState = window.BuilderStore.getState();
@@ -397,33 +438,34 @@ window.FeatureTimeline = (() => {
         if (!container) return;
 
         let classResOpts = '';
-        const allResList = (db && db.resourceLibrary || []).filter(r => r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId));
-        
+        const FR = window.FeatureResource;
+        let allResList = (db && db.resourceLibrary) || [];
+        let staffIds = [];
+        if (FR && typeof FR.fetchClassStaffUserIds === 'function') {
+            const staffCacheKey = '_resStaff_' + bState.classId;
+            if (!window[staffCacheKey]) {
+                window[staffCacheKey] = await FR.fetchClassStaffUserIds(bState.classId);
+            }
+            staffIds = window[staffCacheKey] || [];
+        }
+        if (FR && typeof FR.resourceAppliesToClass === 'function') {
+            allResList = allResList.filter(function (r) {
+                return FR.resourceAppliesToClass(r, bState.classId, staffIds);
+            });
+        } else {
+            allResList = allResList.filter(function (r) {
+                return r.scope === 'global' || (r.scope === 'class' && r.target_class_id === bState.classId);
+            });
+        }
+
         if (allResList.length > 0) {
-            const resMap = new Map();
-            allResList.forEach(r => {
-                const hasUrl = r.url && r.url.trim() !== '';
-                const key = hasUrl ? r.url.trim() : r.id; 
-                
-                if (!resMap.has(key)) {
-                    resMap.set(key, r);
-                } else if (hasUrl) {
-                    const existing = resMap.get(key);
-                    if (existing.scope === 'class' && r.scope === 'global') {
-                        resMap.set(key, r);
-                    }
-                }
-            });
+            const uniqueResList = (FR && FR.mergeResourcesByUrl)
+                ? FR.mergeResourcesByUrl(allResList)
+                : allResList;
 
-            const uniqueResList = Array.from(resMap.values()).sort((a, b) => {
-                if (a.scope === 'global' && b.scope === 'class') return -1;
-                if (a.scope === 'class' && b.scope === 'global') return 1;
-                return 0;
-            });
-
-            classResOpts = uniqueResList.map(r => {
-                const scopeIcon = r.scope === 'global' ? '🌍' : '🏷️';
-                return `<option value="${r.id}">${r.icon} ${r.name} (${scopeIcon})</option>`;
+            classResOpts = uniqueResList.map(function (r) {
+                const scopeIcon = r.scope === 'global' ? '🌍' : (r.scope === 'teacher' ? '👥' : '🏷️');
+                return '<option value="' + r.id + '">' + r.icon + ' ' + r.name + ' (' + scopeIcon + ')</option>';
             }).join('');
         }
 
@@ -905,22 +947,17 @@ window.FeatureTimeline = (() => {
             const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
             const statusEl = document.getElementById('node-material-status-' + pathStr);
             if (!selectEl) return;
+            const rootKind = readMaterialsRootKind(pathStr);
+            const destLabel = rootKind === 'teacher' ? '01_My_Materials' : '00_Class_Materials';
             if (statusEl) {
-                statusEl.textContent = '⏳ 載入 00_Class_Materials…';
+                statusEl.textContent = '⏳ 載入 ' + destLabel + '…';
                 statusEl.style.color = '#3B82F6';
             }
             try {
-                const options = await loadMaterialMetaOptions(bState.classId);
-                if (options.length === 0) {
-                    selectEl.innerHTML = '<option value="">（尚無 meta 檔，請先到 ⚙️ 教材發布）</option>';
-                } else {
-                    selectEl.innerHTML = '<option value="">— 選擇 meta 檔 —</option>' + options.map(function (opt) {
-                        const val = opt.folderName + '::' + opt.fileName;
-                        return '<option value="' + val.replace(/"/g, '&quot;') + '">' + opt.label + '</option>';
-                    }).join('');
-                }
+                const options = await loadMaterialMetaOptions(bState.classId, rootKind);
+                fillMaterialMetaSelect(selectEl, options, '');
                 if (statusEl) {
-                    statusEl.textContent = '✅ 已載入 ' + options.length + ' 個 meta 檔';
+                    statusEl.textContent = '✅ 已載入 ' + options.length + ' 個 meta 檔（' + destLabel + '）';
                     statusEl.style.color = '#059669';
                 }
             } catch (err) {
@@ -940,8 +977,10 @@ window.FeatureTimeline = (() => {
             try {
                 const picker = readMaterialPicker(pathStr);
                 const sliceOpts = readMaterialSliceInputs(pathStr);
-                const folderId = getClassDriveFolderId(bState.classId);
-                const fileResult = await window.GasService.readMaterialFile(folderId, picker.material_folder, picker.published_file);
+                const folderId = await resolveMaterialsRootFolderId(bState.classId, picker.materials_root_kind);
+                const fileResult = await window.GasService.readMaterialFile(
+                    folderId, picker.material_folder, picker.published_file, picker.materials_root_kind
+                );
                 const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
                 const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, picker);
                 if (previewEl) {
@@ -963,8 +1002,10 @@ window.FeatureTimeline = (() => {
             try {
                 const picker = readMaterialPicker(pathStr);
                 const sliceOpts = readMaterialSliceInputs(pathStr);
-                const folderId = getClassDriveFolderId(bState.classId);
-                const fileResult = await window.GasService.readMaterialFile(folderId, picker.material_folder, picker.published_file);
+                const folderId = await resolveMaterialsRootFolderId(bState.classId, picker.materials_root_kind);
+                const fileResult = await window.GasService.readMaterialFile(
+                    folderId, picker.material_folder, picker.published_file, picker.materials_root_kind
+                );
                 const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
                 const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, picker);
                 applySnapshotToNode(pathStr, snapshot);
@@ -976,6 +1017,14 @@ window.FeatureTimeline = (() => {
 
         onMaterialModeChange: function (pathStr) {
             toggleMaterialSliceFields(pathStr);
+        },
+
+        onMaterialRootChange: function (pathStr) {
+            const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
+            if (selectEl) {
+                selectEl.innerHTML = '<option value="">— 請重新載入 meta 清單 —</option>';
+            }
+            window.FeatureTimeline.loadMaterialMetaSelect(pathStr);
         }
     };
 })();

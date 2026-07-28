@@ -186,6 +186,12 @@
                     </label>
                 </div>
             </div>
+
+            <div style="margin-bottom: 20px; padding: 15px; background: #1E293B; border-radius: 8px; border: 1px dashed #475569;">
+                <div style="color: #38BDF8; font-weight: 800; margin-bottom: 5px;">🌐 全域 Drive 最頂層資料夾</div>
+                <p style="color:#94A3B8; font-size:0.85rem; margin:0 0 10px;">資源管理選「全域資料夾」時自動帶入。請填 <code>_LogOnEnglish</code> 根目錄（或機構全域根）的資料夾網址／ID，勿填 00／01 子資料夾。</p>
+                <input type="text" id="global-drive-folder" class="form-control" placeholder="https://drive.google.com/drive/folders/… 或資料夾 ID" style="width:100%; padding:10px; border-radius:8px; border:1px solid #475569; background:#0F172A; color:#F8FAFC;">
+            </div>
             
             <div style="margin-top: auto;">
                 <button id="btn-save-global-settings" class="btn-system" onclick="saveGlobalSettings()">💾 儲存全域設定</button>
@@ -275,14 +281,19 @@
             try {
                 const { data } = await window.supabaseClient
                     .from('system_settings')
-                    .select('value')
-                    .eq('setting_key', 'global_name_mode')
-                    .single();
-                    
-                if (data && data.value) {
-                    const rb = document.querySelector(`input[name="global_name_mode"][value="${data.value}"]`);
-                    if (rb) rb.checked = true;
-                }
+                    .select('setting_key, value')
+                    .in('setting_key', ['global_name_mode', 'global_drive_folder']);
+
+                (data || []).forEach(function (row) {
+                    if (row.setting_key === 'global_name_mode' && row.value) {
+                        const rb = document.querySelector('input[name="global_name_mode"][value="' + row.value + '"]');
+                        if (rb) rb.checked = true;
+                    }
+                    if (row.setting_key === 'global_drive_folder') {
+                        const el = document.getElementById('global-drive-folder');
+                        if (el) el.value = row.value || '';
+                    }
+                });
             } catch (err) { 
                 console.warn("尚未建立全域設定", err); 
             }
@@ -292,19 +303,28 @@
             const btn = document.getElementById('btn-save-global-settings');
             const msg = document.getElementById('global-msg');
             const selectedMode = document.querySelector('input[name="global_name_mode"]:checked').value;
+            const driveFolder = (document.getElementById('global-drive-folder') || {}).value || '';
 
             btn.disabled = true; 
             btn.textContent = "⏳ 儲存中..."; 
             msg.textContent = "";
 
             try {
-                const { error } = await window.supabaseClient
-                    .from('system_settings')
-                    .upsert({ 
+                const rows = [
+                    { 
                         setting_key: 'global_name_mode', 
                         value: selectedMode, 
                         description: '系統全域預設姓名顯示模式'
-                    }, { onConflict: 'setting_key' });
+                    },
+                    {
+                        setting_key: 'global_drive_folder',
+                        value: String(driveFolder).trim(),
+                        description: '全域 Drive 最頂層資料夾（網址或 ID）'
+                    }
+                ];
+                const { error } = await window.supabaseClient
+                    .from('system_settings')
+                    .upsert(rows, { onConflict: 'setting_key' });
 
                 if (error) throw error;
                 

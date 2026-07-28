@@ -84,7 +84,7 @@ window.FeatureStudentMessages = (() => {
         return { done: done, total: total };
     }
 
-    /** 標題優先用 payload 三行；進度放在截止日期右邊 */
+    /** 依班級 message_layout 行列渲染（上下分列、左右並排） */
     function renderTitleBlock(row, progressCtx) {
         const p = row.payload || {};
         const progress = getProgressForRow(row, progressCtx);
@@ -93,19 +93,73 @@ window.FeatureStudentMessages = (() => {
             : '';
         const lineStyle = 'font-weight:700;color:#334155;font-size:1rem;line-height:1.5;';
 
-        if (p.class_name || p.progress_label || p.block_label) {
-            return `
-                <div style="${lineStyle}">
-                    📚 ${escapeHtml(p.class_name || '')}
-                </div>
-                <div style="${lineStyle}margin-top:4px;">
-                    ${escapeHtml(p.progress_label || '')}
-                </div>
-                <div style="${lineStyle}margin-top:4px;">
-                    📝 ${escapeHtml(p.block_label || p.assignment_title || '')}${progressInline}
-                </div>`;
+        const className = p.class_name || '';
+        const progressLabel = p.progress_label || '';
+        const blockLabel = p.block_label || p.assignment_title || '';
+        const dueKey = getDueDateKey(row);
+        const dueLabel = dueKey ? ('⏰ 截止日：' + dueKey) : '';
+        const studentName = (progressCtx && progressCtx.studentEnglishName)
+            || p.student_name
+            || p.english_name
+            || '';
+
+        const Tpl = window.MessageLayoutTemplate;
+        const layout = progressCtx && progressCtx.layoutByClassId
+            ? progressCtx.layoutByClassId[row.class_id]
+            : null;
+
+        if (!Tpl || (!className && !progressLabel && !blockLabel && !row.title)) {
+            return `<div style="${lineStyle}white-space:pre-wrap;">${escapeHtml(row.title || '通知')}</div>`;
         }
-        return `<div style="${lineStyle}white-space:pre-wrap;">${escapeHtml(row.title || '通知')}</div>`;
+
+        if (!className && !progressLabel && !blockLabel) {
+            return `<div style="${lineStyle}white-space:pre-wrap;">${escapeHtml(row.title || '通知')}</div>`;
+        }
+
+        const fieldHtml = {
+            student_name: studentName
+                ? `<div style="font-weight:900;color:#334155;font-size:1.2rem;line-height:1.4;">${escapeHtml(studentName)}</div>`
+                : '',
+            class_name: className
+                ? `<div style="${lineStyle}">📚 ${escapeHtml(className)}</div>`
+                : '',
+            progress_date: progressLabel
+                ? `<div style="${lineStyle}">${escapeHtml(progressLabel)}</div>`
+                : '',
+            assignment_title: blockLabel
+                ? `<div style="${lineStyle}">📝 ${escapeHtml(blockLabel)}</div>`
+                : '',
+            due_date: dueLabel
+                ? `<div style="${lineStyle};color:#B45309;">${escapeHtml(dueLabel)}</div>`
+                : '',
+            completion_progress: progress
+                ? `<div style="${lineStyle}">${progressInline.trim()}</div>`
+                : '',
+            kind_badge: '',
+            icon_heart: Tpl ? Tpl.iconHeartHtml() : '❤️',
+            icon_hearts: Tpl ? Tpl.iconHeartsHtml() : '❤️❤️❤️',
+            notify_time: row.created_at
+                ? `<div style="font-size:1rem;color:#64748B;font-weight:700;">通知時間：${formatTime(row.created_at)}</div>`
+                : ''
+        };
+        const badgeHtml = formatKindBadge(row.kind, row, progressCtx);
+        if (badgeHtml) {
+            fieldHtml.kind_badge = `<div>${badgeHtml}</div>`;
+        }
+
+        const effectiveLayout = layout || Tpl.defaultLayout();
+        const order = Tpl.orderedEnabledIds(effectiveLayout, 'message');
+        const hasProgressField = order.indexOf('completion_progress') !== -1;
+        if (!hasProgressField && progress && fieldHtml.assignment_title) {
+            fieldHtml.assignment_title = `<div style="${lineStyle}">📝 ${escapeHtml(blockLabel)}${progressInline}</div>`;
+        }
+
+        let html = Tpl.composeRowsHtml(effectiveLayout, 'message', fieldHtml);
+        if (!html) {
+            html = fieldHtml.student_name + fieldHtml.class_name + fieldHtml.progress_date
+                + (fieldHtml.assignment_title || `<div style="${lineStyle}">📝 ${escapeHtml(blockLabel)}${progressInline}</div>`);
+        }
+        return html;
     }
 
     function getDueDateKey(row) {
@@ -169,10 +223,16 @@ window.FeatureStudentMessages = (() => {
             (rows || []).map(function (r) { return r.class_id; }).filter(Boolean)
         )];
         if (!assignmentIds.length) {
-            return { assignmentTasks: {}, completedSet: new Set(), allowLateByAssignment: {} };
+            return {
+                assignmentTasks: {},
+                completedSet: new Set(),
+                allowLateByAssignment: {},
+                layoutByClassId: {},
+                studentEnglishName: ''
+            };
         }
 
-        const [assignRes, compRes, classRes] = await Promise.all([
+        const [assignRes, compRes, classRes, profileRes] = await Promise.all([
             window.supabaseClient
                 .from('assignments')
                 .select('id, class_id, tasks, raw_data')
@@ -189,10 +249,28 @@ window.FeatureStudentMessages = (() => {
                     .from('classes')
                     .select('id, raw_data')
                     .in('id', classIds)
-                : Promise.resolve({ data: [] })
+                : Promise.resolve({ data: [] }),
+            window.supabaseClient
+                .from('profiles')
+                .select('raw_data, name')
+                .eq('id', userId)
+                .maybeSingle()
         ]);
 
+        let studentEnglishName = '';
+        try {
+            let pRaw = (profileRes && profileRes.data && profileRes.data.raw_data) || {};
+            if (typeof pRaw === 'string') {
+                try { pRaw = JSON.parse(pRaw); } catch (_e) { pRaw = {}; }
+            }
+            studentEnglishName = String(pRaw.nameEN || '').trim();
+            if (!studentEnglishName && profileRes && profileRes.data && profileRes.data.name) {
+                studentEnglishName = String(profileRes.data.name).split(/\s+/)[0] || '';
+            }
+        } catch (_e) { /* ignore */ }
+
         const classAllowLate = {};
+        const layoutByClassId = {};
         (classRes.data || []).forEach(function (c) {
             let raw = c.raw_data || {};
             if (typeof raw === 'string') {
@@ -200,6 +278,9 @@ window.FeatureStudentMessages = (() => {
             }
             const defaults = raw.late_submission_defaults || {};
             classAllowLate[c.id] = defaults.allow_late === true;
+            if (window.MessageLayoutTemplate) {
+                layoutByClassId[c.id] = window.MessageLayoutTemplate.fromClassRaw(raw);
+            }
         });
 
         const assignmentTasks = {};
@@ -229,7 +310,9 @@ window.FeatureStudentMessages = (() => {
         return {
             assignmentTasks: assignmentTasks,
             completedSet: completedSet,
-            allowLateByAssignment: allowLateByAssignment
+            allowLateByAssignment: allowLateByAssignment,
+            layoutByClassId: layoutByClassId,
+            studentEnglishName: studentEnglishName
         };
     }
 
@@ -248,10 +331,19 @@ window.FeatureStudentMessages = (() => {
 
         const sortedRows = sortRowsByDueDateDesc(rows);
         const unread = sortedRows.filter(function (r) { return !r.read_at; }).length;
+        const Tpl = window.MessageLayoutTemplate;
         const items = sortedRows.map(function (row) {
             const unreadBar = row.read_at
                 ? ''
                 : '<div style="position:absolute;top:0;left:0;right:0;height:4px;background:#F59E0B;border-radius:10px 10px 0 0;"></div>';
+
+            const useLayout = !!Tpl;
+            // 有版型：徽章／通知時間只依畫布；無版型：右側徽章＋底部時間
+            const sideBadge = useLayout ? '' : formatKindBadge(row.kind, row, progressCtx);
+            const timeFallback = useLayout
+                ? ''
+                : `<div style="font-size:1rem;color:#64748B;margin-top:10px;font-weight:700;">通知時間：${formatTime(row.created_at)}</div>`;
+
             return `
                 <button type="button"
                     class="student-msg-item"
@@ -264,9 +356,9 @@ window.FeatureStudentMessages = (() => {
                         <div style="flex:1;min-width:200px;">
                             ${renderTitleBlock(row, progressCtx)}
                         </div>
-                        ${formatKindBadge(row.kind, row, progressCtx)}
+                        ${sideBadge}
                     </div>
-                    <div style="font-size:1rem;color:#64748B;margin-top:10px;font-weight:700;">通知時間：${formatTime(row.created_at)}</div>
+                    ${timeFallback}
                 </button>`;
         }).join('');
 

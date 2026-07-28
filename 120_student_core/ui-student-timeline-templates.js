@@ -565,7 +565,40 @@ window.UIStudentTimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V103 模組已成功載入！");
+    function stripHtml(str) {
+        return String(str == null ? '' : str).replace(/<[^>]*>?/gm, '').replace(/&nbsp;/gi, ' ').trim();
+    }
+
+    function escapeAttr(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function escapeJsSingleQuoted(str) {
+        return String(str == null ? '' : str)
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/"/g, '&quot;')
+            .replace(/\n/g, '\\n')
+            .replace(/\r/g, '');
+    }
+
+    /** drive 類型但標題像 Recording → 視為錄音任務（與 audio_record 同 UI） */
+    function isRecordingLikeTask(task) {
+        if (!task) return false;
+        if (task.type === 'audio_record') return true;
+        if (task.type === 'drive') {
+            const title = stripHtml(task.title || '').toLowerCase();
+            return /recording|錄音|朗讀/.test(title);
+        }
+        return false;
+    }
+
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V108 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -754,10 +787,12 @@ window.UIStudentTimelineTemplates = (() => {
                     let iconStr = '📁';
                     if (task.type === 'check') iconStr = '📌';
                     if (task.type === 'link') iconStr = '🔗';
-                    if (task.type === 'audio_record') iconStr = '🎙️';
+                    if (task.type === 'audio_record' || isRecordingLikeTask(task)) iconStr = '🎙️';
                     
                     let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
-                    let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', this.checked)" ${checked}>`;
+                    const safeCourseId = escapeJsSingleQuoted(course.id);
+                    const safeTaskId = escapeJsSingleQuoted(task.id);
+                    let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', this.checked)" ${checked}>`;
 
                     let btn = '';
                     let taskTitleDisplay = '';
@@ -767,23 +802,22 @@ window.UIStudentTimelineTemplates = (() => {
 
                     if (task.type === 'link') {
                         let safeUrlText = task.url_text ? task.url_text : '';
-                        let actualUrlText = String(safeUrlText).trim();
-                        let safeTitleVal = task.title ? task.title : '';
-                        let actualTitle = String(safeTitleVal).trim();
+                        let actualUrlText = stripHtml(safeUrlText);
+                        let actualTitle = stripHtml(task.title ? task.title : '');
 
                         if (actualUrlText !== '') {
                             let displayTitle = actualTitle ? actualTitle : '未命名任務';
-                            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${displayTitle}</span>`;
-                            linkContent = formattedTaskUrl ? `<a href="${formattedTaskUrl}" target="_blank" class="btn-action" style="font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${actualUrlText}</a>` : '';
+                            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
+                            linkContent = formattedTaskUrl ? `<a href="${escapeAttr(formattedTaskUrl)}" target="_blank" class="btn-action" style="font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', true)">${escapeAttr(actualUrlText)}</a>` : '';
                         } else {
                             let fallbackText = actualTitle ? actualTitle : '未命名連結';
                             if (formattedTaskUrl) {
-                                taskTitleDisplay = `<a href="${formattedTaskUrl}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${course.id}', '${task.id}', true)">${fallbackText}</a>`;
+                                taskTitleDisplay = `<a href="${escapeAttr(formattedTaskUrl)}" target="_blank" class="rt-normalize" style="font-weight:900; color:var(--primary); text-decoration:underline; font-size:1rem;" onclick="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', true)">${escapeAttr(fallbackText)}</a>`;
                             } else {
-                                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${fallbackText} (無網址)</span>`;
+                                taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(fallbackText)} (無網址)</span>`;
                             }
                         }
-                    } else if (task.type === 'audio_record') {
+                    } else if (task.type === 'audio_record' || isRecordingLikeTask(task)) {
                         
                         let studioScript = '';
                         let originalScript = '';
@@ -799,8 +833,8 @@ window.UIStudentTimelineTemplates = (() => {
                             if (task.raw_data.material_range) materialRange = String(task.raw_data.material_range);
                         }
 
-                        let displayTitle = task.title ? task.title : '語音錄製任務';
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
+                        let displayTitle = stripHtml(task.title ? task.title : '語音錄製任務');
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -811,15 +845,14 @@ window.UIStudentTimelineTemplates = (() => {
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                             
-                            let pureTaskTitleVal = task.title ? task.title : '未命名任務';
-                            const pureTaskTitle = String(pureTaskTitleVal).replace(/<[^>]*>?/gm, '').trim();
+                            const pureTaskTitle = displayTitle || '未命名任務';
                             const statusId = `upload-status-${course.id}-${task.id}`;
                             
-                            const safeTitleForJS = pureTaskTitle.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            const safeTitleForJS = escapeJsSingleQuoted(pureTaskTitle);
                             const boothScript = studioScript || originalScript;
-                            const safeScriptForJS = String(boothScript).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
-                            const safeUrlForJS = String(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                            const safeRangeForJS = String(materialRange).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            const safeScriptForJS = escapeJsSingleQuoted(boothScript);
+                            const safeUrlForJS = escapeJsSingleQuoted(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl);
+                            const safeRangeForJS = escapeJsSingleQuoted(materialRange);
 
                             const recordBtnText = hasValidAudioFile ? '重新錄製' : '🎙️ 開啟錄音艙';
                             const recordBtnStyle = hasValidAudioFile ? 
@@ -833,7 +866,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                             if (hasValidAudioFile) {
                                 if (directAudioUrl !== '') {
-                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${directAudioUrl}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
+                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${escapeAttr(directAudioUrl)}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
                                 }
                                 
                                 let showManualSubmit = false;
@@ -844,19 +877,20 @@ window.UIStudentTimelineTemplates = (() => {
 
                                 if (showManualSubmit) {
                                     const rawRetryUrl = retryAudioUrl ? retryAudioUrl : '';
-                                    const safeRetryAudioUrl = String(rawRetryUrl).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                                    const safeRetryAudioUrl = escapeJsSingleQuoted(rawRetryUrl);
+                                    const safeRetryId = escapeJsSingleQuoted(retryAudioId);
                                     const manualSubmitLabel = taskStatus === 'ai_ready'
                                         ? '🤖 重新提交批改'
                                         : '🤖 手動提交批改';
-                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${course.id}', '${task.id}', '${retryAudioId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">${manualSubmitLabel}</button>`;
+                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${safeCourseId}', '${safeTaskId}', '${safeRetryId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">${manualSubmitLabel}</button>`;
                                 }
                             }
 
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${audioPlayerHtml}
-                                    <button onclick="window.FeatureStudentTimeline.openAudioStudio('${course.id}', '${task.id}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
-                                    <input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
+                                    <button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
+                                    <input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
                                     <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;" title="支援 mp3、wav、m4a、webm 等，上傳後自動 AI 批改">📤 上傳音檔 AI 批改</button>
                                     <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
                                     ${manualSubmitBtnHtml}
@@ -865,8 +899,8 @@ window.UIStudentTimelineTemplates = (() => {
                             `;
                         }
                     } else if (task.type === 'drive') {
-                        let displayTitle = task.title ? task.title : '未命名任務';
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
+                        let displayTitle = stripHtml(task.title ? task.title : '未命名任務');
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -877,19 +911,18 @@ window.UIStudentTimelineTemplates = (() => {
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
                             
-                            let pureTaskTitleVal = task.title ? task.title : '未命名任務';
-                            const pureTaskTitle = String(pureTaskTitleVal).replace(/<[^>]*>?/gm, '').trim();
-                            const safeTitleForJS = pureTaskTitle.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            const pureTaskTitle = displayTitle || '未命名任務';
+                            const safeTitleForJS = escapeJsSingleQuoted(pureTaskTitle);
                             
                             let safeNodeTitleStr = node.title ? node.title : '';
-                            const safeNodeTitle = String(safeNodeTitleStr).replace(/[\/\\:*?"<>\x7C]/g, '_').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                            const safeNodeTitle = escapeJsSingleQuoted(String(safeNodeTitleStr).replace(/[\/\\:*?"<>\x7C]/g, '_'));
 
                             const uniqueId = `file-input-${course.id}-${task.id}`;
                             const statusId = `upload-status-${course.id}-${task.id}`;
 
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                    <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${course.id}', '${task.id}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
+                                    <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
                                     <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
                                     <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
@@ -897,8 +930,8 @@ window.UIStudentTimelineTemplates = (() => {
                             `;
                         }
                     } else {
-                        let displayTitle = task.title ? task.title : '未命名任務';
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${String(displayTitle)}</span>`;
+                        let displayTitle = stripHtml(task.title ? task.title : '未命名任務');
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
                     }
 
                     let cleanTaskDesc = '';

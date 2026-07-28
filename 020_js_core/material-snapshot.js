@@ -1,6 +1,6 @@
 /**
  * 📂 020_js_core/material-snapshot.js
- * 從 00_Class_Materials 的 *.meta.json 切片並合成 assignment snapshot
+ * 從 00_Class_Materials 或老師 01_My_Materials 的 *.meta.json 切片並合成 assignment snapshot
  */
 window.MaterialSnapshot = (function () {
     'use strict';
@@ -97,6 +97,7 @@ window.MaterialSnapshot = (function () {
 
         return {
             material_ref: {
+                materials_root_kind: context.materials_root_kind || context.rootKind || 'class',
                 material_folder: context.material_folder || '',
                 published_file: context.published_file || context.metaFile || '',
                 published_at: context.published_at || null,
