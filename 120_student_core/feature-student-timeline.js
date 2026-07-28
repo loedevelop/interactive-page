@@ -133,10 +133,9 @@ window.FeatureStudentTimeline = (() => {
         }
         const raw = task.raw_data ? task.raw_data : {};
         if (raw.use_ai_grading === false) return false;
-        // 僅 audio_record（線上錄音／AI）才預設開 AI；drive = 上傳到資料夾
-        if (task.type === 'audio_record') return true;
+        // drive（上傳資料夾）與 audio_record（錄音艙）都可 AI；有無文稿另檢
+        if (task.type === 'audio_record' || task.type === 'drive') return true;
         if (raw.use_ai_grading === true) return true;
-        if (raw.use_ai_grading !== false && raw.original_script) return true;
         return false;
     }
 
@@ -221,21 +220,30 @@ window.FeatureStudentTimeline = (() => {
             assertAssignmentUuid(assignmentId, '作業 ID');
             const taskConfig = findTaskConfig(assignmentId, taskId);
             const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-            if (!scriptText) {
-                throw new Error('此錄音任務尚未設定「批改文稿」。請通知老師在作業編輯器套用 Material Snapshot 或貼上 AI 文稿後再上傳。');
-            }
+            const canSendAI = !!scriptText;
 
             if (statusEl) {
-                statusEl.textContent = '⚙️ 音檔轉碼中...';
+                statusEl.textContent = canSendAI ? '⚙️ 音檔轉碼中...' : '🚀 音檔上傳中...';
                 statusEl.style.color = '#3B82F6';
             }
 
-            let wavBlob = fileBlob;
-            const audioReady = await ensureFeatureStudentAudioReady();
-            if (audioReady && window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
-                wavBlob = await window.FeatureStudentAudio.convertBlobToWav(fileBlob);
-            } else if (!audioReady) {
-                console.warn('錄音轉碼模組尚未就緒，將嘗試直接上傳原始音檔');
+            let uploadBlob = fileBlob;
+            let uploadMime = (fileBlob && fileBlob.type) ? fileBlob.type : 'audio/mpeg';
+            let uploadExt = '.mp3';
+            if (originalFileName && originalFileName.includes('.')) {
+                uploadExt = originalFileName.substring(originalFileName.lastIndexOf('.'));
+            }
+
+            // 有文稿才轉 wav 送 AI；無文稿則原檔上傳到資料夾即可
+            if (canSendAI) {
+                const audioReady = await ensureFeatureStudentAudioReady();
+                if (audioReady && window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
+                    uploadBlob = await window.FeatureStudentAudio.convertBlobToWav(fileBlob);
+                    uploadMime = 'audio/wav';
+                    uploadExt = '.wav';
+                } else if (!audioReady) {
+                    console.warn('錄音轉碼模組尚未就緒，將嘗試直接上傳原始音檔');
+                }
             }
 
             const reader = new FileReader();
@@ -245,7 +253,7 @@ window.FeatureStudentTimeline = (() => {
                     resolve(parts.length > 1 ? parts[1] : parts[0]);
                 };
                 reader.onerror = () => reject(new Error('FileReader Error'));
-                reader.readAsDataURL(wavBlob);
+                reader.readAsDataURL(uploadBlob);
             });
 
             if (statusEl) {
@@ -264,24 +272,30 @@ window.FeatureStudentTimeline = (() => {
             const classPrefix = (classId ? classId : '0000').substring(0, 4);
             const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
             const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
-            const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}.wav`;
+            const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}${uploadExt}`;
 
-            const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, 'audio/wav', targetFolderId, assignmentId, taskId);
-
-            if (statusEl) {
-                statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
-                statusEl.style.color = '#8B5CF6';
-            }
-
+            const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId);
             const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
-            await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
 
-            if (statusEl) {
-                statusEl.textContent = '✅ 繳交成功！AI 已接管';
-                statusEl.style.color = '#10B981';
+            if (canSendAI) {
+                if (statusEl) {
+                    statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
+                    statusEl.style.color = '#8B5CF6';
+                }
+                await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
+                if (statusEl) {
+                    statusEl.textContent = '✅ 繳交成功！AI 已接管';
+                    statusEl.style.color = '#10B981';
+                }
+                applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
+            } else {
+                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [result.fileId]);
+                if (statusEl) {
+                    statusEl.textContent = '✅ 已上傳到資料夾（無文稿，略過 AI）';
+                    statusEl.style.color = '#10B981';
+                }
+                window.showFlash('音檔已上傳到資料夾。此任務尚未設定批改文稿，故未送 AI。');
             }
-
-            applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
             renderCourses();
         } catch (err) {
             window.showFlash('音檔上傳失敗: ' + err.message, 'error');
@@ -980,6 +994,11 @@ window.FeatureStudentTimeline = (() => {
                     document.body.style.pointerEvents = 'none';
 
                     try {
+                        assertAssignmentUuid(assignmentId, '作業 ID');
+                        const taskConfig = findTaskConfig(assignmentId, taskId);
+                        const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
+                        const canSendAI = !!scriptText;
+
                         if (statusEl) {
                             statusEl.textContent = '🚀 錄音上傳中...';
                             statusEl.style.color = '#3B82F6';
@@ -998,21 +1017,27 @@ window.FeatureStudentTimeline = (() => {
                         const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${audioData.fileName}`;
 
                         const result = await window.ApiService.uploadToGAS(audioData.base64, finalFileName, audioData.mimeType, targetFolderId, assignmentId, taskId);
-                        
-                        if (statusEl) {
-                            statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
-                            statusEl.style.color = '#8B5CF6';
-                        }
-
                         const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
-                        await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
-                        
-                        if (statusEl) {
-                            statusEl.textContent = '✅ 繳交成功！AI 已接管';
-                            statusEl.style.color = '#10B981';
+
+                        if (canSendAI) {
+                            if (statusEl) {
+                                statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
+                                statusEl.style.color = '#8B5CF6';
+                            }
+                            await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
+                            if (statusEl) {
+                                statusEl.textContent = '✅ 繳交成功！AI 已接管';
+                                statusEl.style.color = '#10B981';
+                            }
+                            applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
+                        } else {
+                            await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [result.fileId]);
+                            if (statusEl) {
+                                statusEl.textContent = '✅ 已上傳（無文稿，略過 AI）';
+                                statusEl.style.color = '#10B981';
+                            }
+                            window.showFlash('錄音已上傳。此任務尚未設定批改文稿，故未送 AI。');
                         }
-                        
-                        applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
                         renderCourses();
 
                     } catch (err) {
@@ -1050,6 +1075,13 @@ window.FeatureStudentTimeline = (() => {
             const statusEl = document.getElementById(statusId);
 
             try {
+                assertAssignmentUuid(assignmentId, '作業 ID');
+                const taskConfig = findTaskConfig(assignmentId, taskId);
+                const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
+                if (!scriptText) {
+                    throw new Error('尚未設定批改文稿，無法送 AI。請通知老師先套用 Snapshot 或貼上文稿。');
+                }
+
                 if (statusEl) {
                     statusEl.textContent = '🚀 手動喚醒 AI 批改中...';
                     statusEl.style.color = '#3B82F6';

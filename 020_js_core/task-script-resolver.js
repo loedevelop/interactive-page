@@ -114,13 +114,16 @@ window.TaskScriptResolver = (function () {
         return !!task && (task.type === 'drive' || task.type === 'audio_record');
     }
 
+    /**
+     * 任務是否「允許」走 AI 發音批改管線（drive 上傳／錄音艙皆可）。
+     * 真正送 AI 前仍須另檢查是否已有文稿。
+     */
     function taskSupportsAIGrading(task, tasksInput) {
         if (!task) return false;
         const raw = task.raw_data || {};
         if (raw.use_ai_grading === false || task.use_ai_grading === false) return false;
 
-        // audio_record = 線上錄音／AI；drive = 上傳到資料夾（除非明確 use_ai_grading）
-        if (task.type === 'audio_record') return true;
+        if (task.type === 'audio_record' || task.type === 'drive') return true;
         if (raw.use_ai_grading === true || task.use_ai_grading === true) return true;
         return false;
     }
