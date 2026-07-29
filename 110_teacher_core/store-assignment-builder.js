@@ -62,72 +62,137 @@ window.BuilderStore = (() => {
                     const useAiEl = document.getElementById(`node-use-ai-${pathStr}`); 
                     const useGrammarEl = document.getElementById(`node-use-grammar-${pathStr}`);
                     if (useAiEl) t.raw_data.use_ai_grading = useAiEl.checked;
-                    if (useGrammarEl) t.raw_data.use_ai_grammar = useGrammarEl.checked; 
+                    if (useGrammarEl) t.raw_data.use_ai_grammar = useGrammarEl.checked;
 
-                    const aiSourceTypeEl = document.getElementById(`node-ai-source-type-${pathStr}`);
-                    if (aiSourceTypeEl) t.raw_data.ai_source_type = aiSourceTypeEl.value;
+                    const captureStudioEl = document.getElementById(`node-capture-studio-${pathStr}`);
+                    const captureUploadEl = document.getElementById(`node-capture-upload-${pathStr}`);
+                    if (captureStudioEl) t.raw_data.capture_studio = captureStudioEl.checked;
+                    if (captureUploadEl) t.raw_data.capture_upload = captureUploadEl.checked;
+                    if (t.raw_data.capture_studio === false && t.raw_data.capture_upload === false) {
+                        t.raw_data.capture_studio = true;
+                        t.raw_data.capture_upload = true;
+                    }
 
-                    const aiDriveUrlEl = document.getElementById(`node-ai-drive-url-${pathStr}`);
-                    if (aiDriveUrlEl) t.raw_data.ai_drive_url = aiDriveUrlEl.value;
+                    const scriptSourceEl = document.getElementById(`node-script-source-${pathStr}`);
+                    if (scriptSourceEl) t.raw_data.script_source = scriptSourceEl.value || 'meta';
+                    const scriptSource = t.raw_data.script_source || 'meta';
 
-                    const aiSheetEl = document.getElementById(`node-ai-sheet-${pathStr}`);
-                    if (aiSheetEl) t.raw_data.ai_sheet = aiSheetEl.value;
+                    const materialRangeEl = document.getElementById(`node-material-range-${pathStr}`);
+                    const materialRangeManualEl = document.getElementById(`node-material-range-manual-${pathStr}`);
+                    if (scriptSource === 'meta') {
+                        if (materialRangeEl) t.raw_data.material_range = String(materialRangeEl.value || '').trim();
+                    } else if (materialRangeManualEl) {
+                        t.raw_data.material_range = String(materialRangeManualEl.value || '').trim();
+                    } else if (materialRangeEl) {
+                        t.raw_data.material_range = String(materialRangeEl.value || '').trim();
+                    }
 
-                    const aiRangeEl = document.getElementById(`node-ai-range-${pathStr}`);
-                    if (aiRangeEl) t.raw_data.ai_range = aiRangeEl.value;
+                    const materialUrlEl = document.getElementById(`node-material-url-${pathStr}`);
+                    if (materialUrlEl) {
+                        t.raw_data.material_url = String(materialUrlEl.value || '').trim();
+                        if (t.raw_data.material_url && !t.raw_data.student_drive_url) {
+                            t.raw_data.student_drive_url = t.raw_data.material_url;
+                        }
+                    }
 
-                    const aiLocalSheetEl = document.getElementById(`node-ai-local-sheet-${pathStr}`);
-                    if (aiLocalSheetEl) t.raw_data.ai_local_sheet = aiLocalSheetEl.value;
-
-                    const aiLocalRangeEl = document.getElementById(`node-ai-local-range-${pathStr}`);
-                    if (aiLocalRangeEl) t.raw_data.ai_local_range = aiLocalRangeEl.value;
-
+                    // A: meta 文稿以 snapshot / meta 面板為準；C: 以 paste 面板為準
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
-                    if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
+                    const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
+                    const scriptPasteEl = document.getElementById(`node-script-paste-${pathStr}`);
+                    const studentPasteEl = document.getElementById(`node-student-text-paste-${pathStr}`);
+
+                    if (scriptSource === 'paste') {
+                        if (scriptPasteEl) t.raw_data.original_script = sanitizeScript(scriptPasteEl.value);
+                        if (studentPasteEl) {
+                            const displayText = studentPasteEl.value;
+                            t.raw_data.student_text = displayText;
+                            t.raw_data.student_display = displayText;
+                            t.raw_data.student_display_text = displayText;
+                        }
+                        if (scriptEl && scriptPasteEl) scriptEl.value = scriptPasteEl.value;
+                        if (studentTextEl && studentPasteEl) studentTextEl.value = studentPasteEl.value;
+                    } else if (scriptSource === 'range_only') {
+                        // 僅範圍：清掉顯示文稿本體（保留 material_range）
+                        t.raw_data.student_display = '';
+                        t.raw_data.student_display_text = '';
+                        t.raw_data.student_text = '';
+                        if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
+                    } else {
+                        if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
+                        if (studentTextEl) {
+                            t.raw_data.student_text = studentTextEl.value;
+                            t.raw_data.student_display = studentTextEl.value;
+                            t.raw_data.student_display_text = studentTextEl.value;
+                        }
+                    }
 
                     const snapshotJsonEl = document.getElementById(`node-material-snapshot-json-${pathStr}`);
                     if (snapshotJsonEl && snapshotJsonEl.value) {
                         try {
                             const snap = JSON.parse(snapshotJsonEl.value);
-                            if (snap.original_script) t.raw_data.original_script = sanitizeScript(snap.original_script);
-                            if (snap.student_display || snap.student_display_text) {
-                                const displayText = snap.student_display || snap.student_display_text;
-                                t.raw_data.student_display = displayText;
-                                t.raw_data.student_display_text = displayText;
-                                t.raw_data.student_text = displayText;
+                            if (scriptSource === 'meta') {
+                                if (snap.original_script) t.raw_data.original_script = sanitizeScript(scriptEl && scriptEl.value ? scriptEl.value : snap.original_script);
+                                if (snap.student_display || snap.student_display_text) {
+                                    const fromUi = studentTextEl ? studentTextEl.value : '';
+                                    const displayText = fromUi || snap.student_display || snap.student_display_text;
+                                    t.raw_data.student_display = displayText;
+                                    t.raw_data.student_display_text = displayText;
+                                    t.raw_data.student_text = displayText;
+                                }
+                                if (Array.isArray(snap.material_refs) && snap.material_refs.length) {
+                                    t.raw_data.material_refs = snap.material_refs;
+                                    t.raw_data.material_ref = snap.material_refs[0];
+                                } else if (snap.material_ref) {
+                                    t.raw_data.material_ref = snap.material_ref;
+                                    t.raw_data.material_refs = [snap.material_ref];
+                                }
+                                if (snap.material_range) t.raw_data.material_range = snap.material_range;
+                                if (materialRangeEl && materialRangeEl.value) t.raw_data.material_range = String(materialRangeEl.value).trim();
+                                if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
                             }
-                            if (snap.material_ref) t.raw_data.material_ref = snap.material_ref;
-                            if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
                         } catch (_snapErr) {}
-                    } else {
-                        const metaSelectEl = document.getElementById(`node-material-meta-select-${pathStr}`);
-                        const modeEl = document.getElementById(`node-material-mode-${pathStr}`);
-                        const pageEl = document.getElementById(`node-material-page-${pathStr}`);
-                        const fromEl = document.getElementById(`node-material-item-from-${pathStr}`);
-                        const toEl = document.getElementById(`node-material-item-to-${pathStr}`);
-                        if (metaSelectEl && metaSelectEl.value) {
-                            const parts = metaSelectEl.value.split('::');
-                            const rootEl = document.getElementById(`node-material-root-${pathStr}`);
-                            t.raw_data.material_ref = {
-                                materials_root_kind: (rootEl && rootEl.value === 'teacher') ? 'teacher' : 'class',
-                                material_folder: parts[0] || '',
-                                published_file: parts[1] || '',
-                                select_mode: modeEl ? modeEl.value : 'item_range',
-                                page: pageEl && pageEl.value ? Number(pageEl.value) : null,
-                                item_from: fromEl && fromEl.value ? Number(fromEl.value) : null,
-                                item_to: toEl && toEl.value ? Number(toEl.value) : null
-                            };
+                    }
+
+                    if (scriptSource === 'meta') {
+                        const rows = [];
+                        const listEl = document.getElementById(`node-material-rows-${pathStr}`);
+                        const rootEl = document.getElementById(`node-material-root-${pathStr}`);
+                        if (listEl) {
+                            listEl.querySelectorAll('.material-meta-row').forEach(function (rowEl) {
+                                const fileEl = rowEl.querySelector('.material-meta-file');
+                                const rangeEl = rowEl.querySelector('.material-meta-range');
+                                const value = fileEl ? String(fileEl.value || '').trim() : '';
+                                if (!value) return;
+                                const parts = value.split('::');
+                                const rangeSpec = rangeEl ? String(rangeEl.value || '').trim() : '';
+                                const label = (parts[1] || '').replace(/\.meta\.json$/i, '').replace(/\.json$/i, '');
+                                const stemParts = label.split(/[\/_]/);
+                                rows.push({
+                                    materials_root_kind: (rootEl && rootEl.value === 'class') ? 'class' : 'teacher',
+                                    material_folder: parts[0] || '',
+                                    published_file: parts[1] || '',
+                                    select_mode: 'range_spec',
+                                    range_spec: rangeSpec,
+                                    label: stemParts[stemParts.length - 1] || label
+                                });
+                            });
+                        }
+                        if (rows.length) {
+                            t.raw_data.material_refs = rows;
+                            t.raw_data.material_ref = rows[0];
                         }
                     }
 
                     const studentSourceTypeEl = document.getElementById(`node-student-source-type-${pathStr}`);
                     if (studentSourceTypeEl) t.raw_data.student_source_type = studentSourceTypeEl.value;
+                    else if (scriptSource === 'resource' && t.raw_data.student_local_b64) t.raw_data.student_source_type = 'local';
+                    else if (scriptSource === 'resource' && (t.raw_data.material_url || t.raw_data.student_drive_url)) t.raw_data.student_source_type = 'drive';
 
                     const studentDriveUrlEl = document.getElementById(`node-student-drive-url-${pathStr}`);
-                    if (studentDriveUrlEl) t.raw_data.student_drive_url = studentDriveUrlEl.value;
+                    if (studentDriveUrlEl && studentDriveUrlEl.value) t.raw_data.student_drive_url = studentDriveUrlEl.value;
                     
                     const studentDriveDescEl = document.getElementById(`node-student-drive-desc-${pathStr}`);
-                    if (studentDriveDescEl) t.raw_data.student_drive_desc = studentDriveDescEl.value;
+                    if (studentDriveDescEl) t.raw_data.student_drive_desc = studentDriveDescEl.value || t.raw_data.material_range || '';
 
                     const studentLocalDescEl = document.getElementById(`node-student-local-desc-${pathStr}`);
                     if (studentLocalDescEl) t.raw_data.student_local_desc = studentLocalDescEl.value;
@@ -141,12 +206,9 @@ window.BuilderStore = (() => {
                     const studentLocalFilenameEl = document.getElementById(`node-student-local-filename-${pathStr}`);
                     if (studentLocalFilenameEl) t.raw_data.student_local_filename = studentLocalFilenameEl.value;
 
-                    const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
-                    if (studentTextEl) {
-                        t.raw_data.student_text = studentTextEl.value;
-                        if (!t.raw_data.student_display) t.raw_data.student_display = studentTextEl.value;
-                        if (!t.raw_data.student_display_text) t.raw_data.student_display_text = studentTextEl.value;
-                    }
+                    // 相容舊欄位
+                    if (!t.raw_data.ai_source_type) t.raw_data.ai_source_type = 'text';
+                    if (!t.raw_data.student_source_type) t.raw_data.student_source_type = 'text';
                 }
             }
         });
@@ -239,7 +301,16 @@ window.BuilderStore = (() => {
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
                 due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
-                raw_data: type === 'audio_record' ? { use_ai_grading: true, use_ai_grammar: false, ai_source_type: 'text', student_source_type: 'text' } : {}, 
+                raw_data: type === 'audio_record' ? {
+                    use_ai_grading: true,
+                    use_ai_grammar: false,
+                    capture_studio: true,
+                    capture_upload: true,
+                    script_source: 'meta',
+                    material_range: '',
+                    ai_source_type: 'text',
+                    student_source_type: 'text'
+                } : {}, 
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
         },
@@ -303,6 +374,10 @@ window.BuilderStore = (() => {
                 if (!task.raw_data) task.raw_data = {};
                 if (task.raw_data.use_ai_grading === undefined) task.raw_data.use_ai_grading = true;
                 if (task.raw_data.use_ai_grammar === undefined) task.raw_data.use_ai_grammar = false;
+                if (task.raw_data.capture_studio === undefined) task.raw_data.capture_studio = true;
+                if (task.raw_data.capture_upload === undefined) task.raw_data.capture_upload = true;
+                if (task.raw_data.script_source === undefined) task.raw_data.script_source = 'meta';
+                if (task.raw_data.material_range === undefined) task.raw_data.material_range = '';
                 if (task.raw_data.ai_source_type === undefined) task.raw_data.ai_source_type = 'text';
                 if (task.raw_data.student_source_type === undefined) task.raw_data.student_source_type = 'text';
             }
@@ -387,6 +462,9 @@ window.BuilderStore = (() => {
                     if (cloned.type === 'audio_record') {
                         if (cloned.raw_data.use_ai_grading === undefined) cloned.raw_data.use_ai_grading = true;
                         if (cloned.raw_data.use_ai_grammar === undefined) cloned.raw_data.use_ai_grammar = false;
+                        if (cloned.raw_data.capture_studio === undefined) cloned.raw_data.capture_studio = true;
+                        if (cloned.raw_data.capture_upload === undefined) cloned.raw_data.capture_upload = true;
+                        if (cloned.raw_data.script_source === undefined) cloned.raw_data.script_source = 'meta';
                         if (cloned.raw_data.ai_source_type === undefined) cloned.raw_data.ai_source_type = 'text';
                         if (cloned.raw_data.student_source_type === undefined) cloned.raw_data.student_source_type = 'text';
                     }

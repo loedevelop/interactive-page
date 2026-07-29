@@ -3,6 +3,10 @@ _hand-off_prompt.md
 _Material_Publish_Spec.md
 docs/AGENT_*.md
 
+# 本機教材發布
+material_templates/.venv/
+material_templates/published/
+
 # macOS
 .DS_Store
 **/.DS_Store

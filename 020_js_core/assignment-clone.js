@@ -32,6 +32,9 @@ window.AssignmentClone = (function () {
             if (cloned.type === 'audio_record') {
                 if (cloned.raw_data.use_ai_grading === undefined) cloned.raw_data.use_ai_grading = true;
                 if (cloned.raw_data.use_ai_grammar === undefined) cloned.raw_data.use_ai_grammar = false;
+                if (cloned.raw_data.capture_studio === undefined) cloned.raw_data.capture_studio = true;
+                if (cloned.raw_data.capture_upload === undefined) cloned.raw_data.capture_upload = true;
+                if (cloned.raw_data.script_source === undefined) cloned.raw_data.script_source = 'meta';
                 if (cloned.raw_data.ai_source_type === undefined) cloned.raw_data.ai_source_type = 'text';
                 if (cloned.raw_data.student_source_type === undefined) cloned.raw_data.student_source_type = 'text';
             }

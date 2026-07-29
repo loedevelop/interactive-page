@@ -38,6 +38,27 @@ window.FeatureStudentTimeline = (() => {
         return true;
     };
 
+    function extractDriveFolderId(raw) {
+        if (!raw) return '';
+        const trimmed = String(raw).trim();
+        let match = trimmed.match(/folders\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) return match[1];
+        match = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) return match[1];
+        match = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) return match[1];
+        if (!/^https?:\/\//i.test(trimmed) && /^[a-zA-Z0-9_-]{15,}$/.test(trimmed)) return trimmed;
+        return '';
+    }
+
+    function resolveStudentUploadFolderId() {
+        const folderId = extractDriveFolderId(studentDriveUrl);
+        if (!folderId) {
+            throw new Error('老師尚未為您設定專屬資料夾，或資料夾連結無效！');
+        }
+        return folderId;
+    }
+
     async function getAuthContext() {
         if (!window.supabaseClient) throw new Error("系統連線尚未準備完成");
         const { data: { user }, error } = await window.supabaseClient.auth.getUser();
@@ -173,7 +194,8 @@ window.FeatureStudentTimeline = (() => {
         const rawPatch = {
             drive_file_ids: fileId ? [String(fileId)] : [],
             student_audio_url: audioUrlStr,
-            audio_url: audioUrlStr
+            audio_url: audioUrlStr,
+            submitted_files: fileId ? [{ id: String(fileId), mime: 'audio/wav', name: 'recording.wav' }] : []
         };
         let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
         if (tempRecord) {
@@ -192,6 +214,11 @@ window.FeatureStudentTimeline = (() => {
 
     async function submitAudioToAIGrading(assignmentId, taskId, fileId, audioUrl) {
         assertAssignmentUuid(assignmentId, '作業 ID');
+        const taskConfig = findTaskConfig(assignmentId, taskId);
+        const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
+        if (!scriptText) {
+            throw new Error('尚未設定批改文稿，略過 AI。請通知老師套用 Snapshot 後再補批改。');
+        }
         const { userId, classId } = await getAuthContext();
         if (!window.supabaseClient) throw new Error('系統 API 模組尚未載入');
         const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
@@ -262,12 +289,9 @@ window.FeatureStudentTimeline = (() => {
             }
 
             const { userId, classId } = await getAuthContext();
-            if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
             if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error('系統 API 模組尚未載入');
 
-            let targetFolderId = studentDriveUrl;
-            const folderMatch = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
-            if (folderMatch && folderMatch[1]) targetFolderId = folderMatch[1];
+            const targetFolderId = resolveStudentUploadFolderId();
 
             const classPrefix = (classId ? classId : '0000').substring(0, 4);
             const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
@@ -289,7 +313,11 @@ window.FeatureStudentTimeline = (() => {
                 }
                 applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
             } else {
-                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [result.fileId]);
+                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [{
+                    id: result.fileId,
+                    mime: uploadMime,
+                    name: finalFileName
+                }]);
                 if (statusEl) {
                     statusEl.textContent = '✅ 已上傳到資料夾（無文稿，略過 AI）';
                     statusEl.style.color = '#10B981';
@@ -681,9 +709,36 @@ window.FeatureStudentTimeline = (() => {
                 }
                 renderCourses();
 
-                const rawData = (fileIds && fileIds.length > 0)
-                    ? { drive_file_ids: fileIds }
-                    : null;
+                const normalizedFiles = [];
+                if (Array.isArray(fileIds)) {
+                    fileIds.forEach(function (f) {
+                        if (!f) return;
+                        if (typeof f === 'string') {
+                            normalizedFiles.push({ id: String(f) });
+                        } else if (f.id) {
+                            normalizedFiles.push({
+                                id: String(f.id),
+                                mime: f.mime ? String(f.mime) : '',
+                                name: f.name ? String(f.name) : ''
+                            });
+                        }
+                    });
+                }
+                const idList = normalizedFiles.map(function (f) { return f.id; });
+                let rawData = null;
+                if (idList.length > 0) {
+                    rawData = {
+                        drive_file_ids: idList,
+                        submitted_files: normalizedFiles
+                    };
+                    const first = normalizedFiles[0];
+                    const mime = (first.mime || '').toLowerCase();
+                    const name = (first.name || '').toLowerCase();
+                    if (mime.indexOf('audio/') === 0 || /\.(wav|mp3|m4a|ogg|aac|webm|flac)$/.test(name)) {
+                        rawData.student_audio_url = 'https://drive.google.com/file/d/' + first.id + '/view';
+                        rawData.audio_url = rawData.student_audio_url;
+                    }
+                }
 
                 // 優先走 RPC（避開 soft-delete RETURNING 的 RLS 邊角）
                 const { error: rpcErr } = await window.supabaseClient.rpc('student_set_task_completion', {
@@ -767,56 +822,51 @@ window.FeatureStudentTimeline = (() => {
         },
         
         handleFileSelect: async (inputElement, assignmentId, taskId, safeTitleForJS, statusId, dateKey, isLate) => {
-            const filesArray = Array.from(inputElement.files);
+            const filesArray = Array.from(inputElement.files || []);
             if (filesArray.length === 0) return;
-            const statusEl = document.getElementById(statusId);
-            if (!statusEl) return;
 
-            const resetInput = () => { inputElement.value = ''; };
+            const statusEl = document.getElementById(statusId);
+            const resetInput = () => { try { inputElement.value = ''; } catch (_e) {} };
             const updateStatus = (msg, color) => {
+                if (!statusEl) return;
                 statusEl.textContent = msg;
                 statusEl.style.color = color;
             };
 
             updateStatus('⏳ 檢查檔案...', '#F59E0B');
 
-            const taskConfig = findTaskConfig(assignmentId, taskId);
-            const aiGradingEnabled = taskSupportsAIGrading(taskConfig, assignmentId);
-
-            if (aiGradingEnabled && filesArray.length >= 1) {
-                const audioFiles = filesArray.filter(f => isAudioUploadFile(f));
-                if (audioFiles.length === filesArray.length && audioFiles.length > 0) {
-                    const targetFile = audioFiles[0];
-                    if (targetFile.size > 25 * 1024 * 1024) {
-                        throw new Error('音檔超過 25MB，請縮短或壓縮後再上傳。');
-                    }
-                    resetInput();
-                    await uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, targetFile, targetFile.name);
-                    return;
-                }
-            }
-
-            let uploadedFileIds = [];
-
             try {
-                const { userId, classId } = await getAuthContext(); 
-                if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
+                const taskConfig = findTaskConfig(assignmentId, taskId);
+                const aiGradingEnabled = taskSupportsAIGrading(taskConfig, assignmentId);
 
-                if (!window.ApiService || !window.ApiService.uploadToGAS) {
-                    throw new Error("系統 API 模組尚未載入完成，請重整網頁。");
+                if (aiGradingEnabled && filesArray.length >= 1) {
+                    const audioFiles = filesArray.filter(f => isAudioUploadFile(f));
+                    if (audioFiles.length === filesArray.length && audioFiles.length > 0) {
+                        const targetFile = audioFiles[0];
+                        if (targetFile.size > 25 * 1024 * 1024) {
+                            throw new Error('音檔超過 25MB，請縮短或壓縮後再上傳。');
+                        }
+                        resetInput();
+                        await uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, targetFile, targetFile.name);
+                        return;
+                    }
                 }
 
-                let targetFolderId = studentDriveUrl;
-                const match = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
-                if (match && match[1]) targetFolderId = match[1];
+                let uploadedFileIds = [];
+                const { userId, classId } = await getAuthContext();
+                if (!window.ApiService || !window.ApiService.uploadToGAS) {
+                    throw new Error('系統 API 模組尚未載入完成，請重整網頁。');
+                }
+
+                const targetFolderId = resolveStudentUploadFolderId();
 
                 const classPrefix = (classId || '0000').substring(0, 4);
-                const cleanDateKey = dateKey.replace(/[\\/:*?"<>|]/g, '_');
+                const cleanDateKey = String(dateKey || '').replace(/[\\/:*?"<>|]/g, '_');
                 const safeDateStr = (cleanDateKey && cleanDateKey !== '未分類日期') ? `${cleanDateKey}_` : '';
                 const lateSuffixStr = isLate ? '_late' : '';
                 
-                const allImages = filesArray.every(file => file.type.startsWith('image/'));
-                const allAudio = filesArray.every(file => file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|m4a|ogg|aac)$/i));
+                const allImages = filesArray.every(file => file.type && file.type.startsWith('image/'));
+                const allAudio = filesArray.every(file => (file.type && file.type.startsWith('audio/')) || file.name.match(/\.(mp3|wav|m4a|ogg|aac)$/i));
 
                 if (filesArray.length > 1 && allAudio) {
                     updateStatus(`⏳ 準備上傳 ${filesArray.length} 個音檔...`, '#F59E0B');
@@ -841,10 +891,11 @@ window.FeatureStudentTimeline = (() => {
                         const base64Data = (await readFileAsDataURL(file)).split(',')[1];
                         
                         const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
-                        uploadedFileIds.push(result.fileId); 
+                        uploadedFileIds.push({ id: result.fileId, mime: finalMimeType, name: finalFileName }); 
                     }
                     
                     updateStatus('✅ 上傳成功', '#10B981');
+                    window.showFlash('上傳成功！檔案已送到您的專屬資料夾。');
                     setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
                     resetInput(); 
                     return; 
@@ -853,7 +904,7 @@ window.FeatureStudentTimeline = (() => {
                 let base64Data = '', finalMimeType = '', finalFileName = '';
 
                 if (filesArray.length > 1) {
-                    if (!allImages) throw new Error("多檔案上傳目前僅支援「全圖片轉PDF」或「全音檔」。若為混合格式請分次上傳。");
+                    if (!allImages) throw new Error('多檔案上傳目前僅支援「全圖片轉PDF」或「全音檔」。若為混合格式請分次上傳。');
                     updateStatus('⏳ 正在將圖片合併為 PDF...', '#F59E0B');
                     
                     await ensureJsPDFLoaded();
@@ -875,7 +926,7 @@ window.FeatureStudentTimeline = (() => {
                     finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}.pdf`;
                 } else {
                     const file = filesArray[0];
-                    if (file.size > 25 * 1024 * 1024) throw new Error("檔案超過 25MB。");
+                    if (file.size > 25 * 1024 * 1024) throw new Error('檔案超過 25MB。');
                     const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
                     finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}${ext}`;
                     
@@ -899,13 +950,17 @@ window.FeatureStudentTimeline = (() => {
                 updateStatus('🚀 上傳雲端中...', '#3B82F6');
                 
                 const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
-                uploadedFileIds.push(result.fileId); 
+                uploadedFileIds.push({ id: result.fileId, mime: finalMimeType, name: finalFileName }); 
 
                 updateStatus('✅ 上傳成功', '#10B981');
+                window.showFlash('上傳成功！檔案已送到您的專屬資料夾。');
                 setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
 
             } catch (err) {
-                updateStatus(`❌ 失敗: ${err.message}`, '#EF4444');
+                console.error('[handleFileSelect]', err);
+                const msg = (err && err.message) ? err.message : String(err);
+                updateStatus(`❌ 失敗: ${msg}`, '#EF4444');
+                window.showFlash('上傳失敗：' + msg, 'error');
             } finally {
                 resetInput(); 
             }
@@ -1005,12 +1060,9 @@ window.FeatureStudentTimeline = (() => {
                         }
                         
                         const { userId, classId } = await getAuthContext(); 
-                        if (!studentDriveUrl) throw new Error('老師尚未為您設定專屬資料夾！');
                         if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error("系統 API 模組尚未載入");
 
-                        let targetFolderId = studentDriveUrl;
-                        const match = targetFolderId.match(/folders\/([a-zA-Z0-9-_]+)/);
-                        if (match && match[1]) targetFolderId = match[1];
+                        const targetFolderId = resolveStudentUploadFolderId();
 
                         const classPrefix = (classId || '0000').substring(0, 4);
                         const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
@@ -1031,7 +1083,11 @@ window.FeatureStudentTimeline = (() => {
                             }
                             applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
                         } else {
-                            await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [result.fileId]);
+                            await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [{
+                                id: result.fileId,
+                                mime: audioData.mimeType || 'audio/wav',
+                                name: finalFileName
+                            }]);
                             if (statusEl) {
                                 statusEl.textContent = '✅ 已上傳（無文稿，略過 AI）';
                                 statusEl.style.color = '#10B981';
@@ -1057,11 +1113,41 @@ window.FeatureStudentTimeline = (() => {
         },
         
         openDriveAndCheck: async () => {
-            if (!studentDriveUrl) {
-                window.open("https://drive.google.com/", '_blank');
+            const folderId = extractDriveFolderId(studentDriveUrl);
+            if (!folderId) {
+                window.showFlash('尚未設定專屬資料夾，請通知老師綁定。', 'error');
+                window.open('https://drive.google.com/', '_blank');
                 return;
             }
-            window.open(safeFormatUrl(studentDriveUrl), '_blank');
+            // 開啟前盡力補上學生編輯權限，避免「需要存取權」假象干擾確認上傳
+            try {
+                if (window.ApiService && typeof window.ApiService.ensureGASFolderSharing === 'function' && window.supabaseClient) {
+                    const { userId } = await getAuthContext();
+                    const { data: profileRow } = await window.supabaseClient
+                        .from('profiles')
+                        .select('email, raw_data')
+                        .eq('id', userId)
+                        .maybeSingle();
+                    let secondary = '';
+                    try {
+                        let raw = profileRow?.raw_data || {};
+                        if (typeof raw === 'string') raw = JSON.parse(raw);
+                        secondary = (raw?.emailSecondary || '').trim();
+                    } catch (_e) {}
+                    const shareEmails = [...new Set(
+                        [profileRow?.email, secondary]
+                            .map(e => String(e || '').trim().toLowerCase())
+                            .filter(e => e && e.indexOf('@') !== -1)
+                    )];
+                    await window.ApiService.ensureGASFolderSharing(folderId, {
+                        permission: 'edit',
+                        shareEmails: shareEmails
+                    });
+                }
+            } catch (shareErr) {
+                console.warn('[openDriveAndCheck] 補權限失敗', shareErr);
+            }
+            window.open(safeFormatUrl(folderId), '_blank');
         },
 
         retryAIGrading: async (assignmentId, taskId, fileId, audioUrl) => {

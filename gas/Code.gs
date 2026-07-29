@@ -677,12 +677,13 @@ function doPost(e) {
         throw new Error("找不到指定的資料夾，或權限不足 (Folder ID: " + folderId + ")");
       }
 
-      // 班級資源／舊 01_Materials：統一收納到 01_Class_Resources
-      if (!subFolderName
-          || subFolderName === CLASS_RESOURCES_FOLDER
+      // 僅在明確指定時才導向班級資源夾。
+      // 學生繳交（不傳 subFolderName）必須直接寫入 folderId（通常為 01_Submissions），
+      // 否則檔案會被誤丟進資料夾內的 01_Class_Resources，老師在學生夾根目錄會看到「零檔案」。
+      if (subFolderName === CLASS_RESOURCES_FOLDER
           || subFolderName === CLASS_RESOURCES_FOLDER_LEGACY) {
         folder = resolveClassResourcesFolder(folder, true);
-      } else {
+      } else if (subFolderName) {
         folder = getOrCreateSubFolder(folder, subFolderName);
       }
 

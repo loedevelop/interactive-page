@@ -9,21 +9,41 @@
 | `_Publish` | 發布規則（最大可用範圍，不含 #11～15） |
 | `A` … `Z` | 教材內容（phrase / vocab 等） |
 
+## 正確發布路徑（本機）
+
+**不要**把 Excel 上傳到 Drive 發布，**不要**轉成 Google Sheets。
+
+```
+本機 Excel（_Config / _Schema / _Publish + A～Z）
+        ↓  publish_local（本機腳本）
+本機產出 .meta.json + .script.txt（+ _manifest.json）
+        ↓  （之後若要給 Snapshot 用）只上傳這些 json/txt 到 00／01 Materials
+LogOn 出作業 Material Snapshot
+```
+
 ## 快速開始
 
-1. 開啟 Excel，建立活頁 `_Config`、`_Schema`、`_Publish`
-2. 將本資料夾內 CSV **分別複製貼上**到對應活頁（或由「資料 → 自文字」匯入）
-3. 依您的 GEPT-2 版面調整 `_Schema` 的 `excel_col`
-4. 在 `_Publish` 填要發布的來源活頁（如 `C`）、列範圍、`LAST`
-5. 存檔後上傳至 Google Drive（建議：班級 `00_Class_Materials/_draft/` 或老師 `01_My_Materials/_draft/`）
-6. 在 LogOn 老師端 **📦 教材發布** 選擇目標（🏫 班級 00 或 👤 老師個人 01）→ 貼 Drive 檔案 ID／網址 → **發布**
-7. 出錄音作業時在 Material Snapshot 選相同來源 → 載入 meta → 切片 → **套用 Snapshot**（寫入 AI 批改文稿）
+1. 在 Excel 建好 `_Config`、`_Schema`、`_Publish` 與內容活頁（可把本資料夾 CSV 貼上當模板）
+2. 依版面調 `_Schema` 的 `excel_col`；`_Publish` 設要發布的活頁（`enabled=Y`）
+3. **本機產出 json／txt**（在 Terminal）：
+
+```bash
+cd "/Users/glorias/Desktop/PDF處理工具箱/interactive-page/material_templates"
+chmod +x publish_local.sh   # 首次
+./publish_local.sh "/你的路徑/教材.xlsx"
+```
+
+預設輸出到：Excel 同層的 `published/<material_folder>/`  
+也可指定：`./publish_local.sh 教材.xlsx --out /某資料夾`
+
+4. 若 `_Publish` 的檔名用了公式（如 `=B2&".meta.json"`），請先用 Excel **開啟並存檔一次**，讓公式結果寫入快取，再跑腳本。
+5. 出錄音作業時：Material Snapshot 載入已發布的 meta → 切片 → **套用 Snapshot**
 
 ## `_Config` 欄位
 
 | key | 範例 | 說明 |
 |-----|------|------|
-| material_folder | GEPT-2_vocab | 寫入 00／01 母稿根下的子資料夾名 |
+| material_folder | GEPT-2_vocab | 本機輸出子資料夾名（亦供之後放到 00／01 時使用） |
 | last_row_column | A | 計算 `LAST` 時以哪一欄為準 |
 
 ## `_Schema` 欄位
@@ -45,12 +65,8 @@
 | source_sheet | 來源活頁名，如 `C` |
 | row_start | 起始列（通常 `2`，跳過標題） |
 | row_end | 結束列，或 `LAST` |
-| output_meta | 如 `C.meta.json` |
-| output_txt | 如 `C.script.txt`（可留空则不產 txt） |
+| output_meta | 如 `C.meta.json`（可用公式 `=B2&".meta.json"`） |
+| output_txt | 如 `C.script.txt`（可留空則不產 txt） |
 | schema_id | 使用哪一套 `_Schema` 映射 |
 
 **注意：`_Publish` 只定「最大發布範圍」，不出現 #11～15 或「作業第 3 頁」。**
-
-## GAS 部署
-
-`Code.gs` 新增 `publish_material` 動作。若上傳的是 `.xlsx`，請在 GAS 專案啟用 **進階 Google 服務 → Drive API**，或先將檔案在 Drive **以 Google 試算表開啟**後再發布。

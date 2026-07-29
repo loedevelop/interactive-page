@@ -285,7 +285,7 @@ window.TimelineTemplates = (() => {
                         <option value="check" ${t.type === 'check' ? 'selected' : ''}>📌 一般</option>
                         <option value="link" ${t.type === 'link' ? 'selected' : ''}>🔗 連結</option>
                         <option value="drive" ${t.type === 'drive' ? 'selected' : ''}>📁 Drive</option>
-                        <option value="audio_record" ${t.type === 'audio_record' ? 'selected' : ''}>🎙️ 語音錄製</option>
+                        <option value="audio_record" ${t.type === 'audio_record' ? 'selected' : ''}>🎙️ 錄音</option>
                     </select>
                 `;
 
@@ -318,22 +318,33 @@ window.TimelineTemplates = (() => {
                 let audioInputHtml = '';
                 if (t.type === 'audio_record') {
                     const raw = t.raw_data || {};
-                    const useAi = raw.use_ai_grading !== false; 
-                    const useAiGrammar = raw.use_ai_grammar === true; 
-                    
-                    const aiSourceType = raw.ai_source_type || 'text';
-                    const safeAiDriveUrl = (raw.ai_drive_url || '').replace(/"/g, '&quot;');
-                    const safeAiSheet = (raw.ai_sheet || 'Sheet1').replace(/"/g, '&quot;');
-                    const safeAiRange = (raw.ai_range || '').replace(/"/g, '&quot;');
-                    const safeAiLocalSheet = (raw.ai_local_sheet || 'Sheet1').replace(/"/g, '&quot;');
-                    const safeAiLocalRange = (raw.ai_local_range || '').replace(/"/g, '&quot;');
-                    const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
+                    const useAi = raw.use_ai_grading !== false;
+                    const useAiGrammar = raw.use_ai_grammar === true;
+                    const captureStudio = raw.capture_studio !== false;
+                    const captureUpload = raw.capture_upload !== false;
 
-                    const studentSourceType = raw.student_source_type || 'text';
-                    const safeStudentDriveUrl = (raw.student_drive_url || '').replace(/"/g, '&quot;');
-                    const safeStudentDriveDesc = (raw.student_drive_desc || '').replace(/"/g, '&quot;');
-                    const safeStudentLocalDesc = (raw.student_local_desc || '').replace(/"/g, '&quot;');
+                    let scriptSource = raw.script_source || '';
+                    if (!scriptSource) {
+                        if (raw.snapshot_at || (raw.material_ref && raw.material_ref.published_file)) scriptSource = 'meta';
+                        else if (raw.material_url || raw.student_drive_url) scriptSource = 'resource';
+                        else if (raw.original_script || raw.student_display || raw.student_display_text || raw.student_text) scriptSource = 'paste';
+                        else scriptSource = 'meta';
+                    }
+
+                    const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_display_text || raw.student_display || raw.student_text || '').replace(/"/g, '&quot;');
+                    const safeMaterialRange = (raw.material_range || raw.student_drive_desc || '').replace(/"/g, '&quot;');
+                    const safeMaterialUrl = (raw.material_url || raw.student_drive_url || '').replace(/"/g, '&quot;');
+                    const safeStudentDriveUrl = (raw.student_drive_url || raw.material_url || '').replace(/"/g, '&quot;');
+                    const safeStudentDriveDesc = (raw.student_drive_desc || raw.material_range || '').replace(/"/g, '&quot;');
+                    const safeStudentLocalDesc = (raw.student_local_desc || '').replace(/"/g, '&quot;');
+                    const safeStudentLocalB64 = raw.student_local_b64 || '';
+                    const safeStudentLocalMime = raw.student_local_mime || '';
+                    const safeStudentLocalFilename = (raw.student_local_filename || '').replace(/"/g, '&quot;');
+                    const studentSourceTypeHidden = raw.student_local_b64
+                        ? 'local'
+                        : ((raw.student_drive_url || raw.material_url) ? 'drive' : 'text');
+
                     let snapshotJsonAttr = '';
                     if (raw.snapshot_at) {
                         try {
@@ -348,37 +359,40 @@ window.TimelineTemplates = (() => {
                             snapshotJsonAttr = '';
                         }
                     }
-                    
-                    // Base64 快取防呆 (切換頁面時不遺失)
-                    const safeStudentLocalB64 = raw.student_local_b64 || '';
-                    const safeStudentLocalMime = raw.student_local_mime || '';
-                    const safeStudentLocalFilename = (raw.student_local_filename || '').replace(/"/g, '&quot;');
-                    const materialMetaValue = raw.material_ref
-                        ? ((raw.material_ref.material_folder || '') + '::' + (raw.material_ref.published_file || ''))
-                        : '';
-                    const safeMaterialMetaValue = materialMetaValue.replace(/"/g, '&quot;');
-                    const materialRootKind = (raw.material_ref && raw.material_ref.materials_root_kind === 'teacher')
-                        ? 'teacher' : 'class';
-                    const materialMode = (raw.material_ref && raw.material_ref.select_mode) ? raw.material_ref.select_mode : 'item_range';
-                    const materialPage = (raw.material_ref && raw.material_ref.page != null) ? raw.material_ref.page : '';
-                    const materialItemFrom = (raw.material_ref && raw.material_ref.item_from != null) ? raw.material_ref.item_from : '';
-                    const materialItemTo = (raw.material_ref && raw.material_ref.item_to != null) ? raw.material_ref.item_to : '';
+
+                    const materialRefs = Array.isArray(raw.material_refs) && raw.material_refs.length
+                        ? raw.material_refs
+                        : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
+                    const primaryRef = materialRefs[0] || raw.material_ref || {};
+                    const selectedMetaRows = materialRefs.map(function (r) {
+                        return {
+                            value: (r.material_folder || '') + '::' + (r.published_file || ''),
+                            range_spec: r.range_spec || '',
+                            label: r.label || ''
+                        };
+                    }).filter(function (r) { return r.value && r.value !== '::'; });
+                    const materialRootKind = primaryRef.materials_root_kind === 'class' ? 'class' : 'teacher';
+                    const selectedMetaJson = JSON.stringify(selectedMetaRows).replace(/"/g, '&quot;');
                     const snapshotPreview = raw.snapshot_at
-                        ? ('已凍結 snapshot：' + raw.snapshot_at)
+                        ? ('已凍結 snapshot：' + raw.snapshot_at + (safeMaterialRange ? ('｜' + safeMaterialRange) : ''))
                         : '尚未套用 Material snapshot';
 
-                    let resOptsHtmlForStudentDrive = '';
+                    let resOptsHtmlForResource = '';
                     if (classResOpts) {
-                        resOptsHtmlForStudentDrive = `<select class="form-control" style="width:auto; padding:6px; font-size:0.85rem; border-radius:4px; border:1px solid #CBD5E1;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-student-drive-url-${pathStr}');">
-                            <option value="" disabled selected>📚 從資源庫選擇</option>${classResOpts}
+                        resOptsHtmlForResource = `<select class="form-control" style="width:auto; padding:6px; font-size:0.85rem; border-radius:4px; border:1px solid #CBD5E1;" onchange="window.FeatureTimeline.applyResourceUrl('${pathStr}', this.value, 'node-material-url-${pathStr}');">
+                            <option value="" disabled selected>📚 從班級 01 資源庫選擇</option>${classResOpts}
                         </select>`;
                     }
 
+                    const showMeta = scriptSource === 'meta';
+                    const showRangeOnly = scriptSource === 'range_only';
+                    const showPaste = scriptSource === 'paste';
+                    const showResource = scriptSource === 'resource';
+
                     audioInputHtml = `
-                        <div style="margin-top:15px; width:100%; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
-                            
-                            <!-- 🌟 1. AI 開關 (極簡同行) -->
-                            <div style="display:flex; gap: 20px; align-items: center; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px dashed #CBD5E1;">
+                        <div style="margin-top:15px; width:100%; background:#F8FAFC; padding:15px; border-radius:8px; border:1px solid #E2E8F0;">
+
+                            <div style="display:flex; gap:20px; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px dashed #CBD5E1; flex-wrap:wrap;">
                                 <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#4338CA;">
                                     <input type="checkbox" id="node-use-ai-${pathStr}" style="transform:scale(1.2); accent-color:#4338CA;" ${useAi ? 'checked' : ''}> ✨ AI 批改發音
                                 </label>
@@ -387,36 +401,56 @@ window.TimelineTemplates = (() => {
                                 </label>
                             </div>
 
-                            <!-- 🌟 Material Snapshot：從 00 或 老師 01 切片 -->
-                            <div style="background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:15px;">
+                            <div style="margin-bottom:14px; padding:12px; background:white; border:1px solid #E2E8F0; border-radius:8px;">
+                                <div style="font-weight:900; color:#0F172A; margin-bottom:8px;">🎙️ 學生繳交方式</div>
+                                <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center;">
+                                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; color:#334155;">
+                                        <input type="checkbox" id="node-capture-studio-${pathStr}" style="transform:scale(1.15);" ${captureStudio ? 'checked' : ''}> 錄音艙
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; color:#334155;">
+                                        <input type="checkbox" id="node-capture-upload-${pathStr}" style="transform:scale(1.15);" ${captureUpload ? 'checked' : ''}> 上傳音檔
+                                    </label>
+                                    <span style="font-size:0.8rem; color:#64748B;">預設兩者都開；可只留其一</span>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom:14px; padding:12px; background:white; border:1px solid #E2E8F0; border-radius:8px;">
+                                <div style="font-weight:900; color:#0F172A; margin-bottom:8px;">📄 文稿來源</div>
+                                <select id="node-script-source-${pathStr}" class="form-control" style="width:100%; max-width:560px; padding:8px; font-size:0.9rem; font-weight:800;" onchange="window.FeatureTimeline.onScriptSourceChange('${pathStr}')">
+                                    <option value="meta" ${scriptSource === 'meta' ? 'selected' : ''}>A. meta + base 範圍（套用 Snapshot；一定有顯示文稿）</option>
+                                    <option value="range_only" ${scriptSource === 'range_only' ? 'selected' : ''}>B. 無 meta + base 範圍（僅範圍，無文稿本體）</option>
+                                    <option value="paste" ${scriptSource === 'paste' ? 'selected' : ''}>C. 無 meta + 自行貼上 + base 範圍</option>
+                                    <option value="resource" ${scriptSource === 'resource' ? 'selected' : ''}>D. 無 meta + 資源（如 PDF）+ base 範圍 → 班級 01</option>
+                                </select>
+                                <div style="font-size:0.78rem; color:#64748B; margin-top:6px;">老師指哪裡就讀哪裡；班級真相是 Snapshot。有 meta 時學生可收起文稿，只留錄音鍵。</div>
+                            </div>
+
+                            <div id="node-base-range-wrap-${pathStr}" style="display:${showMeta ? 'none' : 'flex'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">
+                                <span style="font-weight:900; color:#92400E; font-size:0.9rem;">📍 base 範圍（必填）</span>
+                                <input type="text" id="node-material-range-manual-${pathStr}" class="form-control" style="flex:1; min-width:200px; padding:8px;" value="${safeMaterialRange}" placeholder="例：A pp. 1~2 B pp. 1~2">
+                            </div>
+
+                            <div id="script-source-panel-meta-${pathStr}" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-                                    <div style="font-weight:900; color:#5B21B6;">📦 Material Snapshot（出作業凍結稿）</div>
+                                    <div style="font-weight:900; color:#5B21B6;">📦 Material Snapshot（＋新增 meta 列）</div>
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')">🔄 載入 meta 清單</button>
                                 </div>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
                                     <select id="node-material-root-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:800;" onchange="window.FeatureTimeline.onMaterialRootChange('${pathStr}')">
-                                        <option value="class" ${materialRootKind === 'class' ? 'selected' : ''}>🏫 班級 00</option>
-                                        <option value="teacher" ${materialRootKind === 'teacher' ? 'selected' : ''}>👤 老師個人 01</option>
+                                        <option value="teacher" ${materialRootKind === 'teacher' ? 'selected' : ''}>👤 老師個人母稿</option>
+                                        <option value="class" ${materialRootKind === 'class' ? 'selected' : ''}>🏫 班級 00（若有）</option>
                                     </select>
-                                    <select id="node-material-meta-select-${pathStr}" class="form-control" style="flex:2; min-width:220px; padding:6px; font-size:0.85rem;">
-                                        ${safeMaterialMetaValue ? `<option value="${safeMaterialMetaValue}" selected>${safeMaterialMetaValue.replace(/::/g, ' / ')}</option>` : ''}
-                                        <option value="" ${safeMaterialMetaValue ? '' : 'selected'}>— 請先按「載入 meta 清單」—</option>
-                                    </select>
-                                    <select id="node-material-mode-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:700;" onchange="window.FeatureTimeline.onMaterialModeChange('${pathStr}')">
-                                        <option value="item_range" ${materialMode === 'item_range' ? 'selected' : ''}># 題號範圍</option>
-                                        <option value="page" ${materialMode === 'page' ? 'selected' : ''}>整頁 page</option>
-                                        <option value="all" ${materialMode === 'all' ? 'selected' : ''}>全部列</option>
-                                    </select>
+                                    <span style="font-size:0.78rem; color:#64748B;">每列一個 meta；範圍例：<code>pp. 1~2, 5, 10</code> 或 <code>#11~16, 26</code></span>
                                 </div>
-                                <div id="node-material-page-wrap-${pathStr}" style="display:${materialMode === 'page' ? 'flex' : 'none'}; gap:8px; align-items:center; margin-bottom:8px;">
-                                    <span style="font-size:0.85rem; font-weight:800; color:#475569;">page</span>
-                                    <input type="number" id="node-material-page-${pathStr}" class="form-control" style="width:100px; padding:6px;" value="${materialPage}" placeholder="3">
+                                <div id="node-material-rows-${pathStr}" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;"></div>
+                                <input type="hidden" id="node-material-selected-json-${pathStr}" value="${selectedMetaJson}">
+                                <div style="margin-bottom:8px;">
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.addMaterialMetaRow('${pathStr}')">＋ 新增 meta</button>
                                 </div>
-                                <div id="node-material-range-wrap-${pathStr}" style="display:${materialMode === 'item_range' ? 'flex' : 'none'}; gap:8px; align-items:center; margin-bottom:8px;">
-                                    <span style="font-size:0.85rem; font-weight:800; color:#475569;">#</span>
-                                    <input type="number" id="node-material-item-from-${pathStr}" class="form-control" style="width:100px; padding:6px;" value="${materialItemFrom}" placeholder="11">
-                                    <span>～</span>
-                                    <input type="number" id="node-material-item-to-${pathStr}" class="form-control" style="width:100px; padding:6px;" value="${materialItemTo}" placeholder="15">
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; padding:10px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px;">
+                                    <span style="font-weight:900; color:#92400E; font-size:0.85rem;">📍 base 範圍</span>
+                                    <input type="text" id="node-material-range-${pathStr}" class="form-control" style="flex:1; min-width:220px; padding:8px; font-weight:800;" value="${safeMaterialRange}" placeholder="例：A pp. 1~2, 5, 10；D #11~16, 26">
+                                    <button type="button" class="btn-action" style="font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.refreshMaterialRangeLabel('${pathStr}')">依列重算</button>
                                 </div>
                                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')">👁 預覽</button>
@@ -425,141 +459,52 @@ window.TimelineTemplates = (() => {
                                 <div id="node-material-status-${pathStr}" style="font-size:0.8rem; color:#64748B; margin-bottom:6px;"></div>
                                 <div id="node-material-preview-${pathStr}" style="font-size:0.8rem; color:#475569; background:white; border:1px dashed #CBD5E1; border-radius:6px; padding:8px; max-height:160px; overflow:auto;">${snapshotPreview}</div>
                                 <input type="hidden" id="node-material-snapshot-json-${pathStr}" value="${snapshotJsonAttr}">
+                                <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+                                    <div>
+                                        <div style="font-weight:800; font-size:0.85rem; color:#4338CA; margin-bottom:4px;">🎯 AI 批改文稿（可微調）</div>
+                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="套用 Snapshot 後會填入；可再微調">${safeScript}</textarea>
+                                    </div>
+                                    <div>
+                                        <div style="font-weight:800; font-size:0.85rem; color:#065F46; margin-bottom:4px;">👀 學生顯示文稿（有 meta 必有；學生端可收起）</div>
+                                        <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="套用 Snapshot 後會填入">${safeStudentText}</textarea>
+                                    </div>
+                                </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:15px;">
-                                
-                                <!-- 🌟 2. 批改文稿區 (AI 基準) -->
-                                <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 12px;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
-                                        <div style="font-weight: 900; color: #334155; font-size: 1rem;">🎯 批改文稿 (AI 評分基準)</div>
-                                        <select id="node-ai-source-type-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem; font-weight:bold; background:#EEF2FF; border-color:#A5B4FC; color:#4338CA; outline:none;" onchange="
-                                            document.getElementById('ai-source-drive-${pathStr}').style.display = (this.value === 'drive') ? 'flex' : 'none';
-                                            document.getElementById('ai-source-local-${pathStr}').style.display = (this.value === 'local') ? 'flex' : 'none';
-                                        ">
-                                            <option value="text" ${aiSourceType === 'text' ? 'selected' : ''}>📝 貼上文字</option>
-                                            <option value="drive" ${aiSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結萃取</option>
-                                            <option value="local" ${aiSourceType === 'local' ? 'selected' : ''}>📂 Local 端開啟檔案</option>
-                                        </select>
-                                    </div>
+                            <div id="script-source-panel-range_only-${pathStr}" style="display:${showRangeOnly ? 'block' : 'none'}; margin-bottom:14px; padding:12px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:8px; font-size:0.85rem; color:#475569;">
+                                僅交代學生念哪一段（上方 base 範圍）。無顯示文稿本體；若要 AI 請改選 C 貼上或 A meta。
+                            </div>
 
-                                    <!-- AI Source: Drive (PDF 或 Excel) -->
-                                    <div id="ai-source-drive-${pathStr}" style="display:${aiSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px;">
-                                        <input type="url" id="node-ai-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入 Google Sheets / Drive PDF 網址" value="${safeAiDriveUrl}">
-                                        <input type="text" id="node-ai-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁 (Excel用)" value="${safeAiSheet}">
-                                        <input type="text" id="node-ai-range-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="範圍 (例: A1:B20)" value="${safeAiRange}">
-                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#10B981; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
-                                            const url = document.getElementById('node-ai-drive-url-${pathStr}').value;
-                                            if(!url) return window.showFlash('請先填寫網址！', 'error');
-                                            const targetArea = document.getElementById('node-script-${pathStr}');
-                                            const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
-                                            
-                                            if(url.includes('spreadsheets') || url.includes('excel')) {
-                                                if(typeof window.GasService === 'undefined') { window.showFlash('系統錯誤：找不到 GasService。', 'error'); btn.innerText = '執行萃取'; btn.disabled = false; return; }
-                                                window.GasService.extractSheetData(url, document.getElementById('node-ai-sheet-${pathStr}').value || 'Sheet1', document.getElementById('node-ai-range-${pathStr}').value || 'A1:B20')
-                                                .then(text => { targetArea.value = text; window.showFlash('Excel 萃取成功，請人工核對內容'); })
-                                                .catch(err => window.showFlash('失敗：' + err.message, 'error'))
-                                                .finally(() => { btn.innerText = '執行萃取'; btn.disabled = false; });
-                                            } else {
-                                                window.showFlash('若來源為 Drive PDF，受限於權限，請手動將文字貼入下方文字框。', 'error');
-                                                btn.innerText = '執行萃取'; btn.disabled = false;
-                                            }
-                                        ">執行萃取</button>
+                            <div id="script-source-panel-paste-${pathStr}" style="display:${showPaste ? 'block' : 'none'}; margin-bottom:14px;">
+                                <div style="display:flex; flex-direction:column; gap:12px;">
+                                    <div style="background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
+                                        <div style="font-weight:900; color:#334155; margin-bottom:8px;">🎯 批改文稿（AI 基準）</div>
+                                        <textarea id="node-script-paste-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上 AI 評分用英文稿…">${safeScript}</textarea>
                                     </div>
-
-                                    <!-- 真實實作：AI Source Local (.pdf, .xlsx, .xls, .csv, .txt) -->
-                                    <div id="ai-source-local-${pathStr}" style="display:${aiSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px; align-items:center;">
-                                        <input type="file" id="node-ai-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,.txt" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;">
-                                        <input type="text" id="node-ai-local-sheet-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="活頁 (Excel用)" value="${safeAiLocalSheet}">
-                                        <input type="text" id="node-ai-local-range-${pathStr}" class="form-control" style="flex:1; min-width:60px; padding:6px; font-size:0.85rem;" placeholder="範圍 (Excel用)" value="${safeAiLocalRange}">
-                                        <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="
-                                            const file = document.getElementById('node-ai-local-file-${pathStr}').files[0];
-                                            if (!file) return window.showFlash('請先選擇檔案', 'error');
-                                            const targetArea = document.getElementById('node-script-${pathStr}');
-                                            const btn = this; btn.innerText = '⏳...'; btn.disabled = true;
-                                            
-                                            if (file.name.endsWith('.pdf')) {
-                                                if(window.FeatureTimeline && window.FeatureTimeline.handlePDFUpload) {
-                                                    window.FeatureTimeline.handlePDFUpload(document.getElementById('node-ai-local-file-${pathStr}'), '${pathStr}');
-                                                } else { window.showFlash('PDF 解析模組未載入。', 'error'); }
-                                                btn.innerText = '前端解析取字'; btn.disabled = false;
-                                            } else if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
-                                                const reader = new FileReader();
-                                                reader.onload = e => { targetArea.value = e.target.result; window.showFlash('讀取成功'); btn.innerText = '前端解析取字'; btn.disabled = false; };
-                                                reader.readAsText(file);
-                                            } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-                                                if(typeof XLSX === 'undefined') {
-                                                    window.showFlash('找不到 Excel 解析模組 (SheetJS)，請確認 index.html 是否有正確載入。', 'error');
-                                                    btn.innerText = '前端解析取字'; btn.disabled = false;
-                                                    return;
-                                                }
-                                                const reader = new FileReader();
-                                                reader.onload = e => {
-                                                    try {
-                                                        const data = new Uint8Array(e.target.result);
-                                                        const workbook = XLSX.read(data, {type: 'array'});
-                                                        const sheetName = document.getElementById('node-ai-local-sheet-${pathStr}').value || workbook.SheetNames[0];
-                                                        const worksheet = workbook.Sheets[sheetName];
-                                                        if(!worksheet) throw new Error('找不到工作表: ' + sheetName);
-                                                        
-                                                        const rangeVal = document.getElementById('node-ai-local-range-${pathStr}').value;
-                                                        const options = { header: 1 };
-                                                        if(rangeVal) options.range = rangeVal;
-                                                        
-                                                        const json = XLSX.utils.sheet_to_json(worksheet, options);
-                                                        targetArea.value = json.map(row => Object.values(row).join(' ')).join('\\n');
-                                                        window.showFlash('Local Excel 取字成功');
-                                                    } catch(err) { window.showFlash('Excel 解析失敗：' + err.message, 'error'); }
-                                                    finally { btn.innerText = '前端解析取字'; btn.disabled = false; }
-                                                };
-                                                reader.readAsArrayBuffer(file);
-                                            } else {
-                                                window.showFlash('不支援的檔案格式。', 'error');
-                                                btn.innerText = '前端解析取字'; btn.disabled = false;
-                                            }
-                                        ">前端解析取字</button>
+                                    <div style="background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
+                                        <div style="font-weight:900; color:#334155; margin-bottom:8px;">👀 學生顯示文稿</div>
+                                        <textarea id="node-student-text-paste-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上學生錄音艙看到的內容…">${safeStudentText}</textarea>
                                     </div>
-
-                                    <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="請在此確認與編輯最終純淨的 AI 批改基準文字...">${safeScript}</textarea>
+                                    <div style="font-size:0.78rem; color:#64748B;">內容寫入作業 Snapshot 欄位；建議歸檔本班 01_Class_Resources。</div>
                                 </div>
+                            </div>
 
-                                <!-- 🌟 3. 學生端文稿區 (視覺教材) -->
-                                <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 12px;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
-                                        <div style="font-weight: 900; color: #334155; font-size: 1rem;">👀 學生端文稿 (錄音視覺教材)</div>
-                                        <select id="node-student-source-type-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem; font-weight:bold; background:#F0FDF4; border-color:#6EE7B7; color:#065F46; outline:none;" onchange="
-                                            document.getElementById('student-source-drive-${pathStr}').style.display = (this.value === 'drive') ? 'flex' : 'none';
-                                            document.getElementById('student-source-local-${pathStr}').style.display = (this.value === 'local') ? 'flex' : 'none';
-                                            document.getElementById('student-source-text-${pathStr}').style.display = (this.value === 'text') ? 'block' : 'none';
-                                        ">
-                                            <option value="text" ${studentSourceType === 'text' ? 'selected' : ''}>📝 貼上文字</option>
-                                            <option value="drive" ${studentSourceType === 'drive' ? 'selected' : ''}>🔗 Drive 連結 / 雲端</option>
-                                            <option value="local" ${studentSourceType === 'local' ? 'selected' : ''}>📂 本機檔案 (上傳 PDF/Excel)</option>
-                                        </select>
-                                    </div>
-
-                                    <!-- Student Source: Drive -->
-                                    <div id="student-source-drive-${pathStr}" style="display:${studentSourceType === 'drive' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; margin-bottom:10px;">
-                                        <input type="url" id="node-student-drive-url-${pathStr}" class="form-control" style="flex:2; min-width:150px; padding:6px; font-size:0.85rem;" placeholder="輸入教材 Drive 連結" value="${safeStudentDriveUrl}">
-                                        <input type="text" id="node-student-drive-desc-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="範圍/說明 (選填)" value="${safeStudentDriveDesc}">
-                                        ${resOptsHtmlForStudentDrive}
-                                    </div>
-
-                                    <!-- Student Source: Local (For Uploading Files) -->
-                                    <div id="student-source-local-${pathStr}" style="display:${studentSourceType === 'local' ? 'flex' : 'none'}; gap:8px; flex-wrap:wrap; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0; align-items:center; margin-bottom:10px;">
-                                        <input type="file" id="node-student-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,image/*" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;" onchange="window.FeatureTimeline.handleStudentLocalFileChange(this, '${pathStr}')">
-                                        <input type="text" id="node-student-local-desc-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="範圍/說明 (選填)" value="${safeStudentLocalDesc}">
-                                        <span style="font-size:0.8rem; color:#64748B; width:100%;">📌 提示：選取後將於儲存時自動上傳至雲端，並轉為 Drive 網址供學生讀取 (支援 PDF/Excel/圖片)。</span>
-                                        <!-- 隱藏 Base64 暫存區 -->
-                                        <input type="hidden" id="node-student-local-b64-${pathStr}" value="${safeStudentLocalB64}">
-                                        <input type="hidden" id="node-student-local-mime-${pathStr}" value="${safeStudentLocalMime}">
-                                        <input type="hidden" id="node-student-local-filename-${pathStr}" value="${safeStudentLocalFilename}">
-                                    </div>
-
-                                    <!-- Student Source: Text Area -->
-                                    <div id="student-source-text-${pathStr}" style="display:${studentSourceType === 'text' ? 'block' : 'none'};">
-                                        <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="請輸入或貼上給學生看的純文字內容...">${safeStudentText}</textarea>
-                                    </div>
+                            <div id="script-source-panel-resource-${pathStr}" style="display:${showResource ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
+                                <div style="font-weight:900; color:#334155; margin-bottom:8px;">📁 資源（PDF 等）→ 班級 01_Class_Resources</div>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                                    <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:2; min-width:180px; padding:8px; font-size:0.85rem;" placeholder="Drive／資源網址" value="${safeMaterialUrl}">
+                                    ${resOptsHtmlForResource}
+                                </div>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
+                                    <input type="file" id="node-student-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,image/*" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;" onchange="window.FeatureTimeline.handleStudentLocalFileChange(this, '${pathStr}')">
+                                    <input type="text" id="node-student-local-desc-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="說明（選填）" value="${safeStudentLocalDesc}">
+                                    <span style="font-size:0.78rem; color:#64748B; width:100%;">選本機檔後，儲存作業時會上傳到本班 01_Class_Resources。</span>
+                                    <input type="hidden" id="node-student-local-b64-${pathStr}" value="${safeStudentLocalB64}">
+                                    <input type="hidden" id="node-student-local-mime-${pathStr}" value="${safeStudentLocalMime}">
+                                    <input type="hidden" id="node-student-local-filename-${pathStr}" value="${safeStudentLocalFilename}">
+                                    <input type="hidden" id="node-student-drive-url-${pathStr}" value="${safeStudentDriveUrl}">
+                                    <input type="hidden" id="node-student-drive-desc-${pathStr}" value="${safeStudentDriveDesc}">
+                                    <input type="hidden" id="node-student-source-type-${pathStr}" value="${studentSourceTypeHidden}">
                                 </div>
                             </div>
                         </div>

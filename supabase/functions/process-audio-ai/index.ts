@@ -507,17 +507,19 @@ serve(async (req: Request) => {
           const siblingLink = findSiblingScriptLink(assignmentTasks, record.task_id);
           if (siblingLink?.url) {
             const linkUrl = String(siblingLink.url).trim();
-            if (!/^https?:\/\//i.test(linkUrl)) {
+            // 僅接受「非 URL 的純文稿」貼在連結欄；http(s) 連結不當作文稿內容
+            if (linkUrl && !/^https?:\/\//i.test(linkUrl)) {
               originalScript = linkUrl;
             }
           }
         }
 
-        if (
-          foundTask &&
+        // 有可用文稿才開 AI；禁止「僅因有 sibling link」就強制送 AI
+        if (!String(originalScript || "").trim()) {
+          useAiGrading = false;
+        } else if (
           foundTask.use_ai_grading !== false &&
-          (!foundTask.raw_data || foundTask.raw_data.use_ai_grading !== false) &&
-          (originalScript || findSiblingScriptLink(assignmentTasks, record.task_id))
+          (!foundTask.raw_data || foundTask.raw_data.use_ai_grading !== false)
         ) {
           useAiGrading = true;
         }
@@ -528,18 +530,39 @@ serve(async (req: Request) => {
       originalScript = assignmentRaw.original_script || "";
     }
 
-    if (!useAiGrading) {
-      await supabase.from("task_completions").update({ status: "submitted" }).eq("id", record.id);
-      return new Response(JSON.stringify({ message: "AI Grading is disabled for this task." }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const scriptResolved = resolveEffectiveScript(originalScript, materialRange);
     const effectiveScript = scriptResolved.text;
-    if (!effectiveScript) {
-      throw new Error("Fatal: original_script is missing in assignment tasks.");
+
+    // 無文稿或關閉 AI：只視為已繳交，禁止丟 Fatal / ai_error（上傳仍有效）
+    if (!useAiGrading || !effectiveScript) {
+      const skipRaw = {
+        ...currentRawData,
+        ai_skip_reason: !useAiGrading
+          ? "use_ai_grading_disabled"
+          : "original_script_missing",
+        ai_skipped_at: new Date().toISOString(),
+      };
+      delete (skipRaw as any).ai_error_log;
+      delete (skipRaw as any).failed_at;
+      await supabase
+        .from("task_completions")
+        .update({
+          status: "submitted",
+          raw_data: skipRaw,
+        })
+        .eq("id", record.id);
+      return new Response(
+        JSON.stringify({
+          message: !useAiGrading
+            ? "AI Grading is disabled for this task."
+            : "Skipped AI grading: original_script is missing (submission kept).",
+          skipped_ai: true,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     let driveUrl =

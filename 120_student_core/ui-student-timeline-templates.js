@@ -50,6 +50,82 @@ window.UIStudentTimelineTemplates = (() => {
         }
     };
 
+    const guessSubmittedKind = (fileId, audioUrl, fileMeta) => {
+        const metaMime = fileMeta && fileMeta.mime ? String(fileMeta.mime).toLowerCase() : '';
+        const metaName = fileMeta && fileMeta.name ? String(fileMeta.name).toLowerCase() : '';
+        const url = String(audioUrl || '').toLowerCase();
+        const hay = metaMime + ' ' + metaName + ' ' + url;
+        if (/audio\/|\.wav|\.mp3|\.m4a|\.ogg|\.aac|\.webm|\.flac/.test(hay)) return 'audio';
+        if (/image\/|\.png|\.jpe?g|\.gif|\.webp|\.bmp|\.heic/.test(hay)) return 'image';
+        if (/pdf|\.pdf|application\/pdf/.test(hay)) return 'pdf';
+        // Recording／上傳音檔任務常見：有 fileId 且有 student_audio_url → 當音檔
+        if (audioUrl && /drive\.google\.com\/file/.test(String(audioUrl))) return 'audio';
+        return 'file';
+    };
+
+    const resolveStreamUrl = (fileId) => {
+        if (!fileId) return '';
+        if (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function') {
+            return window.ApiService.getAudioStreamUrl(fileId);
+        }
+        return `https://drive.google.com/uc?export=download&id=${fileId}`;
+    };
+
+    const resolveDriveViewUrl = (fileId) => {
+        if (window.ApiService && typeof window.ApiService.getDriveFileViewUrl === 'function') {
+            return window.ApiService.getDriveFileViewUrl(fileId);
+        }
+        return `https://drive.google.com/file/d/${fileId}/view`;
+    };
+
+    const resolveDrivePreviewUrl = (fileId) => {
+        if (window.ApiService && typeof window.ApiService.getDriveFilePreviewUrl === 'function') {
+            return window.ApiService.getDriveFilePreviewUrl(fileId);
+        }
+        return `https://drive.google.com/thumbnail?id=${fileId}&sz=w640`;
+    };
+
+    /** 已繳交檔：音檔播放／圖片顯示／文件開預覽（開的是檔案，不是資料夾） */
+    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas) => {
+        const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean).map(String) : [];
+        if (ids.length === 0 && audioUrl) {
+            const m = String(audioUrl).match(/\/d\/([a-zA-Z0-9_-]+)/);
+            if (m && m[1]) ids.push(m[1]);
+        }
+        if (ids.length === 0) return '';
+
+        const metas = Array.isArray(fileMetas) ? fileMetas : [];
+        let html = '<div style="display:flex; flex-direction:column; gap:8px; width:100%;">';
+        ids.forEach((fileId, idx) => {
+            const meta = metas.find(function (m) { return m && String(m.id) === String(fileId); }) || metas[idx] || null;
+            const kind = guessSubmittedKind(fileId, idx === 0 ? audioUrl : '', meta);
+            const viewUrl = resolveDriveViewUrl(fileId);
+            const playerId = ids.length === 1 ? inlinePlayerId : `${inlinePlayerId}-${idx}`;
+
+            if (kind === 'audio') {
+                const streamUrl = resolveStreamUrl(fileId);
+                html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="metadata" style="height:36px; max-width:min(320px,100%); outline:none; border-radius:8px; vertical-align:middle; box-shadow:0 1px 3px rgba(0,0,0,0.1);"></audio>
+                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟音檔</a>
+                </div>`;
+            } else if (kind === 'image') {
+                const previewUrl = resolveDrivePreviewUrl(fileId);
+                html += `<div style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
+                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" title="開啟原圖">
+                        <img src="${escapeAttr(previewUrl)}" alt="繳交圖片" style="max-width:min(360px,100%); max-height:220px; border-radius:8px; border:1px solid #E2E8F0; object-fit:contain; background:#F8FAFC;" onerror="this.style.display='none'">
+                    </a>
+                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟圖片</a>
+                </div>`;
+            } else {
+                html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; text-decoration:none; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800;">📄 開啟繳交檔</a>
+                </div>`;
+            }
+        });
+        html += '</div>';
+        return html;
+    };
+
     // 🎧 2. 錯音切片連動引擎
     let sliceTimerInterval = null;
     let sliceAudioCache = {};
@@ -587,7 +663,7 @@ window.UIStudentTimelineTemplates = (() => {
             .replace(/\r/g, '');
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V109 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V111 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -622,7 +698,9 @@ window.UIStudentTimelineTemplates = (() => {
                     let retryAudioId = '';
                     let retryAudioUrl = '';
                     let taskStatus = '';
-                    let directAudioUrl = ''; 
+                    let directAudioUrl = '';
+                    let submittedFileIds = [];
+                    let submittedFileMetas = [];
                     
                     let inlinePlayerId = '';
                     if (course.id) {
@@ -642,16 +720,16 @@ window.UIStudentTimelineTemplates = (() => {
                                     let url2 = compRecord.raw_data.audio_url;
                                     retryAudioUrl = String(url1 ? url1 : (url2 ? url2 : ''));
                                     
-                                    let hasDriveIds = false;
                                     if (Array.isArray(compRecord.raw_data.drive_file_ids)) {
-                                        if (compRecord.raw_data.drive_file_ids.length > 0) {
-                                            hasDriveIds = true;
-                                        }
+                                        submittedFileIds = compRecord.raw_data.drive_file_ids.map(String).filter(Boolean);
+                                    }
+                                    if (Array.isArray(compRecord.raw_data.submitted_files)) {
+                                        submittedFileMetas = compRecord.raw_data.submitted_files;
                                     }
 
                                     if (!retryAudioUrl) {
-                                        if (hasDriveIds) {
-                                            retryAudioId = String(compRecord.raw_data.drive_file_ids[0]);
+                                        if (submittedFileIds.length > 0) {
+                                            retryAudioId = String(submittedFileIds[0]);
                                             retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
                                         }
                                     } else if (retryAudioUrl) {
@@ -662,47 +740,56 @@ window.UIStudentTimelineTemplates = (() => {
                                         
                                         if (driveIdMatch) retryAudioId = driveIdMatch[1];
                                     }
+
+                                    if (retryAudioId && submittedFileIds.indexOf(String(retryAudioId)) === -1) {
+                                        submittedFileIds.unshift(String(retryAudioId));
+                                    }
                                     
-                                    if (retryAudioId) {
+                                    if (submittedFileIds.length > 0 || retryAudioUrl) {
                                         hasValidAudioFile = true;
-                                        if (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function') {
-                                            directAudioUrl = window.ApiService.getAudioStreamUrl(retryAudioId);
-                                        } else {
-                                            directAudioUrl = `https://drive.google.com/uc?export=download&id=${retryAudioId}`;
+                                        if (retryAudioId) {
+                                            // 與錄音艙／AI 報告切片同一條：Supabase stream-audio（勿用 GAS Web App 當 audio src）
+                                            directAudioUrl = resolveStreamUrl(retryAudioId);
+                                        } else if (retryAudioUrl) {
+                                            directAudioUrl = retryAudioUrl;
                                         }
-                                    } else if (retryAudioUrl) {
-                                        hasValidAudioFile = true;
-                                        directAudioUrl = retryAudioUrl;
                                     }
                                 }
 
-                                if (taskStatus === 'ai_processing') {
+                                // 無文稿被誤送 AI 的舊資料：不當成「批改失敗」
+                                const skipAiMissingScript = !!(compRecord.raw_data && (
+                                    compRecord.raw_data.ai_skip_reason === 'original_script_missing'
+                                    || /original_script is missing/i.test(String(compRecord.raw_data.ai_error_log || ''))
+                                ));
+                                const effectiveTaskStatus = (taskStatus === 'ai_error' || taskStatus === 'failed') && skipAiMissingScript
+                                    ? 'submitted'
+                                    : taskStatus;
+
+                                if (effectiveTaskStatus === 'ai_processing') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
-                                } else if (taskStatus === 'ai_ready') {
+                                } else if (effectiveTaskStatus === 'ai_ready') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🤖 AI 分析完成</span>`;
-                                } else if (taskStatus === 'graded') {
+                                } else if (effectiveTaskStatus === 'graded') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
-                                } else if (taskStatus === 'completed') {
+                                } else if (effectiveTaskStatus === 'completed') {
                                     // 自我勾選完成 ≠ 老師／AI 批改
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#F1F5F9; color:#475569; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #CBD5E1;">✅ 已完成</span>`;
-                                } else if (taskStatus === 'ai_error') {
+                                } else if (effectiveTaskStatus === 'ai_error' || effectiveTaskStatus === 'failed') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
-                                } else if (taskStatus === 'failed') {
-                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
-                                } else if (taskStatus === 'submitted') {
-                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">⏳ 已繳交</span>`;
+                                } else if (effectiveTaskStatus === 'submitted') {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">✅ 已繳交</span>`;
                                 }
 
                                 let showAIReport = false;
-                                if (taskStatus === 'graded') showAIReport = true;
-                                else if (taskStatus === 'ai_ready') showAIReport = true;
-                                else if (taskStatus === 'completed' && compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
+                                if (effectiveTaskStatus === 'graded') showAIReport = true;
+                                else if (effectiveTaskStatus === 'ai_ready') showAIReport = true;
+                                else if (effectiveTaskStatus === 'completed' && compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
                                     showAIReport = true;
                                 }
 
                                 let scoreDisclaimer = '';
                                 if (window.GradingPolicy && window.GradingPolicy.studentScoreDisclaimer) {
-                                    scoreDisclaimer = window.GradingPolicy.studentScoreDisclaimer(classGradingPolicy, compRecord.raw_data, taskStatus);
+                                    scoreDisclaimer = window.GradingPolicy.studentScoreDisclaimer(classGradingPolicy, compRecord.raw_data, effectiveTaskStatus);
                                 }
 
                                 if (showAIReport) {
@@ -751,8 +838,9 @@ window.UIStudentTimelineTemplates = (() => {
                                 }
 
                                 let showAIError = false;
-                                if (taskStatus === 'ai_error') showAIError = true;
-                                else if (taskStatus === 'failed') showAIError = true;
+                                if ((effectiveTaskStatus === 'ai_error' || effectiveTaskStatus === 'failed') && !skipAiMissingScript) {
+                                    showAIError = true;
+                                }
 
                                 if (showAIError) {
                                     let errorLogText = '系統尚未完成此作業的 AI 分析。';
@@ -796,7 +884,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                         if (actualUrlText !== '') {
                             let displayTitle = actualTitle ? actualTitle : '未命名任務';
-                            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
+                            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
                             linkContent = formattedTaskUrl ? `<a href="${escapeAttr(formattedTaskUrl)}" target="_blank" class="btn-action" style="font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', true)">${escapeAttr(actualUrlText)}</a>` : '';
                         } else {
                             let fallbackText = actualTitle ? actualTitle : '未命名連結';
@@ -823,7 +911,10 @@ window.UIStudentTimelineTemplates = (() => {
                         }
 
                         let displayTitle = stripHtml(task.title ? task.title : '語音錄製任務');
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle;">${escapeAttr(displayTitle)}</span>`;
+
+                        const captureStudio = !(task.raw_data && task.raw_data.capture_studio === false);
+                        const captureUpload = !(task.raw_data && task.raw_data.capture_upload === false);
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -854,9 +945,12 @@ window.UIStudentTimelineTemplates = (() => {
                             let manualSubmitBtnHtml = '';
 
                             if (hasValidAudioFile) {
-                                if (directAudioUrl !== '') {
-                                    audioPlayerHtml = `<audio id="${inlinePlayerId}" controls src="${escapeAttr(directAudioUrl)}" preload="metadata" style="height: 36px; max-width: 250px; outline: none; border-radius: 8px; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></audio>`;
-                                }
+                                audioPlayerHtml = buildSubmittedFilesHtml(
+                                    submittedFileIds,
+                                    retryAudioUrl,
+                                    inlinePlayerId,
+                                    submittedFileMetas
+                                );
                                 
                                 let showManualSubmit = false;
                                 if (taskStatus === 'submitted') showManualSubmit = true;
@@ -875,13 +969,24 @@ window.UIStudentTimelineTemplates = (() => {
                                 }
                             }
 
+                            const openFileBtnHtml = (hasValidAudioFile && retryAudioId)
+                                ? `<a href="${escapeAttr(resolveDriveViewUrl(retryAudioId))}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; text-decoration:none; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📂 繳交檔</a>`
+                                : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>`;
+
+                            const studioBtnHtml = captureStudio
+                                ? `<button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>`
+                                : '';
+                            const uploadBtnHtml = captureUpload
+                                ? `<input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
+                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;" title="支援 mp3、wav、m4a、webm 等">📤 上傳音檔</button>`
+                                : '';
+
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${audioPlayerHtml}
-                                    <button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>
-                                    <input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
-                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;" title="支援 mp3、wav、m4a、webm 等，上傳後自動 AI 批改">📤 上傳音檔 AI 批改</button>
-                                    <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
+                                    ${studioBtnHtml}
+                                    ${uploadBtnHtml}
+                                    ${openFileBtnHtml}
                                     ${manualSubmitBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
@@ -889,7 +994,7 @@ window.UIStudentTimelineTemplates = (() => {
                         }
                     } else if (task.type === 'drive') {
                         let displayTitle = stripHtml(task.title ? task.title : '未命名任務');
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
 
                         if (!canUpload) {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
@@ -909,18 +1014,26 @@ window.UIStudentTimelineTemplates = (() => {
                             const uniqueId = `file-input-${course.id}-${task.id}`;
                             const statusId = `upload-status-${course.id}-${task.id}`;
 
+                            const drivePreviewHtml = hasValidAudioFile
+                                ? buildSubmittedFilesHtml(submittedFileIds, retryAudioUrl, inlinePlayerId, submittedFileMetas)
+                                : '';
+                            const driveOpenBtnHtml = (hasValidAudioFile && (retryAudioId || submittedFileIds[0]))
+                                ? `<a href="${escapeAttr(resolveDriveViewUrl(retryAudioId || submittedFileIds[0]))}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; text-decoration:none; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📂 繳交檔</a>`
+                                : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>`;
+
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    ${drivePreviewHtml}
                                     <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
                                     <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
-                                    <button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>
+                                    ${driveOpenBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
                             `;
                         }
                     } else {
                         let displayTitle = stripHtml(task.title ? task.title : '未命名任務');
-                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; ${isTaskDone ? 'text-decoration:line-through; color:#94A3B8;' : ''}">${escapeAttr(displayTitle)}</span>`;
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
                     }
 
                     let cleanTaskDesc = '';

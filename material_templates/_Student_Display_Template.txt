@@ -1,0 +1,17 @@
+# 學生顯示文稿輸出模板（Student Display Template）
+# 檔名：_Student_Display_Template.txt
+# 放在各教材 meta 資料夾（與 *.meta.json 同層）
+#
+# 規則：
+# 1. 每個「活頁／meta 代號 + 頁碼」開一段標題：【{代號}】[{頁碼}]
+# 2. 該頁句子依序編號：1.  2.  3. …
+# 3. 每行格式：{序號}.  {中文 display_zh}  {英文 script}
+# 4. 中英文之間兩個空白
+# 5. Snapshot 套用後，學生錄音艙「顯示文稿」依此格式產生
+# 6. AI 批改文稿（original_script）仍為純英文，一行一句，不含中文與標題
+#
+# 範例：
+
+【A】[1]
+1.  山姆遺棄了妻子和兒女。  Sam abandoned his wife and children.
+2.  Jack放棄找到那條狗的一切希望。  Jack abandoned all hope of finding his dog.

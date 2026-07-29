@@ -328,15 +328,30 @@ const ApiService = (() => {
 
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
     const SUPABASE_PROJECT_URL = 'https://ueigcfdpnsohmkavbzmw.supabase.co';
+    // 與 supabase-client.js 相同的 publishable key（供 <audio src> 呼叫 Edge Function）
+    const SUPABASE_ANON_KEY = 'sb_publishable_Ps-C0ZFw5FlV07GGgFCJfw_jvdXSaRw';
 
     const getAudioStreamUrl = (fileId) => {
         if (!fileId) return '';
-        return `${SUPABASE_PROJECT_URL}/functions/v1/stream-audio?file_id=${encodeURIComponent(String(fileId))}`;
+        // 與錄音艙／切片播放同一條路（Supabase stream-audio）。
+        // 禁止把 GAS Web App URL 當 <audio src>（會 redirect → 0:00/0:00）。
+        return `${SUPABASE_PROJECT_URL}/functions/v1/stream-audio?file_id=${encodeURIComponent(String(fileId))}&apikey=${encodeURIComponent(SUPABASE_ANON_KEY)}`;
     };
 
     const getGASAudioStreamUrl = (fileId) => {
         if (!fileId) return '';
         return `${GAS_API_URL}?action=stream_audio&fileId=${encodeURIComponent(String(fileId))}`;
+    };
+
+    const getDriveFileViewUrl = (fileId) => {
+        if (!fileId) return '';
+        return `https://drive.google.com/file/d/${encodeURIComponent(String(fileId))}/view`;
+    };
+
+    const getDriveFilePreviewUrl = (fileId) => {
+        if (!fileId) return '';
+        // 圖片縮圖；音檔／文件仍以 view 為主
+        return `https://drive.google.com/thumbnail?id=${encodeURIComponent(String(fileId))}&sz=w640`;
     };
 
     // 🌟 核心擴充修復：新增 requireShare 參數，精準控制是否開放權限
@@ -487,17 +502,36 @@ const ApiService = (() => {
         }
     };
 
+    const extractDriveFolderId = (raw) => {
+        if (!raw) return '';
+        const trimmed = String(raw).trim();
+        let match = trimmed.match(/folders\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) return match[1];
+        match = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) return match[1];
+        match = trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) return match[1];
+        if (!/^https?:\/\//i.test(trimmed) && /^[a-zA-Z0-9_-]{15,}$/.test(trimmed)) return trimmed;
+        return '';
+    };
+
     const uploadToGAS = async (base64Data, fileName, mimeType, folderId, assignmentId = null, taskId = null) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
         try {
+            const cleanFolderId = extractDriveFolderId(folderId);
+            if (!cleanFolderId) {
+                throw new Error('學生專屬資料夾 ID 無效，請請老師重新綁定 Drive 資料夾。');
+            }
+
             const payload = { 
                 action: 'upload_file',
                 fileData: base64Data, 
                 fileName, 
                 mimeType, 
-                folderId 
+                folderId: cleanFolderId
+                // 不傳 subFolderName：直接寫入學生繳交夾（見 Code.gs upload_file）
             };
             if (assignmentId) payload.assignmentId = assignmentId;
             if (taskId) payload.taskId = taskId;
@@ -513,7 +547,13 @@ const ApiService = (() => {
             clearTimeout(timeoutId);
 
             if (!response.ok) throw new Error(`連線異常 (HTTP ${response.status})`);
-            const result = JSON.parse(await response.text());
+            const rawText = await response.text();
+            let result;
+            try {
+                result = JSON.parse(rawText);
+            } catch (_parseErr) {
+                throw new Error('雲端回應格式異常，請稍後再試或通知老師檢查 GAS 部署。');
+            }
             
             if (result.status !== 'success') {
                 throw new Error(result.message || '雲端儲存空間回報未知錯誤');
@@ -533,7 +573,7 @@ const ApiService = (() => {
         fetchClasses, fetchArchivedClasses, fetchArchivedClassAssignments,
         fetchStudents, fetchClassStaff, fetchAssignments, syncProgress,
         archiveClass, restoreClass, purgeClassPermanent, insertAssignment,
-        createGASFolder, renameGASFolder, renameGASParentFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl
+        createGASFolder, renameGASFolder, renameGASParentFolder, ensureGASFolderSharing, uploadToGAS, getAudioStreamUrl, getGASAudioStreamUrl, getDriveFileViewUrl, getDriveFilePreviewUrl
     };
 })();
 

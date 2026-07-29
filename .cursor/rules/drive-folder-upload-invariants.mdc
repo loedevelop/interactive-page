@@ -1,0 +1,78 @@
+---
+description: Drive 資料夾層級與學生上傳鐵律（禁止再把繳交誤導進 01_Class_Resources）
+alwaysApply: true
+---
+
+# Drive／學生上傳鐵律
+
+曾發生「本來對的被改錯、再改回去」：GAS `upload_file` 在未傳 `subFolderName` 時誤呼叫 `resolveClassResourcesFolder`，在學生夾下長出錯誤的 `01_Class_Resources`，繳交檔消失在老師視線外。
+
+## 正確目錄（不可改亂）
+
+```
+班級根/
+  00_Class_Materials/     ← 教材 master
+  01_Class_Resources/     ← 僅班級層資源（老師上傳教材用）
+  02_Students/
+    姓名_短ID/
+      01_Submissions/     ← 學生繳交唯一目標（enrollment.drive_folder_id）
+```
+
+- **禁止**在 `02_Students/姓名_短ID/` 下建立 `01_Class_Resources`
+- **禁止**把學生 `upload_file` 預設導向 `01_Class_Resources`
+
+## GAS `upload_file`（gas/Code.gs）
+
+```javascript
+// ✅ 正確：只有明確指定才進班級資源夾；空 subFolderName = 直接寫入 folderId
+if (subFolderName === '01_Class_Resources' || subFolderName === '01_Materials') {
+  folder = resolveClassResourcesFolder(folder, true);
+} else if (subFolderName) {
+  folder = getOrCreateSubFolder(folder, subFolderName);
+}
+// else: 不動 folder（學生 ApiService.uploadToGAS 走這條）
+
+// ❌ 禁止：!subFolderName 時也 resolveClassResourcesFolder
+```
+
+| 呼叫端 | subFolderName | 寫入位置 |
+|--------|---------------|----------|
+| 學生 `ApiService.uploadToGAS` | 不傳／空 | `folderId`（= 01_Submissions） |
+| 老師 `GasService.uploadStudentLocalFile` | 明確 `'01_Class_Resources'` | 班級資源夾 |
+
+## 產品行為（勿再搞混）
+
+- 教材發布：**本機** Excel → `publish_local` → `.meta.json` / `.script.txt`。禁止要求老師上傳 Excel 給 GAS、禁止強制轉 Google Sheets。
+- `drive` = 上傳到學生專屬夾；`audio_record` = 錄音艙。差異只在音檔怎麼產出。
+- **禁止**用標題含 Recording 就把 `drive` 改成錄音 UI。
+- 有 `original_script` 才送 AI；無文稿仍可上傳，略過 AI，不可擋上傳。
+- **禁止**無文稿仍呼叫 `submit_audio_task_atomic`／讓 `process-audio-ai` 丟 `Fatal: original_script is missing`（應 skip → status `submitted`）。
+- **學生端音檔播放**：`<audio src>` 必須用 `ApiService.getAudioStreamUrl`（Supabase `stream-audio`）。**禁止**把 GAS Web App URL 當 audio src（會 redirect → `0:00/0:00`）。曾修好又被改壞過，勿再翻。
+- **已繳交確認**：有檔時開「該檔」的 Drive file 連結／內嵌播放／圖片預覽，不要只開 `01_Submissions` 資料夾。
+
+## 改動前自問
+
+若本次會動到 `gas/Code.gs`、`020_js_core/api.js`、學生上傳、或班級資源路徑：是否仍保證「學生繳交直寫 01_Submissions」？若否，停下。
+
+## 改完 Code.gs 後：必須重新部署 GAS（逐步）
+
+Git push **不會**更新線上 Web App。漏部署 = 學生仍跑舊邏輯。
+
+1. 開啟 [Google Apps Script](https://script.google.com/) → 開啟本專案所用的 GAS 專案  
+2. 將本機 `gas/Code.gs` **整份貼上／同步**到編輯器（確認含上述 `upload_file` 正確分支）  
+3. 按儲存（磁碟圖示／Ctrl/Cmd+S）  
+4. 上方 **部署** → **管理部署作業**  
+5. 現有 Web App 部署右側 **✎ 編輯**  
+6. **版本** 選「新版本」（必要：選舊版本等於沒更新）  
+7. 說明可填：`fix: 學生上傳直寫 folderId`  
+8. **部署**  
+9. 確認網址仍與前端一致：  
+   - 學生／共用：`020_js_core/api.js` 的 `GAS_API_URL`  
+   - 老師：`110_teacher_core/api-gas-service.js` 的 `GAS_WEB_APP_URL`  
+   （若網址變了，前端也要改並 bump `?v=`）  
+10. 用學生帳測一次「上傳檔案」→ 檔案應出現在該生 `01_Submissions` 根目錄（不是學生夾下的 `01_Class_Resources`）
+
+## Code review 打勾在哪裡做
+
+- **開 GitHub PR 時**：`.github/PULL_REQUEST_TEMPLATE.md` 會自動帶出 checklist（見該檔）  
+- **自己改完未開 PR**：對照上節部署步驟 + 模板裡的 `upload_file` 那一勾，自行確認後再測  

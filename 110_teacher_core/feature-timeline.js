@@ -84,63 +84,175 @@ window.FeatureTimeline = (() => {
         return collectMaterialMetaOptions(materials, kind);
     }
 
-    function fillMaterialMetaSelect(selectEl, options, selectedVal) {
-        if (!selectEl) return;
-        if (!options || options.length === 0) {
-            selectEl.innerHTML = '<option value="">（尚無 meta 檔，請先到 ⚙️ 教材發布）</option>';
-            return;
+    const _materialMetaOptionsCache = {};
+
+    function metaStemFromFileName(fileName) {
+        const base = String(fileName || '').replace(/\.meta\.json$/i, '').replace(/\.json$/i, '');
+        const parts = base.split(/[\/_]/);
+        return parts[parts.length - 1] || base || '?';
+    }
+
+    function escapeAttr(str) {
+        return String(str || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+
+    function buildMetaOptionsHtml(options, selectedVal) {
+        const opts = options || [];
+        if (!opts.length) {
+            return '<option value="">（尚無 meta，請先載入／發布）</option>';
         }
-        selectEl.innerHTML = '<option value="">— 選擇 meta 檔 —</option>' + options.map(function (opt) {
+        return '<option value="">— 選 meta —</option>' + opts.map(function (opt) {
             const val = opt.folderName + '::' + opt.fileName;
-            return '<option value="' + val.replace(/"/g, '&quot;') + '">' + opt.label + '</option>';
+            const sel = val === selectedVal ? ' selected' : '';
+            return '<option value="' + escapeAttr(val) + '"' + sel + '>' + escapeAttr(opt.label) + '</option>';
         }).join('');
-        if (selectedVal) {
-            selectEl.value = selectedVal;
-            if (!selectEl.value) {
-                selectEl.innerHTML = '<option value="' + selectedVal.replace(/"/g, '&quot;') + '" selected>'
-                    + selectedVal.replace(/::/g, ' / ').replace(/</g, '&lt;') + '</option>' + selectEl.innerHTML;
-                selectEl.value = selectedVal;
+    }
+
+    function createMaterialMetaRowEl(pathStr, options, rowData) {
+        rowData = rowData || {};
+        const safePath = String(pathStr || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const wrap = document.createElement('div');
+        wrap.className = 'material-meta-row';
+        wrap.style.cssText = 'display:flex; gap:8px; align-items:center; flex-wrap:wrap; background:white; border:1px solid #DDD6FE; border-radius:8px; padding:8px;';
+        wrap.innerHTML =
+            '<select class="form-control material-meta-file" style="flex:1.2; min-width:180px; padding:6px; font-size:0.85rem; font-weight:700;">'
+            + buildMetaOptionsHtml(options, rowData.value || '')
+            + '</select>'
+            + '<input type="text" class="form-control material-meta-range" style="flex:1.4; min-width:200px; padding:6px; font-size:0.85rem; font-weight:700;" '
+            + 'placeholder="pp. 1~2, 5, 10 或 #11~16, 26" value="' + escapeAttr(rowData.range_spec || '') + '">'
+            + '<button type="button" class="btn-action" style="padding:6px 10px; background:#FEE2E2; color:#B91C1C; border:none; border-radius:6px; font-weight:900; cursor:pointer;" '
+            + 'onclick="window.FeatureTimeline.removeMaterialMetaRow(this, \'' + safePath + '\')">×</button>';
+
+        const fileEl = wrap.querySelector('.material-meta-file');
+        const rangeEl = wrap.querySelector('.material-meta-range');
+        if (fileEl) fileEl.addEventListener('change', function () { refreshMaterialRangeLabel(pathStr); });
+        if (rangeEl) rangeEl.addEventListener('input', function () { refreshMaterialRangeLabel(pathStr); });
+        return wrap;
+    }
+
+    function renderMaterialMetaRows(pathStr, options, rows) {
+        const container = document.getElementById('node-material-rows-' + pathStr);
+        if (!container) return;
+        _materialMetaOptionsCache[pathStr] = options || [];
+        container.innerHTML = '';
+        const list = Array.isArray(rows) && rows.length ? rows : [{ value: '', range_spec: '' }];
+        list.forEach(function (row) {
+            container.appendChild(createMaterialMetaRowEl(pathStr, _materialMetaOptionsCache[pathStr], row));
+        });
+        refreshMaterialRangeLabel(pathStr);
+    }
+
+    function readMaterialMetaRows(pathStr) {
+        const container = document.getElementById('node-material-rows-' + pathStr);
+        if (!container) return [];
+        const rootKind = readMaterialsRootKind(pathStr);
+        const out = [];
+        container.querySelectorAll('.material-meta-row').forEach(function (rowEl) {
+            const fileEl = rowEl.querySelector('.material-meta-file');
+            const rangeEl = rowEl.querySelector('.material-meta-range');
+            const value = fileEl ? String(fileEl.value || '').trim() : '';
+            const rangeSpec = rangeEl ? String(rangeEl.value || '').trim() : '';
+            if (!value) return;
+            const parts = value.split('::');
+            out.push({
+                materials_root_kind: rootKind,
+                material_folder: parts[0] || '',
+                published_file: parts[1] || '',
+                metaFile: parts[1] || '',
+                label: metaStemFromFileName(parts[1] || ''),
+                range_spec: rangeSpec,
+                select_mode: 'range_spec'
+            });
+        });
+        return out;
+    }
+
+    function buildMaterialRangeLabelFromRows(rows) {
+        const MS = window.MaterialSnapshot;
+        return (rows || []).map(function (m) {
+            const stem = m.label || metaStemFromFileName(m.published_file || '');
+            if (MS && typeof MS.formatRangeLabel === 'function') {
+                return MS.formatRangeLabel(stem, m.range_spec || '');
+            }
+            return stem + (m.range_spec ? (' ' + m.range_spec) : '');
+        }).filter(Boolean).join('；');
+    }
+
+    function refreshMaterialRangeLabel(pathStr) {
+        const rows = readMaterialMetaRows(pathStr);
+        const label = buildMaterialRangeLabelFromRows(rows);
+        const rangeEl = document.getElementById('node-material-range-' + pathStr);
+        if (rangeEl) rangeEl.value = label;
+        const hidden = document.getElementById('node-material-selected-json-' + pathStr);
+        if (hidden) {
+            hidden.value = JSON.stringify(rows.map(function (m) {
+                return {
+                    value: (m.material_folder || '') + '::' + (m.published_file || ''),
+                    range_spec: m.range_spec || '',
+                    label: m.label || ''
+                };
+            }));
+        }
+        return label;
+    }
+
+    function readSelectedMaterialMetas(pathStr) {
+        return readMaterialMetaRows(pathStr);
+    }
+
+    async function buildMergedMaterialSnapshot(pathStr, classId) {
+        const selected = readMaterialMetaRows(pathStr);
+        if (!selected.length) throw new Error('請至少新增一列 meta');
+        for (let i = 0; i < selected.length; i++) {
+            if (!selected[i].range_spec) {
+                throw new Error('第 ' + (i + 1) + ' 列請填範圍（例：pp. 1~2, 5, 10 或 #11~16, 26）');
             }
         }
-    }
+        const rootKind = readMaterialsRootKind(pathStr);
+        const folderId = await resolveMaterialsRootFolderId(classId, rootKind);
+        const scriptParts = [];
+        const displayParts = [];
+        const refs = [];
 
-    function readMaterialSliceInputs(pathStr) {
-        const modeEl = document.getElementById('node-material-mode-' + pathStr);
-        const pageEl = document.getElementById('node-material-page-' + pathStr);
-        const fromEl = document.getElementById('node-material-item-from-' + pathStr);
-        const toEl = document.getElementById('node-material-item-to-' + pathStr);
-        const mode = modeEl ? modeEl.value : 'item_range';
-        return {
-            select_mode: mode,
-            mode: mode,
-            page: pageEl ? pageEl.value : '',
-            item_from: fromEl ? fromEl.value : '',
-            item_to: toEl ? toEl.value : ''
-        };
-    }
-
-    function readMaterialPicker(pathStr) {
-        const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
-        if (!selectEl || !selectEl.value) {
-            throw new Error('請先選擇 meta 檔');
+        for (let i = 0; i < selected.length; i++) {
+            const picker = selected[i];
+            const fileResult = await window.GasService.readMaterialFile(
+                folderId, picker.material_folder, picker.published_file, rootKind
+            );
+            const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
+            const sliceOpts = { range_spec: picker.range_spec, select_mode: 'range_spec' };
+            const ctx = Object.assign({}, picker, sliceOpts, {
+                materials_root_kind: rootKind,
+                label: picker.label,
+                range_spec: picker.range_spec
+            });
+            const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, ctx);
+            const stem = picker.label || metaStemFromFileName(picker.published_file);
+            if (snapshot.original_script) {
+                scriptParts.push('【' + stem + '】\n' + snapshot.original_script);
+            }
+            if (snapshot.student_display) {
+                // student_display 已含 【A】[1] 頁首，勿再包一層
+                displayParts.push(snapshot.student_display);
+            }
+            refs.push(Object.assign({}, snapshot.material_ref, { range_spec: picker.range_spec, label: stem }));
         }
-        const parts = selectEl.value.split('::');
+
+        const rangeLabel = buildMaterialRangeLabelFromRows(selected);
         return {
-            materials_root_kind: readMaterialsRootKind(pathStr),
-            material_folder: parts[0] || '',
-            published_file: parts[1] || '',
-            metaFile: parts[1] || ''
+            material_refs: refs,
+            material_ref: refs[0] || null,
+            material_range: rangeLabel,
+            original_script: scriptParts.join('\n\n'),
+            student_display: displayParts.join('\n\n'),
+            student_display_text: displayParts.join('\n\n'),
+            snapshot_at: new Date().toISOString()
         };
     }
 
     function toggleMaterialSliceFields(pathStr) {
-        const modeEl = document.getElementById('node-material-mode-' + pathStr);
-        const pageWrap = document.getElementById('node-material-page-wrap-' + pathStr);
-        const rangeWrap = document.getElementById('node-material-range-wrap-' + pathStr);
-        if (!modeEl) return;
-        const mode = modeEl.value;
-        if (pageWrap) pageWrap.style.display = mode === 'page' ? 'flex' : 'none';
-        if (rangeWrap) rangeWrap.style.display = mode === 'item_range' ? 'flex' : 'none';
+        // 新版以每列 range_spec 為準，無需切換共用頁碼／題號欄
+        refreshMaterialRangeLabel(pathStr);
     }
 
     function walkAudioRecordNodes(tasks, parentPath, visitor) {
@@ -169,18 +281,49 @@ window.FeatureTimeline = (() => {
 
         const pendingMeta = [];
         walkAudioRecordNodes(bState.tasks, [], function (task, pathStr) {
-            toggleMaterialSliceFields(pathStr);
             const raw = task.raw_data || {};
-            if (!raw.material_ref || !raw.material_ref.published_file) return;
+            const refs = Array.isArray(raw.material_refs) && raw.material_refs.length
+                ? raw.material_refs
+                : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
+            const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+            if (!rowsEl) return;
 
-            const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
-            if (!selectEl) return;
+            let savedRows = [];
+            const hidden = document.getElementById('node-material-selected-json-' + pathStr);
+            if (hidden && hidden.value) {
+                try {
+                    const parsed = JSON.parse(hidden.value);
+                    if (Array.isArray(parsed) && parsed.length && typeof parsed[0] === 'object') {
+                        savedRows = parsed;
+                    }
+                } catch (_e) {}
+            }
+            if (!savedRows.length && refs.length) {
+                savedRows = refs.map(function (r) {
+                    let rangeSpec = r.range_spec || '';
+                    if (!rangeSpec) {
+                        if (r.select_mode === 'item_range' && r.item_from != null) {
+                            rangeSpec = '#' + r.item_from + (r.item_to != null ? ('~' + r.item_to) : '');
+                        } else if ((r.select_mode === 'page_range' || r.select_mode === 'page') && (r.page_from != null || r.page != null)) {
+                            const a = r.page_from != null ? r.page_from : r.page;
+                            const b = r.page_to != null ? r.page_to : a;
+                            rangeSpec = 'pp. ' + a + (String(a) !== String(b) ? ('~' + b) : '');
+                        } else if (r.select_mode === 'all') {
+                            rangeSpec = 'all';
+                        }
+                    }
+                    return {
+                        value: (r.material_folder || '') + '::' + (r.published_file || ''),
+                        range_spec: rangeSpec,
+                        label: r.label || ''
+                    };
+                });
+            }
 
             pendingMeta.push({
                 pathStr: pathStr,
-                savedVal: (raw.material_ref.material_folder || '') + '::' + (raw.material_ref.published_file || ''),
+                savedRows: savedRows,
                 raw: raw,
-                selectEl: selectEl,
                 statusEl: document.getElementById('node-material-status-' + pathStr)
             });
         });
@@ -193,16 +336,16 @@ window.FeatureTimeline = (() => {
                 item.statusEl.style.color = '#3B82F6';
             }
             const rootEl = document.getElementById('node-material-root-' + item.pathStr);
-            if (rootEl && item.raw.material_ref && item.raw.material_ref.materials_root_kind) {
-                rootEl.value = normalizeMaterialsRootKind(item.raw.material_ref.materials_root_kind);
+            const primary = (item.raw.material_refs && item.raw.material_refs[0]) || item.raw.material_ref;
+            if (rootEl && primary && primary.materials_root_kind) {
+                rootEl.value = normalizeMaterialsRootKind(primary.materials_root_kind);
             }
         });
 
-        // 依各節點選定來源分別載入（多數情況相同，仍依 path 處理）
         pendingMeta.forEach(function (item) {
             const kind = readMaterialsRootKind(item.pathStr);
             loadMaterialMetaOptions(bState.classId, kind).then(function (options) {
-                fillMaterialMetaSelect(item.selectEl, options, item.savedVal);
+                renderMaterialMetaRows(item.pathStr, options, item.savedRows.length ? item.savedRows : [{ value: '', range_spec: '' }]);
                 if (item.statusEl) {
                     item.statusEl.textContent = item.raw.snapshot_at
                         ? ('✅ 已還原 snapshot（' + item.raw.snapshot_at + '）')
@@ -221,24 +364,40 @@ window.FeatureTimeline = (() => {
     function applySnapshotToNode(pathStr, snapshot) {
         const scriptEl = document.getElementById('node-script-' + pathStr);
         const studentTextEl = document.getElementById('node-student-text-' + pathStr);
-        const studentTypeEl = document.getElementById('node-student-source-type-' + pathStr);
+        const scriptPasteEl = document.getElementById('node-script-paste-' + pathStr);
+        const studentPasteEl = document.getElementById('node-student-text-paste-' + pathStr);
         const previewEl = document.getElementById('node-material-preview-' + pathStr);
         const snapshotJsonEl = document.getElementById('node-material-snapshot-json-' + pathStr);
+        const scriptSourceEl = document.getElementById('node-script-source-' + pathStr);
+        const materialRangeEl = document.getElementById('node-material-range-' + pathStr);
 
+        const displayText = snapshot.student_display || snapshot.student_display_text || '';
         if (scriptEl) scriptEl.value = snapshot.original_script || '';
-        if (studentTextEl) studentTextEl.value = snapshot.student_display || snapshot.student_display_text || '';
-        if (studentTypeEl) {
-            studentTypeEl.value = 'text';
-            const driveBox = document.getElementById('student-source-drive-' + pathStr);
-            const localBox = document.getElementById('student-source-local-' + pathStr);
-            const textBox = document.getElementById('student-source-text-' + pathStr);
-            if (driveBox) driveBox.style.display = 'none';
-            if (localBox) localBox.style.display = 'none';
-            if (textBox) textBox.style.display = 'block';
+        if (studentTextEl) studentTextEl.value = displayText;
+        if (scriptPasteEl) scriptPasteEl.value = snapshot.original_script || '';
+        if (studentPasteEl) studentPasteEl.value = displayText;
+
+        if (scriptSourceEl) {
+            scriptSourceEl.value = 'meta';
+            if (window.FeatureTimeline && window.FeatureTimeline.onScriptSourceChange) {
+                window.FeatureTimeline.onScriptSourceChange(pathStr);
+            }
         }
+
+        if (materialRangeEl) {
+            if (snapshot.material_range) {
+                materialRangeEl.value = snapshot.material_range;
+            } else if (snapshot.material_refs && snapshot.material_refs.length) {
+                materialRangeEl.value = buildMaterialRangeLabelFromRows(snapshot.material_refs);
+            }
+        }
+
         if (previewEl) {
-            previewEl.textContent = 'AI 稿 ' + (snapshot.original_script || '').length + ' 字；學生顯示 '
-                + (snapshot.student_display || '').length + ' 字；凍結於 ' + (snapshot.snapshot_at || '');
+            const refCount = (snapshot.material_refs && snapshot.material_refs.length) || (snapshot.material_ref ? 1 : 0);
+            previewEl.textContent = '已合併 ' + refCount + ' 個 meta｜AI 稿 '
+                + (snapshot.original_script || '').length + ' 字；學生顯示 '
+                + displayText.length + ' 字；凍結於 ' + (snapshot.snapshot_at || '')
+                + (snapshot.material_range ? ('｜' + snapshot.material_range) : '');
         }
         if (snapshotJsonEl) snapshotJsonEl.value = JSON.stringify(snapshot);
     }
@@ -685,7 +844,7 @@ window.FeatureTimeline = (() => {
                             await processTasksForUpload(t.subTasks);
                         } else if (t.type === 'audio_record' && t.raw_data) {
                             const raw = t.raw_data;
-                            if (raw.student_source_type === 'local' && raw.student_local_b64) {
+                            if ((raw.student_source_type === 'local' || raw.script_source === 'resource') && raw.student_local_b64) {
                                 btnEl.innerHTML = `⏳ 上傳教材: ${raw.student_local_filename}...`;
                                 
                                 const cls = window.TeacherDB.classes.find(c => c.id === bState.classId);
@@ -715,7 +874,9 @@ window.FeatureTimeline = (() => {
                                 // 🚀 上傳成功，轉化為 Drive 模式存檔
                                 raw.student_source_type = 'drive';
                                 raw.student_drive_url = fileUrl;
-                                raw.student_drive_desc = raw.student_local_desc; 
+                                raw.material_url = fileUrl;
+                                raw.student_drive_desc = raw.student_local_desc || raw.material_range || '';
+                                if (raw.script_source !== 'resource') raw.script_source = 'resource';
                                 
                                 delete raw.student_local_b64;
                                 delete raw.student_local_mime;
@@ -944,9 +1105,9 @@ window.FeatureTimeline = (() => {
         loadMaterialMetaSelect: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
             if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
-            const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
+            const rowsEl = document.getElementById('node-material-rows-' + pathStr);
             const statusEl = document.getElementById('node-material-status-' + pathStr);
-            if (!selectEl) return;
+            if (!rowsEl) return;
             const rootKind = readMaterialsRootKind(pathStr);
             const destLabel = rootKind === 'teacher' ? '01_My_Materials' : '00_Class_Materials';
             if (statusEl) {
@@ -954,10 +1115,27 @@ window.FeatureTimeline = (() => {
                 statusEl.style.color = '#3B82F6';
             }
             try {
+                let savedRows = readMaterialMetaRows(pathStr).map(function (m) {
+                    return {
+                        value: (m.material_folder || '') + '::' + (m.published_file || ''),
+                        range_spec: m.range_spec || '',
+                        label: m.label || ''
+                    };
+                });
+                const hidden = document.getElementById('node-material-selected-json-' + pathStr);
+                if (!savedRows.length && hidden && hidden.value) {
+                    try {
+                        const parsed = JSON.parse(hidden.value);
+                        if (Array.isArray(parsed) && parsed.length) {
+                            if (typeof parsed[0] === 'object') savedRows = parsed;
+                            else savedRows = parsed.map(function (v) { return { value: v, range_spec: '' }; });
+                        }
+                    } catch (_e) {}
+                }
                 const options = await loadMaterialMetaOptions(bState.classId, rootKind);
-                fillMaterialMetaSelect(selectEl, options, '');
+                renderMaterialMetaRows(pathStr, options, savedRows.length ? savedRows : [{ value: '', range_spec: 'pp. 1~2' }]);
                 if (statusEl) {
-                    statusEl.textContent = '✅ 已載入 ' + options.length + ' 個 meta 檔（' + destLabel + '）';
+                    statusEl.textContent = '✅ 已載入 ' + options.length + ' 個 meta｜用「＋ 新增 meta」加列｜' + destLabel;
                     statusEl.style.color = '#059669';
                 }
             } catch (err) {
@@ -969,22 +1147,45 @@ window.FeatureTimeline = (() => {
             }
         },
 
+        addMaterialMetaRow: function (pathStr) {
+            const container = document.getElementById('node-material-rows-' + pathStr);
+            if (!container) return;
+            const options = _materialMetaOptionsCache[pathStr] || [];
+            if (!options.length) {
+                return window.showFlash('請先按「載入 meta 清單」', 'error');
+            }
+            container.appendChild(createMaterialMetaRowEl(pathStr, options, { value: '', range_spec: '' }));
+            refreshMaterialRangeLabel(pathStr);
+        },
+
+        removeMaterialMetaRow: function (btnEl, pathStr) {
+            const row = btnEl && btnEl.closest ? btnEl.closest('.material-meta-row') : null;
+            const container = document.getElementById('node-material-rows-' + pathStr);
+            if (row && container) {
+                if (container.querySelectorAll('.material-meta-row').length <= 1) {
+                    const fileEl = row.querySelector('.material-meta-file');
+                    const rangeEl = row.querySelector('.material-meta-range');
+                    if (fileEl) fileEl.value = '';
+                    if (rangeEl) rangeEl.value = '';
+                } else {
+                    row.remove();
+                }
+            }
+            refreshMaterialRangeLabel(pathStr);
+        },
+
         previewMaterialSnapshot: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
             if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
             if (!window.MaterialSnapshot) return window.showFlash('MaterialSnapshot 模組未載入', 'error');
             const previewEl = document.getElementById('node-material-preview-' + pathStr);
             try {
-                const picker = readMaterialPicker(pathStr);
-                const sliceOpts = readMaterialSliceInputs(pathStr);
-                const folderId = await resolveMaterialsRootFolderId(bState.classId, picker.materials_root_kind);
-                const fileResult = await window.GasService.readMaterialFile(
-                    folderId, picker.material_folder, picker.published_file, picker.materials_root_kind
-                );
-                const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
-                const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, picker);
+                const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
+                refreshMaterialRangeLabel(pathStr);
                 if (previewEl) {
-                    previewEl.innerHTML = '<strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                    previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
+                        + String(snapshot.material_range || '').replace(/</g, '&lt;')
+                        + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
                         + (snapshot.original_script || '').replace(/</g, '&lt;')
                         + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
                         + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
@@ -1000,16 +1201,9 @@ window.FeatureTimeline = (() => {
             if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
             if (!window.MaterialSnapshot) return window.showFlash('MaterialSnapshot 模組未載入', 'error');
             try {
-                const picker = readMaterialPicker(pathStr);
-                const sliceOpts = readMaterialSliceInputs(pathStr);
-                const folderId = await resolveMaterialsRootFolderId(bState.classId, picker.materials_root_kind);
-                const fileResult = await window.GasService.readMaterialFile(
-                    folderId, picker.material_folder, picker.published_file, picker.materials_root_kind
-                );
-                const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
-                const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, picker);
+                const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
                 applySnapshotToNode(pathStr, snapshot);
-                window.showFlash('已寫入 Snapshot（請記得儲存作業區塊）');
+                window.showFlash('已寫入 Snapshot：' + (snapshot.material_range || '') + '（請記得儲存作業）');
             } catch (err) {
                 window.showFlash('套用 Snapshot 失敗：' + err.message, 'error');
             }
@@ -1020,11 +1214,30 @@ window.FeatureTimeline = (() => {
         },
 
         onMaterialRootChange: function (pathStr) {
-            const selectEl = document.getElementById('node-material-meta-select-' + pathStr);
-            if (selectEl) {
-                selectEl.innerHTML = '<option value="">— 請重新載入 meta 清單 —</option>';
-            }
+            const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+            if (rowsEl) rowsEl.innerHTML = '';
+            _materialMetaOptionsCache[pathStr] = [];
             window.FeatureTimeline.loadMaterialMetaSelect(pathStr);
+        },
+
+        onMaterialMetaCheckChange: function (pathStr) {
+            refreshMaterialRangeLabel(pathStr);
+        },
+
+        refreshMaterialRangeLabel: function (pathStr) {
+            return refreshMaterialRangeLabel(pathStr);
+        },
+
+        onScriptSourceChange: function (pathStr) {
+            const sourceEl = document.getElementById('node-script-source-' + pathStr);
+            const source = sourceEl ? sourceEl.value : 'meta';
+            const panels = ['meta', 'range_only', 'paste', 'resource'];
+            panels.forEach(function (key) {
+                const el = document.getElementById('script-source-panel-' + key + '-' + pathStr);
+                if (el) el.style.display = (source === key) ? 'block' : 'none';
+            });
+            const baseWrap = document.getElementById('node-base-range-wrap-' + pathStr);
+            if (baseWrap) baseWrap.style.display = (source === 'meta') ? 'none' : 'flex';
         }
     };
 })();
