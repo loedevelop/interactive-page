@@ -317,10 +317,22 @@ window.FeatureAudioSplitUpload = (function () {
             const streamUrl = window.ApiService.getAudioStreamUrl(fileId);
             const res = await fetch(streamUrl);
             if (!res.ok) throw new Error('下載音檔失敗（HTTP ' + res.status + '）');
+            const contentType = res.headers.get('Content-Type') || '';
             const arrayBuffer = await res.arrayBuffer();
+            if (contentType.indexOf('audio') === -1) {
+                const preview = new TextDecoder().decode(arrayBuffer.slice(0, 200)).toLowerCase();
+                if (preview.indexOf('<!doctype html') > -1 || preview.indexOf('<html') > -1) {
+                    throw new Error('下載到的是網頁而不是音檔（可能是 Google Drive 檔案過大觸發確認頁），請重新整理頁面後再試一次');
+                }
+            }
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             const ctx = new AudioCtx();
-            const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+            let decoded;
+            try {
+                decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+            } catch (decodeErr) {
+                throw new Error('瀏覽器無法解碼此音檔格式（Content-Type: ' + (contentType || '未知') + '），請確認來源檔案是否為標準音訊格式');
+            }
             state.audioBuffer = decoded;
             state.audioDuration = decoded.duration;
 
