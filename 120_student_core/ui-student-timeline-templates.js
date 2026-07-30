@@ -1,6 +1,6 @@
 /**
  * 📂 檔案路徑：120_student_core/ui-student-timeline-templates.js
- * 🌟 純粹視覺模板層 (V96 有道發音回歸版：接通 Supabase Stream API，徹底摧毀 Drive 播放阻擋)
+ * 🌟 純粹視覺模板層 (V119：AI 報告卡片預設收合、並匯出共用函式供「學習分析」頁籤重用)
  * 🌟 免疫介面災難：程式碼內 0 個雙直豎線，絕對防彈。
  */
 
@@ -58,8 +58,10 @@ window.UIStudentTimelineTemplates = (() => {
         if (/audio\/|\.wav|\.mp3|\.m4a|\.ogg|\.aac|\.webm|\.flac/.test(hay)) return 'audio';
         if (/image\/|\.png|\.jpe?g|\.gif|\.webp|\.bmp|\.heic/.test(hay)) return 'image';
         if (/pdf|\.pdf|application\/pdf/.test(hay)) return 'pdf';
-        // Recording／上傳音檔任務常見：有 fileId 且有 student_audio_url → 當音檔
-        if (audioUrl && /drive\.google\.com\/file/.test(String(audioUrl))) return 'audio';
+        // 🌟 拿掉「只要是 drive.google.com/file 網址就當音檔」這條過寬的預設值：
+        // 一般 drive 上傳任務（小考照片、PDF、其他檔案）產生的網址格式跟音檔完全一樣，
+        // 之前這條規則會把非錄音作業也誤判成音檔、硬塞一個播放不出東西的音檔播放器。
+        // 判斷不出來時，一律當成一般檔案，走「📄 開啟繳交檔」即可。
         return 'file';
     };
 
@@ -95,18 +97,25 @@ window.UIStudentTimelineTemplates = (() => {
         if (ids.length === 0) return '';
 
         const metas = Array.isArray(fileMetas) ? fileMetas : [];
-        let html = '<div style="display:flex; flex-direction:column; gap:8px; width:100%;">';
+        const showLabel = ids.length > 1;
+        let html = '<div style="display:flex; flex-direction:column; gap:6px; width:100%;">';
         ids.forEach((fileId, idx) => {
             const meta = metas.find(function (m) { return m && String(m.id) === String(fileId); }) || metas[idx] || null;
             const kind = guessSubmittedKind(fileId, idx === 0 ? audioUrl : '', meta);
             const viewUrl = resolveDriveViewUrl(fileId);
             const playerId = ids.length === 1 ? inlinePlayerId : `${inlinePlayerId}-${idx}`;
+            const unitLabel = meta && meta.label ? String(meta.label).trim() : '';
+            const labelChip = (showLabel && unitLabel)
+                ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(unitLabel)}</span>`
+                : (showLabel ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
 
             if (kind === 'audio') {
+                // 🌟 依老師要求拿掉「開啟音檔」灰色按鈕：inline <audio controls> 本身就能播放，
+                // 多一顆連去 Drive 開檔的按鈕只是重複功能、徒增畫面雜亂。
                 const streamUrl = resolveStreamUrl(fileId);
                 html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="metadata" style="height:36px; max-width:min(320px,100%); outline:none; border-radius:8px; vertical-align:middle; box-shadow:0 1px 3px rgba(0,0,0,0.1);"></audio>
-                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟音檔</a>
+                    ${labelChip}
+                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="metadata" style="height:34px; flex:1 1 220px; min-width:180px; max-width:340px; outline:none; border-radius:8px; vertical-align:middle;"></audio>
                 </div>`;
             } else if (kind === 'image') {
                 const previewUrl = resolveDrivePreviewUrl(fileId);
@@ -117,9 +126,9 @@ window.UIStudentTimelineTemplates = (() => {
                     <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟圖片</a>
                 </div>`;
             } else {
-                html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; text-decoration:none; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800;">📄 開啟繳交檔</a>
-                </div>`;
+                // 🌟 依老師要求拿掉紫色「📄 開啟繳交檔」按鈕：勾勾已顯示已繳交，
+                // 不需要每個檔案都放一顆長得一樣的按鈕造成畫面擁擠。
+                html += '';
             }
         });
         html += '</div>';
@@ -285,6 +294,53 @@ window.UIStudentTimelineTemplates = (() => {
         return m ? m[1] : '';
     };
 
+    /**
+     * 從一筆 task_completions 記錄推出「這次繳交的音檔要用哪個 fileId 播放」。
+     * 抽成共用函式讓課程進度／學習分析兩邊用同一套判斷，避免各寫一份、之後改壞其中一邊。
+     */
+    const resolveAudioContextFromCompletion = (compRecord) => {
+        let retryAudioId = '';
+        let retryAudioUrl = '';
+        let hasValidAudioFile = false;
+        let submittedFileIds = [];
+
+        if (!compRecord || !compRecord.raw_data) {
+            return { retryAudioId, hasValidAudioFile };
+        }
+
+        const raw = compRecord.raw_data;
+        const url1 = raw.student_audio_url;
+        const url2 = raw.audio_url;
+        retryAudioUrl = String(url1 ? url1 : (url2 ? url2 : ''));
+
+        if (Array.isArray(raw.drive_file_ids)) {
+            submittedFileIds = raw.drive_file_ids.map(String).filter(Boolean);
+        }
+
+        if (!retryAudioUrl) {
+            if (submittedFileIds.length > 0) {
+                retryAudioId = String(submittedFileIds[0]);
+                retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
+            }
+        } else {
+            let driveIdMatch = retryAudioUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+            if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+            if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+            if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+            if (driveIdMatch) retryAudioId = driveIdMatch[1];
+        }
+
+        if (retryAudioId && submittedFileIds.indexOf(String(retryAudioId)) === -1) {
+            submittedFileIds.unshift(String(retryAudioId));
+        }
+
+        if (submittedFileIds.length > 0 || retryAudioUrl) {
+            hasValidAudioFile = true;
+        }
+
+        return { retryAudioId, hasValidAudioFile };
+    };
+
     const getWordErrorCount = (ai) => {
         if (!ai) return 0;
         if (!ai.word_errors) return 0;
@@ -409,8 +465,8 @@ window.UIStudentTimelineTemplates = (() => {
             </div>`;
     };
 
-    const renderCurrentRowDetailHtml = (ai, compositeKey, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
-        return `<div style="padding:8px 4px;">${renderEvaluationDetailHtml(ai, inlinePlayerId, fallbackFileId, hasValidAudioFile)}</div>`;
+    const renderCurrentRowDetailHtml = (ai, compositeKey, inlinePlayerId, fallbackFileId, hasValidAudioFile, perPageEvals) => {
+        return `<div style="padding:8px 4px;">${renderEvaluationDetailHtml(ai, inlinePlayerId, fallbackFileId, hasValidAudioFile, perPageEvals)}</div>`;
     };
 
     const renderHistorySummaryHtml = (ai, compositeKey, historyIndex, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
@@ -439,7 +495,7 @@ window.UIStudentTimelineTemplates = (() => {
             </div>`;
     };
 
-    const buildHistoryTableHtml = (compositeKey, gradingHistory, currentAi, inlinePlayerId, defaultFileId, hasValidAudioFile) => {
+    const buildHistoryTableHtml = (compositeKey, gradingHistory, currentAi, inlinePlayerId, defaultFileId, hasValidAudioFile, currentAiEvaluations) => {
         if (!currentAi) return '';
 
         const aiEntries = [];
@@ -472,7 +528,7 @@ window.UIStudentTimelineTemplates = (() => {
         const openKey = openIdxRaw ? openIdxRaw : 'current';
         const currentRowIcon = isCurrentOpen ? '▼' : '▶';
         const currentDetailDisplay = isCurrentOpen ? 'table-row' : 'none';
-        const currentDetailHtml = renderCurrentRowDetailHtml(currentAi, compositeKey, inlinePlayerId, defaultFileId, hasValidAudioFile);
+        const currentDetailHtml = renderCurrentRowDetailHtml(currentAi, compositeKey, inlinePlayerId, defaultFileId, hasValidAudioFile, currentAiEvaluations);
 
         const currentRowHtml = `
             <tr style="cursor:pointer;background:${isCurrentOpen ? '#EDE9FE' : 'white'};" onclick="window.FeatureStudentTimeline.toggleAIHistoryRow('${compositeKey}', 'current')">
@@ -570,6 +626,45 @@ window.UIStudentTimelineTemplates = (() => {
             </div>`;
     };
 
+    /** 把單字標準化成可比對的形式（去大小寫、去頭尾標點），用來把 word_errors 對回原文裡的位置。 */
+    const normalizeWordForMatch = (w) => String(w == null ? '' : w).toLowerCase().replace(/^[^a-z0-9']+|[^a-z0-9']+$/gi, '');
+
+    /**
+     * 原先規劃：批改結果直接「在文字稿上」標出錯音的單字（而非只列一張表）。
+     * 依 word_errors 的 word 逐字比對 effectiveScript，命中的字直接加底線標紅，
+     * 點擊可定位播放該字錄音片段（沿用既有的 playStudentAudioSlice）。
+     */
+    const renderScriptWithErrorHighlightsHtml = (effectiveScript, wordErrors, aiEvalForTiming, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
+        const script = String(effectiveScript || '').trim();
+        if (!script) return '';
+        const errList = Array.isArray(wordErrors) ? wordErrors : [];
+        const errMap = {};
+        errList.forEach(function (e) {
+            const key = normalizeWordForMatch(e && e.word);
+            if (key && !errMap[key]) errMap[key] = e;
+        });
+
+        const tokens = script.split(/(\s+)/);
+        const bodyHtml = tokens.map(function (tok) {
+            if (/^\s*$/.test(tok)) return tok.replace(/\n/g, '<br>');
+            const key = normalizeWordForMatch(tok);
+            const err = key ? errMap[key] : null;
+            if (!err) return escapeAttr(tok);
+            const timing = resolveWordErrorTiming(err, aiEvalForTiming);
+            const tipParts = [];
+            if (err.student_pronunciation) tipParts.push('你唸成：' + err.student_pronunciation);
+            if (err.expected_phonetic) tipParts.push('正確音標：' + err.expected_phonetic);
+            if (err.error_type) tipParts.push(err.error_type);
+            const tip = tipParts.join('｜') || '發音需加強';
+            const clickAttr = hasValidAudioFile
+                ? ` onclick="window.UIStudentTimelineTemplates.playStudentAudioSlice('${escapeJsSingleQuoted(inlinePlayerId)}', ${timing.sTime}, ${timing.eTime}, '${escapeJsSingleQuoted(fallbackFileId)}')" style="cursor:pointer;"`
+                : '';
+            return `<span title="${escapeAttr(tip)}"${clickAttr} class="rt-word-error-mark" style="color:#DC2626; font-weight:900; text-decoration:underline wavy #EF4444; text-underline-offset:3px;">${escapeAttr(tok)}</span>`;
+        }).join('');
+
+        return `<div class="rt-normalize" style="font-size:0.92rem; line-height:1.9; color:#334155; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; padding:10px 12px;">${bodyHtml}</div>`;
+    };
+
     const renderWordErrorsHtml = (ai, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
         if (!ai || !ai.word_errors || !Array.isArray(ai.word_errors) || ai.word_errors.length === 0) return '';
         return `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #E2E8F0;">
@@ -620,13 +715,38 @@ window.UIStudentTimelineTemplates = (() => {
         </div>`;
     };
 
-    const renderEvaluationDetailHtml = (ai, inlinePlayerId, fallbackFileId, hasValidAudioFile) => {
+    const renderEvaluationDetailHtml = (ai, inlinePlayerId, fallbackFileId, hasValidAudioFile, perPageEvals) => {
         if (!ai) return '';
         let feedback = ai.comprehensive_feedback ? ai.comprehensive_feedback : (ai.feedback ? ai.feedback : '無綜合評語');
-        const wordErrorsHtml = renderWordErrorsHtml(ai, inlinePlayerId, fallbackFileId, hasValidAudioFile);
+
+        // 多頁（segment_count > 1）時，每頁各自的文稿／錯音要對回「該頁」，不能整批混在一起比對，
+        // 否則頁2的錯音套用頁1文稿會完全比不到字。單頁或缺 perPageEvals 時退回單一頁籤。
+        const pages = (Array.isArray(perPageEvals) && perPageEvals.length > 1)
+            ? perPageEvals
+            : [Object.assign({}, ai, { effective_script: ai.effective_script || '' })];
+
+        // 多頁時「文稿標錯」和「錯字表」都要各自跟著該頁走，不要合併成一份整批列表——
+        // 否則沒人看得出來某個錯字到底是哪一頁的，也違反「以頁／檔為單位顯示」的要求。
+        const pagesHtml = pages.map(function (p, idx) {
+            const label = pages.length > 1 ? (p.label || p.unit_key || ('第 ' + (idx + 1) + ' 頁')) : '';
+            const highlightHtml = renderScriptWithErrorHighlightsHtml(p.effective_script, p.word_errors, p, inlinePlayerId, fallbackFileId, hasValidAudioFile);
+            if (!highlightHtml) return '';
+            const labelHtml = label ? `<div style="font-weight:900; color:#4338CA; font-size:0.82rem; margin-bottom:4px;">📄 ${escapeAttr(label)}</div>` : '';
+            const pageErrorsHtml = renderWordErrorsHtml(p, inlinePlayerId, fallbackFileId, hasValidAudioFile);
+            return `<div style="margin-bottom:14px;">${labelHtml}${highlightHtml}${pageErrorsHtml}</div>`;
+        }).join('');
+
+        const scriptHighlightBlockHtml = pagesHtml
+            ? `<div style="margin-top:10px; margin-bottom:10px;">
+                <div style="font-weight: 900; color: #B45309; margin-bottom: 6px;">✍️ 文稿標錯（紅字為錯音，可點擊播放）：</div>
+                ${pagesHtml}
+            </div>`
+            : '';
+
         return `<div class="rt-normalize" style="font-size: 0.95rem; color: #334155; line-height: 1.6; background: white; padding: 12px; border-radius: 6px; border: 1px solid #E2E8F0; max-height: 400px; overflow-y: auto;">
             <div style="font-weight: 900; color: #4F46E5; margin-bottom: 6px;">📝 綜合評語：</div>
-            ${String(feedback).replace(/\n/g, '<br>')}${wordErrorsHtml}
+            ${String(feedback).replace(/\n/g, '<br>')}
+            ${scriptHighlightBlockHtml}
         </div>`;
     };
 
@@ -663,11 +783,20 @@ window.UIStudentTimelineTemplates = (() => {
             .replace(/\r/g, '');
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V111 模組已成功載入！");
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V119 模組已成功載入！");
 
     return {
         playGoogleTTS,
         playStudentAudioSlice, 
+
+        // 供「學習分析」頁籤（feature-student-analytics.js）重用，不必複製一份邏輯。
+        getScoresFromAi,
+        renderScriptWithErrorHighlightsHtml,
+        renderWordErrorsHtml,
+        formatAttemptDate,
+        escapeAttr,
+        escapeJsSingleQuoted,
+        resolveAudioContextFromCompletion,
         
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl, classGradingPolicy) => {
             try {
@@ -776,9 +905,9 @@ window.UIStudentTimelineTemplates = (() => {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#F1F5F9; color:#475569; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #CBD5E1;">✅ 已完成</span>`;
                                 } else if (effectiveTaskStatus === 'ai_error' || effectiveTaskStatus === 'failed') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF2F2; color:#EF4444; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FECACA;">⚠️ AI 分析失敗</span>`;
-                                } else if (effectiveTaskStatus === 'submitted') {
-                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EFF6FF; color:#3B82F6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #BFDBFE;">✅ 已繳交</span>`;
                                 }
+                                // 'submitted' 不再另外顯示「已繳交」字樣徽章：前面的打勾本身就是這個意思，
+                                // 重複標示只會讓畫面更亂；有進一步進度（AI 處理中／已批改等）才需要額外徽章。
 
                                 let showAIReport = false;
                                 if (effectiveTaskStatus === 'graded') showAIReport = true;
@@ -799,7 +928,10 @@ window.UIStudentTimelineTemplates = (() => {
                                             const scores = getScoresFromAi(ai);
                                             const gradingHistory = Array.isArray(compRecord.raw_data.grading_history) ? compRecord.raw_data.grading_history : [];
 
-                                            const isCollapsed = localStorage.getItem(`ai_report_collapsed_${compositeKey}`) === 'true';
+                                            // 預設收合：使用者沒手動展開／收合過時，先收起來避免課程進度一次攤開一堆報告；
+                                            // 一旦使用者手動切換過（true 或 'false'），就照使用者的選擇走。
+                                            const collapsedRaw = localStorage.getItem(`ai_report_collapsed_${compositeKey}`);
+                                            const isCollapsed = collapsedRaw === null ? true : collapsedRaw === 'true';
                                             const reportDisplay = isCollapsed ? 'none' : 'block';
                                             const toggleIcon = isCollapsed ? '◀️' : '🔽';
 
@@ -810,7 +942,8 @@ window.UIStudentTimelineTemplates = (() => {
 
                                             const progressHtml = buildLearningTrackHtml(ai, gradingHistory);
                                             const latestAttemptNum = gradingHistory.length + 1;
-                                            const historySectionHtml = buildHistoryTableHtml(compositeKey, gradingHistory, ai, inlinePlayerId, retryAudioId, hasValidAudioFile);
+                                            const currentAiEvaluations = Array.isArray(compRecord.raw_data.ai_evaluations) ? compRecord.raw_data.ai_evaluations : null;
+                                            const historySectionHtml = buildHistoryTableHtml(compositeKey, gradingHistory, ai, inlinePlayerId, retryAudioId, hasValidAudioFile, currentAiEvaluations);
 
                                             aiFeedbackHtml = `
                                                 <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -869,11 +1002,14 @@ window.UIStudentTimelineTemplates = (() => {
                     let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                     const safeCourseId = escapeJsSingleQuoted(course.id);
                     const safeTaskId = escapeJsSingleQuoted(task.id);
-                    let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px; cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', this.checked)" ${checked}>`;
+                    // 打勾本身就代表「已繳交」，勾勾顏色跟底色要有明顯對比才夠醒目
+                    const checkboxBaseStyle = 'transform: scale(1.4); margin-right: 8px; margin-top: 2px; accent-color: #059669; outline: 1px solid #CBD5E1; outline-offset: 1px; border-radius: 4px;';
+                    let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', this.checked)" ${checked}>`;
 
                     let btn = '';
                     let taskTitleDisplay = '';
                     let linkContent = '';
+                    let titleUsedRangeFallback = false;
 
                     const formattedTaskUrl = safeFormatUrl ? String(safeFormatUrl(task.url) ? safeFormatUrl(task.url) : '') : '';
 
@@ -910,20 +1046,32 @@ window.UIStudentTimelineTemplates = (() => {
                             if (task.raw_data.material_range) materialRange = String(task.raw_data.material_range);
                         }
 
-                        let displayTitle = stripHtml(task.title ? task.title : '語音錄製任務');
+                        let displayTitle = stripHtml(task.title ? task.title : '').trim();
+                        // 標題（麥克風右側）空白時，改用 base 範圍
+                        if (!displayTitle && materialRange) {
+                            displayTitle = String(materialRange).trim();
+                            titleUsedRangeFallback = true;
+                        }
+                        if (!displayTitle) displayTitle = '語音錄製任務';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle;">${escapeAttr(displayTitle)}</span>`;
 
                         const captureStudio = !(task.raw_data && task.raw_data.capture_studio === false);
                         const captureUpload = !(task.raw_data && task.raw_data.capture_upload === false);
 
                         if (!canUpload) {
-                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
+                            // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
+                    // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
+                    // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
                             btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⛔ 已逾期，停止收件</div>`;
                         } else if (!studentDriveUrl) {
-                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
+                            // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
+                    // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
+                    // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
                             btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⚠️ 您的專屬資料夾尚未設定</div>`;
                         } else {
-                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
+                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             
                             const pureTaskTitle = displayTitle || '未命名任務';
                             const statusId = `upload-status-${course.id}-${task.id}`;
@@ -965,29 +1113,35 @@ window.UIStudentTimelineTemplates = (() => {
                                     const manualSubmitLabel = taskStatus === 'ai_ready'
                                         ? '🤖 重新提交批改'
                                         : '🤖 手動提交批改';
-                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${safeCourseId}', '${safeTaskId}', '${safeRetryId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:6px; font-weight:800; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);">${manualSubmitLabel}</button>`;
+                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${safeCourseId}', '${safeTaskId}', '${safeRetryId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#7C3AED; color:white; border:none; cursor:pointer; font-size:0.82rem; padding:6px 12px; border-radius:8px; font-weight:800;">${manualSubmitLabel}</button>`;
                                 }
                             }
 
+                            const btnBaseStyle = 'font-size:0.82rem; padding:6px 12px; border-radius:8px; font-weight:800; cursor:pointer;';
+
+                            // 🌟 依老師要求拿掉「📂 繳交檔」按鈕：已有音檔時上面的 inline 播放器已足夠，
+                            // 沒有音檔時才需要一個入口讓學生自己去 Drive 資料夾確認。
                             const openFileBtnHtml = (hasValidAudioFile && retryAudioId)
-                                ? `<a href="${escapeAttr(resolveDriveViewUrl(retryAudioId))}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; text-decoration:none; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📂 繳交檔</a>`
-                                : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>`;
+                                ? ''
+                                : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="${btnBaseStyle} border:1px solid #E2E8F0; background:white; color:#64748B;">📁 Drive</button>`;
 
                             const studioBtnHtml = captureStudio
-                                ? `<button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">${recordBtnText}</button>`
+                                ? `<button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} ${btnBaseStyle}">${recordBtnText}</button>`
                                 : '';
                             const uploadBtnHtml = captureUpload
-                                ? `<input type="file" id="${audioUploadId}" accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
-                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;" title="支援 mp3、wav、m4a、webm 等">📤 上傳音檔</button>`
+                                ? `<input type="file" id="${audioUploadId}" multiple accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
+                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="${btnBaseStyle} background:#10B981; color:white; border:none;" title="可複選多檔；請依頁面順序點選">📤 上傳音檔（可複選）</button>`
                                 : '';
 
                             btn = `
-                                <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:8px 10px;">
                                     ${audioPlayerHtml}
-                                    ${studioBtnHtml}
-                                    ${uploadBtnHtml}
-                                    ${openFileBtnHtml}
-                                    ${manualSubmitBtnHtml}
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        ${studioBtnHtml}
+                                        ${uploadBtnHtml}
+                                        ${openFileBtnHtml}
+                                        ${manualSubmitBtnHtml}
+                                    </div>
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
                             `;
@@ -997,13 +1151,19 @@ window.UIStudentTimelineTemplates = (() => {
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
 
                         if (!canUpload) {
-                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
+                            // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
+                    // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
+                    // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
                             btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⛔ 已逾期，停止收件</div>`;
                         } else if (!studentDriveUrl) {
-                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked}>`;
+                            // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
+                    // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
+                    // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
+                    checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
                             btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⚠️ 您的專屬資料夾尚未設定</div>`;
                         } else {
-                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="transform: scale(1.3); margin-right: 8px; margin-top: 2px;" disabled ${checked} title="上傳成功後將自動打勾">`;
+                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             
                             const pureTaskTitle = displayTitle || '未命名任務';
                             const safeTitleForJS = escapeJsSingleQuoted(pureTaskTitle);
@@ -1017,8 +1177,9 @@ window.UIStudentTimelineTemplates = (() => {
                             const drivePreviewHtml = hasValidAudioFile
                                 ? buildSubmittedFilesHtml(submittedFileIds, retryAudioUrl, inlinePlayerId, submittedFileMetas)
                                 : '';
+                            // 🌟 依老師要求拿掉「📂 繳交檔」按鈕，理由同錄音任務：已有檔案時不需要重複入口。
                             const driveOpenBtnHtml = (hasValidAudioFile && (retryAudioId || submittedFileIds[0]))
-                                ? `<a href="${escapeAttr(resolveDriveViewUrl(retryAudioId || submittedFileIds[0]))}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; text-decoration:none; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📂 繳交檔</a>`
+                                ? ''
                                 : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>`;
 
                             btn = `
@@ -1042,11 +1203,11 @@ window.UIStudentTimelineTemplates = (() => {
                     }
                     
                     let materialRangeText = '';
-                    if (task.type === 'audio_record') {
-                        if (task.raw_data) {
-                            if (task.raw_data.material_range) {
-                                materialRangeText = String(task.raw_data.material_range).trim();
-                            }
+                    // 標題空白時已經退回顯示 base 範圍（見上方 titleUsedRangeFallback），
+                    // 這裡就不要再重複印一次一模一樣的「(範圍：...)」灰字。
+                    if (task.type === 'audio_record' && !titleUsedRangeFallback) {
+                        if (task.raw_data && task.raw_data.material_range) {
+                            materialRangeText = String(task.raw_data.material_range).trim();
                         }
                     }
 
@@ -1059,11 +1220,27 @@ window.UIStudentTimelineTemplates = (() => {
                             finalDescText = rangeStr;
                         }
                     }
+                    let recordingUnitHintHtml = '';
+                    if (task.type === 'audio_record') {
+                        const unitCount = (task.raw_data && Array.isArray(task.raw_data.grading_units))
+                            ? task.raw_data.grading_units.length
+                            : 0;
+                        const uploadLine = unitCount > 0
+                            ? `繳交時，可複選多檔一次上傳（本作業共 <strong>${unitCount}</strong> 頁 → 請上傳 <strong>${unitCount}</strong> 檔）`
+                            : '繳交時，可複選多檔一次上傳';
+                        recordingUnitHintHtml = `
+                            <ul class="rt-normalize" style="margin:6px 0 0; padding-left:34px; font-size:0.78rem; color:#64748B; line-height:1.65; list-style:none;">
+                                <li>🎙️ 錄音時，每一頁請錄成一支音檔</li>
+                                <li>📤 ${uploadLine}</li>
+                                <li>⚠️ 複選時，請依「頁面順序」點選檔案（先選第 1 頁、再選第 2 頁…），系統會依點選先後對應頁碼</li>
+                            </ul>`;
+                    }
 
                     let taskDescHtml = '';
                     if (finalDescText !== '') {
                         taskDescHtml = `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${finalDescText}</div>`;
                     }
+                    taskDescHtml += recordingUnitHintHtml;
                     
                     let showTaskDue = false;
                     if (task.due_date) {

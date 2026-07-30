@@ -56,6 +56,7 @@
 
     <nav class="tabs-nav">
         <button class="tab-link" data-view="progress" onclick="window.FeatureStudentTimeline.switchView('progress', this)">課程進度</button>
+        <button class="tab-link" data-view="analytics" onclick="window.FeatureStudentTimeline.switchView('analytics', this)">📊 學習分析</button>
         <button class="tab-link active" data-view="messages" id="tab-student-messages" onclick="window.FeatureStudentTimeline.switchView('messages', this)">📬 訊息</button>
         <button class="tab-link" data-view="resources" onclick="window.FeatureStudentTimeline.switchView('resources', this)">課程資源</button>
         <button class="tab-link" data-view="personal" onclick="window.FeatureStudentTimeline.switchView('personal', this)">個人作品</button>
@@ -64,6 +65,10 @@
 
     <div id="view-progress" class="view-content">
         <div id="course-container"></div>
+    </div>
+
+    <div id="view-analytics" class="view-content">
+        <div id="analytics-container"></div>
     </div>
 
     <div id="view-messages" class="view-content active">
@@ -167,12 +172,13 @@
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
 
     <script src="../120_student_core/ui-audio-templates.js?v=57"></script>
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=113"></script>
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=122"></script>
 
     <script defer src="../120_student_core/feature-student-audio.js?v=58"></script>
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>
     <script defer src="../120_student_core/feature-student-messages.js?v=13"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=84"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=88"></script>
+    <script defer src="../120_student_core/feature-student-analytics.js?v=3"></script>
     
     <script defer>
         function switchClass(newClassId) {

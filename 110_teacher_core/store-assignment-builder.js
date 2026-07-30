@@ -86,6 +86,14 @@ window.BuilderStore = (() => {
                     } else if (materialRangeEl) {
                         t.raw_data.material_range = String(materialRangeEl.value || '').trim();
                     }
+                    // 標題（麥克風右側）空白時，改用 base 範圍
+                    const titlePlain = titleEl
+                        ? String(titleEl.textContent || '').trim()
+                        : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                    if (!titlePlain && t.raw_data.material_range) {
+                        t.title = t.raw_data.material_range;
+                        if (titleEl) titleEl.textContent = t.raw_data.material_range;
+                    }
 
                     const materialUrlEl = document.getElementById(`node-material-url-${pathStr}`);
                     if (materialUrlEl) {
@@ -149,6 +157,21 @@ window.BuilderStore = (() => {
                                 if (snap.material_range) t.raw_data.material_range = snap.material_range;
                                 if (materialRangeEl && materialRangeEl.value) t.raw_data.material_range = String(materialRangeEl.value).trim();
                                 if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
+                                if (Array.isArray(snap.grading_units)) t.raw_data.grading_units = snap.grading_units;
+                                // 逐頁批改稿編輯框若存在，代表老師可能微調過內容，優先採用畫面上的最新值
+                                // （否則會被 hidden snapshot json 裡「套用 Snapshot 當下」的舊版蓋回去）
+                                const domGradingUnits = (window.FeatureTimeline && typeof window.FeatureTimeline.collectGradingUnitsFromDom === 'function')
+                                    ? window.FeatureTimeline.collectGradingUnitsFromDom(pathStr)
+                                    : null;
+                                if (domGradingUnits && domGradingUnits.length) {
+                                    t.raw_data.grading_units = domGradingUnits;
+                                    t.raw_data.original_script = sanitizeScript(domGradingUnits.map(function (u) {
+                                        const label = u.label || u.stem || '';
+                                        return label ? ('【' + label + '】\n' + (u.original_script || '')) : (u.original_script || '');
+                                    }).join('\n\n'));
+                                }
+                                if (snap.recording_unit) t.raw_data.recording_unit = snap.recording_unit;
+                                if (snap.recording_unit_hint) t.raw_data.recording_unit_hint = snap.recording_unit_hint;
                             }
                         } catch (_snapErr) {}
                     }
@@ -386,6 +409,43 @@ window.BuilderStore = (() => {
             syncState();
             const arr = pathStr.split('-').map(Number);
             getTaskParentArray(arr)[arr[arr.length - 1]].url = val;
+        },
+        /**
+         * 「套用 Snapshot」過去只把結果寫進 DOM（欄位、hidden json），沒有同步回
+         * BuilderStore 的 state。只要中間發生任何一次重繪（切分頁、加/刪節點…），
+         * template 會照 state 重新產生 HTML，剛套用好的 6 筆 meta／base 範圍就會被
+         * state 裡的舊值蓋掉，變成「改對又改錯」的迴圈。這裡把 snapshot 結果直接
+         * 寫回 state，讓重繪後 hydrate 也能還原一樣的內容。
+         */
+        updateNodeMaterialSnapshot: (pathStr, snapshot) => {
+            syncState();
+            const arr = pathStr.split('-').map(Number);
+            const task = getTaskParentArray(arr)[arr[arr.length - 1]];
+            if (!task || !snapshot) return;
+            if (!task.raw_data) task.raw_data = {};
+            const rd = task.raw_data;
+            if (Array.isArray(snapshot.material_refs) && snapshot.material_refs.length) {
+                rd.material_refs = snapshot.material_refs;
+                rd.material_ref = snapshot.material_refs[0];
+            } else if (snapshot.material_ref) {
+                rd.material_ref = snapshot.material_ref;
+                rd.material_refs = [snapshot.material_ref];
+            }
+            if (snapshot.material_range) rd.material_range = snapshot.material_range;
+            if (snapshot.original_script) rd.original_script = snapshot.original_script;
+            const displayText = snapshot.student_display || snapshot.student_display_text;
+            if (displayText) {
+                rd.student_display = displayText;
+                rd.student_display_text = displayText;
+                rd.student_text = displayText;
+            }
+            if (snapshot.snapshot_at) rd.snapshot_at = snapshot.snapshot_at;
+            if (Array.isArray(snapshot.grading_units)) rd.grading_units = snapshot.grading_units;
+            if (snapshot.recording_unit) rd.recording_unit = snapshot.recording_unit;
+            if (snapshot.recording_unit_hint) rd.recording_unit_hint = snapshot.recording_unit_hint;
+            rd.script_source = 'meta';
+            const plainTitle = String(task.title || '').replace(/<[^>]*>/g, '').trim();
+            if (!plainTitle && rd.material_range) task.title = rd.material_range;
         },
         copyPrevNodeUrl: (pathStr) => {
             syncState();

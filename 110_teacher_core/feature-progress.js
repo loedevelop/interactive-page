@@ -98,6 +98,7 @@ window.FeatureProgress = (() => {
                 .from('student_enrollments')
                 .select(`
                     user_id,
+                    raw_data,
                     profiles:user_id (id, name)
                 `)
                 .eq('class_id', classId)
@@ -106,7 +107,12 @@ window.FeatureProgress = (() => {
                 
             if (enrollError) throw new Error('讀取選課名單失敗: ' + enrollError.message);
 
-            const students = enrollments ? enrollments.map(e => e.profiles).filter(p => p !== null) : [];
+            // 附掛 drive_folder_id（指向該生 01_Submissions），供音檔分割上傳等工具使用
+            const students = enrollments
+                ? enrollments.filter(e => e.profiles !== null).map(e => Object.assign({}, e.profiles, {
+                    drive_folder_id: (e.raw_data && e.raw_data.drive_folder_id) || ''
+                }))
+                : [];
 
             const { data: assignments, error: assignError } = await window.supabaseClient
                 .from('assignments')

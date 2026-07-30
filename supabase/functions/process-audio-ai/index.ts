@@ -186,18 +186,31 @@ function mapSpeechaceToEvaluation(speechaceResult: any, phoneticFormat: string):
   const wordErrors: any[] = [];
   wordList.forEach((w: any) => {
     const quality = w.quality_score ?? 100;
-    if (quality >= 80) return;
+    // Speechace 官方判讀標準：70-80 分僅屬「Good，可懂但有一兩個小瑕疵」，
+    // 老師測試後反應這類太輕微、幾乎每個字都會被抓，不實用。
+    // 改成只抓 70 分以下（Fair/Poor：可能聽不懂、有明顯錯誤），聚焦真正明顯的發音錯誤。
+    if (quality >= 70) return;
 
     let errorType = "mispronunciation";
     if (w.quality_class === "omission") errorType = "omission";
 
     let expectedPhonetic = "";
+    let studentPronunciation = "";
     if (Array.isArray(w.phone_score_list)) {
       const phones = w.phone_score_list
         .map((p: any) => p.phone ?? p.ipa ?? "")
         .filter(Boolean)
         .join("");
       expectedPhonetic = phones ? `/${phones}/` : "";
+
+      // sound_most_like 是 Speechace 依學生實際發音判斷「聽起來最像哪個音」，
+      // 用它才拼得出「學生實際唸成什麼」；之前誤用不存在的 extended_word_score 欄位，
+      // 導致永遠拿不到值、只能顯示「[需覆核]」佔位字，等於白做。
+      const soundedPhones = w.phone_score_list
+        .map((p: any) => p.sound_most_like ?? p.phone ?? "")
+        .filter(Boolean)
+        .join("");
+      studentPronunciation = soundedPhones ? `/${soundedPhones}/` : "";
     }
 
     let startTime = Number(w.start_time ?? 0);
@@ -221,7 +234,7 @@ function mapSpeechaceToEvaluation(speechaceResult: any, phoneticFormat: string):
       word: w.word || "",
       error_type: errorType,
       expected_phonetic: expectedPhonetic,
-      student_pronunciation: w.extended_word_score ? String(w.extended_word_score) : "[需覆核]",
+      student_pronunciation: studentPronunciation || "(音檔片段過短，無法辨識)",
       start_time: startTime,
       end_time: endTime,
     });
@@ -470,6 +483,7 @@ serve(async (req: Request) => {
     let materialRange = "";
     let useAiGrading = true;
     let useAiGrammar = false;
+    let taskGradingUnits: any[] = [];
 
     if (Array.isArray(assignmentTasks) && assignmentTasks.length > 0) {
       let foundTask: any = null;
@@ -496,6 +510,9 @@ serve(async (req: Request) => {
           (foundTask.raw_data && foundTask.raw_data.material_range) ||
           foundTask.material_range ||
           "";
+        if (foundTask.raw_data && Array.isArray(foundTask.raw_data.grading_units)) {
+          taskGradingUnits = foundTask.raw_data.grading_units;
+        }
         useAiGrading =
           foundTask.use_ai_grading !== false &&
           (!foundTask.raw_data || foundTask.raw_data.use_ai_grading !== false);
@@ -514,8 +531,11 @@ serve(async (req: Request) => {
           }
         }
 
-        // 有可用文稿才開 AI；禁止「僅因有 sibling link」就強制送 AI
-        if (!String(originalScript || "").trim()) {
+        const hasUnitScripts = taskGradingUnits.some(
+          (u: any) => String(u?.original_script || "").trim(),
+        );
+        // 有可用文稿（整份或分頁單位）才開 AI
+        if (!String(originalScript || "").trim() && !hasUnitScripts) {
           useAiGrading = false;
         } else if (
           foundTask.use_ai_grading !== false &&
@@ -530,13 +550,115 @@ serve(async (req: Request) => {
       originalScript = assignmentRaw.original_script || "";
     }
 
-    const scriptResolved = resolveEffectiveScript(originalScript, materialRange);
-    const effectiveScript = scriptResolved.text;
+    function buildSegments(): any[] {
+      const rawSegs = currentRawData.audio_segments;
+      if (Array.isArray(rawSegs) && rawSegs.length > 0) {
+        return rawSegs.map((s: any, idx: number) => {
+          const unit = taskGradingUnits[idx] || {};
+          return {
+            ...s,
+            file_id: s.file_id || s.id,
+            audio_url: s.audio_url ||
+              (s.file_id ? `https://drive.google.com/file/d/${s.file_id}/view` : ""),
+            original_script: String(s.original_script || unit.original_script || "").trim(),
+            unit_key: s.unit_key || unit.unit_key || "",
+            label: s.label || unit.label || "",
+            page: s.page != null ? s.page : unit.page,
+            status: s.status || "pending",
+          };
+        });
+      }
+      const ids = Array.isArray(currentRawData.drive_file_ids)
+        ? currentRawData.drive_file_ids.map(String).filter(Boolean)
+        : [];
+      const primaryUrl =
+        currentRawData.student_audio_url || record.audio_url || currentRawData.audio_url || "";
+      if (ids.length === 0 && primaryUrl) {
+        const fid = extractDriveFileId(primaryUrl);
+        if (fid) ids.push(fid);
+      }
+      if (ids.length === 0) return [];
+      if (taskGradingUnits.length > 0) {
+        return ids.map((fid: string, idx: number) => {
+          const unit = taskGradingUnits[idx] || taskGradingUnits[taskGradingUnits.length - 1] || {};
+          return {
+            file_id: fid,
+            audio_url: `https://drive.google.com/file/d/${fid}/view`,
+            original_script: String(unit.original_script || "").trim(),
+            unit_key: unit.unit_key || "",
+            label: unit.label || "",
+            page: unit.page,
+            status: "pending",
+          };
+        });
+      }
+      return [{
+        file_id: ids[0],
+        audio_url: primaryUrl || `https://drive.google.com/file/d/${ids[0]}/view`,
+        original_script: "",
+        unit_key: "",
+        label: "",
+        status: "pending",
+      }];
+    }
 
-    // 無文稿或關閉 AI：只視為已繳交，禁止丟 Fatal / ai_error（上傳仍有效）
-    if (!useAiGrading || !effectiveScript) {
+    async function gradeOne(
+      audioBytes: Uint8Array,
+      scriptText: string,
+    ): Promise<any> {
+      const audioBase64 = encodeBase64(audioBytes);
+      let aiEvaluation: any = null;
+      try {
+        if (!speechaceApiKey) throw new Error("SPEECHACE_API_KEY not configured.");
+        const speechaceResult = await gradeWithSpeechace(
+          audioBytes,
+          scriptText,
+          gradingPolicy.accent,
+          speechaceApiKey,
+        );
+        aiEvaluation = mapSpeechaceToEvaluation(speechaceResult, gradingPolicy.phonetic_format);
+      } catch (speechaceErr: any) {
+        console.warn("Speechace failed, falling back to Gemini:", speechaceErr.message);
+        aiEvaluation = await gradeWithGeminiFallback(
+          audioBase64,
+          scriptText,
+          geminiApiKey!,
+          useAiGrammar,
+        );
+      }
+      const feedback = await generateGeminiFeedback(aiEvaluation, geminiApiKey!);
+      aiEvaluation.comprehensive_feedback = feedback;
+      aiEvaluation.graded_at = new Date().toISOString();
+      return aiEvaluation;
+    }
+
+    // 重新讀取最新 raw，避免並發重入搶同一段
+    const { data: freshRow } = await supabase
+      .from("task_completions")
+      .select("raw_data, status")
+      .eq("id", recordId)
+      .maybeSingle();
+    if (freshRow?.raw_data) currentRawData = freshRow.raw_data;
+    if (freshRow?.status && freshRow.status !== "ai_processing") {
+      return new Response(JSON.stringify({ message: "Bypassed: status changed." }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const segments = buildSegments();
+    if (!segments.length) {
+      throw new Error("Fatal: audio_url or student_audio_url is missing.");
+    }
+
+    // 無 AI 或完全沒文稿可批：保留繳交
+    const anySegmentScript = segments.some((s) => String(s.original_script || "").trim());
+    const scriptResolved = resolveEffectiveScript(originalScript, materialRange);
+    const fallbackScript = scriptResolved.text;
+    if (!useAiGrading || (!anySegmentScript && !fallbackScript)) {
       const skipRaw = {
         ...currentRawData,
+        audio_segments: segments,
         ai_skip_reason: !useAiGrading
           ? "use_ai_grading_disabled"
           : "original_script_missing",
@@ -546,10 +668,7 @@ serve(async (req: Request) => {
       delete (skipRaw as any).failed_at;
       await supabase
         .from("task_completions")
-        .update({
-          status: "submitted",
-          raw_data: skipRaw,
-        })
+        .update({ status: "submitted", raw_data: skipRaw })
         .eq("id", record.id);
       return new Response(
         JSON.stringify({
@@ -558,82 +677,174 @@ serve(async (req: Request) => {
             : "Skipped AI grading: original_script is missing (submission kept).",
           skipped_ai: true,
         }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // 填補缺稿的 segment
+    for (const s of segments) {
+      if (!String(s.original_script || "").trim() && fallbackScript) {
+        s.original_script = fallbackScript;
+      }
+    }
+
+    // 只取 pending；若有人正在 processing，讓該次執行接手，避免雙重開跑
+    let pendingIdx = segments.findIndex((s) => s.status === "pending");
+    if (pendingIdx < 0) {
+      pendingIdx = segments.findIndex((s) => s.status === "processing");
+    }
+    if (pendingIdx < 0) {
+      const doneEvals = segments
+        .filter((s) => s.status === "done" && s.ai_evaluation)
+        .map((s) => s.ai_evaluation);
+      const nextStatus = gradingPolicy.final_authority === "ai_auto" ? "graded" : "ai_ready";
+      const primary = doneEvals[0] || currentRawData.ai_evaluation || null;
+      await supabase.from("task_completions").update({
+        status: doneEvals.length ? nextStatus : "ai_error",
+        raw_data: {
+          ...currentRawData,
+          audio_segments: segments,
+          ai_evaluations: doneEvals,
+          ai_evaluation: primary,
         },
-      );
+      }).eq("id", recordId);
+      return new Response(JSON.stringify({ success: true, status: nextStatus, segments: segments.length }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    let driveUrl =
-      currentRawData.student_audio_url || record.audio_url || currentRawData.audio_url;
-    if (
-      !driveUrl &&
-      Array.isArray(currentRawData.drive_file_ids) &&
-      currentRawData.drive_file_ids.length > 0
-    ) {
-      driveUrl = `https://drive.google.com/file/d/${currentRawData.drive_file_ids[0]}/view`;
+    // 🌟 判斷「這是不是一次全新批改的第一段」：曾發生 bug——多頁（例如 6 頁）錄音一次送批，
+    // 內部其實是逐段（每個 segment 各呼叫一次本函式）處理，處理到「最後一段」完成時
+    // stillPending 才會變 false；若在那個時間點才把「目前 ai_evaluation」存進 grading_history，
+    // 存到的其實是「這次批改跑到一半（例如前 5 段）的中間彙總值」，而不是真正上一次獨立的批改，
+    // 導致畫面誤植成「批改過 2 次」。正確判斷點應該是「這批 segments 全部都還是 pending」
+    // （代表這是全新一次提交／補批改的第一段），此時若已有舊的 ai_evaluation，才是真的要封存的歷史紀錄。
+    const isFreshRunStart = segments.every((s) => s.status === "pending");
+
+    const seg = segments[pendingIdx];
+    const segScript = String(seg.original_script || "").trim();
+    if (!segScript) {
+      segments[pendingIdx] = {
+        ...seg,
+        status: "skipped",
+        skip_reason: "original_script_missing",
+      };
+    } else {
+      const driveUrl = seg.audio_url ||
+        (seg.file_id ? `https://drive.google.com/file/d/${seg.file_id}/view` : "");
+      const fileId = extractDriveFileId(driveUrl) || String(seg.file_id || "");
+      if (!fileId) throw new Error(`Invalid Google Drive URL for segment ${pendingIdx}`);
+
+      try {
+        const audioBytes = await downloadAudioFromDrive(fileId);
+        const aiEvaluation = await gradeOne(audioBytes, segScript);
+        aiEvaluation.effective_script = segScript;
+        aiEvaluation.script_scope_note = seg.unit_key
+          ? `grading_unit_${seg.unit_key}`
+          : scriptResolved.note;
+        aiEvaluation.material_range = materialRange;
+        aiEvaluation.unit_key = seg.unit_key || "";
+        aiEvaluation.label = seg.label || "";
+        aiEvaluation.page = seg.page;
+        aiEvaluation.segment_index = pendingIdx;
+
+        segments[pendingIdx] = {
+          ...seg,
+          status: "done",
+          ai_evaluation: aiEvaluation,
+          graded_at: aiEvaluation.graded_at,
+        };
+      } catch (segErr: any) {
+        segments[pendingIdx] = {
+          ...seg,
+          status: "error",
+          error: segErr?.message || String(segErr),
+        };
+      }
     }
-    if (!driveUrl) {
-      throw new Error("Fatal: audio_url or student_audio_url is missing.");
+
+    const stillPending = segments.some((s) => s.status === "pending");
+    const doneEvals = segments
+      .filter((s) => s.status === "done" && s.ai_evaluation)
+      .map((s) => ({
+        ...s.ai_evaluation,
+        unit_key: s.unit_key,
+        label: s.label,
+        page: s.page,
+        file_id: s.file_id,
+      }));
+    const hasError = segments.some((s) => s.status === "error");
+
+    // 彙總：以第一份完成稿為主報告，並附上分頁陣列
+    let primaryEval = doneEvals[0] || null;
+    if (doneEvals.length > 1 && primaryEval) {
+      const avg = (key: string) => {
+        const nums = doneEvals.map((e) => Number(e[key])).filter((n) => Number.isFinite(n));
+        if (!nums.length) return primaryEval[key];
+        return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
+      };
+      primaryEval = {
+        ...primaryEval,
+        pronunciation_score: avg("pronunciation_score"),
+        fluency_score: avg("fluency_score"),
+        completeness_score: avg("completeness_score"),
+        word_errors: doneEvals.flatMap((e) => e.word_errors || []),
+        segment_count: doneEvals.length,
+        comprehensive_feedback: doneEvals
+          .map((e, i) => {
+            const tag = e.label || e.unit_key || `第${i + 1}段`;
+            return `【${tag}】\n${e.comprehensive_feedback || ""}`;
+          })
+          .join("\n\n"),
+      };
     }
-
-    const fileId = extractDriveFileId(driveUrl);
-    if (!fileId) {
-      throw new Error(`Invalid Google Drive URL format: ${driveUrl}`);
-    }
-
-    const audioBytes = await downloadAudioFromDrive(fileId);
-    const audioBase64 = encodeBase64(audioBytes);
-
-    let aiEvaluation: any = null;
-
-    try {
-      if (!speechaceApiKey) throw new Error("SPEECHACE_API_KEY not configured.");
-      const speechaceResult = await gradeWithSpeechace(
-        audioBytes,
-        effectiveScript,
-        gradingPolicy.accent,
-        speechaceApiKey,
-      );
-      aiEvaluation = mapSpeechaceToEvaluation(speechaceResult, gradingPolicy.phonetic_format);
-    } catch (speechaceErr: any) {
-      console.warn("Speechace failed, falling back to Gemini:", speechaceErr.message);
-      aiEvaluation = await gradeWithGeminiFallback(
-        audioBase64,
-        effectiveScript,
-        geminiApiKey,
-        useAiGrammar,
-      );
-    }
-
-    aiEvaluation.effective_script = effectiveScript;
-    aiEvaluation.script_scope_note = scriptResolved.note;
-    aiEvaluation.material_range = materialRange;
-    aiEvaluation.graded_at = new Date().toISOString();
-
-    const feedback = await generateGeminiFeedback(aiEvaluation, geminiApiKey);
-    aiEvaluation.comprehensive_feedback = feedback;
 
     const gradingHistory = currentRawData.grading_history || [];
-    if (currentRawData.ai_evaluation) {
+    if (isFreshRunStart && currentRawData.ai_evaluation) {
       gradingHistory.push({
         timestamp: new Date().toISOString(),
         ai_evaluation: currentRawData.ai_evaluation,
-        audio_url: driveUrl,
+        audio_url: currentRawData.student_audio_url,
         teacher_score: currentRawData.teacher_score,
         ta_score: currentRawData.ta_score,
       });
     }
 
-    const nextStatus = gradingPolicy.final_authority === "ai_auto" ? "graded" : "ai_ready";
+    let nextStatus = "ai_processing";
+    if (!stillPending) {
+      if (doneEvals.length === 0) nextStatus = "ai_error";
+      else nextStatus = gradingPolicy.final_authority === "ai_auto" ? "graded" : "ai_ready";
+    }
+
+    // 老師端「文字稿標錯」是拿這份 assignment_text 全文去比對 word_errors；
+    // 一頁一檔拆成多段後，若只塞第一頁的稿子，第 2 頁以後的錯音字會完全比不到、
+    // 在互動文稿裡直接消失不見。這裡改成把「已完成」的每頁文稿依頁序接起來（附頁籤），
+    // 確保全部頁面的字都在同一份文字裡可被找到、標紅。
+    const assignmentTextForDisplay = doneEvals.length > 1
+      ? doneEvals
+        .map((e, i) => {
+          const tag = e.label || e.unit_key || `第${i + 1}頁`;
+          return `【${tag}】\n${e.effective_script || ""}`;
+        })
+        .join("\n\n")
+      : (primaryEval && primaryEval.effective_script) || fallbackScript;
 
     const updatedRawData = {
       ...currentRawData,
-      ai_evaluation: aiEvaluation,
+      audio_segments: segments,
+      ai_evaluations: doneEvals,
+      ai_evaluation: primaryEval || currentRawData.ai_evaluation,
       grading_history: gradingHistory,
-      assignment_text: effectiveScript,
+      assignment_text: assignmentTextForDisplay,
       grading_policy_snapshot: gradingPolicy,
+      ai_segment_cursor: pendingIdx,
+      ...(hasError && !stillPending && doneEvals.length === 0
+        ? {
+          ai_error_log: segments.map((s) => s.error).filter(Boolean).join(" | ") || "All segments failed",
+          failed_at: new Date().toISOString(),
+        }
+        : {}),
     };
 
     const { error: updateError } = await supabase
@@ -648,10 +859,23 @@ serve(async (req: Request) => {
       throw new Error(`Database Commit Failed: ${updateError.message}`);
     }
 
-    const targetUserId = record.student_id || record.user_id;
-    const errorCount = aiEvaluation.word_errors?.length || 0;
+    // 若尚有 pending：維持 ai_processing 的 UPDATE 會再觸發 webhook 接續下一段
+    if (stillPending) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          status: "ai_processing",
+          segment_done: pendingIdx,
+          remaining: segments.filter((s) => s.status === "pending").length,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
-    if (targetUserId && errorCount > 0 && Array.isArray(aiEvaluation.word_errors)) {
+    const targetUserId = record.student_id || record.user_id;
+    const errorCount = primaryEval?.word_errors?.length || 0;
+
+    if (targetUserId && errorCount > 0 && Array.isArray(primaryEval?.word_errors)) {
       const { data: profileData } = await supabase
         .from("profiles")
         .select("raw_data")
@@ -663,7 +887,7 @@ serve(async (req: Request) => {
         const profileRaw = profileData.raw_data || {};
         const defectVocab = profileRaw.defect_vocab || {};
 
-        aiEvaluation.word_errors.forEach((err: any) => {
+        primaryEval.word_errors.forEach((err: any) => {
           const w = String(err.word || "").toLowerCase().replace(/[^a-z']/g, "");
           if (!w) return;
           if (!defectVocab[w]) {
@@ -678,7 +902,7 @@ serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, status: nextStatus, ai_evaluation: aiEvaluation }), {
+    return new Response(JSON.stringify({ success: true, status: nextStatus, ai_evaluation: primaryEval, segments: segments.length }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

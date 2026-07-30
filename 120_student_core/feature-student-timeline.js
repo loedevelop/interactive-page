@@ -186,17 +186,17 @@ window.FeatureStudentTimeline = (() => {
         return false;
     }
 
-    function applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl) {
+    function applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl, extraRaw) {
         const compositeKey = `${assignmentId}_${taskId}`;
         if (!completedTasks.includes(compositeKey)) completedTasks.push(compositeKey);
         if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
         const audioUrlStr = audioUrl ? String(audioUrl) : '';
-        const rawPatch = {
+        const rawPatch = Object.assign({
             drive_file_ids: fileId ? [String(fileId)] : [],
             student_audio_url: audioUrlStr,
             audio_url: audioUrlStr,
             submitted_files: fileId ? [{ id: String(fileId), mime: 'audio/wav', name: 'recording.wav' }] : []
-        };
+        }, extraRaw || {});
         let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
         if (tempRecord) {
             tempRecord.status = 'ai_processing';
@@ -212,27 +212,125 @@ window.FeatureStudentTimeline = (() => {
         }
     }
 
-    async function submitAudioToAIGrading(assignmentId, taskId, fileId, audioUrl) {
+    function getTaskGradingUnits(taskConfig) {
+        const raw = (taskConfig && taskConfig.raw_data) ? taskConfig.raw_data : {};
+        if (Array.isArray(raw.grading_units) && raw.grading_units.length) {
+            return raw.grading_units.slice();
+        }
+        return [];
+    }
+
+    async function submitAudioSegmentsToAIGrading(assignmentId, taskId, segments) {
         assertAssignmentUuid(assignmentId, '作業 ID');
         const taskConfig = findTaskConfig(assignmentId, taskId);
-        const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-        if (!scriptText) {
+        const units = getTaskGradingUnits(taskConfig);
+        const hasAnyScript = segments.some(s => String(s.original_script || '').trim())
+            || !!resolveTaskScriptText(assignmentId, taskId, taskConfig)
+            || units.length > 0;
+        if (!hasAnyScript) {
             throw new Error('尚未設定批改文稿，略過 AI。請通知老師套用 Snapshot 後再補批改。');
         }
         const { userId, classId } = await getAuthContext();
         if (!window.supabaseClient) throw new Error('系統 API 模組尚未載入');
+        const first = segments[0] || {};
         const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
             p_assignment_id: assignmentId,
             p_task_id: String(taskId),
             p_student_id: userId,
             p_class_id: classId,
-            p_file_id: fileId,
-            p_audio_url: audioUrl
+            p_file_id: first.file_id || null,
+            p_audio_url: first.audio_url || null,
+            p_segments: segments
         });
         if (rpcErr) throw rpcErr;
     }
 
+    async function submitAudioToAIGrading(assignmentId, taskId, fileId, audioUrl) {
+        await submitAudioSegmentsToAIGrading(assignmentId, taskId, [{
+            file_id: fileId,
+            audio_url: audioUrl,
+            name: 'recording.wav',
+            original_script: '',
+            unit_key: '',
+            label: ''
+        }]);
+    }
+
+    async function uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, fileBlob, originalFileName, canSendAI) {
+        let uploadBlob = fileBlob;
+        let uploadMime = (fileBlob && fileBlob.type) ? fileBlob.type : 'audio/mpeg';
+        let uploadExt = '.mp3';
+        if (originalFileName && originalFileName.includes('.')) {
+            uploadExt = originalFileName.substring(originalFileName.lastIndexOf('.'));
+        }
+
+        if (canSendAI) {
+            const audioReady = await ensureFeatureStudentAudioReady();
+            if (audioReady && window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
+                uploadBlob = await window.FeatureStudentAudio.convertBlobToWav(fileBlob);
+                uploadMime = 'audio/wav';
+                uploadExt = '.wav';
+            } else if (!audioReady) {
+                console.warn('錄音轉碼模組尚未就緒，將嘗試直接上傳原始音檔');
+            }
+        }
+
+        const reader = new FileReader();
+        const base64Data = await new Promise((resolve, reject) => {
+            reader.onloadend = () => {
+                const parts = String(reader.result).split(',');
+                resolve(parts.length > 1 ? parts[1] : parts[0]);
+            };
+            reader.onerror = () => reject(new Error('FileReader Error'));
+            reader.readAsDataURL(uploadBlob);
+        });
+
+        const { classId } = await getAuthContext();
+        if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error('系統 API 模組尚未載入');
+        const targetFolderId = resolveStudentUploadFolderId();
+        const classPrefix = (classId ? classId : '0000').substring(0, 4);
+        const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
+        const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
+        const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}${uploadExt}`;
+        const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId);
+        return {
+            fileId: result.fileId,
+            audioUrl: `https://drive.google.com/file/d/${result.fileId}/view`,
+            uploadMime,
+            finalFileName
+        };
+    }
+
+    function isTransientDriveUploadError(err) {
+        const msg = String((err && err.message) ? err.message : err || '');
+        return /存取遭拒|拒絕存取|rate limit|too many requests|temporarily|請稍後再試/i.test(msg);
+    }
+
+    async function delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
+     * 複選多檔會短時間內連續打同一個 Drive 資料夾，偶爾會撞到暫時性的
+     * 「存取遭拒」錯誤；遇到這類錯誤時稍等後自動重試一次，避免整批上傳失敗。
+     */
+    async function uploadOneAudioBlobWithRetry(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI) {
+        try {
+            return await uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI);
+        } catch (err) {
+            if (!isTransientDriveUploadError(err)) throw err;
+            await delay(1200);
+            return await uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI);
+        }
+    }
+
     async function uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, fileBlob, originalFileName) {
+        await uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, [
+            { blob: fileBlob, name: originalFileName || 'recording.wav' }
+        ]);
+    }
+
+    async function uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, fileItems) {
         const statusEl = document.getElementById(statusId);
 
         if (window._isUploadingAudio) {
@@ -247,79 +345,95 @@ window.FeatureStudentTimeline = (() => {
             assertAssignmentUuid(assignmentId, '作業 ID');
             const taskConfig = findTaskConfig(assignmentId, taskId);
             const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-            const canSendAI = !!scriptText;
+            const gradingUnits = getTaskGradingUnits(taskConfig);
+            const canSendAI = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim());
 
-            if (statusEl) {
-                statusEl.textContent = canSendAI ? '⚙️ 音檔轉碼中...' : '🚀 音檔上傳中...';
-                statusEl.style.color = '#3B82F6';
+            const items = (fileItems || []).filter(Boolean);
+            if (!items.length) throw new Error('未選擇音檔');
+
+            // 選取順序對應 grading_units（一頁一檔）
+            const pairCount = gradingUnits.length
+                ? Math.min(items.length, gradingUnits.length)
+                : items.length;
+            if (gradingUnits.length && items.length !== gradingUnits.length) {
+                window.showFlash(
+                    `已選 ${items.length} 檔，此作業有 ${gradingUnits.length} 個錄音頁單位；將依選取順序對應前 ${pairCount} 頁。`,
+                    'warning'
+                );
             }
 
-            let uploadBlob = fileBlob;
-            let uploadMime = (fileBlob && fileBlob.type) ? fileBlob.type : 'audio/mpeg';
-            let uploadExt = '.mp3';
-            if (originalFileName && originalFileName.includes('.')) {
-                uploadExt = originalFileName.substring(originalFileName.lastIndexOf('.'));
-            }
-
-            // 有文稿才轉 wav 送 AI；無文稿則原檔上傳到資料夾即可
-            if (canSendAI) {
-                const audioReady = await ensureFeatureStudentAudioReady();
-                if (audioReady && window.FeatureStudentAudio && typeof window.FeatureStudentAudio.convertBlobToWav === 'function') {
-                    uploadBlob = await window.FeatureStudentAudio.convertBlobToWav(fileBlob);
-                    uploadMime = 'audio/wav';
-                    uploadExt = '.wav';
-                } else if (!audioReady) {
-                    console.warn('錄音轉碼模組尚未就緒，將嘗試直接上傳原始音檔');
+            const uploaded = [];
+            for (let i = 0; i < pairCount; i++) {
+                const item = items[i];
+                if (statusEl) {
+                    statusEl.textContent = canSendAI
+                        ? `⚙️ 轉碼／上傳 ${i + 1}/${pairCount}...`
+                        : `🚀 上傳 ${i + 1}/${pairCount}...`;
+                    statusEl.style.color = '#3B82F6';
                 }
+                if (!isAudioUploadFile(item.blob || item)) {
+                    throw new Error(`「${item.name || '檔案'}」不是支援的音檔格式`);
+                }
+                const blob = item.blob || item;
+                if (blob.size > 25 * 1024 * 1024) {
+                    throw new Error(`「${item.name || '檔案'}」超過 25MB`);
+                }
+                const up = await uploadOneAudioBlobWithRetry(
+                    assignmentId, taskId, safeTitleForJS, blob, item.name || `part_${i + 1}.wav`, canSendAI
+                );
+                const unit = gradingUnits[i] || {};
+                uploaded.push({
+                    file_id: up.fileId,
+                    audio_url: up.audioUrl,
+                    name: up.finalFileName,
+                    uploadMime: up.uploadMime,
+                    unit_key: unit.unit_key || '',
+                    stem: unit.stem || '',
+                    page: unit.page != null ? unit.page : null,
+                    label: unit.label || (gradingUnits.length ? `第${i + 1}頁` : ''),
+                    original_script: String(unit.original_script || '').trim()
+                });
+                // 多檔連續上傳同一資料夾時，稍微間隔可降低撞到 Drive 暫時性存取限制的機率
+                if (i < pairCount - 1) await delay(350);
             }
-
-            const reader = new FileReader();
-            const base64Data = await new Promise((resolve, reject) => {
-                reader.onloadend = () => {
-                    const parts = String(reader.result).split(',');
-                    resolve(parts.length > 1 ? parts[1] : parts[0]);
-                };
-                reader.onerror = () => reject(new Error('FileReader Error'));
-                reader.readAsDataURL(uploadBlob);
-            });
-
-            if (statusEl) {
-                statusEl.textContent = '🚀 音檔上傳中...';
-                statusEl.style.color = '#3B82F6';
-            }
-
-            const { userId, classId } = await getAuthContext();
-            if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error('系統 API 模組尚未載入');
-
-            const targetFolderId = resolveStudentUploadFolderId();
-
-            const classPrefix = (classId ? classId : '0000').substring(0, 4);
-            const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
-            const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
-            const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}${uploadExt}`;
-
-            const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId);
-            const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
 
             if (canSendAI) {
                 if (statusEl) {
-                    statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
+                    statusEl.textContent = `🧠 喚醒 AI（${uploaded.length} 段）...`;
                     statusEl.style.color = '#8B5CF6';
                 }
-                await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
+                await submitAudioSegmentsToAIGrading(assignmentId, taskId, uploaded);
                 if (statusEl) {
-                    statusEl.textContent = '✅ 繳交成功！AI 已接管';
+                    statusEl.textContent = `✅ 已繳交 ${uploaded.length} 檔，AI 依頁批改中`;
                     statusEl.style.color = '#10B981';
                 }
-                applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
+                applyLocalCompletionAfterAudioSubmit(
+                    assignmentId,
+                    taskId,
+                    uploaded[0].file_id,
+                    uploaded[0].audio_url,
+                    {
+                        drive_file_ids: uploaded.map(u => u.file_id),
+                        audio_segments: uploaded.map(u => Object.assign({}, u, { status: 'pending' })),
+                        submitted_files: uploaded.map(u => ({
+                            id: u.file_id,
+                            mime: u.uploadMime || 'audio/wav',
+                            name: u.name,
+                            unit_key: u.unit_key,
+                            label: u.label
+                        }))
+                    }
+                );
+                const mapHint = uploaded.map((u, i) => `${i + 1}→${u.label || u.unit_key || '段'}`).join('，');
+                window.showFlash(`已上傳 ${uploaded.length} 音檔（${mapHint}），AI 將逐頁批改。`);
             } else {
-                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [{
-                    id: result.fileId,
-                    mime: uploadMime,
-                    name: finalFileName
-                }]);
+                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploaded.map(u => ({
+                    id: u.file_id,
+                    mime: u.uploadMime || 'audio/wav',
+                    name: u.name
+                })));
                 if (statusEl) {
-                    statusEl.textContent = '✅ 已上傳到資料夾（無文稿，略過 AI）';
+                    statusEl.textContent = `✅ 已上傳 ${uploaded.length} 檔（無文稿，略過 AI）`;
                     statusEl.style.color = '#10B981';
                 }
                 window.showFlash('音檔已上傳到資料夾。此任務尚未設定批改文稿，故未送 AI。');
@@ -571,7 +685,7 @@ window.FeatureStudentTimeline = (() => {
                     }, 150);
                     return;
                 }
-                const allowed = { progress: 1, messages: 1, resources: 1, personal: 1, class: 1 };
+                const allowed = { progress: 1, messages: 1, resources: 1, personal: 1, class: 1, analytics: 1 };
                 let savedView = '';
                 try { savedView = localStorage.getItem('studentActiveView') || ''; } catch (_e) {}
                 if (!allowed[savedView]) savedView = 'messages';
@@ -669,10 +783,18 @@ window.FeatureStudentTimeline = (() => {
                 if (window.FeatureStudentMessages && typeof window.FeatureStudentMessages.render === 'function') {
                     window.FeatureStudentMessages.render();
                 }
+            } else if (viewId === 'analytics') {
+                if (window.FeatureStudentAnalytics && typeof window.FeatureStudentAnalytics.render === 'function') {
+                    window.FeatureStudentAnalytics.render();
+                }
             }
         },
 
         jumpToAssignment,
+
+        // 供「學習分析」頁籤讀取已載入的作業定義（含 material_ref／grading_units），避免重複打 API。
+        getAssignments: () => assignments,
+        getCurrentClassConfig: () => currentClassConfig,
 
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
             const compositeKey = `${assignmentId}_${taskId}`;
@@ -967,21 +1089,12 @@ window.FeatureStudentTimeline = (() => {
         },
 
         handleAudioFileUpload: async (inputElement, assignmentId, taskId, safeTitleForJS, statusId, isLate) => {
-            const filesArray = Array.from(inputElement.files);
+            const filesArray = Array.from(inputElement.files || []);
             if (filesArray.length === 0) return;
-            const file = filesArray[0];
             inputElement.value = '';
 
-            if (!isAudioUploadFile(file)) {
-                window.showFlash('請上傳音檔格式（支援 mp3, wav, m4a, ogg, aac, webm, flac 等）', 'error');
-                return;
-            }
-            if (file.size > 25 * 1024 * 1024) {
-                window.showFlash('檔案超過 25MB，請縮短錄音或壓縮後再上傳。', 'error');
-                return;
-            }
-
-            await uploadAudioForGrading(assignmentId, taskId, safeTitleForJS, statusId, file, file.name);
+            const items = filesArray.map((f) => ({ blob: f, name: f.name }));
+            await uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, items);
         },
 
         openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {
@@ -1183,14 +1296,26 @@ window.FeatureStudentTimeline = (() => {
                 }
                 renderCourses();
 
-                const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
+                // 「手動提交批改」若只重送單一 fileId，會把原本一頁一檔的 audio_segments
+                // 蓋成只剩 1 筆、且 original_script 是空字串，AI 只會拿到「合併整段文稿」
+                // 去改「一頁的錄音」，批改內容跟音檔就對不上了。這裡改成：只要之前的
+                // 繳交紀錄還留著完整的 audio_segments，重新提交時原樣帶回去，
+                // 不要因為手動重送而把多檔對應關係弄丟。
+                const existingSegments = (tempRecord && tempRecord.raw_data && Array.isArray(tempRecord.raw_data.audio_segments) && tempRecord.raw_data.audio_segments.length > 1)
+                    ? tempRecord.raw_data.audio_segments
+                    : null;
+
+                const rpcPayload = {
                     p_assignment_id: assignmentId,
                     p_task_id: taskId,
                     p_student_id: userId,
                     p_class_id: classId,
                     p_file_id: fileId,
                     p_audio_url: audioUrl
-                });
+                };
+                if (existingSegments) rpcPayload.p_segments = existingSegments;
+
+                const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', rpcPayload);
 
                 if (rpcErr) throw rpcErr;
                 

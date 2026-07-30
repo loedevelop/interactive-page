@@ -337,6 +337,12 @@ window.TimelineTemplates = (() => {
                     const safeMaterialUrl = (raw.material_url || raw.student_drive_url || '').replace(/"/g, '&quot;');
                     const safeStudentDriveUrl = (raw.student_drive_url || raw.material_url || '').replace(/"/g, '&quot;');
                     const safeStudentDriveDesc = (raw.student_drive_desc || raw.material_range || '').replace(/"/g, '&quot;');
+                    // 標題（麥克風右側）空白時，改用 base 範圍顯示
+                    const plainTaskTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    const titleFromRange = String(raw.material_range || raw.student_drive_desc || '').trim();
+                    if (!plainTaskTitle && titleFromRange) {
+                        t.title = titleFromRange;
+                    }
                     const safeStudentLocalDesc = (raw.student_local_desc || '').replace(/"/g, '&quot;');
                     const safeStudentLocalB64 = raw.student_local_b64 || '';
                     const safeStudentLocalMime = raw.student_local_mime || '';
@@ -353,11 +359,38 @@ window.TimelineTemplates = (() => {
                                 original_script: raw.original_script || '',
                                 student_display: raw.student_display || raw.student_display_text || '',
                                 student_display_text: raw.student_display_text || raw.student_display || '',
+                                grading_units: Array.isArray(raw.grading_units) ? raw.grading_units : [],
                                 snapshot_at: raw.snapshot_at
                             }).replace(/"/g, '&quot;');
                         } catch (_snapErr) {
                             snapshotJsonAttr = '';
                         }
+                    }
+
+                    // 一頁一批改稿：有多頁 grading_units 時，逐頁提供可微調文字框，
+                    // 避免老師以為改了上面合併框就能改到單頁批改稿（實際批改讀的是 grading_units[i]）。
+                    const gradingUnits = Array.isArray(raw.grading_units) ? raw.grading_units : [];
+                    let gradingUnitsHtml = '';
+                    if (gradingUnits.length > 1) {
+                        const unitRows = gradingUnits.map(function (u, uIdx) {
+                            const uScript = String(u.original_script || '').replace(/"/g, '&quot;');
+                            const uLabelRaw = String(u.label || (u.stem ? (u.stem + ' p.' + (u.page != null ? u.page : '?')) : ('第 ' + (uIdx + 1) + ' 頁')));
+                            const uLabel = uLabelRaw.replace(/"/g, '&quot;');
+                            const uKey = String(u.unit_key || uLabelRaw).replace(/"/g, '&quot;');
+                            const uStem = String(u.stem || '').replace(/"/g, '&quot;');
+                            const uPage = u.page != null ? String(u.page) : '';
+                            const uItemCount = u.item_count != null ? String(u.item_count) : '';
+                            return `
+                                <div class="grading-unit-row" style="background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px;">
+                                    <div style="font-weight:900; color:#4338CA; font-size:0.8rem; margin-bottom:4px;">📄 ${uLabelRaw}</div>
+                                    <textarea class="form-control grading-unit-script" data-unit-key="${uKey}" data-stem="${uStem}" data-page="${uPage}" data-label="${uLabel}" data-item-count="${uItemCount}" style="width:100%; min-height:56px; padding:8px; font-size:0.88rem; border-radius:6px; border:1px solid #CBD5E1;" oninput="window.FeatureTimeline.onGradingUnitScriptInput('${pathStr}')">${uScript}</textarea>
+                                </div>`;
+                        }).join('');
+                        gradingUnitsHtml = `
+                            <div style="margin-top:4px;">
+                                <div style="font-size:0.78rem; color:#7C3AED; font-weight:800; margin-bottom:6px;">⚠️ 偵測到 ${gradingUnits.length} 頁，AI 批改已依頁拆分；請在下方「逐頁」微調（上面合併框僅供預覽，不會用於批改）</div>
+                                <div id="node-grading-units-${pathStr}" style="display:flex; flex-direction:column; gap:8px;">${unitRows}</div>
+                            </div>`;
                     }
 
                     const materialRefs = Array.isArray(raw.material_refs) && raw.material_refs.length
@@ -452,6 +485,9 @@ window.TimelineTemplates = (() => {
                                     <input type="text" id="node-material-range-${pathStr}" class="form-control" style="flex:1; min-width:220px; padding:8px; font-weight:800;" value="${safeMaterialRange}" placeholder="例：A pp. 1~2, 5, 10；D #11~16, 26">
                                     <button type="button" class="btn-action" style="font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.refreshMaterialRangeLabel('${pathStr}')">依列重算</button>
                                 </div>
+                                <div style="margin-bottom:8px; padding:10px 12px; background:#EEF2FF; border:1px solid #C7D2FE; border-radius:6px; font-size:0.82rem; color:#3730A3; font-weight:700; line-height:1.45;">
+                                    🎙 錄音單位提示：以「一頁」為唯一錄音單位。學生同一作業可複選多檔上傳；Snapshot 會依頁準備 AI 批改稿（一頁一份）。
+                                </div>
                                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')">👁 預覽</button>
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#059669; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')">📌 套用 Snapshot</button>
@@ -461,8 +497,9 @@ window.TimelineTemplates = (() => {
                                 <input type="hidden" id="node-material-snapshot-json-${pathStr}" value="${snapshotJsonAttr}">
                                 <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
                                     <div>
-                                        <div style="font-weight:800; font-size:0.85rem; color:#4338CA; margin-bottom:4px;">🎯 AI 批改文稿（可微調）</div>
-                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="套用 Snapshot 後會填入；可再微調">${safeScript}</textarea>
+                                        <div id="node-script-label-${pathStr}" style="font-weight:800; font-size:0.85rem; color:#4338CA; margin-bottom:4px;">🎯 AI 批改文稿${gradingUnits.length > 1 ? '（合併預覽，唯讀）' : '（可微調）'}</div>
+                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1; ${gradingUnits.length > 1 ? 'background:#F1F5F9; color:#64748B;' : ''}" placeholder="套用 Snapshot 後會填入；可再微調" ${gradingUnits.length > 1 ? 'readonly' : ''}>${safeScript}</textarea>
+                                        ${gradingUnitsHtml}
                                     </div>
                                     <div>
                                         <div style="font-weight:800; font-size:0.85rem; color:#065F46; margin-bottom:4px;">👀 學生顯示文稿（有 meta 必有；學生端可收起）</div>

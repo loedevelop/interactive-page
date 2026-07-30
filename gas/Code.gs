@@ -32,6 +32,29 @@ function resolveDriveRootFolder() {
   return parent.createFolder(DRIVE_ROOT);
 }
 
+/**
+ * 短時間內連續對同一資料夾寫入（例如學生一次複選多檔上傳）時，
+ * Drive 偶爾會丟出暫時性的「存取遭拒／速率限制」例外；對這類錯誤自動重試，
+ * 其餘（如真的權限不足、資料夾不存在）維持原樣直接拋出。
+ */
+function retryDriveWrite(fn, maxAttempts, baseDelayMs) {
+  maxAttempts = maxAttempts || 3;
+  baseDelayMs = baseDelayMs || 800;
+  var lastErr;
+  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return fn();
+    } catch (err) {
+      lastErr = err;
+      var msg = String((err && err.message) ? err.message : err);
+      var isTransient = /存取遭拒|拒絕存取|rate limit|too many requests|internal error|temporarily|請稍後再試/i.test(msg);
+      if (!isTransient || attempt === maxAttempts) throw err;
+      Utilities.sleep(baseDelayMs * attempt);
+    }
+  }
+  throw lastErr;
+}
+
 function getOrCreateSubFolder(parentFolder, subFolderName) {
   if (!subFolderName) return parentFolder;
   var cleanName = String(subFolderName).replace(/[\\/:*?"<>|]/g, '_').trim();
@@ -672,7 +695,9 @@ function doPost(e) {
 
       var folder;
       try {
-        folder = DriveApp.getFolderById(folderId);
+        folder = retryDriveWrite(function () {
+          return DriveApp.getFolderById(folderId);
+        });
       } catch (folderErr) {
         throw new Error("找不到指定的資料夾，或權限不足 (Folder ID: " + folderId + ")");
       }
@@ -685,24 +710,44 @@ function doPost(e) {
         folder = resolveClassResourcesFolder(folder, true);
       } else if (subFolderName) {
         folder = getOrCreateSubFolder(folder, subFolderName);
+      } else {
+        // 🛡️ 保險絲：直寫模式下，folderId 理應「就是」01_Submissions 本身。
+        // 曾發生老師端誤把「姓名_短ID」上一層資料夾的連結存成 drive_folder_id，
+        // 導致明明程式邏輯正確，繳交檔案卻寫到 01_Submissions 外面、跟它同一層。
+        // 這裡自動偵測：若目前資料夾底下剛好有一個 01_Submissions 子夾，且自己不是 01_Submissions，
+        // 就自動改寫進子夾，避免單一筆資料設定錯誤就讓檔案「消失在老師視線外」。
+        var autoSubmissions = findSubFolder(folder, '01_Submissions');
+        if (autoSubmissions && folder.getName() !== '01_Submissions') {
+          folder = autoSubmissions;
+        }
       }
 
-      var existingFiles = folder.getFilesByName(cleanFileName);
-      while (existingFiles.hasNext()) {
-        existingFiles.next().setTrashed(true);
-      }
-
-      var decodedData = Utilities.base64Decode(fileData);
-      var blob = Utilities.newBlob(decodedData, mimeType, cleanFileName);
-      var file = folder.createFile(blob);
+      var file = retryDriveWrite(function () {
+        var existingFiles = folder.getFilesByName(cleanFileName);
+        while (existingFiles.hasNext()) {
+          existingFiles.next().setTrashed(true);
+        }
+        var decodedData = Utilities.base64Decode(fileData);
+        var blob = Utilities.newBlob(decodedData, mimeType, cleanFileName);
+        return folder.createFile(blob);
+      });
 
       var lowerName = cleanFileName.toLowerCase();
       var isAudio = mimeType.indexOf('audio/') === 0
         || lowerName.indexOf('.wav') > -1
         || lowerName.indexOf('.mp3') > -1
         || lowerName.indexOf('.m4a') > -1;
+      // 「設定公開檢視連結」是錦上添花（方便老師直接開檔），不是繳交成功的必要條件；
+      // 這個 ACL 變更動作在 Drive 上的速率限制比建立檔案本身嚴格很多，
+      // 連續多檔上傳時很容易撞到「存取遭拒：DriveApp」。絕不可讓它擋下已經成功建立的檔案。
       if (isAudio) {
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        try {
+          retryDriveWrite(function () {
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          }, 4, 1500);
+        } catch (shareErr) {
+          Logger.log('音檔分享設定失敗（檔案仍已成功上傳）：' + shareErr);
+        }
       }
 
       if (assignmentId && taskId) {

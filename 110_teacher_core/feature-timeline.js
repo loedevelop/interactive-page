@@ -96,16 +96,32 @@ window.FeatureTimeline = (() => {
         return String(str || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     }
 
+    function buildFallbackSelectedOptionHtml(selectedVal) {
+        // 清單載入失敗／過期找不到已選檔案時，仍保留該列的選取值，
+        // 避免 hydrate 或存檔時因 <select> 找不到對應 <option> 而被判定為空，
+        // 導致該筆 meta（連同其 base 範圍）在存檔時被靜默刪除。
+        if (!selectedVal) return '';
+        const parts = String(selectedVal).split('::');
+        const fallbackLabel = '⚠️ ' + (parts[1] || selectedVal) + '（清單中找不到，保留原選取）';
+        return '<option value="' + escapeAttr(selectedVal) + '" selected>' + escapeAttr(fallbackLabel) + '</option>';
+    }
+
     function buildMetaOptionsHtml(options, selectedVal) {
         const opts = options || [];
         if (!opts.length) {
+            const fallback = buildFallbackSelectedOptionHtml(selectedVal);
+            if (fallback) return '<option value="">— 選 meta —</option>' + fallback;
             return '<option value="">（尚無 meta，請先載入／發布）</option>';
         }
-        return '<option value="">— 選 meta —</option>' + opts.map(function (opt) {
+        let matched = false;
+        const optionsHtml = opts.map(function (opt) {
             const val = opt.folderName + '::' + opt.fileName;
             const sel = val === selectedVal ? ' selected' : '';
+            if (sel) matched = true;
             return '<option value="' + escapeAttr(val) + '"' + sel + '>' + escapeAttr(opt.label) + '</option>';
         }).join('');
+        const fallback = (!matched) ? buildFallbackSelectedOptionHtml(selectedVal) : '';
+        return '<option value="">— 選 meta —</option>' + optionsHtml + fallback;
     }
 
     function createMaterialMetaRowEl(pathStr, options, rowData) {
@@ -193,6 +209,13 @@ window.FeatureTimeline = (() => {
                 };
             }));
         }
+        // 標題（麥克風右側）空白時，改用 base 範圍
+        const titleEl = document.getElementById('node-title-' + pathStr);
+        const titleText = titleEl ? String(titleEl.textContent || '').trim() : '';
+        const rangeText = (rangeEl && String(rangeEl.value || '').trim()) || label || '';
+        if (titleEl && !titleText && rangeText) {
+            titleEl.textContent = rangeText;
+        }
         return label;
     }
 
@@ -201,8 +224,22 @@ window.FeatureTimeline = (() => {
     }
 
     async function buildMergedMaterialSnapshot(pathStr, classId) {
+        // 🌟 曾發生：畫面上明明排了 3 列 meta（例如 C、D、E），但其中一列的下拉選單
+        // 因非同步選項清單還沒載完、或該檔案不在清單裡，導致 <select> 實際值是空字串；
+        // readMaterialMetaRows() 會把空值的列「靜默略過」，snapshot 就少了一頁，
+        // 老師卻毫無所覺地存檔，事後才發現 base 範圍跟批改稿都對不上。
+        // 這裡改成：一發現「畫面上的列數」跟「成功讀到值的列數」不一致，就直接擋下、
+        // 明確告知哪裡沒選好，而不是悄悄丟掉那一列。
+        const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+        const actualRowCount = rowsEl ? rowsEl.querySelectorAll('.material-meta-row').length : 0;
         const selected = readMaterialMetaRows(pathStr);
         if (!selected.length) throw new Error('請至少新增一列 meta');
+        if (selected.length < actualRowCount) {
+            throw new Error(
+                '有 ' + (actualRowCount - selected.length) + ' 列尚未選擇 meta 檔案（下拉選單是空的），'
+                + '請補選檔案後再套用 Snapshot；否則該列會被整段忽略，造成 base 範圍與批改稿數量對不上。'
+            );
+        }
         for (let i = 0; i < selected.length; i++) {
             if (!selected[i].range_spec) {
                 throw new Error('第 ' + (i + 1) + ' 列請填範圍（例：pp. 1~2, 5, 10 或 #11~16, 26）');
@@ -212,6 +249,7 @@ window.FeatureTimeline = (() => {
         const folderId = await resolveMaterialsRootFolderId(classId, rootKind);
         const scriptParts = [];
         const displayParts = [];
+        const gradingUnits = [];
         const refs = [];
 
         for (let i = 0; i < selected.length; i++) {
@@ -235,10 +273,18 @@ window.FeatureTimeline = (() => {
                 // student_display 已含 【A】[1] 頁首，勿再包一層
                 displayParts.push(snapshot.student_display);
             }
+            if (Array.isArray(snapshot.grading_units) && snapshot.grading_units.length) {
+                snapshot.grading_units.forEach(function (u) {
+                    gradingUnits.push(u);
+                });
+            }
             refs.push(Object.assign({}, snapshot.material_ref, { range_spec: picker.range_spec, label: stem }));
         }
 
         const rangeLabel = buildMaterialRangeLabelFromRows(selected);
+        const hint = (window.MaterialSnapshot && window.MaterialSnapshot.RECORDING_UNIT_HINT)
+            ? window.MaterialSnapshot.RECORDING_UNIT_HINT
+            : '錄音時以「一頁」為唯一錄音單位：每一頁請錄成一支音檔上傳。';
         return {
             material_refs: refs,
             material_ref: refs[0] || null,
@@ -246,8 +292,39 @@ window.FeatureTimeline = (() => {
             original_script: scriptParts.join('\n\n'),
             student_display: displayParts.join('\n\n'),
             student_display_text: displayParts.join('\n\n'),
+            grading_units: gradingUnits,
+            recording_unit: 'page',
+            recording_unit_hint: hint,
             snapshot_at: new Date().toISOString()
         };
+    }
+
+    /** 讀取「逐頁」批改稿編輯框目前的值（老師微調後的最新版本）；沒有逐頁框時回傳 null。 */
+    function collectGradingUnitsFromDom(pathStr) {
+        const container = document.getElementById('node-grading-units-' + pathStr);
+        if (!container) return null;
+        const rows = Array.from(container.querySelectorAll('.grading-unit-script'));
+        if (!rows.length) return null;
+        return rows.map(function (el) {
+            const page = el.getAttribute('data-page');
+            return {
+                unit_key: el.getAttribute('data-unit-key') || '',
+                stem: el.getAttribute('data-stem') || '',
+                page: page === '' ? null : (isNaN(Number(page)) ? page : Number(page)),
+                label: el.getAttribute('data-label') || '',
+                original_script: String(el.value || '').trim(),
+                item_count: Number(el.getAttribute('data-item-count')) || 0
+            };
+        });
+    }
+
+    /** 依逐頁批改稿重算合併預覽框內容（唯讀，僅供人眼核對，不影響實際批改）。 */
+    function rebuildMergedScriptFromUnits(units) {
+        return units.map(function (u) {
+            const label = u.label || u.stem || '';
+            const script = u.original_script || '';
+            return label ? ('【' + label + '】\n' + script) : script;
+        }).join('\n\n');
     }
 
     function toggleMaterialSliceFields(pathStr) {
@@ -377,6 +454,64 @@ window.FeatureTimeline = (() => {
         if (scriptPasteEl) scriptPasteEl.value = snapshot.original_script || '';
         if (studentPasteEl) studentPasteEl.value = displayText;
 
+        // 一頁一批改稿：重新套用 Snapshot 時，逐頁編輯框也要跟著重繪，否則舊頁數的框會殘留或對不上新內容
+        const gradingUnitsWrap = scriptEl ? scriptEl.parentElement : null;
+        const scriptLabelEl = document.getElementById('node-script-label-' + pathStr);
+        let unitsHost = document.getElementById('node-grading-units-' + pathStr);
+        if (unitsHost && unitsHost.parentElement) unitsHost.parentElement.remove();
+        const units = Array.isArray(snapshot.grading_units) ? snapshot.grading_units : [];
+        if (scriptEl) {
+            if (units.length > 1) {
+                scriptEl.setAttribute('readonly', 'readonly');
+                scriptEl.style.background = '#F1F5F9';
+                scriptEl.style.color = '#64748B';
+            } else {
+                scriptEl.removeAttribute('readonly');
+                scriptEl.style.background = '';
+                scriptEl.style.color = '';
+            }
+        }
+        if (scriptLabelEl) {
+            scriptLabelEl.textContent = '🎯 AI 批改文稿' + (units.length > 1 ? '（合併預覽，唯讀）' : '（可微調）');
+        }
+        if (units.length > 1 && gradingUnitsWrap) {
+            const wrap = document.createElement('div');
+            wrap.style.marginTop = '4px';
+            const hint = document.createElement('div');
+            hint.style.cssText = 'font-size:0.78rem; color:#7C3AED; font-weight:800; margin-bottom:6px;';
+            hint.textContent = '⚠️ 偵測到 ' + units.length + ' 頁，AI 批改已依頁拆分；請在下方「逐頁」微調（上面合併框僅供預覽，不會用於批改）';
+            const rowsHost = document.createElement('div');
+            rowsHost.id = 'node-grading-units-' + pathStr;
+            rowsHost.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
+            units.forEach(function (u, uIdx) {
+                const row = document.createElement('div');
+                row.className = 'grading-unit-row';
+                row.style.cssText = 'background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px;';
+                const label = u.label || (u.stem ? (u.stem + ' p.' + (u.page != null ? u.page : '?')) : ('第 ' + (uIdx + 1) + ' 頁'));
+                const title = document.createElement('div');
+                title.style.cssText = 'font-weight:900; color:#4338CA; font-size:0.8rem; margin-bottom:4px;';
+                title.textContent = '📄 ' + label;
+                const ta = document.createElement('textarea');
+                ta.className = 'form-control grading-unit-script';
+                ta.setAttribute('data-unit-key', u.unit_key || label);
+                ta.setAttribute('data-stem', u.stem || '');
+                ta.setAttribute('data-page', u.page != null ? String(u.page) : '');
+                ta.setAttribute('data-label', label);
+                ta.setAttribute('data-item-count', u.item_count != null ? String(u.item_count) : '');
+                ta.style.cssText = 'width:100%; min-height:56px; padding:8px; font-size:0.88rem; border-radius:6px; border:1px solid #CBD5E1;';
+                ta.value = u.original_script || '';
+                ta.addEventListener('input', function () {
+                    window.FeatureTimeline.onGradingUnitScriptInput(pathStr);
+                });
+                row.appendChild(title);
+                row.appendChild(ta);
+                rowsHost.appendChild(row);
+            });
+            wrap.appendChild(hint);
+            wrap.appendChild(rowsHost);
+            gradingUnitsWrap.appendChild(wrap);
+        }
+
         if (scriptSourceEl) {
             scriptSourceEl.value = 'meta';
             if (window.FeatureTimeline && window.FeatureTimeline.onScriptSourceChange) {
@@ -394,12 +529,40 @@ window.FeatureTimeline = (() => {
 
         if (previewEl) {
             const refCount = (snapshot.material_refs && snapshot.material_refs.length) || (snapshot.material_ref ? 1 : 0);
-            previewEl.textContent = '已合併 ' + refCount + ' 個 meta｜AI 稿 '
+            const unitCount = Array.isArray(snapshot.grading_units) ? snapshot.grading_units.length : 0;
+            previewEl.textContent = '已合併 ' + refCount + ' 個 meta｜批改單位 '
+                + unitCount + ' 頁（一頁一檔）｜AI 稿 '
                 + (snapshot.original_script || '').length + ' 字；學生顯示 '
                 + displayText.length + ' 字；凍結於 ' + (snapshot.snapshot_at || '')
-                + (snapshot.material_range ? ('｜' + snapshot.material_range) : '');
+                + (snapshot.material_range ? ('｜' + snapshot.material_range) : '')
+                + (snapshot.recording_unit_hint ? ('｜' + snapshot.recording_unit_hint) : '');
         }
         if (snapshotJsonEl) snapshotJsonEl.value = JSON.stringify(snapshot);
+
+        // 同步寫回 BuilderStore state，避免中途任何重繪把剛套用的 snapshot 蓋回舊值
+        if (window.BuilderStore && typeof window.BuilderStore.updateNodeMaterialSnapshot === 'function') {
+            window.BuilderStore.updateNodeMaterialSnapshot(pathStr, snapshot);
+        }
+
+        // rows 是「套用 Snapshot」的輸入來源，理論上應與 snapshot.material_refs 一致；
+        // 這裡強制用 snapshot 的結果重繪一次 rows，避免任何時序差導致存檔時讀到不同筆數的 rows。
+        const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+        if (rowsEl && Array.isArray(snapshot.material_refs) && snapshot.material_refs.length) {
+            const kind = readMaterialsRootKind(pathStr);
+            const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+            if (bState) {
+                loadMaterialMetaOptions(bState.classId, kind).then(function (options) {
+                    const rows = snapshot.material_refs.map(function (r) {
+                        return {
+                            value: (r.material_folder || '') + '::' + (r.published_file || ''),
+                            range_spec: r.range_spec || '',
+                            label: r.label || ''
+                        };
+                    });
+                    renderMaterialMetaRows(pathStr, options, rows);
+                }).catch(function () {});
+            }
+        }
     }
 
     function checkCanEditTimeline(classId) {
@@ -1222,6 +1385,17 @@ window.FeatureTimeline = (() => {
 
         onMaterialMetaCheckChange: function (pathStr) {
             refreshMaterialRangeLabel(pathStr);
+        },
+
+        onGradingUnitScriptInput: function (pathStr) {
+            const units = collectGradingUnitsFromDom(pathStr);
+            if (!units) return;
+            const scriptEl = document.getElementById('node-script-' + pathStr);
+            if (scriptEl) scriptEl.value = rebuildMergedScriptFromUnits(units);
+        },
+
+        collectGradingUnitsFromDom: function (pathStr) {
+            return collectGradingUnitsFromDom(pathStr);
         },
 
         refreshMaterialRangeLabel: function (pathStr) {

@@ -1,0 +1,13 @@
+# Cursor Agent Workspace Isolation Rules
+
+# 1. 絕對地理限制 (Strict Workspace Boundary)
+- 你被嚴格限制在當前開啟的專案資料夾 (Workspace Root) 內運作。
+- 絕對禁止 (NEVER) 存取、讀取、修改、分析或建立任何位於專案根目錄之外的檔案或資料夾（包含但不限於 Desktop, Documents, Downloads, ~/.ssh, ~/.aws, ~/.env 或系統核心目錄）。
+
+# 2. 終端機路徑逃逸防護 (Terminal Path Escaping Protection)
+- 在終端機執行任何指令時，禁止使用 `cd ..` 逃逸到上一層目錄。
+- 禁止使用絕對路徑（如 `cd /Users/...` 或 `cat /etc/...`）跳轉或讀取專案外部的資料。
+- 所有的檔案操作（讀取、寫入、刪除、搜尋）都必須被限制在 `./` 當前目錄及其子目錄之內。
+
+# 3. 拒絕越界請求 (Reject Out-of-Bounds Requests)
+- 如果使用者（包含不小心的指令）要求你存取專案外部的檔案，你必須直接拒絕執行該動作，並明確告知「因安全規則限制，無法存取工作區外的檔案」。

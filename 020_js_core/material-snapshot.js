@@ -260,9 +260,8 @@ window.MaterialSnapshot = (function () {
                 var en = String(row.script || '').trim();
                 if (!zh && !en) return;
                 var itemNo = row.item_no != null ? row.item_no : row.itemNo;
+                // 編號須採用 meta JSON 的 item_no（教材原始題號），缺值才退回頁內序號
                 var num = !isNaN(toNumber(itemNo)) ? String(itemNo) : String(localIdx);
-                // 頁內顯示用 1. 2. 3. 連續編號（依該頁列序）
-                num = String(localIdx);
                 var body = (zh ? zh : '') + (zh && en ? '  ' : '') + (en ? en : '');
                 lines.push(num + '.  ' + body);
                 localIdx += 1;
@@ -270,6 +269,63 @@ window.MaterialSnapshot = (function () {
             if (lines.length > 1) blocks.push(lines.join('\n'));
         });
         return blocks.join('\n\n');
+    }
+
+    var RECORDING_UNIT = 'page';
+    var RECORDING_UNIT_HINT = '錄音時以「一頁」為唯一錄音單位：每一頁請錄成一支音檔，同一作業可複選多檔上傳；AI 亦按頁對應批改。';
+
+    /**
+     * 依頁切分 AI 批改單位（一頁一份英文稿）。
+     * unit_key 例：A:1
+     */
+    function buildGradingUnits(rows, context) {
+        context = context || {};
+        var stem = String(context.label || context.stem || '').trim();
+        if (!stem && (context.published_file || context.metaFile)) {
+            stem = String(context.published_file || context.metaFile)
+                .replace(/\.meta\.json$/i, '')
+                .replace(/\.json$/i, '');
+            var parts = stem.split(/[\/_]/);
+            stem = parts[parts.length - 1] || stem;
+        }
+        if (!stem) stem = 'M';
+
+        var byPage = {};
+        var pageOrder = [];
+        (rows || []).forEach(function (row) {
+            var pageKey = String(row.page != null ? row.page : (row.Page != null ? row.Page : '_'));
+            if (!byPage[pageKey]) {
+                byPage[pageKey] = [];
+                pageOrder.push(pageKey);
+            }
+            byPage[pageKey].push(row);
+        });
+
+        var units = [];
+        pageOrder.forEach(function (pageKey) {
+            var pageRows = byPage[pageKey].slice().sort(function (a, b) {
+                var ai = toNumber(a.item_no != null ? a.item_no : a.itemNo);
+                var bi = toNumber(b.item_no != null ? b.item_no : b.itemNo);
+                if (isNaN(ai) && isNaN(bi)) return 0;
+                if (isNaN(ai)) return 1;
+                if (isNaN(bi)) return -1;
+                return ai - bi;
+            });
+            var scriptLines = pageRows.map(function (row) {
+                return String(row.script || '').trim();
+            }).filter(function (line) { return line !== ''; });
+            if (!scriptLines.length) return;
+            var pageLabel = pageKey === '_' ? '?' : pageKey;
+            units.push({
+                unit_key: stem + ':' + pageLabel,
+                stem: stem,
+                page: pageKey === '_' ? null : (isNaN(toNumber(pageKey)) ? pageKey : toNumber(pageKey)),
+                label: stem + ' p.' + pageLabel,
+                original_script: scriptLines.join('\n'),
+                item_count: scriptLines.length
+            });
+        });
+        return units;
     }
 
     function buildSnapshot(rows, context) {
@@ -282,6 +338,8 @@ window.MaterialSnapshot = (function () {
         if (!displayText) {
             displayText = rows.map(formatDisplayLine).filter(function (line) { return line !== ''; }).join('\n');
         }
+
+        var gradingUnits = buildGradingUnits(rows, context);
 
         return {
             material_ref: {
@@ -302,6 +360,9 @@ window.MaterialSnapshot = (function () {
             original_script: scriptLines.join('\n'),
             student_display: displayText,
             student_display_text: displayText,
+            grading_units: gradingUnits,
+            recording_unit: RECORDING_UNIT,
+            recording_unit_hint: RECORDING_UNIT_HINT,
             snapshot_at: new Date().toISOString()
         };
     }
@@ -318,7 +379,10 @@ window.MaterialSnapshot = (function () {
         filterRows: filterRows,
         filterRowsByRangeSpec: filterRowsByRangeSpec,
         buildSnapshot: buildSnapshot,
+        buildGradingUnits: buildGradingUnits,
         formatStudentDisplayBlock: formatStudentDisplayBlock,
-        sliceAndBuild: sliceAndBuild
+        sliceAndBuild: sliceAndBuild,
+        RECORDING_UNIT: RECORDING_UNIT,
+        RECORDING_UNIT_HINT: RECORDING_UNIT_HINT
     };
 })();
