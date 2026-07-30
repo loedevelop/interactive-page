@@ -111,19 +111,61 @@ function findSiblingScriptLink(assignmentTasks: any[], targetTaskId: string): an
   return result;
 }
 
+function looksLikeHtmlBuffer(contentType: string, buffer: ArrayBuffer): boolean {
+  if (contentType.includes("text/html")) return true;
+  const preview = new TextDecoder().decode(buffer.slice(0, 500)).toLowerCase();
+  return preview.includes("<!doctype html") || preview.includes("<html");
+}
+
+/**
+ * 🛡️ Google Drive 對「無法掃描病毒」的檔案會回傳確認頁 HTML 而非真正內容。
+ * 單純加 confirm=t 只能繞過一部分情況，真正可靠的做法是從確認頁解析出
+ * confirm token 與 uuid，改打 drive.usercontent.google.com/download。
+ * 與 stream-audio/index.ts 的 resolveRealDownloadUrl 同一招，勿各自維護後失去同步。
+ */
+async function resolveRealDriveDownloadUrl(fileId: string): Promise<string> {
+  const probeUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+  const probeRes = await fetch(probeUrl);
+  const probeContentType = probeRes.headers.get("Content-Type") || "";
+
+  if (!probeContentType.includes("text/html")) {
+    return probeUrl;
+  }
+
+  const html = await probeRes.text();
+  const confirmMatch = html.match(/name="confirm"\s+value="([^"]+)"/) || html.match(/[?&]confirm=([0-9A-Za-z_-]+)/);
+  const uuidMatch = html.match(/name="uuid"\s+value="([^"]+)"/) || html.match(/[?&]uuid=([0-9A-Za-z-]+)/);
+
+  if (confirmMatch && uuidMatch) {
+    return `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${confirmMatch[1]}&uuid=${uuidMatch[1]}`;
+  }
+
+  return `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
+}
+
 async function downloadAudioFromDrive(fileId: string): Promise<Uint8Array> {
   const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
-  const audioRes = await fetch(downloadUrl);
+  let audioRes = await fetch(downloadUrl);
   if (!audioRes.ok) {
     throw new Error(`Audio Download Failed. HTTP ${audioRes.status}. Ensure file is ANYONE_WITH_LINK.`);
   }
-  const audioBuffer = await audioRes.arrayBuffer();
-  if (audioBuffer.byteLength < 50000) {
-    const textCheck = new TextDecoder().decode(audioBuffer.slice(0, 500)).toLowerCase();
-    if (textCheck.includes("<!doctype html") || textCheck.includes("<html")) {
-      throw new Error(`Drive Download blocked for file ${fileId}.`);
+  let audioBuffer = await audioRes.arrayBuffer();
+  const contentType = audioRes.headers.get("Content-Type") || "";
+
+  if (looksLikeHtmlBuffer(contentType, audioBuffer)) {
+    // 快速路徑被擋（回傳確認頁）→ 解析真正下載網址後重抓一次
+    const realUrl = await resolveRealDriveDownloadUrl(fileId);
+    audioRes = await fetch(realUrl);
+    if (!audioRes.ok) {
+      throw new Error(`Audio Download Failed. HTTP ${audioRes.status}. Ensure file is ANYONE_WITH_LINK.`);
+    }
+    audioBuffer = await audioRes.arrayBuffer();
+    const retryContentType = audioRes.headers.get("Content-Type") || "";
+    if (looksLikeHtmlBuffer(retryContentType, audioBuffer)) {
+      throw new Error(`Drive Download blocked for file ${fileId}（持續回傳確認頁，可能權限異常或檔案已被移動）。`);
     }
   }
+
   return new Uint8Array(audioBuffer);
 }
 
