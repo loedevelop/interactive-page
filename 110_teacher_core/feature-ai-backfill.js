@@ -300,10 +300,18 @@ window.FeatureAIBackfill = (function () {
                     });
                 }
 
+                // 🌟 這裡不能用 t.completion.id：feature-progress.js 撈 completions 時
+                // 沒有 select 'id'（只有 student_id/task_id/assignment_id/status/raw_data/deleted_at），
+                // 用不存在的欄位比對會送出 undefined，導致「invalid input syntax for type bigint: "undefined"」。
+                // 改用跟「補啟 AI 批改」RPC 一樣的組合鍵（assignment_id + task_id + student_id）比對，
+                // 這三個欄位都確定有撈到，且對同一個學生同一個任務唯一。
                 const { error: updErr } = await window.supabaseClient
                     .from('task_completions')
                     .update({ status: 'submitted', raw_data: raw })
-                    .eq('id', t.completion.id);
+                    .eq('assignment_id', job.assignmentId)
+                    .eq('task_id', job.taskId)
+                    .eq('student_id', t.student.id)
+                    .eq('class_id', classId);
                 if (updErr) throw updErr;
                 ok++;
             } catch (err) {
