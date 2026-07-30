@@ -23,7 +23,8 @@ window.FeatureAudioSplitUpload = (function () {
         audioDuration: 0,
         sourceFileId: '',
         boundaries: [], // 內部切點（不含頭尾），秒數
-        folderCheck: null, // { ok: boolean, name: string }
+        folderCheck: null, // { ok: boolean, name: string, autoFixed?: boolean }
+        effectiveFolderId: '', // 實際會上傳的資料夾（可能是自動修正後的 01_Submissions 子資料夾）
         loadingAudio: false,
         uploading: false,
         uploadLog: []
@@ -266,6 +267,7 @@ window.FeatureAudioSplitUpload = (function () {
 
     async function checkTargetFolder() {
         state.folderCheck = { ok: null, name: '驗證中…' };
+        state.effectiveFolderId = '';
         renderBody();
 
         const student = getSelectedStudent();
@@ -277,7 +279,21 @@ window.FeatureAudioSplitUpload = (function () {
         try {
             const result = await window.GasService.listChildFolders(student.drive_folder_id);
             const name = result.parentName || '';
-            state.folderCheck = { ok: (name === '01_Submissions'), name: name };
+            if (name === '01_Submissions') {
+                state.effectiveFolderId = student.drive_folder_id;
+                state.folderCheck = { ok: true, name: name };
+            } else {
+                // 🛡️ 常見誤設：enrollment.drive_folder_id 存成學生根目錄（姓名_短ID）而非其下的
+                // 01_Submissions。與 gas/Code.gs 的 upload_file 保險絲同一邏輯：
+                // 若能在子資料夾找到 01_Submissions，自動改用它，不強迫老師先去資料庫修欄位。
+                const submissionsChild = (result.folders || []).find(function (f) { return f.name === '01_Submissions'; });
+                if (submissionsChild) {
+                    state.effectiveFolderId = submissionsChild.id;
+                    state.folderCheck = { ok: true, name: name, autoFixed: true };
+                } else {
+                    state.folderCheck = { ok: false, name: name };
+                }
+            }
         } catch (err) {
             state.folderCheck = { ok: false, name: '（驗證失敗：' + (err.message || err) + '）' };
         }
@@ -386,8 +402,8 @@ window.FeatureAudioSplitUpload = (function () {
             window.showFlash('請先載入音檔', 'error');
             return;
         }
-        if (!state.folderCheck || state.folderCheck.ok !== true) {
-            window.showFlash('目標資料夾驗證未通過，為了安全不會上傳。請確認學生的 Drive 資料夾設定是否正確（應指向 01_Submissions）。', 'error');
+        if (!state.folderCheck || state.folderCheck.ok !== true || !state.effectiveFolderId) {
+            window.showFlash('目標資料夾驗證未通過，為了安全不會上傳。請確認學生的 Drive 資料夾設定是否正確（應指向或包含 01_Submissions）。', 'error');
             return;
         }
         const errMsg = validateBoundaries();
@@ -427,7 +443,7 @@ window.FeatureAudioSplitUpload = (function () {
 
                 appendLog('☁️ 上傳 ' + fileName + ' …');
 
-                const fileUrl = await uploadSegmentWithRetry(base64, fileName, 'audio/wav', student.drive_folder_id, state.assignmentId, state.taskId, 3);
+                const fileUrl = await uploadSegmentWithRetry(base64, fileName, 'audio/wav', state.effectiveFolderId, state.assignmentId, state.taskId, 3);
                 const fileId = window.GasService.extractFileIdFromUrl(fileUrl) || fileUrl;
 
                 uploadedSegments.push({
@@ -536,10 +552,19 @@ window.FeatureAudioSplitUpload = (function () {
         const border = ok === true ? '#BBF7D0' : (ok === false ? '#FECACA' : '#E2E8F0');
         const color = ok === true ? '#166534' : (ok === false ? '#B91C1C' : '#64748B');
         const icon = ok === true ? '✅' : (ok === false ? '⛔' : '⏳');
+        let note = '';
+        if (ok === true && state.folderCheck.autoFixed) {
+            note = '（此欄位存的是學生根目錄，已自動改用其下的 01_Submissions 子資料夾上傳，不影響本次操作；'
+                + '建議之後有空到「班級成員管理」把該生的 Drive 資料夾連結修正為 01_Submissions 本身）';
+        } else if (ok === true) {
+            note = '（確認為 01_Submissions，可以上傳）';
+        } else if (ok === false) {
+            note = '（找不到 01_Submissions 子資料夾，已擋下上傳，請先到「班級成員管理」修正該生的 Drive 資料夾設定）';
+        }
         return `
             <div style="background:${bg}; border:1px solid ${border}; color:${color}; padding:10px 14px; border-radius:8px; margin-bottom:14px; font-weight:700; font-size:0.9rem;">
                 ${icon} 目標資料夾：${esc(state.folderCheck.name)}
-                ${ok === true ? '（確認為 01_Submissions，可以上傳）' : (ok === false ? '（非 01_Submissions，已擋下上傳，請先修正該生的 Drive 資料夾設定）' : '')}
+                ${note}
             </div>
         `;
     }
@@ -659,6 +684,7 @@ window.FeatureAudioSplitUpload = (function () {
         state.sourceFileId = '';
         state.boundaries = [];
         state.folderCheck = null;
+        state.effectiveFolderId = '';
         state.loadingAudio = false;
         state.uploading = false;
         state.uploadLog = [];
