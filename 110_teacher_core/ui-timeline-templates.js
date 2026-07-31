@@ -37,7 +37,10 @@ window.TimelineTemplates = (() => {
     }
 
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf) {
-        let iconStr = t.type === 'check' ? '📌' : (t.type === 'link' ? '🔗' : (t.type === 'audio_record' ? '🎙️' : '📁'));
+        let iconStr = t.type === 'check' ? '📌'
+            : (t.type === 'link' ? '🔗'
+            : (t.type === 'audio_record' ? '🎙️'
+            : (t.type === 'exam' ? '📝' : '📁')));
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
         let extraTag = '';
@@ -48,6 +51,10 @@ window.TimelineTemplates = (() => {
             const aiBadge = useAi ? `<span style="font-size:0.8rem; background:#DBEAFE; color:#1D4ED8; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">✨ 發音</span>` : ``;
             const grammarBadge = useGrammar ? `<span style="font-size:0.8rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">📝 文法</span>` : '';
             extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}${grammarBadge}`;
+        } else if (t.type === 'exam') {
+            const jobId = (t.raw_data && (t.raw_data.exam_job_id || (t.raw_data.exam_job && t.raw_data.exam_job.job_id))) || '';
+            extraTag = '<span style="font-size:0.9rem; color:#0F766E; margin-left:8px; font-weight:bold;">(考試出題單)</span>'
+                + (jobId ? `<span style="font-size:0.8rem; background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">job: ${jobId}</span>` : '');
         }
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
@@ -266,6 +273,7 @@ window.TimelineTemplates = (() => {
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'check')">+ 📌 一般</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'audio_record')">+ 🎙️ 錄音</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #0F766E; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'exam')">+ 📝 考試</button>
                                 
                                 <div style="display:inline-flex; align-items:center; gap:4px;">
                                     <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
@@ -286,6 +294,7 @@ window.TimelineTemplates = (() => {
                         <option value="link" ${t.type === 'link' ? 'selected' : ''}>🔗 連結</option>
                         <option value="drive" ${t.type === 'drive' ? 'selected' : ''}>📁 Drive</option>
                         <option value="audio_record" ${t.type === 'audio_record' ? 'selected' : ''}>🎙️ 錄音</option>
+                        <option value="exam" ${t.type === 'exam' ? 'selected' : ''}>📝 考試</option>
                     </select>
                 `;
 
@@ -333,12 +342,28 @@ window.TimelineTemplates = (() => {
 
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_display_text || raw.student_display || raw.student_text || '').replace(/"/g, '&quot;');
-                    const safeMaterialRange = (raw.material_range || raw.student_drive_desc || '').replace(/"/g, '&quot;');
-                    const safeMaterialUrl = (raw.material_url || raw.student_drive_url || '').replace(/"/g, '&quot;');
-                    const safeStudentDriveUrl = (raw.student_drive_url || raw.material_url || '').replace(/"/g, '&quot;');
-                    const safeStudentDriveDesc = (raw.student_drive_desc || raw.material_range || '').replace(/"/g, '&quot;');
                     // 標題（麥克風右側）空白時，改用 base 範圍顯示
                     const plainTaskTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    let materialRefs = Array.isArray(raw.material_refs) && raw.material_refs.length
+                        ? raw.material_refs.slice()
+                        : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
+                    const gradingUnitsForRefs = Array.isArray(raw.grading_units) ? raw.grading_units : [];
+                    if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMaterialRefsMatchUnits === 'function') {
+                        materialRefs = window.FeatureTimeline.ensureMaterialRefsMatchUnits(
+                            materialRefs,
+                            gradingUnitsForRefs,
+                            materialRefs[0] || raw.material_ref || {}
+                        );
+                    }
+                    let resolvedMaterialRange = raw.material_range || raw.student_drive_desc || '';
+                    if (!resolvedMaterialRange && window.FeatureTimeline && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
+                        resolvedMaterialRange = window.FeatureTimeline.buildMaterialRangeLabelFromRows(materialRefs) || '';
+                    }
+                    if (!resolvedMaterialRange) resolvedMaterialRange = plainTaskTitle;
+                    const safeMaterialRange = String(resolvedMaterialRange || '').replace(/"/g, '&quot;');
+                    const safeMaterialUrl = (raw.material_url || raw.student_drive_url || '').replace(/"/g, '&quot;');
+                    const safeStudentDriveUrl = (raw.student_drive_url || raw.material_url || '').replace(/"/g, '&quot;');
+                    const safeStudentDriveDesc = (raw.student_drive_desc || resolvedMaterialRange || '').replace(/"/g, '&quot;');
                     const titleFromRange = String(raw.material_range || raw.student_drive_desc || '').trim();
                     if (!plainTaskTitle && titleFromRange) {
                         t.title = titleFromRange;
@@ -355,7 +380,9 @@ window.TimelineTemplates = (() => {
                     if (raw.snapshot_at) {
                         try {
                             snapshotJsonAttr = JSON.stringify({
-                                material_ref: raw.material_ref || null,
+                                material_ref: materialRefs[0] || raw.material_ref || null,
+                                material_refs: materialRefs,
+                                material_range: resolvedMaterialRange || '',
                                 original_script: raw.original_script || '',
                                 student_display: raw.student_display || raw.student_display_text || '',
                                 student_display_text: raw.student_display_text || raw.student_display || '',
@@ -393,9 +420,6 @@ window.TimelineTemplates = (() => {
                             </div>`;
                     }
 
-                    const materialRefs = Array.isArray(raw.material_refs) && raw.material_refs.length
-                        ? raw.material_refs
-                        : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
                     const primaryRef = materialRefs[0] || raw.material_ref || {};
                     const selectedMetaRows = materialRefs.map(function (r) {
                         return {
@@ -548,6 +572,13 @@ window.TimelineTemplates = (() => {
                     `;
                 }
 
+                let examInputHtml = '';
+                if (t.type === 'exam') {
+                    examInputHtml = (window.FeatureExamJob && typeof window.FeatureExamJob.renderInlineEditorHtml === 'function')
+                        ? window.FeatureExamJob.renderInlineEditorHtml(pathStr, t)
+                        : '<div style="margin-top:8px; color:#B91C1C;">FeatureExamJob 未載入</div>';
+                }
+
                 let tLateMode = t.late_mode || 'infinite';
 
                 return `
@@ -594,6 +625,7 @@ window.TimelineTemplates = (() => {
                         </div>
                         ${urlInputHtml}
                         ${audioInputHtml}
+                        ${examInputHtml}
                         <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
                             <div id="node-desc-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
                         </div>
@@ -696,6 +728,7 @@ window.TimelineTemplates = (() => {
                     <button type="button" class="btn btn-action" style="font-size:1rem;" onclick="window.FeatureTimeline.addNode(null, 'check')">+ 📌 一般</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode(null, 'audio_record')">+ 🎙️ 錄音</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #0F766E; color: white;" onclick="window.FeatureTimeline.addNode(null, 'exam')">+ 📝 考試</button>
                     <div style="display:inline-flex; align-items:center; gap:4px;">
                         <button type="button" class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                     </div>
@@ -753,7 +786,7 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    function getTimelineNodeHtml(index, mode, nodeTitle, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId) {
+    function getTimelineNodeHtml(index, mode, nodeTitle, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId, canDeleteSession) {
         let badge = '', borderColor = '#E2E8F0', dotColor = '#E2E8F0', bgColor = '#FFFFFF', headerTextColor = '#475569';
 
         if (isCurrent) {
@@ -764,6 +797,12 @@ window.TimelineTemplates = (() => {
         }
 
         const addBlockBtn = canEditTimeline ? `<button type="button" class="btn btn-primary" onclick="window.FeatureTimeline.openBuilder('${classId}', '${nodeDate}', '${builderContainerId}')">+ 新增區塊</button>` : '';
+        const deleteSessionBtn = canDeleteSession
+            ? `<button type="button" class="btn" title="刪除空白堂次" style="background:#FEF2F2; color:#B91C1C; border:1px solid #FECACA; font-weight:800; padding:6px 12px;" onclick="window.FeatureTimeline.removeSessionDate('${classId}', '${nodeDate}')">刪此日</button>`
+            : '';
+        const headerActions = (addBlockBtn || deleteSessionBtn)
+            ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">${deleteSessionBtn}${addBlockBtn}</div>`
+            : '';
         const nodeDragEvents = canEditTimeline ? `ondragover="event.preventDefault();" ondrop="window.FeatureTimeline.dropAssignToNode(event, '${nodeDate}', '${classId}')"` : '';
 
         return `
@@ -773,26 +812,56 @@ window.TimelineTemplates = (() => {
                         <div style="position: absolute; left: -65px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; border: 4px solid ${dotColor}; z-index: 1;"></div>
                         <span style="font-weight: 800; color: ${headerTextColor}; font-size: 1rem;">📅 第 ${index + 1} ${mode === 'weekly' ? '週' : '堂'} - ${nodeTitle}</span> ${badge}
                     </div>
-                    ${addBlockBtn}
+                    ${headerActions}
                 </div>
                 ${assignmentsHtml}
                 <div id="${builderContainerId}"></div>
             </div>`;
     }
 
-    function getMoveAssignModalHtml(cleanTitle, targetDate, assignId, classId) {
+    function getAddSessionModalHtml(classId) {
         return `
-            <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-                <h3 style="margin-top: 0; color: #1E293B; margin-bottom: 10px; border-bottom: 1px solid #E2E8F0; padding-bottom: 10px;">📅 作業改期 / 搬移</h3>
-                <div style="margin-bottom:20px; font-size:1rem; color:#475569; line-height:1.5;">
-                    準備將 <strong>「${cleanTitle}」</strong> 搬移至新日期：
-                </div>
+            <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 420px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                <h3 style="margin-top: 0; color: #1E293B; margin-bottom: 10px; border-bottom: 1px solid #E2E8F0; padding-bottom: 10px;">＋ 加堂</h3>
+                <p style="margin:0 0 16px; color:#64748B; font-size:0.95rem; line-height:1.5;">
+                    將日期加入進度軸。若超出學期起訖日，確認後仍可加（例如補課）。
+                </p>
                 <div style="display:flex; align-items:center; gap:10px; margin-bottom: 25px; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
-                    <label style="font-weight:800; color:#334155; white-space:nowrap;">選擇新日期：</label>
-                    <input type="date" id="move-target-date" class="form-control" style="flex:1; padding: 8px; font-size: 1rem;" value="${targetDate}">
+                    <label style="font-weight:800; color:#334155; white-space:nowrap;">日期：</label>
+                    <input type="date" id="add-session-date" class="form-control" style="flex:1; padding: 8px; font-size: 1rem;">
                 </div>
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button type="button" class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="document.getElementById('move-assign-modal').remove()">取消</button>
+                    <button type="button" class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="window.ModalOverlay.close('add-session-modal')">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-add-session" style="padding: 8px 20px; font-size:1rem;" onclick="window.FeatureTimeline.submitAddSession('${classId}')">確認加堂</button>
+                </div>
+            </div>
+        `;
+    }
+
+    function getMoveAssignModalHtml(cleanTitle, targetDate, assignId, classId, sessionDates) {
+        const dates = Array.isArray(sessionDates) ? sessionDates : [];
+        const optionsHtml = dates.map(function (d) {
+            const selected = d === targetDate ? ' selected' : '';
+            return '<option value="' + d + '"' + selected + '>' + d + '</option>';
+        }).join('');
+
+        return `
+            <div style="background: white; padding: 30px; border-radius: 12px; width: 90%; max-width: 420px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                <h3 style="margin-top: 0; color: #1E293B; margin-bottom: 10px; border-bottom: 1px solid #E2E8F0; padding-bottom: 10px;">📅 作業改期 / 搬移</h3>
+                <div style="margin-bottom:12px; font-size:1rem; color:#475569; line-height:1.5;">
+                    準備將 <strong>「${cleanTitle}」</strong> 搬移至新日期：
+                </div>
+                <p style="margin:0 0 14px; font-size:0.88rem; color:#64748B; line-height:1.45;">
+                    若清單沒有目標日，請先在進度軸按「＋ 加堂」。
+                </p>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 25px; background: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
+                    <label style="font-weight:800; color:#334155; white-space:nowrap;">選擇新日期：</label>
+                    <select id="move-target-date" class="form-control" style="flex:1; padding: 8px; font-size: 1rem;">
+                        ${optionsHtml}
+                    </select>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                    <button type="button" class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size:1rem;" onclick="window.ModalOverlay.close('move-assign-modal')">取消</button>
                     <button type="button" class="btn btn-primary" id="btn-confirm-move" style="padding: 8px 20px; font-size:1rem;" onclick="window.FeatureTimeline.submitMove('${assignId}', '${classId}', '${targetDate}')">確認改期</button>
                 </div>
             </div>
@@ -822,6 +891,7 @@ window.TimelineTemplates = (() => {
         getBuilderFormHtml,
         getAssignmentBlockHtml,
         getTimelineNodeHtml,
+        getAddSessionModalHtml,
         getMoveAssignModalHtml,
         getLinePushModalHtml
     };

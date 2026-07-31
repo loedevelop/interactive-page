@@ -135,6 +135,8 @@ window.BuilderStore = (() => {
                     }
 
                     const snapshotJsonEl = document.getElementById(`node-material-snapshot-json-${pathStr}`);
+                    let snapMaterialRefs = null;
+                    let snapMaterialRange = '';
                     if (snapshotJsonEl && snapshotJsonEl.value) {
                         try {
                             const snap = JSON.parse(snapshotJsonEl.value);
@@ -148,14 +150,20 @@ window.BuilderStore = (() => {
                                     t.raw_data.student_text = displayText;
                                 }
                                 if (Array.isArray(snap.material_refs) && snap.material_refs.length) {
+                                    snapMaterialRefs = snap.material_refs;
                                     t.raw_data.material_refs = snap.material_refs;
                                     t.raw_data.material_ref = snap.material_refs[0];
                                 } else if (snap.material_ref) {
-                                    t.raw_data.material_ref = snap.material_ref;
-                                    t.raw_data.material_refs = [snap.material_ref];
+                                    // ⚠️ 舊版 hidden snapshot 只存單一 material_ref；不可因此把多冊 refs 砍成 1
+                                    if (!Array.isArray(t.raw_data.material_refs) || t.raw_data.material_refs.length <= 1) {
+                                        t.raw_data.material_ref = snap.material_ref;
+                                        t.raw_data.material_refs = [snap.material_ref];
+                                    }
                                 }
-                                if (snap.material_range) t.raw_data.material_range = snap.material_range;
-                                if (materialRangeEl && materialRangeEl.value) t.raw_data.material_range = String(materialRangeEl.value).trim();
+                                if (snap.material_range) {
+                                    snapMaterialRange = String(snap.material_range).trim();
+                                    t.raw_data.material_range = snapMaterialRange;
+                                }
                                 if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
                                 if (Array.isArray(snap.grading_units)) t.raw_data.grading_units = snap.grading_units;
                                 // 逐頁批改稿編輯框若存在，代表老師可能微調過內容，優先採用畫面上的最新值
@@ -177,6 +185,10 @@ window.BuilderStore = (() => {
                     }
 
                     if (scriptSource === 'meta') {
+                        // 💣 雷區（見 .cursor/rules/material-snapshot-refs-invariant.mdc）：
+                        // 絕對禁止「DOM 讀到幾列就寫幾列 material_refs」。
+                        // hydrate 未完成時 DOM 常只剩 A 一列，若直接覆寫會毁掉已凍結的 A~F，
+                        // 但 grading_units（12 頁）還在 → 老師以為文稿還在、存完再開 meta 卻只剩 A。
                         const rows = [];
                         const listEl = document.getElementById(`node-material-rows-${pathStr}`);
                         const rootEl = document.getElementById(`node-material-root-${pathStr}`);
@@ -200,10 +212,50 @@ window.BuilderStore = (() => {
                                 });
                             });
                         }
-                        if (rows.length) {
-                            t.raw_data.material_refs = rows;
-                            t.raw_data.material_ref = rows[0];
+
+                        const prevRefs = Array.isArray(t.raw_data.material_refs) ? t.raw_data.material_refs : [];
+                        const units = Array.isArray(t.raw_data.grading_units) ? t.raw_data.grading_units : [];
+                        let nextRefs = rows.length ? rows : prevRefs.slice();
+
+                        // 列數必須對齊 grading_units 的 stem；不足則從 units 補回，禁止縮水覆寫
+                        if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMaterialRefsMatchUnits === 'function') {
+                            nextRefs = window.FeatureTimeline.ensureMaterialRefsMatchUnits(
+                                nextRefs,
+                                units,
+                                nextRefs[0] || prevRefs[0] || t.raw_data.material_ref || {}
+                            );
+                        } else if (prevRefs.length > nextRefs.length) {
+                            nextRefs = prevRefs;
+                        } else if (snapMaterialRefs && snapMaterialRefs.length > nextRefs.length) {
+                            nextRefs = snapMaterialRefs;
                         }
+
+                        if (nextRefs.length) {
+                            t.raw_data.material_refs = nextRefs;
+                            t.raw_data.material_ref = nextRefs[0];
+                        }
+
+                        // base 範圍：DOM 若被縮成單冊，保留較完整的 snapshot／由 refs 重算
+                        const domRange = materialRangeEl ? String(materialRangeEl.value || '').trim() : '';
+                        let rangeToSave = domRange;
+                        if (window.FeatureTimeline && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
+                            const fromRefs = window.FeatureTimeline.buildMaterialRangeLabelFromRows(nextRefs);
+                            const stemCount = (window.FeatureTimeline.uniqueStemsFromGradingUnits
+                                ? window.FeatureTimeline.uniqueStemsFromGradingUnits(units).length
+                                : 0);
+                            if (stemCount > 1 && fromRefs && (!domRange || domRange.length < fromRefs.length * 0.5)) {
+                                rangeToSave = fromRefs;
+                            } else if (!rangeToSave && fromRefs) {
+                                rangeToSave = fromRefs;
+                            } else if (!rangeToSave && snapMaterialRange) {
+                                rangeToSave = snapMaterialRange;
+                            } else if (!rangeToSave && t.title) {
+                                rangeToSave = String(t.title).replace(/<[^>]*>?/gm, '').trim();
+                            }
+                        } else if (!rangeToSave && snapMaterialRange) {
+                            rangeToSave = snapMaterialRange;
+                        }
+                        if (rangeToSave) t.raw_data.material_range = rangeToSave;
                     }
 
                     const studentSourceTypeEl = document.getElementById(`node-student-source-type-${pathStr}`);
@@ -232,6 +284,10 @@ window.BuilderStore = (() => {
                     // 相容舊欄位
                     if (!t.raw_data.ai_source_type) t.raw_data.ai_source_type = 'text';
                     if (!t.raw_data.student_source_type) t.raw_data.student_source_type = 'text';
+                }
+
+                if (t.type === 'exam' && window.FeatureExamJob && typeof window.FeatureExamJob.syncInlineEditor === 'function') {
+                    window.FeatureExamJob.syncInlineEditor(pathStr, t);
                 }
             }
         });
@@ -333,7 +389,11 @@ window.BuilderStore = (() => {
                     material_range: '',
                     ai_source_type: 'text',
                     student_source_type: 'text'
-                } : {}, 
+                } : (type === 'exam' ? {
+                    exam_job_id: '',
+                    exam_title: '',
+                    exam_job: null
+                } : {}),
                 ...(type === 'group' ? { subTasks: [] } : {})
             });
         },
@@ -403,6 +463,12 @@ window.BuilderStore = (() => {
                 if (task.raw_data.material_range === undefined) task.raw_data.material_range = '';
                 if (task.raw_data.ai_source_type === undefined) task.raw_data.ai_source_type = 'text';
                 if (task.raw_data.student_source_type === undefined) task.raw_data.student_source_type = 'text';
+            }
+            if (newType === 'exam') {
+                if (!task.raw_data) task.raw_data = {};
+                if (task.raw_data.exam_job_id === undefined) task.raw_data.exam_job_id = '';
+                if (task.raw_data.exam_title === undefined) task.raw_data.exam_title = '';
+                if (task.raw_data.exam_job === undefined) task.raw_data.exam_job = null;
             }
         },
         updateNodeUrl: (pathStr, val) => {

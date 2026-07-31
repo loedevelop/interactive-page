@@ -194,11 +194,106 @@ window.FeatureTimeline = (() => {
         }).filter(Boolean).join('；');
     }
 
+    /** grading_units 裡有幾種 stem（A/B/C…） */
+    function uniqueStemsFromGradingUnits(units) {
+        const order = [];
+        const seen = {};
+        (units || []).forEach(function (u) {
+            const stem = String((u && u.stem) || '').trim();
+            if (!stem || seen[stem]) return;
+            seen[stem] = true;
+            order.push(stem);
+        });
+        return order;
+    }
+
+    /**
+     * 從 grading_units 反推 material_refs（修「存檔後只剩 A 一列」）。
+     * templateRef 提供 folder／檔名樣式（例 GEPT-2_sentence / A.meta.json）。
+     */
+    function rebuildMaterialRefsFromGradingUnits(units, templateRef) {
+        const stems = uniqueStemsFromGradingUnits(units);
+        if (!stems.length) return [];
+        const tpl = templateRef || {};
+        const folder = tpl.material_folder || '';
+        const rootKind = tpl.materials_root_kind === 'class' ? 'class' : 'teacher';
+        const tplFile = tpl.published_file || (stems[0] + '.meta.json');
+        const pageMap = {};
+        (units || []).forEach(function (u) {
+            const stem = String((u && u.stem) || '').trim();
+            if (!stem) return;
+            if (!pageMap[stem]) pageMap[stem] = [];
+            if (u.page != null && u.page !== '') pageMap[stem].push(u.page);
+        });
+        return stems.map(function (stem) {
+            let published = tplFile;
+            if (/^[A-Za-z0-9]+\.meta\.json$/i.test(tplFile)) {
+                published = stem + '.meta.json';
+            } else if (/[A-Za-z0-9]+(?=\.meta\.json)/i.test(tplFile)) {
+                published = tplFile.replace(/[A-Za-z0-9]+(?=\.meta\.json)/i, stem);
+            } else {
+                published = stem + '.meta.json';
+            }
+            const pages = (pageMap[stem] || []).slice().sort(function (a, b) {
+                return Number(a) - Number(b);
+            });
+            let rangeSpec = '';
+            if (pages.length) {
+                const first = pages[0];
+                const last = pages[pages.length - 1];
+                rangeSpec = 'pp. ' + first + (String(first) !== String(last) ? ('~' + last) : '');
+            }
+            return {
+                materials_root_kind: rootKind,
+                material_folder: folder,
+                published_file: published,
+                select_mode: 'range_spec',
+                range_spec: rangeSpec,
+                label: stem
+            };
+        });
+    }
+
+    /**
+     * 💣 雷區：若 refs 冊數 < grading_units stem 數，用 units 補回。
+     * 曾發生存檔後 material_refs 只剩 A、但 grading_units 仍是 A~F 12 頁。
+     * 見 .cursor/rules/material-snapshot-refs-invariant.mdc
+     */
+    function ensureMaterialRefsMatchUnits(refs, units, templateRef) {
+        const list = Array.isArray(refs) ? refs.slice() : [];
+        const stems = uniqueStemsFromGradingUnits(units);
+        if (stems.length <= 1) return list;
+        if (list.length >= stems.length) return list;
+        const rebuilt = rebuildMaterialRefsFromGradingUnits(units, templateRef || list[0] || {});
+        return rebuilt.length ? rebuilt : list;
+    }
+
+    function refsToSavedRows(refs) {
+        return (refs || []).map(function (r) {
+            let rangeSpec = r.range_spec || '';
+            if (!rangeSpec) {
+                if (r.select_mode === 'item_range' && r.item_from != null) {
+                    rangeSpec = '#' + r.item_from + (r.item_to != null ? ('~' + r.item_to) : '');
+                } else if ((r.select_mode === 'page_range' || r.select_mode === 'page') && (r.page_from != null || r.page != null)) {
+                    const a = r.page_from != null ? r.page_from : r.page;
+                    const b = r.page_to != null ? r.page_to : a;
+                    rangeSpec = 'pp. ' + a + (String(a) !== String(b) ? ('~' + b) : '');
+                } else if (r.select_mode === 'all') {
+                    rangeSpec = 'all';
+                }
+            }
+            return {
+                value: (r.material_folder || '') + '::' + (r.published_file || ''),
+                range_spec: rangeSpec,
+                label: r.label || ''
+            };
+        }).filter(function (r) { return r.value && r.value !== '::'; });
+    }
+
     function refreshMaterialRangeLabel(pathStr) {
         const rows = readMaterialMetaRows(pathStr);
         const label = buildMaterialRangeLabelFromRows(rows);
         const rangeEl = document.getElementById('node-material-range-' + pathStr);
-        if (rangeEl) rangeEl.value = label;
         const hidden = document.getElementById('node-material-selected-json-' + pathStr);
         if (hidden) {
             hidden.value = JSON.stringify(rows.map(function (m) {
@@ -209,11 +304,25 @@ window.FeatureTimeline = (() => {
                 };
             }));
         }
-        // 標題（麥克風右側）空白時，改用 base 範圍
+        // 若畫面上列數少於已存在的逐頁批改稿冊數，不要用殘缺列去縮水 base 範圍／標題
+        const unitsHost = document.getElementById('node-grading-units-' + pathStr);
+        let unitStemCount = 0;
+        if (unitsHost) {
+            const stems = {};
+            unitsHost.querySelectorAll('.grading-unit-script').forEach(function (ta) {
+                const s = String(ta.getAttribute('data-stem') || '').trim();
+                if (s) stems[s] = true;
+            });
+            unitStemCount = Object.keys(stems).length;
+        }
+        const incomplete = unitStemCount > 1 && rows.length > 0 && rows.length < unitStemCount;
+        if (!incomplete && rangeEl) {
+            rangeEl.value = label;
+        }
         const titleEl = document.getElementById('node-title-' + pathStr);
         const titleText = titleEl ? String(titleEl.textContent || '').trim() : '';
         const rangeText = (rangeEl && String(rangeEl.value || '').trim()) || label || '';
-        if (titleEl && !titleText && rangeText) {
+        if (titleEl && !titleText && rangeText && !incomplete) {
             titleEl.textContent = rangeText;
         }
         return label;
@@ -359,9 +468,11 @@ window.FeatureTimeline = (() => {
         const pendingMeta = [];
         walkAudioRecordNodes(bState.tasks, [], function (task, pathStr) {
             const raw = task.raw_data || {};
-            const refs = Array.isArray(raw.material_refs) && raw.material_refs.length
+            let refs = Array.isArray(raw.material_refs) && raw.material_refs.length
                 ? raw.material_refs
                 : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
+            // 老問題：grading_units 還在 A~F，material_refs 卻只剩 A → 用 units 補回列
+            refs = ensureMaterialRefsMatchUnits(refs, raw.grading_units, refs[0] || raw.material_ref || {});
             const rowsEl = document.getElementById('node-material-rows-' + pathStr);
             if (!rowsEl) return;
 
@@ -375,26 +486,19 @@ window.FeatureTimeline = (() => {
                     }
                 } catch (_e) {}
             }
-            if (!savedRows.length && refs.length) {
-                savedRows = refs.map(function (r) {
-                    let rangeSpec = r.range_spec || '';
-                    if (!rangeSpec) {
-                        if (r.select_mode === 'item_range' && r.item_from != null) {
-                            rangeSpec = '#' + r.item_from + (r.item_to != null ? ('~' + r.item_to) : '');
-                        } else if ((r.select_mode === 'page_range' || r.select_mode === 'page') && (r.page_from != null || r.page != null)) {
-                            const a = r.page_from != null ? r.page_from : r.page;
-                            const b = r.page_to != null ? r.page_to : a;
-                            rangeSpec = 'pp. ' + a + (String(a) !== String(b) ? ('~' + b) : '');
-                        } else if (r.select_mode === 'all') {
-                            rangeSpec = 'all';
-                        }
-                    }
-                    return {
-                        value: (r.material_folder || '') + '::' + (r.published_file || ''),
-                        range_spec: rangeSpec,
-                        label: r.label || ''
-                    };
-                });
+            const restoredFromRefs = refsToSavedRows(refs);
+            if (restoredFromRefs.length > savedRows.length) {
+                savedRows = restoredFromRefs;
+            } else if (!savedRows.length && restoredFromRefs.length) {
+                savedRows = restoredFromRefs;
+            }
+
+            // 補回 base 範圍顯示（material_range 被存空時，用 refs／標題還原）
+            const rangeEl = document.getElementById('node-material-range-' + pathStr);
+            if (rangeEl && !String(rangeEl.value || '').trim()) {
+                const fromRefs = buildMaterialRangeLabelFromRows(refs);
+                const fromTitle = String(task.title || '').replace(/<[^>]*>?/gm, '').trim();
+                rangeEl.value = fromRefs || fromTitle || '';
             }
 
             pendingMeta.push({
@@ -585,15 +689,23 @@ window.FeatureTimeline = (() => {
         }
     };
 
+    function parseClassRaw(cls) {
+        let raw = (cls && (cls.raw_data || cls.rawData)) || {};
+        if (typeof raw === 'string') {
+            try { raw = JSON.parse(raw); } catch (_e) { raw = {}; }
+        }
+        return raw && typeof raw === 'object' ? raw : {};
+    }
+
     function getTimelineSessions(cls, DateUtils) {
         if (!cls) return [];
-        let raw = cls.raw_data || {};
-        if (typeof raw === 'string') {
-            try { raw = JSON.parse(raw); } catch(e) { raw = {}; }
-        }
+        const DU = DateUtils || window.UtilsDate;
+        if (!DU) return [];
+        let raw = parseClassRaw(cls);
         
         let sessions = [];
-        if (raw.custom_sessions && Array.isArray(raw.custom_sessions) && raw.custom_sessions.length > 0) {
+        // 已寫入 custom_sessions（含空陣列）即以它為準，避免刪光後又被規則推算加回來
+        if (Array.isArray(raw.custom_sessions)) {
             sessions = [...raw.custom_sessions];
         } else if (db && db.sessions && db.sessions[cls.id] && db.sessions[cls.id].length > 0) {
             sessions = [...db.sessions[cls.id]];
@@ -611,11 +723,73 @@ window.FeatureTimeline = (() => {
             let endDateStr = cls.endDate || cls.end_date || raw.end_date;
 
             if (startDateStr && endDateStr && meetDays.length > 0) {
-                sessions = DateUtils.generateDates(startDateStr, endDateStr, meetDays);
+                sessions = DU.generateDates(startDateStr, endDateStr, meetDays);
             }
         }
         
-        return sessions.map(d => DateUtils.normalizeDateString(d)).filter(Boolean);
+        return sessions.map(d => DU.normalizeDateString(d)).filter(Boolean);
+    }
+
+    /** 進度日清單（不含「僅因作業而出現」的幽靈日），供改期下拉使用 */
+    function listProgressDates(classId) {
+        const DateUtils = window.UtilsDate;
+        if (!db || !db.classes || !DateUtils) return [];
+        const cls = db.classes.find(function (c) { return String(c.id) === String(classId); });
+        if (!cls) return [];
+        return getTimelineSessions(cls, DateUtils).slice().sort();
+    }
+
+    function getSemesterBounds(cls) {
+        const DateUtils = window.UtilsDate;
+        const raw = parseClassRaw(cls);
+        const start = DateUtils.normalizeDateString(cls.startDate || cls.start_date || raw.start_date || '');
+        const end = DateUtils.normalizeDateString(cls.endDate || cls.end_date || raw.end_date || '');
+        return { start: start || '', end: end || '' };
+    }
+
+    async function persistCustomSessions(classId, sessions, scrollMode) {
+        const DateUtils = window.UtilsDate;
+        if (!db || !db.classes || !DateUtils) throw new Error('系統資料尚未就緒');
+        const cls = db.classes.find(function (c) { return String(c.id) === String(classId); });
+        if (!cls) throw new Error('找不到班級');
+
+        const normalized = [...new Set((sessions || []).map(function (d) {
+            return DateUtils.normalizeDateString(d);
+        }).filter(Boolean))].sort();
+
+        const raw = parseClassRaw(cls);
+        const mergedRaw = Object.assign({}, raw, { custom_sessions: normalized });
+
+        const { data: updatedRows, error } = await window.supabaseClient
+            .from('classes')
+            .update({ raw_data: mergedRaw })
+            .eq('id', classId)
+            .select('id');
+        if (error) throw error;
+        if (!updatedRows || updatedRows.length === 0) throw new Error('資料庫拒絕寫入排程');
+
+        cls.raw_data = mergedRaw;
+        cls.rawData = mergedRaw;
+        if (!db.sessions) db.sessions = {};
+        db.sessions[classId] = normalized;
+        if (typeof db.save === 'function') db.save();
+
+        renderTimeline(classId, scrollMode || 'none');
+        return normalized;
+    }
+
+    async function ensureCustomSessionsList(classId) {
+        const DateUtils = window.UtilsDate;
+        const cls = db.classes.find(function (c) { return String(c.id) === String(classId); });
+        if (!cls) throw new Error('找不到班級');
+        const raw = parseClassRaw(cls);
+        if (Array.isArray(raw.custom_sessions)) {
+            return raw.custom_sessions.map(function (d) {
+                return DateUtils.normalizeDateString(d);
+            }).filter(Boolean).sort();
+        }
+        const materialized = getTimelineSessions(cls, DateUtils);
+        return persistCustomSessions(classId, materialized, 'none');
     }
 
     function renderTimeline(classId, scrollMode = 'current', targetId = null) {
@@ -704,10 +878,20 @@ window.FeatureTimeline = (() => {
                     });
                 }
                 const builderContainerId = `builder-container-${index}`;
-                html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId);
+                // 第一版：僅單堂模式可刪該日（有作業時在 handler 擋下）
+                const canDeleteSession = canEditTimeline && mode === 'single';
+                html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId, canDeleteSession);
             });
+
+            const toolbarHtml = canEditTimeline
+                ? `<div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; margin:0 0 12px 20px; flex-wrap:wrap;">
+                    <span style="font-size:0.85rem; color:#64748B; font-weight:600;">客製化堂次會寫入排程；若再按「自動鋪設」可能被規則重算覆蓋。</span>
+                    <button type="button" class="btn btn-action" style="background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; font-weight:800;"
+                        onclick="window.FeatureTimeline.openAddSessionModal('${classId}')">＋ 加堂</button>
+                   </div>`
+                : '';
             
-            container.innerHTML = TPL.getTimelineStyleBlock();
+            container.innerHTML = TPL.getTimelineStyleBlock() + toolbarHtml;
             const timelineWrapper = document.createElement('div');
             timelineWrapper.style.borderLeft = '3px solid #E2E8F0';
             timelineWrapper.style.marginLeft = '20px';
@@ -976,6 +1160,7 @@ window.FeatureTimeline = (() => {
         moveNodeLeft: (pathStr) => { window.BuilderStore.moveNodeLeft(pathStr); renderBuilderUI(); },
         moveNodeRight: (pathStr) => { window.BuilderStore.moveNodeRight(pathStr); renderBuilderUI(); },
         changeNodeType: (pathStr, newType) => { window.BuilderStore.changeNodeType(pathStr, newType); renderBuilderUI(); },
+        refreshBuilder: () => { if (window.BuilderStore) { window.BuilderStore.sync(); renderBuilderUI(); } },
         updateNodeUrl: (pathStr, val) => { window.BuilderStore.updateNodeUrl(pathStr, val); renderBuilderUI(); },
         copyPrevNodeUrl: (pathStr) => { window.BuilderStore.copyPrevNodeUrl(pathStr); renderBuilderUI(); },
         addResourceTaskAsLink: (pathStr, resId) => {
@@ -1226,28 +1411,131 @@ window.FeatureTimeline = (() => {
             }
             dragAssignId = null;
         },
+        openAddSessionModal: (classId) => {
+            if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法調整堂次。', 'error');
+            if (!window.ModalOverlay) return window.showFlash('彈窗模組尚未載入', 'error');
+            const TPL = window.TimelineTemplates;
+            if (!TPL || typeof TPL.getAddSessionModalHtml !== 'function') return;
+
+            window.ModalOverlay.open({
+                id: 'add-session-modal',
+                tier: 'B',
+                isDirty: function () {
+                    const el = document.getElementById('add-session-date');
+                    return !!(el && el.value);
+                },
+                unsavedMessage: '尚未加堂，確定要關閉嗎？',
+                contentHtml: TPL.getAddSessionModalHtml(classId)
+            });
+        },
+
+        submitAddSession: async (classId) => {
+            if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足', 'error');
+            const DateUtils = window.UtilsDate;
+            const input = document.getElementById('add-session-date');
+            const newDate = input ? DateUtils.normalizeDateString(input.value) : '';
+            if (!newDate) return window.showFlash('請選擇要加的日期', 'error');
+
+            const btn = document.getElementById('btn-confirm-add-session');
+            const originalText = btn ? btn.innerHTML : '';
+            if (btn) { btn.innerHTML = '⏳ 處理中...'; btn.disabled = true; }
+
+            try {
+                let list = await ensureCustomSessionsList(classId);
+                if (list.indexOf(newDate) > -1) {
+                    window.showFlash('這個日期已在進度中', 'error');
+                    return;
+                }
+
+                const cls = db.classes.find(function (c) { return String(c.id) === String(classId); });
+                const bounds = getSemesterBounds(cls);
+                if (bounds.start && bounds.end && (newDate < bounds.start || newDate > bounds.end)) {
+                    const ok = confirm(
+                        '此日期（' + newDate + '）不在學期區間（' + bounds.start + ' ~ ' + bounds.end + '）內。\n\n仍要加進進度嗎？'
+                    );
+                    if (!ok) return;
+                }
+
+                list = list.concat([newDate]);
+                await persistCustomSessions(classId, list, 'none');
+                if (window.ModalOverlay) window.ModalOverlay.close('add-session-modal');
+                window.showFlash('已加堂：' + newDate, 'success');
+            } catch (err) {
+                window.showFlash('加堂失敗：' + (err.message || err), 'error');
+            } finally {
+                if (btn) { btn.innerHTML = originalText; btn.disabled = false; }
+            }
+        },
+
+        removeSessionDate: async (classId, dateStr) => {
+            if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法調整堂次。', 'error');
+            const DateUtils = window.UtilsDate;
+            const day = DateUtils.normalizeDateString(dateStr);
+            if (!day) return;
+
+            const hasHw = (db.assignments || []).some(function (a) {
+                return String(a.class_id) === String(classId)
+                    && !a.deleted_at
+                    && DateUtils.normalizeDateString(a.target_date) === day;
+            });
+            if (hasHw) {
+                return window.showFlash('這一天還有作業，請先用「📅 改期」把作業搬到別天，再刪空白日。', 'error');
+            }
+
+            if (!confirm('確定要從進度中移除「' + day + '」這一堂嗎？（不會刪除任何作業）')) return;
+
+            try {
+                let list = await ensureCustomSessionsList(classId);
+                list = list.filter(function (d) { return d !== day; });
+                await persistCustomSessions(classId, list, 'none');
+                window.showFlash('已移除堂次：' + day, 'success');
+            } catch (err) {
+                window.showFlash('刪除堂次失敗：' + (err.message || err), 'error');
+            }
+        },
+
         moveAssignment: (assignId, classId) => {
             const TPL = window.TimelineTemplates;
-            if(!db || !db.assignments) return;
+            if (!db || !db.assignments) return;
             const a = db.assignments.find(x => x.id === assignId);
             if (!a || !TPL) return;
             if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法搬移此作業。', 'error');
+            if (!window.ModalOverlay) return window.showFlash('彈窗模組尚未載入', 'error');
 
-            const overlay = document.createElement('div');
-            overlay.id = 'move-assign-modal';
-            overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9999; backdrop-filter: blur(2px);';
+            const currentDate = window.UtilsDate.normalizeDateString(a.target_date);
+            let sessionDates = listProgressDates(classId);
+            if (currentDate && sessionDates.indexOf(currentDate) === -1) {
+                sessionDates = sessionDates.concat([currentDate]).sort();
+            }
+            if (sessionDates.length === 0) {
+                return window.showFlash('目前沒有進度日期可選。請先至「課程基本資料」鋪設排程，或按「＋ 加堂」。', 'error');
+            }
+
             const cleanTitle = a.title ? a.title.replace(/<[^>]*>?/gm, '') : '未命名作業';
-            overlay.innerHTML = TPL.getMoveAssignModalHtml(cleanTitle, window.UtilsDate.normalizeDateString(a.target_date), a.id, classId);
-            document.body.appendChild(overlay);
+            window.ModalOverlay.open({
+                id: 'move-assign-modal',
+                tier: 'A',
+                contentHtml: TPL.getMoveAssignModalHtml(cleanTitle, currentDate, a.id, classId, sessionDates)
+            });
         },
         submitMove: async (assignId, classId, oldDate) => {
-            const newDate = document.getElementById('move-target-date').value;
+            const newDate = document.getElementById('move-target-date')
+                ? window.UtilsDate.normalizeDateString(document.getElementById('move-target-date').value)
+                : '';
             if (!newDate) return window.showFlash('⚠️ 請選擇目標日期', 'error');
-            if (newDate === oldDate) return document.getElementById('move-assign-modal').remove(); 
+            if (newDate === oldDate) {
+                if (window.ModalOverlay) window.ModalOverlay.close('move-assign-modal');
+                return;
+            }
+
+            const allowed = listProgressDates(classId);
+            if (allowed.indexOf(newDate) === -1 && newDate !== oldDate) {
+                return window.showFlash('目標日不在進度清單中。請先按「＋ 加堂」再改期。', 'error');
+            }
             
             const btn = document.getElementById('btn-confirm-move');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⏳ 處理中...'; btn.disabled = true;
+            const originalText = btn ? btn.innerHTML : '';
+            if (btn) { btn.innerHTML = '⏳ 處理中...'; btn.disabled = true; }
             
             try {
                 const { data: updatedRows, error } = await window.supabaseClient.from('assignments').update({ target_date: newDate }).eq('id', assignId).is('deleted_at', null).select(); 
@@ -1257,11 +1545,11 @@ window.FeatureTimeline = (() => {
                 const idx = db.assignments.findIndex(a => a.id === assignId);
                 if(idx > -1) db.assignments[idx].target_date = newDate;
                 
-                document.getElementById('move-assign-modal').remove();
+                if (window.ModalOverlay) window.ModalOverlay.close('move-assign-modal');
                 window.FeatureTimeline.renderTimeline(classId, 'target', `assign-block-${assignId}`);
             } catch (err) {
                 window.showFlash('改期失敗：' + err.message, 'error');
-                btn.innerHTML = originalText; btn.disabled = false;
+                if (btn) { btn.innerHTML = originalText; btn.disabled = false; }
             }
         },
 
@@ -1336,6 +1624,11 @@ window.FeatureTimeline = (() => {
             }
             refreshMaterialRangeLabel(pathStr);
         },
+
+        ensureMaterialRefsMatchUnits: ensureMaterialRefsMatchUnits,
+        rebuildMaterialRefsFromGradingUnits: rebuildMaterialRefsFromGradingUnits,
+        uniqueStemsFromGradingUnits: uniqueStemsFromGradingUnits,
+        buildMaterialRangeLabelFromRows: buildMaterialRangeLabelFromRows,
 
         previewMaterialSnapshot: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;

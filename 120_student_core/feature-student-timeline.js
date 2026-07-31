@@ -558,16 +558,26 @@ window.FeatureStudentTimeline = (() => {
         
         let cls = currentClassConfig || {};
         let raw = cls.raw_data || {};
+        if (typeof raw === 'string') {
+            try { raw = JSON.parse(raw); } catch (_e) { raw = {}; }
+        }
         let mode = cls.calc_mode || cls.calcMode || raw.calc_mode || raw.calcMode || 'single';
         let meetDays = (cls.meet_days || cls.meetDays || raw.meet_days || raw.meetDays || []).map(Number).filter(n => !isNaN(n));
         let weekStartSetting = raw.week_start_day || 'sunday';
         
+        // 與老師端對齊：已寫入 custom_sessions（含空陣列）即以它為準
         let sessions = [];
-        if (Array.isArray(cls.sessions) && cls.sessions.length > 0) sessions = cls.sessions;
-        else if (Array.isArray(raw.sessions) && raw.sessions.length > 0) sessions = raw.sessions;
-        else if (Array.isArray(cls.session_dates) && cls.session_dates.length > 0) sessions = cls.session_dates;
-        else if (Array.isArray(raw.session_dates) && raw.session_dates.length > 0) sessions = raw.session_dates;
-        else {
+        if (Array.isArray(raw.custom_sessions)) {
+            sessions = raw.custom_sessions.slice();
+        } else if (Array.isArray(cls.sessions) && cls.sessions.length > 0) {
+            sessions = cls.sessions;
+        } else if (Array.isArray(raw.sessions) && raw.sessions.length > 0) {
+            sessions = raw.sessions;
+        } else if (Array.isArray(cls.session_dates) && cls.session_dates.length > 0) {
+            sessions = cls.session_dates;
+        } else if (Array.isArray(raw.session_dates) && raw.session_dates.length > 0) {
+            sessions = raw.session_dates;
+        } else {
             let startDateStr = cls.start_date || cls.startDate || raw.start_date || raw.startDate;
             let endDateStr = cls.end_date || cls.endDate || raw.end_date || raw.endDate;
             if (startDateStr && endDateStr && meetDays.length > 0) {
@@ -575,10 +585,13 @@ window.FeatureStudentTimeline = (() => {
                 let eNorm = DateUtils.normalizeDateString(endDateStr);
                 sessions = DateUtils.generateDates(sNorm, eNorm, meetDays);
             }
-            if (sessions.length === 0) sessions = [...new Set(assignments.map(a => DateUtils.normalizeDateString(a.target_date)))].filter(Boolean).sort();
         }
 
         sessions = sessions.map(d => DateUtils.normalizeDateString(d)).filter(Boolean);
+        const assignmentDates = (assignments || [])
+            .map(a => DateUtils.normalizeDateString(a.target_date))
+            .filter(Boolean);
+        sessions = [...new Set([...sessions, ...assignmentDates])].filter(Boolean).sort();
 
         if (sessions.length === 0) {
             container.innerHTML = `

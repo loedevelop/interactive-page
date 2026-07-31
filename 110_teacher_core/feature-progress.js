@@ -124,7 +124,7 @@ window.FeatureProgress = (() => {
 
             const { data: completions, error: compError } = await window.supabaseClient
                 .from('task_completions')
-                .select('student_id, task_id, assignment_id, status, raw_data, deleted_at')
+                .select('student_id, task_id, assignment_id, status, raw_data, deleted_at, updated_at')
                 .eq('class_id', classId)
                 .is('deleted_at', null)
                 .neq('status', 'incomplete');
@@ -270,6 +270,14 @@ window.FeatureProgress = (() => {
             ? window.FeatureAudioSplitUpload.renderEntryButton(classId, validAssignments, completions, students)
             : '';
 
+        const classMeta = (window.TeacherDB && Array.isArray(window.TeacherDB.classes))
+            ? window.TeacherDB.classes.find(function (c) { return String(c.id) === String(classId); })
+            : null;
+        const className = classMeta ? (classMeta.name || classMeta.class_name || '') : '';
+        const examJobEntryHtml = (window.FeatureExamJob && typeof window.FeatureExamJob.renderEntryButton === 'function')
+            ? window.FeatureExamJob.renderEntryButton(classId, validAssignments, className)
+            : '';
+
         container.innerHTML = `
             ${styleHtml}
             <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E2E8F0; margin-top: 20px;">
@@ -280,6 +288,7 @@ window.FeatureProgress = (() => {
                     </h3>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="button" id="btn-open-class-reminders" class="btn btn-action" onclick="window.FeatureReminderImage.openPopup('${classId}')" style="background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; font-weight:800;">📬 家長提醒圖</button>
+                        ${examJobEntryHtml}
                         ${audioSplitEntryHtml}
                         <button class="btn btn-action" onclick="window.FeatureProgress.refresh('${classId}')" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1;">🔄 重新整理資料</button>
                     </div>

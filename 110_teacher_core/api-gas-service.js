@@ -136,6 +136,40 @@ window.GasService = (function() {
     },
 
     /**
+     * 📥 下載 Drive 檔案（POST download_file → Base64）
+     * 給音檔切割工具／備援用：不走公開 uc 連結，也不走 GET 二進位（redirect 易壞）。
+     * @returns {{ arrayBuffer: ArrayBuffer, mimeType: string, fileName: string, fileId: string, byteLength: number }}
+     */
+    async downloadFile(fileId) {
+      try {
+        if (!fileId) throw new Error('缺少 fileId');
+        const payload = { action: 'download_file', fileId: String(fileId).trim() };
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.status !== 'success' || !result.fileData) {
+          throw new Error(result.message || 'GAS 下載失敗');
+        }
+        const binary = atob(result.fileData);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return {
+          arrayBuffer: bytes.buffer,
+          mimeType: result.mimeType || 'application/octet-stream',
+          fileName: result.fileName || '',
+          fileId: result.fileId || String(fileId),
+          byteLength: result.byteLength || bytes.length
+        };
+      } catch (error) {
+        console.error('[GasService] 檔案下載發生錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
      * 🚀 擴充功能 4：呼叫 GAS 上傳學生端 Local 檔案 (強制收納 01_Class_Resources)
      * (對接 Code.gs 的 upload_file 路由)
      */

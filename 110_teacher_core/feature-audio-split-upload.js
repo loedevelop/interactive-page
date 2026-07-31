@@ -4,7 +4,9 @@
  *    上傳回同一位學生的 01_Submissions，讓既有的「一頁一檔」AI 批改管線可以逐頁批改。
  *
  * 設計重點（勿再翻案，見對話紀錄）：
- * - 直接抓「學生已經繳交」的音檔（Supabase stream-audio），不需老師另外下載再上傳。
+ * - 直接抓「學生已經繳交」的音檔，不需老師另外下載再上傳。
+ * - 載入後用 Web Audio 做靜音偵測（對齊本機 ffmpeg silencedetect 思路），依頁數自動填切點；
+ *   老師只需核對／微調，不是從頭聽完手抓。
  * - 原始檔案「不會」被刪除或搬動，只在同一個 01_Submissions 資料夾內新增切好的檔案。
  * - 上傳前一定驗證目標資料夾就是該生的 01_Submissions，驗證失敗就整批擋下來。
  * - 切完＋上傳成功後，直接呼叫 submit_audio_task_atomic 帶 p_segments 補進資料庫，
@@ -21,14 +23,24 @@ window.FeatureAudioSplitUpload = (function () {
         studentId: '',
         audioBuffer: null,
         audioDuration: 0,
+        audioObjectUrl: '', // 本機 Blob URL（播放器用；勿再綁 stream-audio，大檔／掃毒頁會 0:00）
         sourceFileId: '',
         boundaries: [], // 內部切點（不含頭尾），秒數
         folderCheck: null, // { ok: boolean, name: string, autoFixed?: boolean }
         effectiveFolderId: '', // 實際會上傳的資料夾（可能是自動修正後的 01_Submissions 子資料夾）
         loadingAudio: false,
         uploading: false,
-        uploadLog: []
+        uploadLog: [],
+        cutSource: '', // 'silence' | 'equal'
+        cutNote: ''
     };
+
+    function revokeAudioObjectUrl() {
+        if (state.audioObjectUrl) {
+            try { URL.revokeObjectURL(state.audioObjectUrl); } catch (_e) { /* ignore */ }
+            state.audioObjectUrl = '';
+        }
+    }
 
     // ============ 小工具 ============
 
@@ -138,6 +150,146 @@ window.FeatureAudioSplitUpload = (function () {
             }
         }
         throw lastErr;
+    }
+
+    // ============ 靜音自動切點（對齊 tools/split_and_upload_audio.py detect） ============
+
+    /**
+     * 類似 ffmpeg silencedetect=noise=-35dB:d=0.35
+     * @returns {{ start: number, end: number, mid: number, duration: number }[]}
+     */
+    function detectSilenceRegions(audioBuffer, options) {
+        const opts = options || {};
+        const noiseDb = typeof opts.noiseDb === 'number' ? opts.noiseDb : -35;
+        const minSilence = typeof opts.minSilence === 'number' ? opts.minSilence : 0.35;
+        const hopSec = typeof opts.hopSec === 'number' ? opts.hopSec : 0.05;
+        const threshold = Math.pow(10, noiseDb / 20);
+
+        const sampleRate = audioBuffer.sampleRate;
+        const numChannels = audioBuffer.numberOfChannels;
+        const length = audioBuffer.length;
+        const hop = Math.max(1, Math.floor(sampleRate * hopSec));
+        const channels = [];
+        for (let ch = 0; ch < numChannels; ch++) channels.push(audioBuffer.getChannelData(ch));
+
+        const silentFlags = [];
+        for (let i = 0; i < length; i += hop) {
+            const end = Math.min(length, i + hop);
+            let sumSq = 0;
+            let count = 0;
+            for (let s = i; s < end; s++) {
+                let sample = 0;
+                for (let ch = 0; ch < numChannels; ch++) sample += channels[ch][s];
+                sample /= numChannels;
+                sumSq += sample * sample;
+                count++;
+            }
+            const rms = count ? Math.sqrt(sumSq / count) : 0;
+            silentFlags.push(rms < threshold);
+        }
+
+        const regions = [];
+        let runStart = -1;
+        for (let i = 0; i <= silentFlags.length; i++) {
+            const isSilent = i < silentFlags.length ? silentFlags[i] : false;
+            if (isSilent && runStart < 0) {
+                runStart = i;
+            } else if (!isSilent && runStart >= 0) {
+                const start = (runStart * hop) / sampleRate;
+                const end = (i * hop) / sampleRate;
+                const duration = end - start;
+                if (duration >= minSilence) {
+                    regions.push({
+                        start: start,
+                        end: end,
+                        mid: (start + end) / 2,
+                        duration: duration
+                    });
+                }
+                runStart = -1;
+            }
+        }
+
+        // 頭尾長靜音通常是開錄／收錄，不當頁間切點
+        const edgeGuard = 0.4;
+        const total = audioBuffer.duration;
+        return regions.filter(function (r) {
+            return r.mid > edgeGuard && r.mid < total - edgeGuard;
+        });
+    }
+
+    /**
+     * 需要 pageCount-1 個切點：每個「均分理想點」附近挑最長靜音中點；找不到才退回均分。
+     */
+    function autoBoundariesFromSilence(audioBuffer, pageCount) {
+        const need = Math.max(0, (pageCount || 2) - 1);
+        const duration = audioBuffer.duration;
+        if (need === 0) {
+            return { boundaries: [], source: 'silence', note: '此任務只有 1 頁，無需切點。' };
+        }
+
+        let regions = detectSilenceRegions(audioBuffer, { noiseDb: -35, minSilence: 0.35 });
+        // 空檔太少時放寬門檻再試一次（氣音／環境底噪）
+        if (regions.length < need) {
+            regions = detectSilenceRegions(audioBuffer, { noiseDb: -30, minSilence: 0.25 });
+        }
+
+        const searchRadius = Math.max(2, duration / pageCount * 0.45);
+        const boundaries = [];
+        let silenceHits = 0;
+        const used = {};
+
+        for (let i = 1; i <= need; i++) {
+            const ideal = (duration * i) / pageCount;
+            let best = null;
+            let bestScore = -Infinity;
+            for (let r = 0; r < regions.length; r++) {
+                if (used[r]) continue;
+                const dist = Math.abs(regions[r].mid - ideal);
+                if (dist > searchRadius) continue;
+                // 長靜音優先，距離理想點越近越好
+                const score = regions[r].duration * 3 - dist;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = { idx: r, mid: regions[r].mid };
+                }
+            }
+            if (best) {
+                used[best.idx] = true;
+                boundaries.push(Math.round(best.mid * 10) / 10);
+                silenceHits++;
+            } else {
+                boundaries.push(Math.round(ideal * 10) / 10);
+            }
+        }
+
+        // 保序（理論上已依 i 遞增，防邊界靜音重疊）
+        boundaries.sort(function (a, b) { return a - b; });
+        for (let i = 1; i < boundaries.length; i++) {
+            if (boundaries[i] <= boundaries[i - 1]) {
+                boundaries[i] = Math.min(duration - 0.1, boundaries[i - 1] + 0.5);
+            }
+        }
+
+        if (silenceHits === need) {
+            return {
+                boundaries: boundaries,
+                source: 'silence',
+                note: '已依靜音空檔自動偵測 ' + need + ' 個切點（門檻約 -35dB／≥0.35 秒）。請快速核對預覽，再切割上傳。'
+            };
+        }
+        if (silenceHits > 0) {
+            return {
+                boundaries: boundaries,
+                source: 'silence',
+                note: '已自動偵測到 ' + silenceHits + '/' + need + ' 個靜音切點，其餘用均分補上。請聽一下補上的切點再上傳。'
+            };
+        }
+        return {
+            boundaries: boundaries,
+            source: 'equal',
+            note: '未偵測到足夠的頁間靜音空檔，已先用均分切點。請播放確認或手動微調後再上傳。'
+        };
     }
 
     // ============ WAV 編碼（瀏覽器端切割） ============
@@ -314,36 +466,89 @@ window.FeatureAudioSplitUpload = (function () {
         renderBody();
 
         try {
-            const streamUrl = window.ApiService.getAudioStreamUrl(fileId);
-            const res = await fetch(streamUrl);
-            if (!res.ok) throw new Error('下載音檔失敗（HTTP ' + res.status + '）');
-            const contentType = res.headers.get('Content-Type') || '';
-            const arrayBuffer = await res.arrayBuffer();
-            if (contentType.indexOf('audio') === -1) {
-                const preview = new TextDecoder().decode(arrayBuffer.slice(0, 200)).toLowerCase();
-                if (preview.indexOf('<!doctype html') > -1 || preview.indexOf('<html') > -1) {
-                    throw new Error('下載到的是網頁而不是音檔（可能是 Google Drive 檔案過大觸發確認頁），請重新整理頁面後再試一次');
+            // 1) Supabase stream-audio（小檔／公開下載較快）
+            // 2) 失敗則直打 GasService.downloadFile（POST Base64，與上傳同一條路）
+            let arrayBuffer = null;
+            let contentType = '';
+            let streamErr = null;
+
+            try {
+                const streamUrl = window.ApiService.getAudioStreamUrl(fileId);
+                const res = await fetch(streamUrl);
+                contentType = res.headers.get('Content-Type') || '';
+                const buf = await res.arrayBuffer();
+                const headText = new TextDecoder().decode(buf.slice(0, 800));
+                if (!res.ok) {
+                    let detail = 'HTTP ' + res.status;
+                    try {
+                        const errObj = JSON.parse(headText);
+                        if (errObj && errObj.error) detail = errObj.error;
+                    } catch (_e) { /* ignore */ }
+                    throw new Error(detail);
                 }
+                if (headText.trim().charAt(0) === '{') {
+                    const errObj = JSON.parse(new TextDecoder().decode(buf));
+                    if (errObj && errObj.error) throw new Error(String(errObj.error));
+                }
+                if (headText.toLowerCase().indexOf('<!doctype html') > -1 ||
+                    headText.toLowerCase().indexOf('<html') > -1) {
+                    throw new Error('下載到的是網頁而不是音檔（Drive 確認頁）');
+                }
+                arrayBuffer = buf;
+            } catch (e1) {
+                streamErr = e1;
+                console.warn('[AudioSplit] stream-audio 失敗，改走 GAS download_file:', e1 && e1.message);
             }
+
+            if (!arrayBuffer) {
+                if (!window.GasService || typeof window.GasService.downloadFile !== 'function') {
+                    throw new Error(
+                        'stream-audio 失敗且本機無 GasService.downloadFile。' +
+                        (streamErr && streamErr.message ? '（' + streamErr.message + '）' : '')
+                    );
+                }
+                const dl = await window.GasService.downloadFile(fileId);
+                arrayBuffer = dl.arrayBuffer;
+                contentType = dl.mimeType || contentType;
+            }
+
+            // 播放器必須用「剛下載成功」的位元組，不可再指回 stream-audio（常 503／0:00）。
+            // Blob 要在 decodeAudioData 之前建立：部分瀏覽器解碼後會 detach ArrayBuffer。
+            revokeAudioObjectUrl();
+            let blobMime = (contentType || '').split(';')[0].trim();
+            if (!blobMime || blobMime === 'application/octet-stream' || blobMime === 'text/plain' ||
+                blobMime.indexOf('application/json') === 0) {
+                blobMime = 'audio/wav';
+            }
+            const blob = new Blob([arrayBuffer.slice(0)], { type: blobMime });
+            state.audioObjectUrl = URL.createObjectURL(blob);
+
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             const ctx = new AudioCtx();
             let decoded;
             try {
                 decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
             } catch (decodeErr) {
+                revokeAudioObjectUrl();
                 throw new Error('瀏覽器無法解碼此音檔格式（Content-Type: ' + (contentType || '未知') + '），請確認來源檔案是否為標準音訊格式');
             }
+
             state.audioBuffer = decoded;
             state.audioDuration = decoded.duration;
 
             const task = getSelectedTask();
             const pageCount = task ? task.gradingUnits.length : 2;
-            state.boundaries = [];
-            for (let i = 1; i < pageCount; i++) {
-                state.boundaries.push(Math.round((decoded.duration * i) / pageCount * 10) / 10);
-            }
+            const auto = autoBoundariesFromSilence(decoded, pageCount);
+            state.boundaries = auto.boundaries;
+            state.cutSource = auto.source;
+            state.cutNote = auto.note;
+            window.showFlash(
+                auto.source === 'equal' ? auto.note : ('✅ ' + auto.note),
+                auto.source === 'equal' ? 'warning' : 'success'
+            );
         } catch (err) {
             window.showFlash('載入音檔失敗：' + (err.message || err), 'error');
+            revokeAudioObjectUrl();
             state.audioBuffer = null;
         } finally {
             state.loadingAudio = false;
@@ -599,7 +804,7 @@ window.FeatureAudioSplitUpload = (function () {
         }
 
         const task = getSelectedTask();
-        const streamUrl = window.ApiService.getAudioStreamUrl(state.sourceFileId);
+        const playUrl = state.audioObjectUrl || '';
         const cutRowsHtml = state.boundaries.map(function (b, idx) {
             return `
                 <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -616,10 +821,17 @@ window.FeatureAudioSplitUpload = (function () {
 
         return `
             <div style="margin-top:10px;">
-                <audio id="asu-audio-player" controls src="${esc(streamUrl)}" style="width:100%; margin-bottom:12px;"></audio>
-                <div style="color:#64748B; font-size:0.85rem; margin-bottom:10px;">
-                    音檔總長 ${formatMMSS(state.audioDuration)}，需切成 ${task ? task.gradingUnits.length : 0} 段。
-                    先播放音檔找到每一頁之間的空檔，按「🎧 用目前播放位置」把切點抓下來即可，不用手動輸入秒數。
+                ${playUrl
+                    ? '<audio id="asu-audio-player" controls src="' + esc(playUrl) + '" style="width:100%; margin-bottom:12px;"></audio>'
+                    : '<div style="color:#B91C1C; margin-bottom:12px; font-weight:700;">播放用本機音檔尚未就緒，請重新載入。</div>'}
+                <div style="background:${state.cutSource === 'equal' ? '#FFFBEB' : '#F0FDF4'}; border:1px solid ${state.cutSource === 'equal' ? '#FDE68A' : '#BBF7D0'}; color:${state.cutSource === 'equal' ? '#92400E' : '#166534'}; padding:10px 12px; border-radius:8px; margin-bottom:10px; font-size:0.85rem; font-weight:700; line-height:1.45;">
+                    ${esc(state.cutNote || '切點已就緒。')}
+                    <div style="margin-top:6px; font-weight:600;">
+                        音檔總長 ${formatMMSS(state.audioDuration)}，需切成 ${task ? task.gradingUnits.length : 0} 段。
+                        通常直接看下方預覽後按「切割並上傳」即可；只有切錯時才需微調。
+                    </div>
+                    <button type="button" class="btn" style="margin-top:8px; padding:4px 10px; font-size:0.8rem;"
+                        onclick="window.FeatureAudioSplitUpload._reAutoDetect()">🔄 重新自動偵測靜音切點</button>
                 </div>
                 ${cutRowsHtml}
                 <div id="asu-page-preview" style="margin-top:10px; padding:10px; background:#F8FAFC; border-radius:8px; font-size:0.85rem;"></div>
@@ -649,8 +861,8 @@ window.FeatureAudioSplitUpload = (function () {
                     <button type="button" onclick="window.FeatureAudioSplitUpload._close()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:#94A3B8;">✕</button>
                 </div>
                 <p style="margin:0 0 16px; color:#64748B; font-size:0.9rem; line-height:1.5;">
-                    僅用於處理<strong>舊制一次錄完好幾頁</strong>的既有繳交檔。直接使用學生已上傳的音檔切割、上傳回原資料夾，
-                    <strong>不會刪除原始檔案</strong>，完成後自動觸發逐頁 AI 批改。
+                    僅用於處理<strong>舊制一次錄完好幾頁</strong>的既有繳交檔。載入後會<strong>自動依靜音空檔找切點</strong>，
+                    確認預覽後上傳回原資料夾（<strong>不刪原檔</strong>），並觸發逐頁 AI 批改。
                 </p>
                 ${renderSelectorsHtml()}
                 ${renderFolderCheckHtml()}
@@ -691,15 +903,30 @@ window.FeatureAudioSplitUpload = (function () {
     }
 
     function resetAudioState() {
+        revokeAudioObjectUrl();
         state.audioBuffer = null;
         state.audioDuration = 0;
         state.sourceFileId = '';
         state.boundaries = [];
+        state.cutSource = '';
+        state.cutNote = '';
         state.folderCheck = null;
         state.effectiveFolderId = '';
         state.loadingAudio = false;
         state.uploading = false;
         state.uploadLog = [];
+    }
+
+    function reAutoDetectCuts() {
+        if (!state.audioBuffer) return;
+        const task = getSelectedTask();
+        const pageCount = task ? task.gradingUnits.length : 2;
+        const auto = autoBoundariesFromSilence(state.audioBuffer, pageCount);
+        state.boundaries = auto.boundaries;
+        state.cutSource = auto.source;
+        state.cutNote = auto.note;
+        renderBody();
+        window.showFlash(auto.source === 'equal' ? auto.note : ('✅ ' + auto.note), auto.source === 'equal' ? 'warning' : 'success');
     }
 
     function closeModal() {
@@ -755,6 +982,7 @@ window.FeatureAudioSplitUpload = (function () {
         _onSelectTask: onSelectTask,
         _onSelectStudent: onSelectStudent,
         _loadAudio: loadAudio,
+        _reAutoDetect: reAutoDetectCuts,
         _useCurrentTime: useCurrentPlaybackTime,
         _previewBoundary: previewBoundary,
         _updatePreview: updatePagePreview,

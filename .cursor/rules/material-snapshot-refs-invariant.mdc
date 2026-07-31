@@ -1,0 +1,64 @@
+---
+description: 教材 Snapshot／material_refs 與 grading_units 鐵律（禁止存檔後只剩 A 一列）
+alwaysApply: true
+---
+
+# 教材 Snapshot／多冊 meta 鐵律（雷區）
+
+曾發生：老師已套用 Snapshot（A～F、12 頁 `grading_units` 齊全），標題也來自 base 範圍，**存檔再開卻只剩 `A.meta.json` 一列**，`material_range` 被清空。與音檔切割無關。
+
+## 根因（不可再犯）
+
+1. 存檔時用 **DOM meta 列**（hydrate 未完成／只渲染到 1 列）**覆寫**較完整的 `material_refs`
+2. hidden snapshot JSON **只存單一** `material_ref`，存檔時又把 `material_refs` 砍成 `[material_ref]`
+3. 「依列重算」用殘缺列把 `material_range`／標題縮成只剩 A
+
+## 不變量（改相關檔必守）
+
+```
+unique(stems in grading_units) 必須對齊 length(material_refs)
+凍結後 grading_units = AI／一頁一檔的主真相
+禁止用「較短的 DOM 列／單一 material_ref」覆寫較長的 material_refs
+```
+
+| 欄位 | 角色 |
+|------|------|
+| `grading_units[]` | 主真相（逐頁 AI 稿） |
+| `material_refs[]` | 每冊一列 meta（須與 units 的 stem 數一致） |
+| `material_range` | 顯示用 base 範圍（須涵蓋同上 stems） |
+| 標題 | 可來自 base 範圍；**不是**批改稿來源 |
+
+## 禁止
+
+```javascript
+// ❌ 禁止：不問齊全就用 DOM 覆寫
+t.raw_data.material_refs = rowsFromDom; // rows 可能只有 A
+
+// ❌ 禁止：舊 snapshot 只有 material_ref 就砍成一筆
+t.raw_data.material_refs = [snap.material_ref];
+
+// ❌ 禁止：列數 < grading_units 冊數時仍「依列重算」縮水 material_range／標題
+```
+
+## 正確做法
+
+```javascript
+// ✅ 用 FeatureTimeline.ensureMaterialRefsMatchUnits(refs, grading_units, templateRef)
+// ✅ DOM 列數 < 已凍結 refs／units 冊數 → 保留較完整的那份，禁止覆寫
+// ✅ snapshot JSON 必須含 material_refs[] + material_range（不可只留 material_ref）
+```
+
+## 改動前自問
+
+若本次會動到：
+
+- `110_teacher_core/store-assignment-builder.js`（存檔）
+- `110_teacher_core/feature-timeline.js`（hydrate／依列重算／套用 Snapshot）
+- `110_teacher_core/ui-timeline-templates.js`（編輯器／hidden snapshot）
+
+是否仍保證「多冊 Snapshot 存檔後 `material_refs` 不會少於 `grading_units` 的 stem 數」？若否，停下。
+
+## 實測打勾
+
+- 套用 A～F（或 C/D/E）→ 存檔 → 關閉再開 → meta 列數＝冊數、逐頁框仍齊  
+- 故意只留 1 列時存檔不得把 DB 的多冊 refs 靜默砍成 1（應擋或自動補回）

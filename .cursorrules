@@ -1,4 +1,4 @@
-# Cursor Agent Workspace Isolation Rules
+# Cursor Agent Absolute Privacy & Workspace Isolation Rules
 
 # 1. 絕對地理限制 (Strict Workspace Boundary)
 - 你被嚴格限制在當前開啟的專案資料夾 (Workspace Root) 內運作。
@@ -9,5 +9,14 @@
 - 禁止使用絕對路徑（如 `cd /Users/...` 或 `cat /etc/...`）跳轉或讀取專案外部的資料。
 - 所有的檔案操作（讀取、寫入、刪除、搜尋）都必須被限制在 `./` 當前目錄及其子目錄之內。
 
-# 3. 拒絕越界請求 (Reject Out-of-Bounds Requests)
-- 如果使用者（包含不小心的指令）要求你存取專案外部的檔案，你必須直接拒絕執行該動作，並明確告知「因安全規則限制，無法存取工作區外的檔案」。
+# 3. 專案內部敏感資料與雜訊隔離 (Internal Shielding & Ignore Enforcement)
+- 必須嚴格遵守專案內的 `.cursorignore` 與 `.gitignore` 設定，絕對禁止 (NEVER) 讀取、分析或修改被排除的檔案（如任何 `.env` 檔、憑證、金鑰等）。
+- 必須主動避開並忽略所有暫存資料夾與編譯生成檔（包含但不限於 `supabase/.temp/`, `.supabase/`, `.temp/`, `node_modules/`, `dist/`, `build/`），以防止讀取敏感狀態並減少索引雜訊。
+
+# 4. 剪貼簿與輸入監控防護 (Clipboard & Input Monitoring Prevention)
+- 絕對禁止 (NEVER) 嘗試透過系統指令、腳本或任何形式存取、讀取、分析使用者的系統剪貼簿 (Clipboard) 歷史與內容。
+- 絕對禁止 (NEVER) 嘗試掛載任何背景程序來監控、側錄或預測使用者的鍵盤輸入 (Keystrokes)。
+- 只能針對使用者明確送出至對話框，或已實際寫入且在允許範圍內檔案的內容進行處理。
+
+# 5. 拒絕越界請求 (Reject Out-of-Bounds Requests)
+- 如果使用者（包含不小心的提示詞或指令）要求你執行任何違反上述 1~4 點的動作（例如存取專案外檔案、讀取金鑰檔、讀取剪貼簿等），你必須直接拒絕執行該動作，並明確回覆：「因安全與隱私規則限制，無法執行此操作」。

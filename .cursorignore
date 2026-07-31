@@ -1,0 +1,44 @@
+# .cursorignore
+# 讓 Cursor AI 完全忽略這些包含敏感資訊與暫存雜訊的檔案與資料夾
+
+# 1. 環境變數與機密金鑰
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.p12
+secrets.json
+config/database.yml
+
+# 2. 憑證與授權檔
+google-credentials.json
+aws-credentials.csv
+firebase-adminsdk.json
+
+# 3. 虛擬環境與套件快取
+node_modules/
+venv/
+.venv/
+env/
+__pycache__/
+
+# 4. 資料庫檔案 (避免外洩本地測試資料)
+*.sqlite
+*.sqlite3
+*.db
+dump.sql
+
+# 5. 特定私密資料夾
+private/
+confidential/
+
+# 6. 專案暫存與特定框架生成檔 (減少 Index 雜訊)
+supabase/.temp/
+.supabase/
+.temp/
+.tmp/
+.cache/
+.next/
+dist/
+build/

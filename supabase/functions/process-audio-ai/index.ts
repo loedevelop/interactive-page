@@ -122,7 +122,45 @@ function looksLikeHtmlBuffer(contentType: string, buffer: ArrayBuffer): boolean 
  * 單純加 confirm=t 只能繞過一部分情況，真正可靠的做法是從確認頁解析出
  * confirm token 與 uuid，改打 drive.usercontent.google.com/download。
  * 與 stream-audio/index.ts 的 resolveRealDownloadUrl 同一招，勿各自維護後失去同步。
+ * 仍失敗時改走 GAS POST download_file（Base64），與老師端切割工具同一條備援。
  */
+const GAS_WEB_APP_URL =
+  "https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec";
+
+function base64ToUint8Array(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function downloadViaGas(fileId: string): Promise<Uint8Array> {
+  const gasRes = await fetch(GAS_WEB_APP_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action: "download_file", fileId }),
+    redirect: "follow",
+  });
+  if (!gasRes.ok) {
+    throw new Error(`GAS download_file HTTP ${gasRes.status}`);
+  }
+  const text = await gasRes.text();
+  let parsed: { status?: string; message?: string; fileData?: string };
+  try {
+    parsed = JSON.parse(text);
+  } catch (_e) {
+    throw new Error("GAS download_file 回傳非 JSON（可能未部署 download_file）");
+  }
+  if (parsed.status !== "success" || !parsed.fileData) {
+    throw new Error(parsed.message || "GAS download_file 失敗");
+  }
+  const bytes = base64ToUint8Array(parsed.fileData);
+  if (bytes.byteLength < 64) {
+    throw new Error("GAS download_file 內容過短");
+  }
+  return bytes;
+}
+
 async function resolveRealDriveDownloadUrl(fileId: string): Promise<string> {
   const probeUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
   const probeRes = await fetch(probeUrl);
@@ -144,29 +182,33 @@ async function resolveRealDriveDownloadUrl(fileId: string): Promise<string> {
 }
 
 async function downloadAudioFromDrive(fileId: string): Promise<Uint8Array> {
-  const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
-  let audioRes = await fetch(downloadUrl);
-  if (!audioRes.ok) {
-    throw new Error(`Audio Download Failed. HTTP ${audioRes.status}. Ensure file is ANYONE_WITH_LINK.`);
-  }
-  let audioBuffer = await audioRes.arrayBuffer();
-  const contentType = audioRes.headers.get("Content-Type") || "";
-
-  if (looksLikeHtmlBuffer(contentType, audioBuffer)) {
-    // 快速路徑被擋（回傳確認頁）→ 解析真正下載網址後重抓一次
-    const realUrl = await resolveRealDriveDownloadUrl(fileId);
-    audioRes = await fetch(realUrl);
+  try {
+    const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
+    let audioRes = await fetch(downloadUrl);
     if (!audioRes.ok) {
-      throw new Error(`Audio Download Failed. HTTP ${audioRes.status}. Ensure file is ANYONE_WITH_LINK.`);
+      throw new Error(`Audio Download Failed. HTTP ${audioRes.status}.`);
     }
-    audioBuffer = await audioRes.arrayBuffer();
-    const retryContentType = audioRes.headers.get("Content-Type") || "";
-    if (looksLikeHtmlBuffer(retryContentType, audioBuffer)) {
-      throw new Error(`Drive Download blocked for file ${fileId}（持續回傳確認頁，可能權限異常或檔案已被移動）。`);
-    }
-  }
+    let audioBuffer = await audioRes.arrayBuffer();
+    const contentType = audioRes.headers.get("Content-Type") || "";
 
-  return new Uint8Array(audioBuffer);
+    if (looksLikeHtmlBuffer(contentType, audioBuffer)) {
+      const realUrl = await resolveRealDriveDownloadUrl(fileId);
+      audioRes = await fetch(realUrl);
+      if (!audioRes.ok) {
+        throw new Error(`Audio Download Failed. HTTP ${audioRes.status}.`);
+      }
+      audioBuffer = await audioRes.arrayBuffer();
+      const retryContentType = audioRes.headers.get("Content-Type") || "";
+      if (looksLikeHtmlBuffer(retryContentType, audioBuffer)) {
+        throw new Error(`Drive Download blocked for file ${fileId}`);
+      }
+    }
+
+    return new Uint8Array(audioBuffer);
+  } catch (driveErr: any) {
+    console.warn("Drive public download failed, fallback GAS:", driveErr?.message || driveErr);
+    return await downloadViaGas(fileId);
+  }
 }
 
 function speechaceDialect(accent: string): string {
@@ -677,7 +719,7 @@ serve(async (req: Request) => {
     // 重新讀取最新 raw，避免並發重入搶同一段
     const { data: freshRow } = await supabase
       .from("task_completions")
-      .select("raw_data, status")
+      .select("raw_data, status, updated_at")
       .eq("id", recordId)
       .maybeSingle();
     if (freshRow?.raw_data) currentRawData = freshRow.raw_data;
@@ -688,12 +730,11 @@ serve(async (req: Request) => {
       });
     }
 
-    const segments = buildSegments();
+    let segments = buildSegments();
     if (!segments.length) {
       throw new Error("Fatal: audio_url or student_audio_url is missing.");
     }
 
-    // 無 AI 或完全沒文稿可批：保留繳交
     const anySegmentScript = segments.some((s) => String(s.original_script || "").trim());
     const scriptResolved = resolveEffectiveScript(originalScript, materialRange);
     const fallbackScript = scriptResolved.text;
@@ -723,197 +764,333 @@ serve(async (req: Request) => {
       );
     }
 
-    // 填補缺稿的 segment
     for (const s of segments) {
       if (!String(s.original_script || "").trim() && fallbackScript) {
         s.original_script = fallbackScript;
       }
     }
 
-    // 只取 pending；若有人正在 processing，讓該次執行接手，避免雙重開跑
-    let pendingIdx = segments.findIndex((s) => s.status === "pending");
-    if (pendingIdx < 0) {
-      pendingIdx = segments.findIndex((s) => s.status === "processing");
-    }
-    if (pendingIdx < 0) {
-      const doneEvals = segments
-        .filter((s) => s.status === "done" && s.ai_evaluation)
-        .map((s) => s.ai_evaluation);
-      const nextStatus = gradingPolicy.final_authority === "ai_auto" ? "graded" : "ai_ready";
-      const primary = doneEvals[0] || currentRawData.ai_evaluation || null;
-      await supabase.from("task_completions").update({
-        status: doneEvals.length ? nextStatus : "ai_error",
-        raw_data: {
-          ...currentRawData,
-          audio_segments: segments,
-          ai_evaluations: doneEvals,
-          ai_evaluation: primary,
-        },
-      }).eq("id", recordId);
-      return new Response(JSON.stringify({ success: true, status: nextStatus, segments: segments.length }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const STALE_CLAIM_MS = 3 * 60 * 1000;
+    const MAX_WALL_MS = 50 * 1000;
+    const startedAt = Date.now();
+
+    function findClaimableIndex(segs: any[]): number {
+      const now = Date.now();
+      const pendingIdx = segs.findIndex((s) => s.status === "pending");
+      if (pendingIdx >= 0) return pendingIdx;
+      return segs.findIndex((s) => {
+        if (s.status !== "processing") return false;
+        const claimed = Date.parse(String(s.claimed_at || "")) || 0;
+        return !claimed || now - claimed > STALE_CLAIM_MS;
       });
     }
 
-    // 🌟 判斷「這是不是一次全新批改的第一段」：曾發生 bug——多頁（例如 6 頁）錄音一次送批，
-    // 內部其實是逐段（每個 segment 各呼叫一次本函式）處理，處理到「最後一段」完成時
-    // stillPending 才會變 false；若在那個時間點才把「目前 ai_evaluation」存進 grading_history，
-    // 存到的其實是「這次批改跑到一半（例如前 5 段）的中間彙總值」，而不是真正上一次獨立的批改，
-    // 導致畫面誤植成「批改過 2 次」。正確判斷點應該是「這批 segments 全部都還是 pending」
-    // （代表這是全新一次提交／補批改的第一段），此時若已有舊的 ai_evaluation，才是真的要封存的歷史紀錄。
-    const isFreshRunStart = segments.every((s) => s.status === "pending");
+    function buildDoneEvals(segs: any[]): any[] {
+      return segs
+        .filter((s) => s.status === "done" && s.ai_evaluation)
+        .map((s) => ({
+          ...s.ai_evaluation,
+          unit_key: s.unit_key,
+          label: s.label,
+          page: s.page,
+          file_id: s.file_id,
+        }));
+    }
 
-    const seg = segments[pendingIdx];
-    const segScript = String(seg.original_script || "").trim();
-    if (!segScript) {
-      segments[pendingIdx] = {
-        ...seg,
-        status: "skipped",
-        skip_reason: "original_script_missing",
-      };
-    } else {
-      const driveUrl = seg.audio_url ||
-        (seg.file_id ? `https://drive.google.com/file/d/${seg.file_id}/view` : "");
-      const fileId = extractDriveFileId(driveUrl) || String(seg.file_id || "");
-      if (!fileId) throw new Error(`Invalid Google Drive URL for segment ${pendingIdx}`);
-
-      try {
-        const audioBytes = await downloadAudioFromDrive(fileId);
-        const aiEvaluation = await gradeOne(audioBytes, segScript);
-        aiEvaluation.effective_script = segScript;
-        aiEvaluation.script_scope_note = seg.unit_key
-          ? `grading_unit_${seg.unit_key}`
-          : scriptResolved.note;
-        aiEvaluation.material_range = materialRange;
-        aiEvaluation.unit_key = seg.unit_key || "";
-        aiEvaluation.label = seg.label || "";
-        aiEvaluation.page = seg.page;
-        aiEvaluation.segment_index = pendingIdx;
-
-        segments[pendingIdx] = {
-          ...seg,
-          status: "done",
-          ai_evaluation: aiEvaluation,
-          graded_at: aiEvaluation.graded_at,
+    function buildPrimaryEval(doneEvals: any[]): any {
+      let primaryEval = doneEvals[0] || null;
+      if (doneEvals.length > 1 && primaryEval) {
+        const avg = (key: string) => {
+          const nums = doneEvals.map((e) => Number(e[key])).filter((n) => Number.isFinite(n));
+          if (!nums.length) return primaryEval[key];
+          return Math.round(nums.reduce((a: number, b: number) => a + b, 0) / nums.length);
         };
-      } catch (segErr: any) {
-        segments[pendingIdx] = {
-          ...seg,
-          status: "error",
-          error: segErr?.message || String(segErr),
+        primaryEval = {
+          ...primaryEval,
+          pronunciation_score: avg("pronunciation_score"),
+          fluency_score: avg("fluency_score"),
+          completeness_score: avg("completeness_score"),
+          word_errors: doneEvals.flatMap((e) => e.word_errors || []),
+          segment_count: doneEvals.length,
+          comprehensive_feedback: doneEvals
+            .map((e, i) => {
+              const tag = e.label || e.unit_key || `第${i + 1}段`;
+              return `【${tag}】\n${e.comprehensive_feedback || ""}`;
+            })
+            .join("\n\n"),
         };
       }
+      return primaryEval;
     }
 
-    const stillPending = segments.some((s) => s.status === "pending");
-    const doneEvals = segments
-      .filter((s) => s.status === "done" && s.ai_evaluation)
-      .map((s) => ({
-        ...s.ai_evaluation,
-        unit_key: s.unit_key,
-        label: s.label,
-        page: s.page,
-        file_id: s.file_id,
-      }));
-    const hasError = segments.some((s) => s.status === "error");
-
-    // 彙總：以第一份完成稿為主報告，並附上分頁陣列
-    let primaryEval = doneEvals[0] || null;
-    if (doneEvals.length > 1 && primaryEval) {
-      const avg = (key: string) => {
-        const nums = doneEvals.map((e) => Number(e[key])).filter((n) => Number.isFinite(n));
-        if (!nums.length) return primaryEval[key];
-        return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
-      };
-      primaryEval = {
-        ...primaryEval,
-        pronunciation_score: avg("pronunciation_score"),
-        fluency_score: avg("fluency_score"),
-        completeness_score: avg("completeness_score"),
-        word_errors: doneEvals.flatMap((e) => e.word_errors || []),
-        segment_count: doneEvals.length,
-        comprehensive_feedback: doneEvals
+    async function persistSegments(
+      segs: any[],
+      opts: { nextStatus: string; gradingHistory?: any[]; clearErrors?: boolean },
+    ) {
+      const doneEvals = buildDoneEvals(segs);
+      const primaryEval = buildPrimaryEval(doneEvals);
+      const hasError = segs.some((s) => s.status === "error");
+      const stillPendingInner = segs.some((s) => s.status === "pending" || s.status === "processing");
+      const assignmentTextForDisplay = doneEvals.length > 1
+        ? doneEvals
           .map((e, i) => {
-            const tag = e.label || e.unit_key || `第${i + 1}段`;
-            return `【${tag}】\n${e.comprehensive_feedback || ""}`;
+            const tag = e.label || e.unit_key || `第${i + 1}頁`;
+            return `【${tag}】\n${e.effective_script || ""}`;
           })
-          .join("\n\n"),
+          .join("\n\n")
+        : (primaryEval && primaryEval.effective_script) || fallbackScript;
+
+      const updatedRawData: any = {
+        ...currentRawData,
+        audio_segments: segs,
+        ai_evaluations: doneEvals,
+        ai_evaluation: primaryEval || currentRawData.ai_evaluation,
+        grading_history: opts.gradingHistory || currentRawData.grading_history || [],
+        assignment_text: assignmentTextForDisplay,
+        grading_policy_snapshot: gradingPolicy,
+        ai_segment_heartbeat: new Date().toISOString(),
+        ai_segment_cursor: segs.findIndex((s) => s.status === "processing" || s.status === "pending"),
+        ai_pipeline: {
+          total: segs.length,
+          done: doneEvals.length,
+          pending: segs.filter((s) => s.status === "pending").length,
+          processing: segs.filter((s) => s.status === "processing").length,
+          error: segs.filter((s) => s.status === "error").length,
+          current_step: stillPendingInner ? "grading_segments" : "finished",
+          current_step_label: stillPendingInner
+            ? `已完成 ${doneEvals.length}/${segs.length} 段（逐段批改中）`
+            : `全部完成 ${doneEvals.length}/${segs.length} 段`,
+          updated_at: new Date().toISOString(),
+        },
       };
+      if (opts.clearErrors) {
+        delete updatedRawData.ai_error_log;
+        delete updatedRawData.failed_at;
+      }
+      if (hasError && !stillPendingInner && doneEvals.length === 0) {
+        updatedRawData.ai_error_log =
+          segs.map((s) => s.error).filter(Boolean).join(" | ") || "All segments failed";
+        updatedRawData.failed_at = new Date().toISOString();
+      }
+
+      const { error: updateError } = await supabase
+        .from("task_completions")
+        .update({
+          status: opts.nextStatus,
+          raw_data: updatedRawData,
+        })
+        .eq("id", recordId);
+      if (updateError) throw new Error(`Database Commit Failed: ${updateError.message}`);
+      currentRawData = updatedRawData;
+      return { doneEvals, primaryEval, stillPending: stillPendingInner, updatedRawData };
     }
 
-    const gradingHistory = currentRawData.grading_history || [];
+    // 全新一輪才封存舊評分為 history（避免中間彙總被當「批改過 2 次」）
+    const isFreshRunStart = segments.every((s) => s.status === "pending");
+    let gradingHistory = currentRawData.grading_history || [];
     if (isFreshRunStart && currentRawData.ai_evaluation) {
-      gradingHistory.push({
-        timestamp: new Date().toISOString(),
-        ai_evaluation: currentRawData.ai_evaluation,
-        audio_url: currentRawData.student_audio_url,
-        teacher_score: currentRawData.teacher_score,
-        ta_score: currentRawData.ta_score,
-      });
+      gradingHistory = [
+        ...gradingHistory,
+        {
+          timestamp: new Date().toISOString(),
+          ai_evaluation: currentRawData.ai_evaluation,
+          audio_url: currentRawData.student_audio_url,
+          teacher_score: currentRawData.teacher_score,
+          ta_score: currentRawData.ta_score,
+        },
+      ];
     }
 
+    let segmentsProcessedThisInvoke = 0;
+
+    // 同一次 invocation 內迴圈批多段；禁止 fire-and-forget（Edge 回傳後會掐掉背景 fetch）
+    while (Date.now() - startedAt < MAX_WALL_MS) {
+      const { data: loopFresh } = await supabase
+        .from("task_completions")
+        .select("raw_data, status")
+        .eq("id", recordId)
+        .maybeSingle();
+      if (loopFresh?.status && loopFresh.status !== "ai_processing") {
+        return new Response(JSON.stringify({ message: "Bypassed: status changed mid-loop." }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (loopFresh?.raw_data) currentRawData = loopFresh.raw_data;
+      segments = buildSegments();
+      for (const s of segments) {
+        if (!String(s.original_script || "").trim() && fallbackScript) {
+          s.original_script = fallbackScript;
+        }
+      }
+
+      const pendingIdx = findClaimableIndex(segments);
+      if (pendingIdx < 0) break;
+
+      const claimedAt = new Date().toISOString();
+      segments[pendingIdx] = {
+        ...segments[pendingIdx],
+        status: "processing",
+        claimed_at: claimedAt,
+      };
+      await persistSegments(segments, {
+        nextStatus: "ai_processing",
+        gradingHistory,
+        clearErrors: true,
+      });
+
+      const seg = segments[pendingIdx];
+      const segScript = String(seg.original_script || "").trim();
+      if (!segScript) {
+        segments[pendingIdx] = {
+          ...seg,
+          status: "skipped",
+          skip_reason: "original_script_missing",
+        };
+      } else {
+        const driveUrl = seg.audio_url ||
+          (seg.file_id ? `https://drive.google.com/file/d/${seg.file_id}/view` : "");
+        const fileId = extractDriveFileId(driveUrl) || String(seg.file_id || "");
+        if (!fileId) {
+          segments[pendingIdx] = {
+            ...seg,
+            status: "error",
+            error: `Invalid Google Drive URL for segment ${pendingIdx}`,
+          };
+        } else {
+          try {
+            const audioBytes = await downloadAudioFromDrive(fileId);
+            const aiEvaluation = await gradeOne(audioBytes, segScript);
+            aiEvaluation.effective_script = segScript;
+            aiEvaluation.script_scope_note = seg.unit_key
+              ? `grading_unit_${seg.unit_key}`
+              : scriptResolved.note;
+            aiEvaluation.material_range = materialRange;
+            aiEvaluation.unit_key = seg.unit_key || "";
+            aiEvaluation.label = seg.label || "";
+            aiEvaluation.page = seg.page;
+            aiEvaluation.segment_index = pendingIdx;
+
+            segments[pendingIdx] = {
+              ...seg,
+              status: "done",
+              ai_evaluation: aiEvaluation,
+              graded_at: aiEvaluation.graded_at,
+            };
+          } catch (segErr: any) {
+            segments[pendingIdx] = {
+              ...seg,
+              status: "error",
+              error: segErr?.message || String(segErr),
+            };
+          }
+        }
+      }
+
+      segmentsProcessedThisInvoke++;
+      await persistSegments(segments, {
+        nextStatus: "ai_processing",
+        gradingHistory,
+      });
+      gradingHistory = currentRawData.grading_history || gradingHistory;
+    }
+
+    segments = buildSegments();
+    const stillPending = segments.some((s) => s.status === "pending" || s.status === "processing");
     let nextStatus = "ai_processing";
     if (!stillPending) {
-      if (doneEvals.length === 0) nextStatus = "ai_error";
+      const doneCount = segments.filter((s) => s.status === "done" && s.ai_evaluation).length;
+      if (doneCount === 0) nextStatus = "ai_error";
       else nextStatus = gradingPolicy.final_authority === "ai_auto" ? "graded" : "ai_ready";
     }
 
-    // 老師端「文字稿標錯」是拿這份 assignment_text 全文去比對 word_errors；
-    // 一頁一檔拆成多段後，若只塞第一頁的稿子，第 2 頁以後的錯音字會完全比不到、
-    // 在互動文稿裡直接消失不見。這裡改成把「已完成」的每頁文稿依頁序接起來（附頁籤），
-    // 確保全部頁面的字都在同一份文字裡可被找到、標紅。
-    const assignmentTextForDisplay = doneEvals.length > 1
-      ? doneEvals
-        .map((e, i) => {
-          const tag = e.label || e.unit_key || `第${i + 1}頁`;
-          return `【${tag}】\n${e.effective_script || ""}`;
-        })
-        .join("\n\n")
-      : (primaryEval && primaryEval.effective_script) || fallbackScript;
+    const finalPersist = await persistSegments(segments, {
+      nextStatus,
+      gradingHistory,
+    });
 
-    const updatedRawData = {
-      ...currentRawData,
-      audio_segments: segments,
-      ai_evaluations: doneEvals,
-      ai_evaluation: primaryEval || currentRawData.ai_evaluation,
-      grading_history: gradingHistory,
-      assignment_text: assignmentTextForDisplay,
-      grading_policy_snapshot: gradingPolicy,
-      ai_segment_cursor: pendingIdx,
-      ...(hasError && !stillPending && doneEvals.length === 0
-        ? {
-          ai_error_log: segments.map((s) => s.error).filter(Boolean).join(" | ") || "All segments failed",
-          failed_at: new Date().toISOString(),
-        }
-        : {}),
-    };
+    // 💣 雷區（見 .cursor/rules/ai-grading-pipeline-invariants.mdc）：
+    // 若只剩「新鮮 processing」（尚不可搶）或本輪完全沒做成任何段，
+    // 禁止立刻 self-continue。否則會在數分鐘內狂打 Edge、拖垮整站（含登入／登出）。
+    // 絕對禁止改回「只要 stillPending 就 fetch 自己」。
+    const claimableAfter = findClaimableIndex(segments);
+    const shouldContinue =
+      stillPending &&
+      claimableAfter >= 0 &&
+      segmentsProcessedThisInvoke > 0;
 
-    const { error: updateError } = await supabase
-      .from("task_completions")
-      .update({
-        status: nextStatus,
-        raw_data: updatedRawData,
-      })
-      .eq("id", recordId);
-
-    if (updateError) {
-      throw new Error(`Database Commit Failed: ${updateError.message}`);
-    }
-
-    // 若尚有 pending：維持 ai_processing 的 UPDATE 會再觸發 webhook 接續下一段
-    if (stillPending) {
+    if (stillPending && !shouldContinue) {
+      console.warn(
+        "segment continue suppressed:",
+        JSON.stringify({
+          recordId,
+          processed: segmentsProcessedThisInvoke,
+          claimableAfter,
+          pending: segments.filter((s) => s.status === "pending").length,
+          processing: segments.filter((s) => s.status === "processing").length,
+        }),
+      );
       return new Response(
         JSON.stringify({
           success: true,
           status: "ai_processing",
-          segment_done: pendingIdx,
-          remaining: segments.filter((s) => s.status === "pending").length,
+          segments_processed: segmentsProcessedThisInvoke,
+          remaining: segments.filter((s) => s.status === "pending" || s.status === "processing").length,
+          continued: false,
+          continue_suppressed: true,
+          reason:
+            claimableAfter < 0
+              ? "waiting_on_in_flight_claim"
+              : "no_progress_this_invoke",
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
+    if (shouldContinue) {
+      const continueRecord = {
+        ...record,
+        status: "ai_processing",
+        raw_data: finalPersist.updatedRawData,
+      };
+      const fnUrl = `${supabaseUrl}/functions/v1/process-audio-ai`;
+      // 不可 await 整段續跑（會巢狀等到超時）；也不可純 fire-and-forget（回傳後常被掐）。
+      // 優先 EdgeRuntime.waitUntil；否則短等確認請求已送出。
+      const continuePromise = fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ type: "UPDATE", record: continueRecord }),
+      }).then(async (contRes) => {
+        const contText = await contRes.text();
+        console.log("segment continue invoke:", contRes.status, contText.slice(0, 300));
+      }).catch((e) => console.error("segment continue invoke failed:", e));
+
+      const edgeRuntime = (globalThis as any).EdgeRuntime;
+      if (edgeRuntime && typeof edgeRuntime.waitUntil === "function") {
+        edgeRuntime.waitUntil(continuePromise);
+      } else {
+        await Promise.race([
+          continuePromise,
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          status: "ai_processing",
+          segments_processed: segmentsProcessedThisInvoke,
+          remaining: segments.filter((s) => s.status === "pending" || s.status === "processing").length,
+          continued: true,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const primaryEval = finalPersist.primaryEval;
     const targetUserId = record.student_id || record.user_id;
     const errorCount = primaryEval?.word_errors?.length || 0;
 
@@ -944,7 +1121,13 @@ serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, status: nextStatus, ai_evaluation: primaryEval, segments: segments.length }), {
+    return new Response(JSON.stringify({
+      success: true,
+      status: nextStatus,
+      ai_evaluation: primaryEval,
+      segments: segments.length,
+      segments_processed: segmentsProcessedThisInvoke,
+    }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -783,7 +783,70 @@ window.UIStudentTimelineTemplates = (() => {
             .replace(/\r/g, '');
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V119 模組已成功載入！");
+    /** 多段音檔批改進度（逐段 Speechace，非一次送六檔） */
+    function getAudioSegmentProgress(raw) {
+        const data = raw && typeof raw === 'object' ? raw : {};
+        const segs = Array.isArray(data.audio_segments) ? data.audio_segments : [];
+        let done = 0;
+        let pending = 0;
+        let processing = 0;
+        let error = 0;
+        let skipped = 0;
+        const items = segs.map(function (s, idx) {
+            const status = s && s.status ? String(s.status) : 'pending';
+            if (status === 'done' && s.ai_evaluation) done += 1;
+            else if (status === 'processing') processing += 1;
+            else if (status === 'error') error += 1;
+            else if (status === 'skipped') skipped += 1;
+            else pending += 1;
+            const label = (s && (s.label || s.unit_key)) ? String(s.label || s.unit_key) : ('第' + (idx + 1) + '段');
+            return { label: label, status: status, hasEval: !!(s && s.ai_evaluation) };
+        });
+        return {
+            total: segs.length,
+            done: done,
+            pending: pending,
+            processing: processing,
+            error: error,
+            skipped: skipped,
+            items: items
+        };
+    }
+
+    function buildSegmentProgressStripHtml(raw) {
+        const prog = getAudioSegmentProgress(raw);
+        if (!prog.total || prog.total < 2) return '';
+        const chips = prog.items.map(function (it) {
+            let bg = '#E2E8F0';
+            let color = '#64748B';
+            let mark = '等待';
+            if (it.status === 'done' && it.hasEval) {
+                bg = '#D1FAE5';
+                color = '#047857';
+                mark = '完成';
+            } else if (it.status === 'processing') {
+                bg = '#EDE9FE';
+                color = '#6D28D9';
+                mark = '批改中';
+            } else if (it.status === 'error') {
+                bg = '#FEE2E2';
+                color = '#B91C1C';
+                mark = '失敗';
+            } else if (it.status === 'skipped') {
+                bg = '#FEF3C7';
+                color = '#B45309';
+                mark = '略過';
+            }
+            return '<span style="display:inline-block;background:' + bg + ';color:' + color + ';padding:2px 8px;border-radius:4px;font-size:0.72rem;font-weight:800;margin:2px 4px 2px 0;">'
+                + escapeAttr(it.label) + ' · ' + mark + '</span>';
+        }).join('');
+        return '<div style="margin-top:8px;margin-left:36px;">'
+            + '<div style="font-size:0.8rem;font-weight:900;color:#5B21B6;margin-bottom:4px;">📊 分段進度：已完成 '
+            + prog.done + '／' + prog.total + ' 段（逐段批改，非一次送出）</div>'
+            + '<div>' + chips + '</div></div>';
+    }
+
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V124 模組已成功載入！");
 
     return {
         playGoogleTTS,
@@ -797,6 +860,8 @@ window.UIStudentTimelineTemplates = (() => {
         escapeAttr,
         escapeJsSingleQuoted,
         resolveAudioContextFromCompletion,
+        getAudioSegmentProgress,
+        buildSegmentProgressStripHtml,
         
         renderTimelineNodes: (timelineNodes, assignments, completedTasks, currentWeekStart, mode, weekStartSetting, DateUtils, studentDriveUrl, safeFormatUrl, classGradingPolicy) => {
             try {
@@ -895,7 +960,14 @@ window.UIStudentTimelineTemplates = (() => {
                                     : taskStatus;
 
                                 if (effectiveTaskStatus === 'ai_processing') {
-                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">🤖 AI 批改中...</span>`;
+                                    const segProg = getAudioSegmentProgress(compRecord.raw_data);
+                                    let processingLabel = '🤖 AI 批改中...';
+                                    if (segProg.total > 1) {
+                                        processingLabel = '🤖 AI 批改中 ' + segProg.done + '/' + segProg.total;
+                                    } else if (segProg.total === 1 && segProg.done === 1) {
+                                        processingLabel = '🤖 AI 彙整中...';
+                                    }
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#EDE9FE; color:#8B5CF6; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #DDD6FE;">${processingLabel}</span>`;
                                 } else if (effectiveTaskStatus === 'ai_ready') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🤖 AI 分析完成</span>`;
                                 } else if (effectiveTaskStatus === 'graded') {
@@ -909,12 +981,25 @@ window.UIStudentTimelineTemplates = (() => {
                                 // 'submitted' 不再另外顯示「已繳交」字樣徽章：前面的打勾本身就是這個意思，
                                 // 重複標示只會讓畫面更亂；有進一步進度（AI 處理中／已批改等）才需要額外徽章。
 
+                                const hasPartialAiResult = !!(compRecord.raw_data && (
+                                    compRecord.raw_data.ai_evaluation
+                                    || (Array.isArray(compRecord.raw_data.ai_evaluations) && compRecord.raw_data.ai_evaluations.length > 0)
+                                    || (Array.isArray(compRecord.raw_data.audio_segments) && compRecord.raw_data.audio_segments.some(function (s) {
+                                        return s && s.status === 'done' && s.ai_evaluation;
+                                    }))
+                                ));
+
                                 let showAIReport = false;
                                 if (effectiveTaskStatus === 'graded') showAIReport = true;
                                 else if (effectiveTaskStatus === 'ai_ready') showAIReport = true;
+                                else if (effectiveTaskStatus === 'ai_processing' && hasPartialAiResult) showAIReport = true;
                                 else if (effectiveTaskStatus === 'completed' && compRecord.raw_data && compRecord.raw_data.ai_evaluation) {
                                     showAIReport = true;
                                 }
+
+                                const segmentProgressStripHtml = (effectiveTaskStatus === 'ai_processing')
+                                    ? buildSegmentProgressStripHtml(compRecord.raw_data)
+                                    : '';
 
                                 let scoreDisclaimer = '';
                                 if (window.GradingPolicy && window.GradingPolicy.studentScoreDisclaimer) {
@@ -940,18 +1025,28 @@ window.UIStudentTimelineTemplates = (() => {
                                                 disclaimerHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 8px; border-radius:4px; font-weight:900; border:1px solid #FDE68A;">⚠️ ${scoreDisclaimer}</span>`;
                                             }
 
+                                            const partialProg = getAudioSegmentProgress(compRecord.raw_data);
+                                            let partialBadgeHtml = '';
+                                            let reportTitle = 'AI 批改報告';
+                                            if (effectiveTaskStatus === 'ai_processing' && partialProg.total > 1) {
+                                                reportTitle = 'AI 部分結果（' + partialProg.done + '/' + partialProg.total + ' 段）';
+                                                partialBadgeHtml = `<span style="font-size:0.72rem;background:#FEF3C7;color:#B45309;padding:1px 6px;border-radius:4px;font-weight:900;">尚在批改其餘段落</span>`;
+                                            }
+
                                             const progressHtml = buildLearningTrackHtml(ai, gradingHistory);
                                             const latestAttemptNum = gradingHistory.length + 1;
                                             const currentAiEvaluations = Array.isArray(compRecord.raw_data.ai_evaluations) ? compRecord.raw_data.ai_evaluations : null;
                                             const historySectionHtml = buildHistoryTableHtml(compositeKey, gradingHistory, ai, inlinePlayerId, retryAudioId, hasValidAudioFile, currentAiEvaluations);
 
                                             aiFeedbackHtml = `
+                                                ${segmentProgressStripHtml}
                                                 <div style="margin-top: 12px; margin-left: 36px; padding: 12px 16px; background: #FAF5FF; border-left: 4px solid #8B5CF6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                                                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                                                         <div style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;" onclick="window.FeatureStudentTimeline.toggleAIReport('${compositeKey}')">
                                                             <span style="font-size:1.1rem;">🤖</span>
-                                                            <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">AI 批改報告</span>
+                                                            <span style="font-weight: 900; color: #6D28D9; font-size: 0.95rem;">${reportTitle}</span>
                                                             <span style="font-size:0.72rem;background:#EDE9FE;color:#6D28D9;padding:1px 6px;border-radius:4px;font-weight:900;">第 ${latestAttemptNum} 次</span>
+                                                            ${partialBadgeHtml}
                                                             <span id="toggle-icon-${compositeKey}" style="font-size: 0.8rem; margin-left: 4px; color: #8B5CF6;">${toggleIcon}</span>
                                                         </div>
                                                         <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
@@ -968,6 +1063,8 @@ window.UIStudentTimelineTemplates = (() => {
                                             `;
                                         }
                                     }
+                                } else if (segmentProgressStripHtml) {
+                                    aiFeedbackHtml = segmentProgressStripHtml;
                                 }
 
                                 let showAIError = false;
@@ -1009,7 +1106,6 @@ window.UIStudentTimelineTemplates = (() => {
                     let btn = '';
                     let taskTitleDisplay = '';
                     let linkContent = '';
-                    let titleUsedRangeFallback = false;
 
                     const formattedTaskUrl = safeFormatUrl ? String(safeFormatUrl(task.url) ? safeFormatUrl(task.url) : '') : '';
 
@@ -1050,7 +1146,6 @@ window.UIStudentTimelineTemplates = (() => {
                         // 標題（麥克風右側）空白時，改用 base 範圍
                         if (!displayTitle && materialRange) {
                             displayTitle = String(materialRange).trim();
-                            titleUsedRangeFallback = true;
                         }
                         if (!displayTitle) displayTitle = '語音錄製任務';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle;">${escapeAttr(displayTitle)}</span>`;
@@ -1202,24 +1297,8 @@ window.UIStudentTimelineTemplates = (() => {
                         cleanTaskDesc = String(task.description).replace(/<[^>]*>?/gm, '').trim();
                     }
                     
-                    let materialRangeText = '';
-                    // 標題空白時已經退回顯示 base 範圍（見上方 titleUsedRangeFallback），
-                    // 這裡就不要再重複印一次一模一樣的「(範圍：...)」灰字。
-                    if (task.type === 'audio_record' && !titleUsedRangeFallback) {
-                        if (task.raw_data && task.raw_data.material_range) {
-                            materialRangeText = String(task.raw_data.material_range).trim();
-                        }
-                    }
-
+                    // 不再顯示灰色「(範圍：...)」——標題（或標題空白時的 base 範圍 fallback）已有相同內容。
                     let finalDescText = cleanTaskDesc;
-                    if (materialRangeText !== '') {
-                        const rangeStr = `(範圍：${materialRangeText})`;
-                        if (finalDescText !== '') {
-                            finalDescText = `${finalDescText} ${rangeStr}`;
-                        } else {
-                            finalDescText = rangeStr;
-                        }
-                    }
                     let recordingUnitHintHtml = '';
                     if (task.type === 'audio_record') {
                         const unitCount = (task.raw_data && Array.isArray(task.raw_data.grading_units))

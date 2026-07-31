@@ -35,6 +35,13 @@ window.FeatureAIBackfill = (function () {
         if (Array.isArray(raw.drive_file_ids) && raw.drive_file_ids.length > 0) {
             return String(raw.drive_file_ids[0]);
         }
+        const segs = Array.isArray(raw.audio_segments) ? raw.audio_segments : [];
+        for (let i = 0; i < segs.length; i++) {
+            const seg = segs[i];
+            if (!seg) continue;
+            const fid = seg.file_id || seg.id;
+            if (fid) return String(fid);
+        }
         const url = raw.student_audio_url || raw.audio_url;
         if (url && window.GasService && typeof window.GasService.extractFileIdFromUrl === 'function') {
             return window.GasService.extractFileIdFromUrl(url);
@@ -42,23 +49,175 @@ window.FeatureAIBackfill = (function () {
         return null;
     }
 
+    function hasAudioPayload(comp) {
+        if (getAudioFileIdFromCompletion(comp)) return true;
+        const raw = (comp && comp.raw_data) || {};
+        const segs = Array.isArray(raw.audio_segments) ? raw.audio_segments : [];
+        return segs.some(function (s) {
+            return !!(s && (s.file_id || s.id || s.audio_url));
+        });
+    }
+
+    /** 學生列標籤：標出「批改中／可能卡住」與分段進度，避免看起來像沒這筆 */
+    function formatEligibleStudentLabel(entry) {
+        const c = entry.completion;
+        const name = esc(entry.student.name);
+        if (!isAiProcessingOpen(c)) return name;
+        const stats = getSegmentStats(c);
+        const stuck = isStuckAiProcessing(c);
+        let badge = stuck
+            ? '<span style="color:#B91C1C;font-weight:800;">可能卡住</span>'
+            : '<span style="color:#B45309;font-weight:800;">批改中</span>';
+        if (stats.total > 0) {
+            badge += ' <span style="color:#64748B;">(' + stats.done + '/' + stats.total + ' 段)</span>';
+        }
+        if (stats.step) {
+            badge += ' <span style="color:#94A3B8;font-size:0.8rem;">· ' + esc(String(stats.step)) + '</span>';
+        }
+        const segs = ((c.raw_data && c.raw_data.audio_segments) || []);
+        if (Array.isArray(segs) && segs.length > 1) {
+            const chips = segs.map(function (s, idx) {
+                const label = (s && (s.label || s.unit_key)) ? String(s.label || s.unit_key) : ('#' + (idx + 1));
+                let color = '#94A3B8';
+                let mark = '等待';
+                if (s && s.status === 'done' && s.ai_evaluation) {
+                    color = '#047857';
+                    mark = '完成';
+                } else if (s && s.status === 'processing') {
+                    color = '#7C3AED';
+                    mark = '中';
+                } else if (s && s.status === 'error') {
+                    color = '#DC2626';
+                    mark = '失敗';
+                }
+                return '<span style="color:' + color + ';font-size:0.75rem;margin-right:6px;">' + esc(label) + ':' + mark + '</span>';
+            }).join('');
+            badge += '<div style="margin-top:2px;">' + chips + '</div>';
+        }
+        return name + ' ' + badge;
+    }
+
+    /**
+     * 續跑卡住的 ai_processing：保留已 done 段（不重打 Speechace），
+     * 未完成改回 pending；先 submitted 再 ai_processing 以重觸 webhook。
+     */
+    async function resumeStuckProcessing(classId, assignmentId, taskId, studentId, completion) {
+        const raw = Object.assign({}, (completion && completion.raw_data) || {});
+        const segs = Array.isArray(raw.audio_segments) ? raw.audio_segments : [];
+        if (segs.length > 0) {
+            raw.audio_segments = segs.map(function (seg) {
+                const next = Object.assign({}, seg);
+                if (next.status === 'done' && next.ai_evaluation) {
+                    return next;
+                }
+                delete next.error;
+                delete next.claimed_at;
+                next.status = 'pending';
+                return next;
+            });
+        }
+        raw.ai_segment_heartbeat = new Date().toISOString();
+        delete raw.ai_error_log;
+        delete raw.failed_at;
+        delete raw.ai_skip_reason;
+        delete raw.ai_skipped_at;
+
+        const keyFilter = function (q) {
+            return q
+                .eq('assignment_id', assignmentId)
+                .eq('task_id', taskId)
+                .eq('student_id', studentId)
+                .eq('class_id', classId);
+        };
+
+        // 同狀態 UPDATE 常不重觸 webhook；先離開 ai_processing 再回來
+        const { error: step1 } = await keyFilter(
+            window.supabaseClient.from('task_completions').update({ status: 'submitted', raw_data: raw })
+        );
+        if (step1) throw step1;
+
+        const { error: step2 } = await keyFilter(
+            window.supabaseClient.from('task_completions').update({
+                status: 'ai_processing',
+                raw_data: raw
+            })
+        );
+        if (step2) throw step2;
+
+        // 不在此再 functions.invoke：webhook 會因 status 變化觸發；
+        // 雙路徑喚醒在 continue bug 時會放大成 Edge 風暴、拖垮登入。
+    }
+
+    function getSegmentStats(comp) {
+        const raw = (comp && comp.raw_data) || {};
+        const segs = Array.isArray(raw.audio_segments) ? raw.audio_segments : [];
+        let done = 0;
+        let pending = 0;
+        let processing = 0;
+        let error = 0;
+        segs.forEach(function (s) {
+            if (!s) return;
+            if (s.status === 'done' && s.ai_evaluation) done++;
+            else if (s.status === 'processing') processing++;
+            else if (s.status === 'error') error++;
+            else if (s.status === 'pending' || !s.status) pending++;
+        });
+        return {
+            total: segs.length,
+            done: done,
+            pending: pending,
+            processing: processing,
+            error: error,
+            heartbeat: raw.ai_segment_heartbeat || '',
+            step: (raw.ai_pipeline && raw.ai_pipeline.current_step_label) ||
+                (raw.ai_pipeline && raw.ai_pipeline.current_step) || ''
+        };
+    }
+
+    /**
+     * 💣 雷區（見 .cursor/rules/ai-grading-pipeline-invariants.mdc）：
+     * ai_processing 必須能進「補啟／續跑」或「清除」，禁止兩邊都排除導致動不了。
+     */
+    function isAiProcessingOpen(comp) {
+        return !!(comp && !comp.deleted_at && comp.status === 'ai_processing');
+    }
+
+    function isStuckAiProcessing(comp) {
+        if (!isAiProcessingOpen(comp)) return false;
+        const raw = comp.raw_data || {};
+        const segs = raw.audio_segments;
+        if (!Array.isArray(segs) || segs.length === 0) return true;
+
+        const STUCK_MS = 3 * 60 * 1000; // 3 分鐘無心跳即標「可能卡住」（仍一律可操作）
+        const hb = Date.parse(String(raw.ai_segment_heartbeat || '')) || 0;
+        const updated = Date.parse(String(comp.updated_at || '')) || 0;
+        const lastBeat = Math.max(hb, updated);
+        if (!lastBeat) return true;
+        return (Date.now() - lastBeat) >= STUCK_MS;
+    }
+
     function isEligibleForBackfill(comp) {
         if (!comp || comp.deleted_at) return false;
-        if (comp.status === 'ai_processing') return false;
-        if (!getAudioFileIdFromCompletion(comp)) return false;
+        if (!hasAudioPayload(comp)) return false;
+        // 批改中必須可重送／續跑，否則兩邊列表都沒有 → 動不了
+        if (comp.status === 'ai_processing') return true;
         const raw = comp.raw_data || {};
-        if (raw.ai_evaluation && (comp.status === 'ai_ready' || comp.status === 'completed')) return false;
+        if (raw.ai_evaluation && (comp.status === 'ai_ready' || comp.status === 'completed' || comp.status === 'graded')) return false;
         return true;
     }
 
     function hasAiRecord(comp) {
         if (!comp || comp.deleted_at) return false;
-        if (comp.status === 'ai_processing') return false;
+        // 批改中也可「清除」解鎖（含部分已完成的多段）
+        if (comp.status === 'ai_processing') return true;
         const raw = comp.raw_data || {};
         return !!(raw.ai_evaluation
             || (Array.isArray(raw.ai_evaluations) && raw.ai_evaluations.length)
             || (Array.isArray(raw.grading_history) && raw.grading_history.length)
-            || raw.ai_error_log);
+            || raw.ai_error_log
+            || (Array.isArray(raw.audio_segments) && raw.audio_segments.some(function (s) {
+                return s && (s.ai_evaluation || s.status === 'done' || s.status === 'error');
+            })));
     }
 
     function scanBackfillJobs(assignments, completions, students) {
@@ -196,8 +355,10 @@ window.FeatureAIBackfill = (function () {
         });
         if (!job) throw new Error('找不到指定的補批任務');
 
+        const idSet = {};
+        (studentIds || []).forEach(function (id) { idSet[String(id)] = true; });
         const targets = job.eligible.filter(function (e) {
-            return studentIds.indexOf(e.student.id) > -1;
+            return !!idSet[String(e.student.id)];
         });
         if (targets.length === 0) throw new Error('沒有可補批的學生');
 
@@ -221,8 +382,24 @@ window.FeatureAIBackfill = (function () {
 
         for (let i = 0; i < targets.length; i++) {
             const t = targets[i];
-            const audioUrl = buildDriveAudioUrl(t.fileId);
             try {
+                // 已在批改中：續跑未完成段，保留 done（RPC 會把全部段打回 pending，浪費 Speechace）
+                if (isAiProcessingOpen(t.completion)) {
+                    await resumeStuckProcessing(
+                        classId,
+                        job.assignmentId,
+                        job.taskId,
+                        t.student.id,
+                        t.completion
+                    );
+                    ok++;
+                    continue;
+                }
+
+                const fileId = t.fileId || getAudioFileIdFromCompletion(t.completion);
+                if (!fileId) throw new Error('找不到音檔 file_id');
+                const audioUrl = buildDriveAudioUrl(fileId);
+
                 // 學生錄音是「一頁一檔」，補批改也要跟著一頁一份文稿送 AI；
                 // 如果這筆繳交本來就有多檔（raw_data.audio_segments），要原樣整批帶回去，
                 // 不能只補第一檔，否則會被 RPC 蓋成單檔、文稿退回整份合併稿，跟音檔對不上。
@@ -234,7 +411,7 @@ window.FeatureAIBackfill = (function () {
                     p_task_id: job.taskId,
                     p_student_id: t.student.id,
                     p_class_id: classId,
-                    p_file_id: t.fileId,
+                    p_file_id: fileId,
                     p_audio_url: audioUrl
                 };
                 if (existingSegments) rpcPayload.p_segments = existingSegments;
@@ -266,8 +443,10 @@ window.FeatureAIBackfill = (function () {
         });
         if (!job) throw new Error('找不到指定的批改紀錄');
 
+        const idSet = {};
+        (studentIds || []).forEach(function (id) { idSet[String(id)] = true; });
         const targets = job.withRecord.filter(function (e) {
-            return studentIds.indexOf(e.student.id) > -1;
+            return !!idSet[String(e.student.id)];
         });
         if (targets.length === 0) throw new Error('沒有可清除的學生');
 
@@ -287,6 +466,9 @@ window.FeatureAIBackfill = (function () {
                 delete raw.ai_skip_reason;
                 delete raw.ai_skipped_at;
                 delete raw.ai_segment_cursor;
+                delete raw.ai_segment_heartbeat;
+                delete raw.ai_pipeline;
+                delete raw.grading_pipeline_log;
                 delete raw.assignment_text;
                 delete raw.grading_policy_snapshot;
                 if (Array.isArray(raw.audio_segments)) {
@@ -352,7 +534,7 @@ window.FeatureAIBackfill = (function () {
             backfillHtml = `
                 <div style="background:white;padding:20px;border-radius:12px;border:2px solid #E2E8F0;margin-top:20px;">
                     <h3 style="margin:0 0 8px;color:#4338CA;">🤖 補啟 AI 批改（教師端）</h3>
-                    <p style="margin:0;color:#64748B;font-size:0.95rem;">目前沒有「已繳交音檔、尚未 AI 批改」的 Recording／錄音任務。歷史補批請在此操作，學生端不提供此功能。</p>
+                    <p style="margin:0;color:#64748B;font-size:0.95rem;">目前沒有可補批項目（含「已繳交未批」與「AI 批改中卡住」）。切割後若一直顯示批改中，重整後應會出現在此可重送。</p>
                 </div>
             `;
         } else {
@@ -361,9 +543,17 @@ window.FeatureAIBackfill = (function () {
                 const scriptLabel = job.scriptInfo.scriptText
                     ? '任務內文稿（' + job.scriptInfo.scriptText.length + ' 字）'
                     : ('同群組文稿連結：' + (job.scriptInfo.scriptLinkUrl || '—'));
-                const studentNames = job.eligible.map(function (e) {
-                    return esc(e.student.name);
-                }).join('、');
+                const studentChecks = job.eligible.map(function (e) {
+                    const sid = esc(String(e.student.id));
+                    const label = formatEligibleStudentLabel(e);
+                    return '<label style="display:flex;align-items:flex-start;gap:6px;margin:4px 0;cursor:pointer;">'
+                        + '<input type="checkbox" class="ai-bf-check" data-job="' + esc(job.key) + '" value="' + sid + '" checked style="margin-top:3px;">'
+                        + '<span>' + label + '</span></label>';
+                }).join('');
+                const hasProcessing = job.eligible.some(function (e) {
+                    return isAiProcessingOpen(e.completion);
+                });
+                const btnLabel = hasProcessing ? '續跑／重送 AI' : '補啟 AI 批改';
                 rows += `
                     <tr>
                         <td style="border:1px solid #E2E8F0;padding:10px;vertical-align:top;">
@@ -371,11 +561,14 @@ window.FeatureAIBackfill = (function () {
                             <div style="color:#64748B;font-size:0.85rem;margin-top:4px;">${esc(job.taskTitle)}</div>
                         </td>
                         <td style="border:1px solid #E2E8F0;padding:10px;font-size:0.85rem;color:#475569;max-width:280px;word-break:break-all;">${esc(scriptLabel)}</td>
-                        <td style="border:1px solid #E2E8F0;padding:10px;font-size:0.85rem;color:#334155;">${job.eligible.length} 人<br><span style="color:#94A3B8;">${studentNames}</span></td>
+                        <td style="border:1px solid #E2E8F0;padding:10px;font-size:0.85rem;color:#334155;">
+                            <div style="font-weight:800;margin-bottom:4px;">${job.eligible.length} 人（可勾選）</div>
+                            ${studentChecks}
+                        </td>
                         <td style="border:1px solid #E2E8F0;padding:10px;text-align:center;white-space:nowrap;">
                             <button type="button" class="btn btn-action" style="background:#7C3AED;color:white;border:none;font-weight:800;"
                                 onclick="window.FeatureAIBackfill.runBatch('${esc(classId)}','${esc(job.key)}')">
-                                補啟 AI 批改
+                                ${btnLabel}
                             </button>
                         </td>
                     </tr>
@@ -386,8 +579,8 @@ window.FeatureAIBackfill = (function () {
                 <div style="background:white;padding:20px;border-radius:12px;border:2px solid #DDD6FE;margin-top:20px;">
                     <h3 style="margin:0 0 8px;color:#5B21B6;display:flex;align-items:center;gap:8px;">🤖 補啟 AI 批改（教師端）</h3>
                     <p style="margin:0 0 16px;color:#64748B;font-size:0.9rem;line-height:1.5;">
-                        針對<strong>已繳交錄音／音檔</strong>但尚未完成 AI 批改的作業，由老師在此批次觸發。
-                        文稿來源：Recording 任務設定的文字，或<strong>同群組 audio 連結</strong>（即學生端的文稿連結，非上傳音檔）。
+                        針對<strong>已繳交錄音／音檔</strong>但尚未完成 AI 批改的作業（含狀態為「AI 批改中」）由此重送／續跑。
+                        續跑會<strong>保留已完成段</strong>，只重跑未完成段。請勾選要處理的學生，避免誤觸已完成的人。
                     </p>
                     <div style="overflow-x:auto;">
                         <table style="width:100%;border-collapse:collapse;min-width:640px;">
@@ -410,20 +603,38 @@ window.FeatureAIBackfill = (function () {
         if (clearJobs.length > 0) {
             let clearRows = '';
             clearJobs.forEach(function (job) {
-                const studentNames = job.withRecord.map(function (e) {
-                    return esc(e.student.name);
-                }).join('、');
+                // 預設只勾「批改中／卡住」；已批完的（如 Janice）不勾，避免誤清浪費 API
+                const studentChecks = job.withRecord.map(function (e) {
+                    const sid = esc(String(e.student.id));
+                    const processing = isAiProcessingOpen(e.completion);
+                    const stuck = processing && isStuckAiProcessing(e.completion);
+                    let tag = '';
+                    if (processing) {
+                        tag = stuck
+                            ? ' <span style="color:#B91C1C;font-weight:800;">(可能卡住)</span>'
+                            : ' <span style="color:#B45309;font-weight:800;">(批改中)</span>';
+                    } else {
+                        tag = ' <span style="color:#64748B;">(已有批改結果)</span>';
+                    }
+                    const checked = processing ? ' checked' : '';
+                    return '<label style="display:flex;align-items:flex-start;gap:6px;margin:4px 0;cursor:pointer;">'
+                        + '<input type="checkbox" class="ai-clear-check" data-job="' + esc(job.key) + '" value="' + sid + '"' + checked + ' style="margin-top:3px;">'
+                        + '<span>' + esc(e.student.name) + tag + '</span></label>';
+                }).join('');
                 clearRows += `
                     <tr>
                         <td style="border:1px solid #E2E8F0;padding:10px;vertical-align:top;">
                             <div style="font-weight:900;color:#1E293B;">${esc(job.targetDate)} · ${esc(job.assignmentTitle)}</div>
                             <div style="color:#64748B;font-size:0.85rem;margin-top:4px;">${esc(job.taskTitle)}</div>
                         </td>
-                        <td style="border:1px solid #E2E8F0;padding:10px;font-size:0.85rem;color:#334155;">${job.withRecord.length} 人<br><span style="color:#94A3B8;">${studentNames}</span></td>
+                        <td style="border:1px solid #E2E8F0;padding:10px;font-size:0.85rem;color:#334155;">
+                            <div style="font-weight:800;margin-bottom:4px;">${job.withRecord.length} 人（請勾選要清的）</div>
+                            ${studentChecks}
+                        </td>
                         <td style="border:1px solid #E2E8F0;padding:10px;text-align:center;white-space:nowrap;">
                             <button type="button" class="btn btn-action" style="background:#DC2626;color:white;border:none;font-weight:800;"
                                 onclick="window.FeatureAIBackfill.clearBatch('${esc(classId)}','${esc(job.key)}')">
-                                🗑 清除 AI 批改紀錄
+                                🗑 清除勾選學生
                             </button>
                         </td>
                     </tr>
@@ -434,8 +645,8 @@ window.FeatureAIBackfill = (function () {
                 <div style="background:white;padding:20px;border-radius:12px;border:2px solid #FECACA;margin-top:20px;">
                     <h3 style="margin:0 0 8px;color:#B91C1C;display:flex;align-items:center;gap:8px;">🗑 清除 AI 批改紀錄（教師端）</h3>
                     <p style="margin:0 0 16px;color:#64748B;font-size:0.9rem;line-height:1.5;">
-                        清除後會移除該任務目前的 AI 評分／錯字紀錄與批改歷史，狀態退回「已繳交」，可再用上方「補啟 AI 批改」重新送批。
-                        <strong>不會</strong>刪除學生已上傳的音檔，也<strong>不會</strong>動到老師手動輸入的成績。
+                        <strong>預設只勾「批改中／卡住」</strong>；已批完的學生請勿勾選，否則清掉後重批會再花 Speechace API。
+                        清除後狀態退回「已繳交」，可用上方補啟重送。<strong>不會</strong>刪音檔，也<strong>不會</strong>動老師手動成績。
                     </p>
                     <div style="overflow-x:auto;">
                         <table style="width:100%;border-collapse:collapse;min-width:520px;">
@@ -456,6 +667,25 @@ window.FeatureAIBackfill = (function () {
         return backfillHtml + clearHtml;
     }
 
+    function collectCheckedStudentIds(selector, jobKey) {
+        const nodes = document.querySelectorAll(selector + '[data-job="' + jobKey + '"]');
+        const ids = [];
+        for (let i = 0; i < nodes.length; i++) {
+            if (nodes[i].checked) ids.push(nodes[i].value);
+        }
+        return ids;
+    }
+
+    function studentNamesForIds(entries, studentIds) {
+        const set = {};
+        studentIds.forEach(function (id) { set[String(id)] = true; });
+        return entries.filter(function (e) {
+            return set[String(e.student.id)];
+        }).map(function (e) {
+            return e.student.name || e.student.id;
+        });
+    }
+
     async function runBatch(classId, jobKey) {
         const job = cachedContext && cachedContext.jobs
             ? cachedContext.jobs.find(function (j) { return j.key === jobKey; })
@@ -465,14 +695,22 @@ window.FeatureAIBackfill = (function () {
             return;
         }
 
-        const studentIds = job.eligible.map(function (e) { return e.student.id; });
+        const studentIds = collectCheckedStudentIds('input.ai-bf-check', jobKey);
         if (studentIds.length === 0) {
-            window.showFlash('沒有可補批的學生', 'error');
+            window.showFlash('請先勾選要補批的學生', 'error');
             return;
         }
 
+        const selected = studentNamesForIds(job.eligible, studentIds);
+        const processingCount = job.eligible.filter(function (e) {
+            return studentIds.indexOf(String(e.student.id)) > -1 && isAiProcessingOpen(e.completion);
+        }).length;
         const ok = confirm(
-            '確定要為「' + job.taskTitle + '」的 ' + studentIds.length + ' 位學生補啟 AI 批改嗎？\n\n'
+            '確定要為「' + job.taskTitle + '」的以下 ' + studentIds.length + ' 位學生補啟／續跑 AI 批改嗎？\n\n'
+            + selected.join('、') + '\n\n'
+            + (processingCount > 0
+                ? ('其中 ' + processingCount + ' 筆為「批改中」：會保留已完成段，只重跑未完成段。\n\n')
+                : '')
             + '若任務尚未設定文稿，系統會嘗試從同群組 audio 連結（試算表）萃取。'
         );
         if (!ok) return;
@@ -493,14 +731,16 @@ window.FeatureAIBackfill = (function () {
             return;
         }
 
-        const studentIds = job.withRecord.map(function (e) { return e.student.id; });
+        const studentIds = collectCheckedStudentIds('input.ai-clear-check', jobKey);
         if (studentIds.length === 0) {
-            window.showFlash('沒有可清除的學生', 'error');
+            window.showFlash('請先勾選要清除的學生（已批完的預設不勾，避免浪費 API）', 'error');
             return;
         }
 
+        const selected = studentNamesForIds(job.withRecord, studentIds);
         const ok = confirm(
-            '確定要清除「' + job.taskTitle + '」共 ' + studentIds.length + ' 位學生的 AI 批改紀錄嗎？\n\n'
+            '確定要清除「' + job.taskTitle + '」以下 ' + studentIds.length + ' 位學生的 AI 批改紀錄嗎？\n\n'
+            + selected.join('、') + '\n\n'
             + '此動作無法復原（AI 評分、錯字診斷、批改歷史都會被移除，狀態退回「已繳交」）。'
         );
         if (!ok) return;

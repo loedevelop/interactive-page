@@ -681,6 +681,46 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
+    // 下載音檔／檔案為 Base64（給 stream-audio Edge Function 與老師端切割工具備援）。
+    // 不用 GET createBinaryOutput：經 Web App redirect 後二進位常壞掉或變空回應；
+    // POST + JSON 與 upload_file 同一條路，較穩。單檔上限約 40MB（GAS 記憶體／回應限制）。
+    if (action === 'download_file') {
+      var downloadFileId = data.fileId ? String(data.fileId).trim() : '';
+      if (!downloadFileId) throw new Error('缺少 fileId');
+
+      var downloadFile;
+      try {
+        downloadFile = DriveApp.getFileById(downloadFileId);
+      } catch (dlErr) {
+        throw new Error('找不到檔案或 GAS 無權限讀取（fileId: ' + downloadFileId + '）：' + String(dlErr));
+      }
+      if (downloadFile.isTrashed()) {
+        throw new Error('檔案已在垃圾桶，無法下載');
+      }
+
+      var downloadBlob = downloadFile.getBlob();
+      var downloadBytes = downloadBlob.getBytes();
+      var maxBytes = 40 * 1024 * 1024;
+      if (downloadBytes.length > maxBytes) {
+        throw new Error(
+          '檔案過大（約 ' + Math.round(downloadBytes.length / 1024 / 1024) +
+          ' MB），超過 GAS 下載上限 40MB。請先在 Drive 手動切開，或改用較短錄音。'
+        );
+      }
+
+      var downloadMime = downloadBlob.getContentType() || downloadFile.getMimeType() || 'application/octet-stream';
+      if (downloadMime === 'text/plain') downloadMime = 'audio/wav';
+
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        fileId: downloadFile.getId(),
+        fileName: downloadFile.getName(),
+        mimeType: downloadMime,
+        byteLength: downloadBytes.length,
+        fileData: Utilities.base64Encode(downloadBytes)
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     if (action === 'upload_file') {
       var fileData = data.fileData;
       var rawFileName = data.fileName;
