@@ -13,6 +13,41 @@ window.TimelineTemplates = (() => {
                 .timeline-node, .timeline-node * { box-sizing: border-box !important; max-width: 100%; word-break: break-word; }
                 .timeline-node { overflow: visible !important; }
                 div.timeline-node::before, div.timeline-node::after { display: none !important; content: none !important; }
+                .tl-rail-date {
+                    position: absolute; left: -72px; top: 4px; width: 46px; z-index: 2;
+                    display: flex; flex-direction: column; align-items: center; justify-content: center;
+                    padding: 0; border: 1px solid #E2E8F0; border-radius: 8px; background: #FFFFFF;
+                    box-shadow: 0 1px 2px rgba(15,23,42,0.06); line-height: 1.1; font-family: inherit;
+                    color: #334155; overflow: hidden;
+                }
+                .tl-rail-date--range { width: 54px; left: -76px; }
+                .tl-rail-date__month {
+                    width: 100%; background: #F1F5F9; color: #64748B; font-size: 0.65rem; font-weight: 800;
+                    letter-spacing: 0.02em; padding: 3px 0; text-align: center;
+                }
+                .tl-rail-date__day {
+                    font-size: 1.05rem; font-weight: 900; padding: 5px 0 6px; text-align: center;
+                }
+                .tl-rail-date__day--range {
+                    font-size: 0.72rem; font-weight: 900; padding: 5px 2px 6px; letter-spacing: -0.02em;
+                    white-space: nowrap;
+                }
+                .tl-rail-date--current { border-color: #6EE7B7; }
+                .tl-rail-date--current .tl-rail-date__month { background: #10B981; color: #FFFFFF; }
+                .tl-rail-date--current .tl-rail-date__day { color: #065F46; }
+                .tl-rail-date--deletable { cursor: pointer; }
+                .tl-rail-date--deletable:hover { border-color: #FCA5A5; background: #FEF2F2; }
+                .tl-rail-date--deletable:hover .tl-rail-date__month { background: #EF4444; color: #FFFFFF; }
+                .tl-rail-date--deletable:hover .tl-rail-date__day { color: #B91C1C; }
+                .tl-rail-add-row { position: relative; height: 0; margin: 0; }
+                .tl-rail-add-btn {
+                    position: absolute; left: -49px; top: 0; transform: translate(-50%, -50%);
+                    width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #CBD5E1;
+                    background: #FFFFFF; color: #64748B; font-size: 0.85rem; font-weight: 900; line-height: 1;
+                    cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;
+                    box-shadow: 0 0 0 2px #F8FAFC; z-index: 2;
+                }
+                .tl-rail-add-btn:hover { border-color: #3B82F6; color: #1D4ED8; background: #EFF6FF; }
                 .rte-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; padding: 6px 12px; background: #F1F5F9; border-radius: 8px; border: 1px solid #E2E8F0; }
                 .rte-btn { background: white; font-weight: 900; border: 1px solid #CBD5E1; padding: 2px 8px; border-radius: 4px; cursor: pointer; color: #334155; }
                 .rte-btn:hover { background: #E2E8F0; }
@@ -23,6 +58,49 @@ window.TimelineTemplates = (() => {
                 details > summary::-webkit-details-marker { display: none; }
             </style>
         `;
+    }
+
+    /** 進度軸左側日期小卡（YYYY-MM-DD → 月／日） */
+    function formatRailDateParts(isoDate) {
+        const parts = String(isoDate || '').split('-');
+        if (parts.length < 3) {
+            return { month: '', day: String(isoDate || ''), isRange: false };
+        }
+        const monthNum = parseInt(parts[1], 10);
+        const dayNum = parseInt(parts[2], 10);
+        return {
+            month: (Number.isFinite(monthNum) ? monthNum : parts[1]) + '月',
+            day: Number.isFinite(dayNum) ? String(dayNum) : parts[2],
+            isRange: false
+        };
+    }
+
+    /** 週模式：顯示該週上課日起迄（同月 17–19；跨月 7/17–8/2） */
+    function formatRailWeekParts(dates) {
+        const list = (Array.isArray(dates) ? dates : []).filter(Boolean);
+        if (list.length === 0) return { month: '', day: '', isRange: false };
+        if (list.length === 1) return formatRailDateParts(list[0]);
+
+        const firstParts = String(list[0]).split('-');
+        const lastParts = String(list[list.length - 1]).split('-');
+        const m1 = parseInt(firstParts[1], 10);
+        const d1 = parseInt(firstParts[2], 10);
+        const m2 = parseInt(lastParts[1], 10);
+        const d2 = parseInt(lastParts[2], 10);
+        const sameMonth = Number.isFinite(m1) && m1 === m2;
+
+        if (sameMonth) {
+            return {
+                month: m1 + '月',
+                day: d1 + '–' + d2,
+                isRange: true
+            };
+        }
+        return {
+            month: '週程',
+            day: m1 + '/' + d1 + '–' + m2 + '/' + d2,
+            isRange: true
+        };
     }
 
     function getLevelStyle(depth) {
@@ -786,36 +864,61 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    function getTimelineNodeHtml(index, mode, nodeTitle, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId, canDeleteSession) {
-        let badge = '', borderColor = '#E2E8F0', dotColor = '#E2E8F0', bgColor = '#FFFFFF', headerTextColor = '#475569';
+    function getTimelineNodeHtml(index, mode, nodeTitle, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId, canDeleteSession, nodeDates) {
+        let badge = '', borderColor = '#E2E8F0', bgColor = '#FFFFFF', headerTextColor = '#475569';
 
         if (isCurrent) {
             badge = '<span style="background: #10B981; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.9rem; margin-left: 10px; font-weight:900; animation: pulse-green 2s infinite;">📍 當週</span>';
-            borderColor = '#10B981'; dotColor = '#10B981'; bgColor = '#ECFDF5'; headerTextColor = '#065F46';
+            borderColor = '#10B981'; bgColor = '#ECFDF5'; headerTextColor = '#065F46';
         } else if (!isFuture) {
-            dotColor = '#CBD5E1'; bgColor = '#F8FAFC'; headerTextColor = '#94A3B8';
+            bgColor = '#F8FAFC'; headerTextColor = '#94A3B8';
         }
 
         const addBlockBtn = canEditTimeline ? `<button type="button" class="btn btn-primary" onclick="window.FeatureTimeline.openBuilder('${classId}', '${nodeDate}', '${builderContainerId}')">+ 新增區塊</button>` : '';
-        const deleteSessionBtn = canDeleteSession
-            ? `<button type="button" class="btn" title="刪除空白堂次" style="background:#FEF2F2; color:#B91C1C; border:1px solid #FECACA; font-weight:800; padding:6px 12px;" onclick="window.FeatureTimeline.removeSessionDate('${classId}', '${nodeDate}')">刪此日</button>`
-            : '';
-        const headerActions = (addBlockBtn || deleteSessionBtn)
-            ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">${deleteSessionBtn}${addBlockBtn}</div>`
+        const headerActions = addBlockBtn
+            ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">${addBlockBtn}</div>`
             : '';
         const nodeDragEvents = canEditTimeline ? `ondragover="event.preventDefault();" ondrop="window.FeatureTimeline.dropAssignToNode(event, '${nodeDate}', '${classId}')"` : '';
 
+        const dates = (Array.isArray(nodeDates) && nodeDates.length > 0) ? nodeDates : [nodeDate];
+        const isWeekly = mode === 'weekly';
+        const railParts = isWeekly ? formatRailWeekParts(dates) : formatRailDateParts(nodeDate);
+        const railCls = 'tl-rail-date'
+            + (railParts.isRange ? ' tl-rail-date--range' : '')
+            + (isCurrent ? ' tl-rail-date--current' : '')
+            + (canDeleteSession ? ' tl-rail-date--deletable' : '');
+        const rangeLabel = dates.length > 1 ? (dates[0] + ' ~ ' + dates[dates.length - 1]) : (nodeTitle || nodeDate);
+        const unitLabel = isWeekly ? '週' : '堂';
+        const railTitle = canDeleteSession
+            ? ('刪除此' + unitLabel + '：' + rangeLabel)
+            : String(rangeLabel || '');
+        const dayCls = 'tl-rail-date__day' + (railParts.isRange ? ' tl-rail-date__day--range' : '');
+        const railInner = `<span class="tl-rail-date__month">${railParts.month}</span><span class="${dayCls}">${railParts.day}</span>`;
+        const datesAttr = dates.join(',');
+        const railDateHtml = canDeleteSession
+            ? `<button type="button" class="${railCls}" title="${railTitle}" onclick="window.FeatureTimeline.removeSessionDate('${classId}', '${datesAttr}')">${railInner}</button>`
+            : `<div class="${railCls}" title="${railTitle}">${railInner}</div>`;
+
         return `
-            <div id="timeline-node-${index}" class="timeline-node" data-is-current="${isCurrent}" style="overflow: visible !important; border: 2px solid ${borderColor}; background-color: ${bgColor}; padding: 15px; border-radius: 12px; margin-bottom: 25px; position: relative; scroll-margin-top: 25px;" ${nodeDragEvents}>
+            <div id="timeline-node-${index}" class="timeline-node" data-is-current="${isCurrent}" style="overflow: visible !important; border: 2px solid ${borderColor}; background-color: ${bgColor}; padding: 15px; border-radius: 12px; margin-bottom: 12px; position: relative; scroll-margin-top: 25px;" ${nodeDragEvents}>
+                ${railDateHtml}
                 <div class="node-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap; gap:10px;">
                     <div class="node-date" style="display:flex; align-items:center; position:relative;">
-                        <div style="position: absolute; left: -65px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; border: 4px solid ${dotColor}; z-index: 1;"></div>
-                        <span style="font-weight: 800; color: ${headerTextColor}; font-size: 1rem;">📅 第 ${index + 1} ${mode === 'weekly' ? '週' : '堂'} - ${nodeTitle}</span> ${badge}
+                        <span style="font-weight: 800; color: ${headerTextColor}; font-size: 1rem;">第 ${index + 1} ${isWeekly ? '週' : '堂'}</span> ${badge}
                     </div>
                     ${headerActions}
                 </div>
                 ${assignmentsHtml}
                 <div id="${builderContainerId}"></div>
+            </div>`;
+    }
+
+    /** 灰線上兩堂之間：加入新日期／進度 */
+    function getTimelineRailAddHtml(classId) {
+        return `
+            <div class="tl-rail-add-row" aria-hidden="false">
+                <button type="button" class="tl-rail-add-btn" title="加入新日期／進度"
+                    onclick="window.FeatureTimeline.openAddSessionModal('${classId}')">＋</button>
             </div>`;
     }
 
@@ -891,6 +994,7 @@ window.TimelineTemplates = (() => {
         getBuilderFormHtml,
         getAssignmentBlockHtml,
         getTimelineNodeHtml,
+        getTimelineRailAddHtml,
         getAddSessionModalHtml,
         getMoveAssignModalHtml,
         getLinePushModalHtml

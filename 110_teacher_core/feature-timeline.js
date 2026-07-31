@@ -517,25 +517,46 @@ window.FeatureTimeline = (() => {
                 item.statusEl.style.color = '#3B82F6';
             }
             const rootEl = document.getElementById('node-material-root-' + item.pathStr);
-            const primary = (item.raw.material_refs && item.raw.material_refs[0]) || item.raw.material_ref;
+            // 還原後的 refs 可能比 DB 舊 material_refs 完整（由 grading_units 補回）
+            const primary = (item.savedRows && item.savedRows[0])
+                ? null
+                : ((item.raw.material_refs && item.raw.material_refs[0]) || item.raw.material_ref);
             if (rootEl && primary && primary.materials_root_kind) {
                 rootEl.value = normalizeMaterialsRootKind(primary.materials_root_kind);
+            }
+            // 若 savedRows 來自 rebuild，同步 root 種類
+            if (rootEl && item.raw.material_ref && item.raw.material_ref.materials_root_kind) {
+                rootEl.value = normalizeMaterialsRootKind(item.raw.material_ref.materials_root_kind);
             }
         });
 
         pendingMeta.forEach(function (item) {
             const kind = readMaterialsRootKind(item.pathStr);
+            const rowsToShow = item.savedRows.length ? item.savedRows : [{ value: '', range_spec: 'pp. 1~2' }];
+
+            // 🚨 先同步畫出 meta 列（不依賴 GAS／清單 API）。
+            // 曾發生：清單載入失敗時 catch 只改文字、不 render → 畫面 0 列，
+            // 但下方仍有 12 頁批改稿（節點看起來「又壞了」）。
+            renderMaterialMetaRows(item.pathStr, _materialMetaOptionsCache[item.pathStr] || [], rowsToShow);
+            if (item.statusEl && item.raw.snapshot_at) {
+                item.statusEl.textContent = '✅ 已還原 meta 列（' + rowsToShow.length + '）｜載入檔名清單中…';
+                item.statusEl.style.color = '#059669';
+            }
+
             loadMaterialMetaOptions(bState.classId, kind).then(function (options) {
-                renderMaterialMetaRows(item.pathStr, options, item.savedRows.length ? item.savedRows : [{ value: '', range_spec: '' }]);
+                renderMaterialMetaRows(item.pathStr, options, rowsToShow);
                 if (item.statusEl) {
                     item.statusEl.textContent = item.raw.snapshot_at
-                        ? ('✅ 已還原 snapshot（' + item.raw.snapshot_at + '）')
-                        : ('✅ 已載入 ' + options.length + ' 個 meta 檔');
+                        ? ('✅ 已還原 snapshot（' + item.raw.snapshot_at + '）｜meta 列 ' + rowsToShow.length)
+                        : ('✅ 已載入 ' + options.length + ' 個 meta 檔｜列 ' + rowsToShow.length);
                     item.statusEl.style.color = '#059669';
                 }
             }).catch(function (err) {
+                // 清單失敗仍保留已畫出的列（含 fallback option）
+                renderMaterialMetaRows(item.pathStr, [], rowsToShow);
                 if (item.statusEl) {
-                    item.statusEl.textContent = '⚠️ meta 清單載入失敗：' + err.message;
+                    item.statusEl.textContent = '⚠️ meta 清單載入失敗：' + (err && err.message ? err.message : err)
+                        + '｜已先還原 ' + rowsToShow.length + ' 列，可稍後再按「載入 meta 清單」';
                     item.statusEl.style.color = '#D97706';
                 }
             });
@@ -878,10 +899,18 @@ window.FeatureTimeline = (() => {
                     });
                 }
                 const builderContainerId = `builder-container-${index}`;
-                // 第一版：僅單堂模式可刪該日（有作業時在 handler 擋下）
-                const canDeleteSession = canEditTimeline && mode === 'single';
-                html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId, canDeleteSession);
+                // 單堂刪一日；週模式刪該節點內全部上課日（有作業時在 handler 擋下）
+                const canDeleteSession = !!canEditTimeline;
+                html += TPL.getTimelineNodeHtml(index, mode, node.title, isCurrent, isFuture, nodeDate, classId, canEditTimeline, assignmentsHtml, builderContainerId, canDeleteSession, node.dates);
+                // 兩節之間的灰線上可加新日期／進度（加入後週模式會自動歸入對應週）
+                if (canEditTimeline && index < timelineNodes.length - 1 && typeof TPL.getTimelineRailAddHtml === 'function') {
+                    html += TPL.getTimelineRailAddHtml(classId);
+                }
             });
+            // 最後一節之後也可加（方便補在尾端）
+            if (canEditTimeline && timelineNodes.length > 0 && typeof TPL.getTimelineRailAddHtml === 'function') {
+                html += TPL.getTimelineRailAddHtml(classId);
+            }
 
             const toolbarHtml = canEditTimeline
                 ? `<div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; margin:0 0 12px 20px; flex-wrap:wrap;">
@@ -1470,25 +1499,38 @@ window.FeatureTimeline = (() => {
         removeSessionDate: async (classId, dateStr) => {
             if (!checkCanEditTimeline(classId)) return window.showFlash('權限不足：您的身分無法調整堂次。', 'error');
             const DateUtils = window.UtilsDate;
-            const day = DateUtils.normalizeDateString(dateStr);
-            if (!day) return;
+            // 支援單日，或週模式一次刪多日（逗號分隔）
+            const days = String(dateStr || '').split(',').map(function (d) {
+                return DateUtils.normalizeDateString(String(d || '').trim());
+            }).filter(Boolean);
+            if (days.length === 0) return;
+
+            const daySet = {};
+            days.forEach(function (d) { daySet[d] = true; });
 
             const hasHw = (db.assignments || []).some(function (a) {
-                return String(a.class_id) === String(classId)
-                    && !a.deleted_at
-                    && DateUtils.normalizeDateString(a.target_date) === day;
+                if (String(a.class_id) !== String(classId) || a.deleted_at) return false;
+                const t = DateUtils.normalizeDateString(a.target_date);
+                return !!daySet[t];
             });
             if (hasHw) {
-                return window.showFlash('這一天還有作業，請先用「📅 改期」把作業搬到別天，再刪空白日。', 'error');
+                return window.showFlash(
+                    days.length > 1
+                        ? '這一週還有作業，請先用「📅 改期」把作業搬到別天，再刪空白週。'
+                        : '這一天還有作業，請先用「📅 改期」把作業搬到別天，再刪空白日。',
+                    'error'
+                );
             }
 
-            if (!confirm('確定要從進度中移除「' + day + '」這一堂嗎？（不會刪除任何作業）')) return;
+            const label = days.length > 1 ? (days[0] + ' ~ ' + days[days.length - 1]) : days[0];
+            const unit = days.length > 1 ? '週' : '堂';
+            if (!confirm('確定要從進度中移除「' + label + '」這一' + unit + '嗎？（不會刪除任何作業）')) return;
 
             try {
                 let list = await ensureCustomSessionsList(classId);
-                list = list.filter(function (d) { return d !== day; });
+                list = list.filter(function (d) { return !daySet[d]; });
                 await persistCustomSessions(classId, list, 'none');
-                window.showFlash('已移除堂次：' + day, 'success');
+                window.showFlash('已移除該' + unit + '：' + label, 'success');
             } catch (err) {
                 window.showFlash('刪除堂次失敗：' + (err.message || err), 'error');
             }
