@@ -1185,7 +1185,6 @@ window.UIStudentTimelineTemplates = (() => {
                             const audioUploadId = `audio-upload-input-${course.id}-${task.id}`;
 
                             let audioPlayerHtml = '';
-                            let manualSubmitBtnHtml = '';
 
                             if (hasValidAudioFile) {
                                 audioPlayerHtml = buildSubmittedFilesHtml(
@@ -1194,22 +1193,6 @@ window.UIStudentTimelineTemplates = (() => {
                                     inlinePlayerId,
                                     submittedFileMetas
                                 );
-                                
-                                let showManualSubmit = false;
-                                if (taskStatus === 'submitted') showManualSubmit = true;
-                                else if (taskStatus === 'failed') showManualSubmit = true;
-                                else if (taskStatus === 'ai_error') showManualSubmit = true;
-                                else if (taskStatus === 'ai_ready') showManualSubmit = true;
-
-                                if (showManualSubmit) {
-                                    const rawRetryUrl = retryAudioUrl ? retryAudioUrl : '';
-                                    const safeRetryAudioUrl = escapeJsSingleQuoted(rawRetryUrl);
-                                    const safeRetryId = escapeJsSingleQuoted(retryAudioId);
-                                    const manualSubmitLabel = taskStatus === 'ai_ready'
-                                        ? '🤖 重新提交批改'
-                                        : '🤖 手動提交批改';
-                                    manualSubmitBtnHtml = `<button onclick="window.FeatureStudentTimeline.retryAIGrading('${safeCourseId}', '${safeTaskId}', '${safeRetryId}', '${safeRetryAudioUrl}')" class="btn-action" style="background:#7C3AED; color:white; border:none; cursor:pointer; font-size:0.82rem; padding:6px 12px; border-radius:8px; font-weight:800;">${manualSubmitLabel}</button>`;
-                                }
                             }
 
                             const btnBaseStyle = 'font-size:0.82rem; padding:6px 12px; border-radius:8px; font-weight:800; cursor:pointer;';
@@ -1235,7 +1218,6 @@ window.UIStudentTimelineTemplates = (() => {
                                         ${studioBtnHtml}
                                         ${uploadBtnHtml}
                                         ${openFileBtnHtml}
-                                        ${manualSubmitBtnHtml}
                                     </div>
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>

@@ -1276,84 +1276,13 @@ window.FeatureStudentTimeline = (() => {
             window.open(safeFormatUrl(folderId), '_blank');
         },
 
-        retryAIGrading: async (assignmentId, taskId, fileId, audioUrl) => {
-            if (window._isUploadingAudio) {
-                console.warn('正在處理中，請勿重複點擊');
-                return;
+        // 💣 雷區：學生端已拔除「手動提交／重新提交 AI 批改」。
+        // 送批只走錄音繳交／上傳成功路徑；勿再掛回 UI（見 .cursor/rules/ai-grading-pipeline-invariants.mdc）。
+        retryAIGrading: async function () {
+            if (window.showFlash) {
+                window.showFlash('學生端已停用手動提交 AI 批改。若需重送，請由老師在進度表補啟／續跑。', 'error');
             }
-            window._isUploadingAudio = true;
-            
-            const statusId = `upload-status-${assignmentId}-${taskId}`;
-            const statusEl = document.getElementById(statusId);
-
-            try {
-                assertAssignmentUuid(assignmentId, '作業 ID');
-                const taskConfig = findTaskConfig(assignmentId, taskId);
-                const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-                if (!scriptText) {
-                    throw new Error('尚未設定批改文稿，無法送 AI。請通知老師先套用 Snapshot 或貼上文稿。');
-                }
-
-                if (statusEl) {
-                    statusEl.textContent = '🚀 手動喚醒 AI 批改中...';
-                    statusEl.style.color = '#3B82F6';
-                }
-                
-                const { userId, classId } = await getAuthContext(); 
-                if (!window.supabaseClient) throw new Error("系統 API 模組尚未載入");
-                
-                if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
-                let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
-                if (tempRecord) {
-                    tempRecord.status = 'ai_processing';
-                }
-                renderCourses();
-
-                // 「手動提交批改」若只重送單一 fileId，會把原本一頁一檔的 audio_segments
-                // 蓋成只剩 1 筆、且 original_script 是空字串，AI 只會拿到「合併整段文稿」
-                // 去改「一頁的錄音」，批改內容跟音檔就對不上了。這裡改成：只要之前的
-                // 繳交紀錄還留著完整的 audio_segments，重新提交時原樣帶回去，
-                // 不要因為手動重送而把多檔對應關係弄丟。
-                const existingSegments = (tempRecord && tempRecord.raw_data && Array.isArray(tempRecord.raw_data.audio_segments) && tempRecord.raw_data.audio_segments.length > 1)
-                    ? tempRecord.raw_data.audio_segments
-                    : null;
-
-                const rpcPayload = {
-                    p_assignment_id: assignmentId,
-                    p_task_id: taskId,
-                    p_student_id: userId,
-                    p_class_id: classId,
-                    p_file_id: fileId,
-                    p_audio_url: audioUrl
-                };
-                if (existingSegments) rpcPayload.p_segments = existingSegments;
-
-                const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', rpcPayload);
-
-                if (rpcErr) throw rpcErr;
-                
-                if (statusEl) {
-                    statusEl.textContent = '✅ 已提交！AI 已接管';
-                    statusEl.style.color = '#10B981';
-                }
-
-                applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl);
-                renderCourses();
-
-            } catch (err) {
-                window.showFlash('重新啟動 AI 失敗: ' + err.message, 'error');
-                if (statusEl) {
-                    statusEl.textContent = '❌ 提交失敗';
-                    statusEl.style.color = '#EF4444';
-                }
-                let tempRecord = window._studentTaskCompletions.find(c => String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId));
-                if (tempRecord) {
-                    tempRecord.status = 'ai_error';
-                }
-                renderCourses();
-            } finally {
-                window._isUploadingAudio = false; 
-            }
+            return;
         },
 
         toggleAIReport: (compositeKey) => {
