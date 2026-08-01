@@ -1,0 +1,3 @@
+enabled,profile_id,label,fields,fields_answer,lines_per_page,is_default,note
+Y,sentence-translate-4col,翻譯四欄,"STACK(D,E,C), FONTSIZE(Y,-1), X","STACK(D,E,C), FONTSIZE(SUBSTITUTE(SUBSTITUTE(X, BA, ""__ (""&BC&"")""), BB, ""__ (""&BD&"")""),-1), BA, BB",10,Y,fields=題卷；fields_answer=答卷／提示版；同教材所有活頁共用
+N,sentence-cloze-4col,填空四欄,"STACK(D,E,C), FONTSIZE(Y,-1), X","STACK(D,E,C), FONTSIZE(SUBSTITUTE(SUBSTITUTE(X, BA, ""__ (""&BC&"")""), BB, ""__ (""&BD&"")""),-1), BA, BB",10,N,填空時改這列 enabled=Y，並把上一列 is_default 改 N

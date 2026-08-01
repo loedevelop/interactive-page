@@ -7,6 +7,7 @@
 | `_Config` | 全域設定（輸出資料夾名稱等） |
 | `_Schema` | 欄位映射（語意 → Excel 欄、是否送 AI） |
 | `_Publish` | 發布規則（最大可用範圍，不含 #11～15） |
+| `_Layout` | 同教材共用的排版／欄位（可多列＝多種狀況可選） |
 | `A` … `Z` | 教材內容（phrase / vocab 等） |
 
 ## 正確發布路徑（本機）
@@ -14,16 +15,16 @@
 **不要**把 Excel 上傳到 Drive 發布，**不要**轉成 Google Sheets。
 
 ```
-本機 Excel（_Config / _Schema / _Publish + A～Z）
+本機 Excel（_Config / _Schema / _Publish / _Layout + A～Z）
         ↓  publish_local（本機腳本）
-本機產出 .meta.json + .script.txt（+ _manifest.json）
+本機產出 .meta.json + .script.txt + _manifest.json + _layout.json
         ↓  （之後若要給 Snapshot 用）只上傳這些 json/txt 到 00／01 Materials
 LogOn 出作業 Material Snapshot
 ```
 
 ## 快速開始
 
-1. 在 Excel 建好 `_Config`、`_Schema`、`_Publish` 與內容活頁（可把本資料夾 CSV 貼上當模板）
+1. 在 Excel 建好 `_Config`、`_Schema`、`_Publish`、（建議）`_Layout` 與內容活頁（可把本資料夾 CSV 貼上當模板）
 2. 依版面調 `_Schema` 的 `excel_col`；`_Publish` 設要發布的活頁（`enabled=Y`）
 3. **本機產出 json／txt**（在 Terminal）：
 
@@ -70,3 +71,22 @@ chmod +x publish_local.sh   # 首次
 | schema_id | 使用哪一套 `_Schema` 映射 |
 
 **注意：`_Publish` 只定「最大發布範圍」，不出現 #11～15 或「作業第 3 頁」。**
+
+## `_Layout` 欄位（→ `_layout.json`）
+
+同一份教材**所有活頁共用一份** `_layout.json`；表上可列多種排版，出考試時再依狀況選。
+
+| 欄 | 說明 |
+|----|------|
+| enabled | `Y` 才寫進 `_layout.json` |
+| profile_id | 對齊 Python `layout_profile_id`（如 `gept-translate-5col`） |
+| label | 給老師看的名稱 |
+| fields | 題卷欄位公式（頂層逗號＝輸出欄；支援 STACK／FONTSIZE／SUBSTITUTE／&／欄字母） |
+| fields_answer | 答卷／提示版公式（可空） |
+| lines_per_page | 每頁行數（考試區段預設題數估算用） |
+| is_default | `Y`＝預設選這組；多列都 Y 時取第一個 |
+| note | 備註 |
+
+產出 `_layout.json` 另含 `col_map`／`col_maps`（由 `_Schema` 的 excel_col→semantic_key 產生），供線上卷求值。
+
+沒有 `_Layout` 活頁、或沒有 `enabled=Y` 時：略過 `_layout.json`，不影響 meta 發布。

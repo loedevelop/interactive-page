@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-本機教材發布：讀 Excel（含 _Config / _Schema / _Publish）→ 產出 .meta.json / .script.txt
+本機教材發布：讀 Excel（含 _Config / _Schema / _Publish / _Layout）
+→ 產出 .meta.json / .script.txt / _manifest.json / _layout.json
 不上傳 Drive、不轉 Google Sheets。
 
 用法：
@@ -110,6 +111,96 @@ def read_publish_rules(wb) -> list[dict]:
     return [r for r in sheet_as_maps(wb, "_Publish") if is_truthy_yn(r.get("enabled"))]
 
 
+def read_layout_profiles(wb) -> list[dict]:
+    """
+    讀 _Layout 活頁：同一教材共用一份；列＝可選的排版／欄位組合。
+    活頁不存在時回傳 []（不阻斷發布）。
+    """
+    if "_Layout" not in wb.sheetnames:
+        return []
+    profiles = []
+    for r in sheet_as_maps(wb, "_Layout"):
+        if not is_truthy_yn(r.get("enabled")):
+            continue
+        pid = str(r.get("profile_id") or "").strip()
+        if not pid:
+            continue
+        lpp_raw = r.get("lines_per_page")
+        try:
+            lpp = int(lpp_raw) if lpp_raw is not None and str(lpp_raw).strip() != "" else 10
+        except (TypeError, ValueError):
+            lpp = 10
+        if lpp <= 0:
+            lpp = 10
+        fields_answer = str(
+            r.get("fields_answer") or r.get("answer_fields") or ""
+        ).strip()
+        profiles.append(
+            {
+                "profile_id": pid,
+                "label": str(r.get("label") or pid).strip(),
+                "fields": str(r.get("fields") or "").strip(),
+                "fields_answer": fields_answer,
+                "lines_per_page": lpp,
+                "is_default": is_truthy_yn(r.get("is_default")),
+                "note": str(r.get("note") or "").strip(),
+            }
+        )
+    return profiles
+
+
+def build_col_maps(schemas: dict) -> dict:
+    """excel_col → semantic_key（依 schema_id）；供線上卷公式求值。"""
+    out: dict[str, dict[str, str]] = {}
+    for sid, fields in (schemas or {}).items():
+        m: dict[str, str] = {}
+        for f in fields or []:
+            col = str(f.get("excel_col") or "").strip().upper()
+            key = str(f.get("semantic_key") or "").strip()
+            if col and key:
+                m[col] = key
+        if m:
+            out[str(sid)] = m
+    return out
+
+
+def build_layout_payload(
+    cfg: dict, profiles: list[dict], published_at: str, schemas: dict | None = None
+) -> dict | None:
+    if not profiles:
+        return None
+    default_id = ""
+    for p in profiles:
+        if p.get("is_default"):
+            default_id = p["profile_id"]
+            break
+    if not default_id:
+        default_id = profiles[0]["profile_id"]
+    col_maps = build_col_maps(schemas or {})
+    # 扁平 col_map：多 schema 時後寫覆蓋；通常一份教材共用一 schema
+    flat: dict[str, str] = {}
+    for _sid, m in col_maps.items():
+        flat.update(m)
+    return {
+        "published_at": published_at,
+        "material_folder": cfg.get("material_folder") or "",
+        "default_profile_id": default_id,
+        "col_map": flat,
+        "col_maps": col_maps,
+        "profiles": [
+            {
+                "profile_id": p["profile_id"],
+                "label": p["label"],
+                "fields": p["fields"],
+                "fields_answer": p.get("fields_answer") or "",
+                "lines_per_page": p["lines_per_page"],
+                "note": p.get("note") or "",
+            }
+            for p in profiles
+        ],
+    }
+
+
 def load_sheet_matrix(ws) -> list[tuple]:
     """一次讀完整張表（values_only），比逐格 ws.cell 快很多。"""
     return list(ws.iter_rows(values_only=True))
@@ -214,13 +305,19 @@ def publish(xlsx_path: Path, out_root: Path | None) -> Path:
     cfg = read_config(wb)
     schemas = read_schemas(wb)
     rules = read_publish_rules(wb)
+    layout_profiles = read_layout_profiles(wb)
     if not rules:
         raise SystemExit("_Publish 沒有 enabled=Y 的規則（請把要發布的列改成 Y）")
 
     out_dir = out_root or (xlsx_path.parent / "published" / cfg["material_folder"])
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"輸出目錄：{out_dir.resolve()}")
-    print(f"共 {len(rules)} 條 enabled=Y 規則\n")
+    print(f"共 {len(rules)} 條 enabled=Y 規則")
+    if layout_profiles:
+        print(f"共 {len(layout_profiles)} 個 _Layout 排版（同教材共用）")
+    else:
+        print("（無 _Layout 或沒有 enabled=Y → 略過 _layout.json）")
+    print()
 
     outputs = []
     now = datetime.now(timezone.utc).isoformat()
@@ -285,18 +382,28 @@ def publish(xlsx_path: Path, out_root: Path | None) -> Path:
             }
         )
 
+    layout_payload = build_layout_payload(cfg, layout_profiles, now, schemas)
+    if layout_payload:
+        (out_dir / "_layout.json").write_text(
+            json.dumps(layout_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"\n✓ _layout.json（預設 {layout_payload['default_profile_id']}，"
+              f"{len(layout_payload['profiles'])} 種可選）")
+
     manifest = {
         "published_at": now,
         "source_file": str(xlsx_path.name),
         "material_folder": cfg["material_folder"],
         "root_kind": "local",
         "outputs": outputs,
+        "layout": "_layout.json" if layout_payload else None,
     }
     (out_dir / "_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"\n✓ _manifest.json")
+    print(f"✓ _manifest.json")
     print(f"完成：{out_dir.resolve()}")
     wb.close()
     return out_dir

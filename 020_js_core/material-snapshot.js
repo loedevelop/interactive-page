@@ -311,9 +311,15 @@ window.MaterialSnapshot = (function () {
                 if (isNaN(bi)) return -1;
                 return ai - bi;
             });
-            var scriptLines = pageRows.map(function (row) {
-                return String(row.script || '').trim();
-            }).filter(function (line) { return line !== ''; });
+            var scriptLines = [];
+            var itemNos = [];
+            pageRows.forEach(function (row) {
+                var line = String(row.script || '').trim();
+                if (line === '') return;
+                scriptLines.push(line);
+                var itemNo = toNumber(row.item_no != null ? row.item_no : row.itemNo);
+                if (!isNaN(itemNo)) itemNos.push(itemNo);
+            });
             if (!scriptLines.length) return;
             var pageLabel = pageKey === '_' ? '?' : pageKey;
             units.push({
@@ -322,10 +328,39 @@ window.MaterialSnapshot = (function () {
                 page: pageKey === '_' ? null : (isNaN(toNumber(pageKey)) ? pageKey : toNumber(pageKey)),
                 label: stem + ' p.' + pageLabel,
                 original_script: scriptLines.join('\n'),
-                item_count: scriptLines.length
+                item_count: scriptLines.length,
+                // 題號清單：考試「#16~18」可用題數要靠這個跟出題範圍對齊
+                item_nos: itemNos
             });
         });
         return units;
+    }
+
+    /** 扁平題號索引：[{ stem, page, item_no }]，供考試區段依 # 範圍計算可用題數 */
+    function buildMetaItems(rows, context) {
+        context = context || {};
+        var stem = String(context.label || context.stem || '').trim();
+        if (!stem && (context.published_file || context.metaFile)) {
+            stem = String(context.published_file || context.metaFile)
+                .replace(/\.meta\.json$/i, '')
+                .replace(/\.json$/i, '');
+            var parts = stem.split(/[\/_]/);
+            stem = parts[parts.length - 1] || stem;
+        }
+        if (!stem) stem = 'M';
+        var out = [];
+        (rows || []).forEach(function (row) {
+            if (!String(row.script || '').trim()) return;
+            var itemNo = toNumber(row.item_no != null ? row.item_no : row.itemNo);
+            if (isNaN(itemNo)) return;
+            var pageNum = toNumber(row.page != null ? row.page : row.Page);
+            out.push({
+                stem: stem,
+                page: isNaN(pageNum) ? null : pageNum,
+                item_no: itemNo
+            });
+        });
+        return out;
     }
 
     function buildSnapshot(rows, context) {
@@ -340,6 +375,7 @@ window.MaterialSnapshot = (function () {
         }
 
         var gradingUnits = buildGradingUnits(rows, context);
+        var metaItems = buildMetaItems(rows, context);
 
         return {
             material_ref: {
@@ -361,6 +397,7 @@ window.MaterialSnapshot = (function () {
             student_display: displayText,
             student_display_text: displayText,
             grading_units: gradingUnits,
+            meta_items: metaItems,
             recording_unit: RECORDING_UNIT,
             recording_unit_hint: RECORDING_UNIT_HINT,
             snapshot_at: new Date().toISOString()

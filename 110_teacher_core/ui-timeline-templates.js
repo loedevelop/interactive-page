@@ -229,11 +229,22 @@ window.TimelineTemplates = (() => {
                 let gDueBadge = (t.due_date && t.due_date !== effectiveBlockDueDate) ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
 
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
+                const isRangeGroup = !!(t.raw_data && t.raw_data.group_role === 'range');
+                let groupTitleText = t.title || '';
+                if (isRangeGroup && !String(groupTitleText).replace(/<[^>]*>?/gm, '').trim()
+                    && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
+                    groupTitleText = window.BuilderStore.deriveRangeTitleFromGroup(t) || '';
+                }
+                const groupIcon = isRangeGroup ? '📐' : '🗂️';
+                const rangeChip = isRangeGroup
+                    ? '<span style="font-size:0.72rem; background:#DBEAFE; color:#1D4ED8; padding:2px 7px; border-radius:999px; font-weight:800;">範圍</span>'
+                    : '';
 
                 html += `
                     <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid ${lvl.border}; border-radius: 8px;">
-                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${t.title || '未命名群組作業'}</span>
+                        <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span style="font-size:1.2rem;">${groupIcon}</span> <span class="rt-normalize">${groupTitleText || (isRangeGroup ? '未命名範圍' : '未命名群組作業')}</span>
+                            ${rangeChip}
                             ${gDueBadge} ${gLateBadge}
                         </div>
                 `;
@@ -280,6 +291,16 @@ window.TimelineTemplates = (() => {
             const arrowHtml = getArrowButtonsHtml(pathStr, idx, tasks.length, depth, hasPrevSiblingGroup);
 
             if (t.type === 'group') {
+                const isRangeGroup = !!(t.raw_data && t.raw_data.group_role === 'range');
+                let displayGroupTitle = t.title || '';
+                if (isRangeGroup && !String(displayGroupTitle).replace(/<[^>]*>?/gm, '').trim()
+                    && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
+                    const derived = window.BuilderStore.deriveRangeTitleFromGroup(t);
+                    if (derived) {
+                        displayGroupTitle = derived;
+                        t.title = derived; // 畫面與資料同步；老師仍可再改
+                    }
+                }
                 let subTasksHtml = '';
                 if (t.subTasks && t.subTasks.length > 0) {
                     subTasksHtml = `<div style="padding-left: 10px; display:flex; flex-direction:column;">` +
@@ -298,20 +319,36 @@ window.TimelineTemplates = (() => {
 
                 let gLateMode = t.late_mode || 'infinite';
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
+                const groupBg = isRangeGroup ? '#EFF6FF' : '#F3E8FF';
+                const groupBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
+                const groupIcon = isRangeGroup ? '📐' : '🗂️';
+                const titlePlaceholder = isRangeGroup
+                    ? '✏️ 範圍，例：A pp. 1~2, B pp. 1~2, C #16~35'
+                    : '✏️ 群組作業標題';
+                const titleColor = isRangeGroup ? '#1E3A8A' : '#581C87';
+                const titleBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
+                const rangeBadge = isRangeGroup
+                    ? '<span style="font-size:0.75rem; background:#DBEAFE; color:#1D4ED8; padding:3px 8px; border-radius:999px; font-weight:800; white-space:nowrap;">範圍層</span>'
+                    : '';
+                const rangeHint = isRangeGroup
+                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">標題空白時會從底下錄音的 base 範圍自動帶入；子任務用「錄音」「考試」。</div>'
+                    : '';
 
                 return `
                     <div id="group-block-${pathStr}"
-                         style="${marginStyle} margin-bottom: 10px; background: #F3E8FF; padding: 12px; border-radius: 8px; border: 1px solid #D8B4FE; transition: border 0.2s;">
+                         style="${marginStyle} margin-bottom: 10px; background: ${groupBg}; padding: 12px; border-radius: 8px; border: 1px solid ${groupBorder}; transition: border 0.2s;">
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
-                            <span style="font-size:1.4rem;">🗂️</span>
-                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 群組作業標題" style="flex:1; font-size:1.1rem; font-weight:900; color:#581C87; padding:8px 12px; background:white; border:1px solid #D8B4FE; border-radius:6px; outline:none;">${t.title || ''}</div>
+                            <span style="font-size:1.4rem;">${groupIcon}</span>
+                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="${titlePlaceholder}" style="flex:1; font-size:1.1rem; font-weight:900; color:${titleColor}; padding:8px 12px; background:white; border:1px solid ${titleBorder}; border-radius:6px; outline:none;">${displayGroupTitle || ''}</div>
+                            ${rangeBadge}
                             
                             <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
                                 ${arrowHtml}
                                 <button type="button" class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
                             </div>
                         </div>
+                        ${rangeHint}
 
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
                             <div style="display:flex; align-items:center; gap:8px;">
@@ -358,6 +395,7 @@ window.TimelineTemplates = (() => {
                                 </div>
 
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle('${pathStr}')" title="建立範圍層，底下自動帶錄音＋考試">+ 📐 範圍（錄音＋考試）</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 ${addResourceHtml}
@@ -568,7 +606,7 @@ window.TimelineTemplates = (() => {
                             <div id="script-source-panel-meta-${pathStr}" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
                                     <div style="font-weight:900; color:#5B21B6;">📦 Material Snapshot（＋新增 meta 列）</div>
-                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')">🔄 載入 meta 清單</button>
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')" title="清單會在開啟編輯器時自動載入；此鈕僅供失敗時重抓">🔄 重新整理清單</button>
                                 </div>
                                 <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
                                     <select id="node-material-root-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:800;" onchange="window.FeatureTimeline.onMaterialRootChange('${pathStr}')">
@@ -811,6 +849,7 @@ window.TimelineTemplates = (() => {
                         <button type="button" class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                     </div>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle(null)" title="建立範圍層，底下自動帶錄音＋考試">+ 📐 範圍（錄音＋考試）</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     ${addResourceHtml}

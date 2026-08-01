@@ -1095,6 +1095,7 @@ window.UIStudentTimelineTemplates = (() => {
                     if (task.type === 'check') iconStr = '📌';
                     if (task.type === 'link') iconStr = '🔗';
                     if (task.type === 'audio_record') iconStr = '🎙️';
+                    if (task.type === 'exam') iconStr = '📝';
                     
                     let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                     const safeCourseId = escapeJsSingleQuoted(course.id);
@@ -1220,6 +1221,33 @@ window.UIStudentTimelineTemplates = (() => {
                                         ${openFileBtnHtml}
                                     </div>
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
+                                </div>
+                            `;
+                        }
+                    } else if (task.type === 'exam') {
+                        let displayTitle = stripHtml(task.title ? task.title : '線上考試');
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
+                        const paper = task.raw_data && task.raw_data.quiz_paper;
+                        const itemN = paper && Array.isArray(paper.items) ? paper.items.length : 0;
+                        let quizScoreHtml = '';
+                        const quizComp = (window._studentTaskCompletions || []).find(function (c) {
+                            return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
+                        });
+                        if (quizComp && quizComp.raw_data && quizComp.raw_data.quiz_result) {
+                            const qr = quizComp.raw_data.quiz_result;
+                            quizScoreHtml = `<span style="font-size:0.8rem; font-weight:800; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:2px 8px; border-radius:6px;">${escapeAttr(qr.correct)}/${escapeAttr(qr.total)}（${escapeAttr(qr.score)}%）</span>`;
+                        }
+                        if (!itemN) {
+                            btn = `<div style="color:#92400E; font-size:0.85rem; font-weight:800; background:#FFFBEB; padding:4px 10px; border-radius:6px; border:1px solid #FDE68A;">老師尚未產生線上卷</div>`;
+                        } else {
+                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
+                            const quizBtnLabel = quizScoreHtml ? '再作一次' : '📝 開始作答';
+                            btn = `
+                                <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    ${quizScoreHtml}
+                                    <button type="button" class="btn-action" style="background:#0F766E; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${quizBtnLabel}</button>
+                                    <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${itemN} 題</span>
                                 </div>
                             `;
                         }
@@ -1430,7 +1458,13 @@ window.UIStudentTimelineTemplates = (() => {
                                     if (!isLastLeaf && tasksList[idx + 1] && tasksList[idx + 1].type === 'group') isLastLeaf = true;
                                     
                                     if (task.type === 'group') {
-                                        let groupTitle = String(task.title ? task.title : '未命名作業群組');
+                                        const isRangeGroup = !!(task.raw_data && task.raw_data.group_role === 'range');
+                                        let groupTitle = String(task.title ? task.title : '');
+                                        if (isRangeGroup && !groupTitle.replace(/<[^>]*>?/gm, '').trim()
+                                            && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
+                                            groupTitle = window.BuilderStore.deriveRangeTitleFromGroup(task) || '';
+                                        }
+                                        if (!groupTitle) groupTitle = isRangeGroup ? '未命名範圍' : '未命名作業群組';
                                         let subTasksHtml = '';
                                         
                                         if (Array.isArray(task.subTasks) && task.subTasks.length > 0) {
@@ -1442,11 +1476,12 @@ window.UIStudentTimelineTemplates = (() => {
                                         }
 
                                         const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
+                                        const groupIcon = isRangeGroup ? '📐' : '🗂️';
 
                                         return `
                                             <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background:${lvl.bg}; border: 1px solid #E2E8F0; border-radius: 8px;">
-                                                <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
-                                                    <span style="font-size:1.2rem;">🗂️</span> <span class="rt-normalize">${groupTitle}</span>
+                                                <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px; flex-wrap:wrap;">
+                                                    <span style="font-size:1.2rem;">${groupIcon}</span> <span class="rt-normalize">${groupTitle}</span>
                                                 </div>
                                                 ${subTasksHtml}
                                             </div>

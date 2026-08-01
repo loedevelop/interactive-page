@@ -18,6 +18,41 @@ window.BuilderStore = (() => {
             .trim();
     }
 
+    /** 從範圍層底下錄音任務的 material_range／meta 列組出範圍標題 */
+    function deriveRangeTitleFromGroup(groupNode) {
+        if (!groupNode || !Array.isArray(groupNode.subTasks)) return '';
+        const audio = groupNode.subTasks.find(function (t) { return t && t.type === 'audio_record'; });
+        if (!audio) return '';
+        const raw = audio.raw_data || {};
+        let label = String(raw.material_range || '').trim();
+        if (!label) {
+            const refs = Array.isArray(raw.material_refs) && raw.material_refs.length
+                ? raw.material_refs
+                : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
+            if (refs.length && window.FeatureTimeline && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
+                label = String(window.FeatureTimeline.buildMaterialRangeLabelFromRows(refs) || '').trim();
+            }
+        }
+        if (!label) {
+            label = String(audio.title || '').replace(/<[^>]*>?/gm, '').trim();
+        }
+        if (!label || label === '錄音' || label === '考試') return '';
+        return label;
+    }
+
+    /** 範圍層標題空白時，用 base 範圍（錄音 meta）自動產生；不覆寫老師已填標題 */
+    function fillBlankRangeGroupTitles(tasks) {
+        (tasks || []).forEach(function (t) {
+            if (!t || t.type !== 'group') return;
+            if (t.subTasks) fillBlankRangeGroupTitles(t.subTasks);
+            if (!(t.raw_data && t.raw_data.group_role === 'range')) return;
+            const plain = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+            if (plain) return;
+            const derived = deriveRangeTitleFromGroup(t);
+            if (derived) t.title = derived;
+        });
+    }
+
     function syncTasksState(tasks, parentPathArray = []) {
         tasks.forEach((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -44,6 +79,17 @@ window.BuilderStore = (() => {
             
             if (t.type === 'group') {
                 if (t.subTasks) syncTasksState(t.subTasks, pathArray);
+                // 範圍層標題空白 → 用底下錄音 base 範圍填上
+                if (t.raw_data && t.raw_data.group_role === 'range') {
+                    const plain = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    if (!plain) {
+                        const derived = deriveRangeTitleFromGroup(t);
+                        if (derived) {
+                            t.title = derived;
+                            if (titleEl) titleEl.textContent = derived;
+                        }
+                    }
+                }
             } else {
                 const urlEl = document.getElementById(`node-url-${pathStr}`);
                 const urlTextEl = document.getElementById(`node-url-text-${pathStr}`);
@@ -166,6 +212,7 @@ window.BuilderStore = (() => {
                                 }
                                 if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
                                 if (Array.isArray(snap.grading_units)) t.raw_data.grading_units = snap.grading_units;
+                                if (Array.isArray(snap.meta_items)) t.raw_data.meta_items = snap.meta_items;
                                 // 逐頁批改稿編輯框若存在，代表老師可能微調過內容，優先採用畫面上的最新值
                                 // （否則會被 hidden snapshot json 裡「套用 Snapshot 當下」的舊版蓋回去）
                                 const domGradingUnits = (window.FeatureTimeline && typeof window.FeatureTimeline.collectGradingUnitsFromDom === 'function')
@@ -322,6 +369,7 @@ window.BuilderStore = (() => {
         if (bState.late_mode === 'no_late') { bState.late_grace = 0; bState.late_penalty = 0; }
         if (bState.late_mode === 'infinite') { bState.late_grace = 0; }
         if (bState.tasks) syncTasksState(bState.tasks);
+        fillBlankRangeGroupTitles(bState.tasks);
     }
 
     function getTaskParentArray(pathArray) {
@@ -363,10 +411,85 @@ window.BuilderStore = (() => {
         getState: () => bState,
         clear: () => { bState = null; },
         sync: () => syncState(),
+        deriveRangeTitleFromGroup: deriveRangeTitleFromGroup,
+        fillBlankRangeGroupTitles: fillBlankRangeGroupTitles,
         
         getTaskParentArray: getTaskParentArray,
 
+        /** 新作業慣例：教材／群組底下掛「範圍層」，再掛錄音＋考試 */
+        _isRangeGroupNode: (node) => !!(node && node.type === 'group' && node.raw_data && node.raw_data.group_role === 'range'),
+
+        _defaultAudioRaw: () => ({
+            use_ai_grading: true,
+            use_ai_grammar: false,
+            capture_studio: true,
+            capture_upload: true,
+            script_source: 'meta',
+            material_range: '',
+            ai_source_type: 'text',
+            student_source_type: 'text'
+        }),
+
+        _defaultExamRaw: () => ({
+            exam_job_id: '',
+            exam_title: '',
+            exam_job: null
+        }),
+
+        _makeLeafNode: (type, title, rawData) => ({
+            id: `task_${Date.now()}_${Math.random()}`,
+            type,
+            title: title || '',
+            url: '',
+            url_text: '',
+            description: '',
+            due_date: '',
+            late_mode: 'infinite',
+            grace_period_hours: 0,
+            penalty_percentage: 0,
+            raw_data: rawData || {}
+        }),
+
         addNode: (pathStr, type) => {
+            syncState();
+            let targetArr;
+            let parentNode = null;
+            if (!pathStr) targetArr = bState.tasks;
+            else {
+                const arr = pathStr.split('-').map(Number);
+                const parentArr = getTaskParentArray(arr);
+                parentNode = parentArr[arr[arr.length - 1]];
+                if (!parentNode.subTasks) parentNode.subTasks = [];
+                targetArr = parentNode.subTasks;
+            }
+
+            let defaultTitle = '';
+            if (window.BuilderStore._isRangeGroupNode(parentNode)) {
+                if (type === 'audio_record') defaultTitle = '錄音';
+                else if (type === 'exam') defaultTitle = '考試';
+            }
+
+            let raw = {};
+            if (type === 'audio_record') raw = window.BuilderStore._defaultAudioRaw();
+            else if (type === 'exam') raw = window.BuilderStore._defaultExamRaw();
+            else if (type === 'group') raw = {};
+
+            // 掛在範圍層下的錄音：若尚未填 material_range，帶入父層標題當提示（舊作業無 group_role 不受影響）
+            if (type === 'audio_record' && window.BuilderStore._isRangeGroupNode(parentNode)) {
+                const rangeHint = (parentNode.title || '').replace(/<[^>]*>?/gm, '').trim();
+                if (rangeHint && !raw.material_range) raw.material_range = rangeHint;
+            }
+
+            const node = window.BuilderStore._makeLeafNode(type, defaultTitle, raw);
+            if (type === 'group') node.subTasks = [];
+            targetArr.push(node);
+        },
+
+        /**
+         * 一鍵建立「範圍群組 → 錄音＋考試」（僅影響新建節點，不改舊作業）
+         * 標題留給老師填範圍，例如：A pp. 1~2, B pp. 1~2, C #16~35
+         */
+        addRangeBundle: (pathStr) => {
             syncState();
             let targetArr;
             if (!pathStr) targetArr = bState.tasks;
@@ -377,25 +500,28 @@ window.BuilderStore = (() => {
                 if (!targetNode.subTasks) targetNode.subTasks = [];
                 targetArr = targetNode.subTasks;
             }
-            targetArr.push({
-                id: `task_${Date.now()}_${Math.random()}`, type, title: '', url: '', url_text: '', description: '',
-                due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0,
-                raw_data: type === 'audio_record' ? {
-                    use_ai_grading: true,
-                    use_ai_grammar: false,
-                    capture_studio: true,
-                    capture_upload: true,
-                    script_source: 'meta',
-                    material_range: '',
-                    ai_source_type: 'text',
-                    student_source_type: 'text'
-                } : (type === 'exam' ? {
-                    exam_job_id: '',
-                    exam_title: '',
-                    exam_job: null
-                } : {}),
-                ...(type === 'group' ? { subTasks: [] } : {})
-            });
+
+            const stamp = Date.now();
+            const rangeGroup = {
+                id: `task_${stamp}_${Math.random()}`,
+                type: 'group',
+                title: '',
+                url: '',
+                url_text: '',
+                description: '',
+                due_date: '',
+                late_mode: 'infinite',
+                grace_period_hours: 0,
+                penalty_percentage: 0,
+                raw_data: { group_role: 'range' },
+                subTasks: [
+                    window.BuilderStore._makeLeafNode('audio_record', '錄音', window.BuilderStore._defaultAudioRaw()),
+                    window.BuilderStore._makeLeafNode('exam', '考試', window.BuilderStore._defaultExamRaw())
+                ]
+            };
+            // 確保子節點 id 不碰撞
+            rangeGroup.subTasks[1].id = `task_${stamp + 1}_${Math.random()}`;
+            targetArr.push(rangeGroup);
         },
         removeNode: (pathStr) => {
             syncState();
@@ -507,6 +633,11 @@ window.BuilderStore = (() => {
             }
             if (snapshot.snapshot_at) rd.snapshot_at = snapshot.snapshot_at;
             if (Array.isArray(snapshot.grading_units)) rd.grading_units = snapshot.grading_units;
+            if (Array.isArray(snapshot.meta_items)) rd.meta_items = snapshot.meta_items;
+            // 完整 meta 列快取：考試產生線上卷可直接抽題，不必再連打 GAS
+            if (snapshot.meta_rows_by_stem && typeof snapshot.meta_rows_by_stem === 'object') {
+                rd.meta_rows_by_stem = snapshot.meta_rows_by_stem;
+            }
             if (snapshot.recording_unit) rd.recording_unit = snapshot.recording_unit;
             if (snapshot.recording_unit_hint) rd.recording_unit_hint = snapshot.recording_unit_hint;
             rd.script_source = 'meta';

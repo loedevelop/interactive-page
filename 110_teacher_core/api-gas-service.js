@@ -8,6 +8,49 @@ window.GasService = (function() {
   // 這是你已部署且剛更新完畢的 GAS 網頁應用程式網址
   const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwsunsD9BnK1DEdyXlT5OmH5j2t4vvDf6URWhfYzXoB3FjdLOPsCC4jTKjSK3Q2RmGO/exec';
 
+  /**
+   * 統一 POST：辨識「打到 doGet 健康檢查」與「回 HTML」兩種常見部署故障。
+   */
+  async function postGasJson(payload) {
+    const response = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    });
+    const text = await response.text();
+    var result;
+    try {
+      result = JSON.parse(text);
+    } catch (_parseErr) {
+      if (/^\s*</.test(text)) {
+        if (/找不到網頁|Moved Temporarily|Page not found/i.test(text)) {
+          throw new Error(
+            'GAS Web App 網址已失效（回傳「找不到網頁」）。'
+            + '請在 script.google.com → 部署 → 管理部署作業 → 編輯 → 選「新版本」→ 對象「任何人」後部署；'
+            + '若網址變了，請同步更新 api-gas-service.js 與 api.js 的 GAS URL。'
+          );
+        }
+        throw new Error(
+          'GAS 回傳 HTML 而非 JSON（常見：Web App 權限不是「任何人」、或部署網址過期）。'
+          + '請重新部署：執行身分＝我、誰可以存取＝任何人，並核對前端 GAS_WEB_APP_URL。'
+        );
+      }
+      throw new Error('GAS 回應不是 JSON：' + String(text || '').slice(0, 160));
+    }
+    // doGet 預設：{ status:'ok', message:'LogOn GAS Online' } —— 代表 POST 被轉成 GET，action 沒進 doPost
+    if (result && result.status === 'ok' && /LogOn GAS Online/i.test(String(result.message || ''))) {
+      throw new Error(
+        'GAS 只回應了健康檢查（doGet），沒有執行 doPost action「'
+        + (payload && payload.action ? payload.action : '?')
+        + '」。請重新部署 Web App（務必選「新版本」），確認對象為「任何人」。'
+      );
+    }
+    if (!result || result.status !== 'success') {
+      throw new Error((result && result.message) || 'GAS 呼叫失敗');
+    }
+    return result;
+  }
+
   return {
     /**
      * 🔍 內部工具：解析 Google Drive / Sheets URL 以取得真正的 File ID
@@ -269,41 +312,49 @@ window.GasService = (function() {
     },
 
     async listMaterialMasters(targetFolderId, rootKind = 'class') {
-      const payload = {
+      const result = await postGasJson({
         action: 'list_material_masters',
         targetFolderId: targetFolderId,
         rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
-      };
-      const response = await fetch(GAS_WEB_APP_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
       });
-      const result = await response.json();
-      if (result.status !== 'success') {
-        throw new Error(result.message || '無法列出教材母稿');
-      }
       return result.materials || [];
     },
 
-    async readMaterialFile(targetFolderId, materialFolder, fileName, rootKind = 'class') {
+    /**
+     * 讀單一教材檔。優先 fileId（不依賴資料夾名）；否則走 targetFolderId + materialFolder + fileName。
+     * opts: { fileId } 或第四參之後相容舊呼叫。
+     */
+    async readMaterialFile(targetFolderId, materialFolder, fileName, rootKind = 'class', opts) {
+      const options = opts || {};
       const payload = {
         action: 'read_material_file',
-        targetFolderId: targetFolderId,
-        materialFolder: materialFolder || '',
-        fileName: fileName,
         rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
       };
-      const response = await fetch(GAS_WEB_APP_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      });
-      const result = await response.json();
-      if (result.status !== 'success') {
-        throw new Error(result.message || '無法讀取 meta 檔');
+      if (options.fileId) {
+        payload.fileId = String(options.fileId).trim();
+      } else {
+        payload.targetFolderId = targetFolderId;
+        payload.materialFolder = materialFolder || '';
+        payload.fileName = fileName;
       }
-      return result;
+      return postGasJson(payload);
+    },
+
+    /** 一批讀多個 meta／layout（一次 GAS 往返） */
+    async readMaterialFiles(targetFolderId, items, rootKind = 'class') {
+      const result = await postGasJson({
+        action: 'read_material_files',
+        targetFolderId: targetFolderId,
+        rootKind: rootKind === 'teacher' ? 'teacher' : 'class',
+        items: (items || []).map(function (it) {
+          return {
+            materialFolder: (it && (it.materialFolder || it.material_folder)) || '',
+            fileName: (it && it.fileName) || '',
+            fileId: (it && it.fileId) || ''
+          };
+        })
+      });
+      return result.files || [];
     },
 
     async ensureTeacherWorkspace(teacherName, teacherShortId) {

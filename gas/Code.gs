@@ -197,6 +197,15 @@ function resolveClassMaterialsFolder(classFolder, createIfMissing) {
 function resolveMaterialsRoot(rootFolder, rootKind, createIfMissing) {
   if (!rootFolder) return null;
   var kind = normalizeMaterialsRootKind(rootKind);
+  var rootName = '';
+  try { rootName = String(rootFolder.getName() || ''); } catch (_nameErr) { rootName = ''; }
+
+  // 若傳進來的已經是教材根（綁定到子夾時），不要再往下找一層
+  if (kind === 'teacher' && rootName === TEACHER_MATERIALS_FOLDER) return rootFolder;
+  if (kind !== 'teacher' && (rootName === CLASS_MATERIALS_FOLDER || rootName === CLASS_MATERIALS_FOLDER_LEGACY)) {
+    return rootFolder;
+  }
+
   if (kind === 'teacher') {
     var teacherMats = findSubFolder(rootFolder, TEACHER_MATERIALS_FOLDER);
     if (teacherMats) return teacherMats;
@@ -204,6 +213,76 @@ function resolveMaterialsRoot(rootFolder, rootKind, createIfMissing) {
     return null;
   }
   return resolveClassMaterialsFolder(rootFolder, createIfMissing);
+}
+
+/** 不分大小寫找子資料夾 */
+function findSubFolderInsensitive(parentFolder, subFolderName) {
+  if (!parentFolder || !subFolderName) return null;
+  var exact = findSubFolder(parentFolder, subFolderName);
+  if (exact) return exact;
+  var want = String(subFolderName).trim().toLowerCase();
+  if (!want) return null;
+  var iter = parentFolder.getFolders();
+  while (iter.hasNext()) {
+    var f = iter.next();
+    if (String(f.getName() || '').trim().toLowerCase() === want) return f;
+  }
+  return null;
+}
+
+/** 列出教材根下一層資料夾名（錯誤訊息用） */
+function listImmediateFolderNames(parentFolder, limit) {
+  var names = [];
+  if (!parentFolder) return names;
+  var max = limit > 0 ? limit : 30;
+  var iter = parentFolder.getFolders();
+  while (iter.hasNext() && names.length < max) {
+    names.push(iter.next().getName());
+  }
+  return names;
+}
+
+/**
+ * 在教材根找檔：先指定子夾，找不到再掃所有子夾／根目錄（修「明明有檔卻說找不到子夾」）。
+ */
+function locateMaterialFile(mastersRoot, materialFolderName, fileName) {
+  var cleanName = String(fileName || '').trim();
+  if (!mastersRoot || !cleanName) return null;
+
+  var folderHint = String(materialFolderName || '').trim();
+  if (folderHint) {
+    var named = findSubFolderInsensitive(mastersRoot, folderHint);
+    if (named) {
+      var inNamed = named.getFilesByName(cleanName);
+      if (inNamed.hasNext()) {
+        return { file: inNamed.next(), folderName: named.getName(), folderId: named.getId() };
+      }
+    }
+  }
+
+  // 掃子夾：同檔名優先選資料夾名相符者
+  var hits = [];
+  var subs = mastersRoot.getFolders();
+  while (subs.hasNext()) {
+    var sub = subs.next();
+    var files = sub.getFilesByName(cleanName);
+    if (files.hasNext()) {
+      hits.push({ file: files.next(), folderName: sub.getName(), folderId: sub.getId() });
+    }
+  }
+  var top = mastersRoot.getFilesByName(cleanName);
+  if (top.hasNext()) {
+    hits.push({ file: top.next(), folderName: '', folderId: mastersRoot.getId() });
+  }
+
+  if (!hits.length) return null;
+  if (folderHint) {
+    var want = folderHint.toLowerCase();
+    for (var i = 0; i < hits.length; i++) {
+      if (String(hits[i].folderName || '').toLowerCase() === want) return hits[i];
+    }
+  }
+  return hits[0];
 }
 
 function resolveClassResourcesFolder(classFolder, createIfMissing) {
@@ -288,28 +367,93 @@ function readMaterialFile(rootFolderId, materialFolderName, fileName, rootKind) 
       : '找不到 00_Class_Materials，請先發布教材。');
   }
 
-  var targetFolder = mastersRoot;
-  if (materialFolderName) {
-    var named = findSubFolder(mastersRoot, materialFolderName);
-    if (!named) throw new Error('找不到教材子資料夾：' + materialFolderName);
-    targetFolder = named;
-  }
-
   var cleanName = String(fileName || '').trim();
   if (!cleanName) throw new Error('缺少 fileName');
 
-  var matches = targetFolder.getFilesByName(cleanName);
-  if (!matches.hasNext()) {
-    throw new Error('找不到檔案：' + cleanName);
+  var located = locateMaterialFile(mastersRoot, materialFolderName, cleanName);
+  if (!located) {
+    var kids = listImmediateFolderNames(mastersRoot, 20);
+    throw new Error(
+      '找不到檔案：' + (materialFolderName ? (materialFolderName + '/') : '') + cleanName
+      + '（教材根「' + mastersRoot.getName() + '」下現有資料夾：'
+      + (kids.length ? kids.join(', ') : '（空）') + '）'
+    );
   }
 
-  var file = matches.next();
+  var file = located.file;
   return {
     fileName: cleanName,
     fileId: file.getId(),
     content: file.getBlob().getDataAsString('UTF-8'),
     mimeType: file.getMimeType(),
-    rootKind: kind
+    rootKind: kind,
+    materialFolder: located.folderName || String(materialFolderName || '')
+  };
+}
+
+/** 一次讀多個教材檔（大幅減少 Web App 冷啟動來回） */
+function readMaterialFiles(rootFolderId, items, rootKind) {
+  var list = items || [];
+  var out = [];
+  var kind = normalizeMaterialsRootKind(rootKind);
+  for (var i = 0; i < list.length; i++) {
+    var it = list[i] || {};
+    var fileName = String(it.fileName || '').trim();
+    var materialFolder = String(it.materialFolder || it.material_folder || '').trim();
+    var byId = String(it.fileId || '').trim();
+    try {
+      var one;
+      if (byId) {
+        one = readDriveTextFileById(byId);
+        out.push({
+          ok: true,
+          fileName: one.fileName || fileName,
+          fileId: one.fileId,
+          content: one.content,
+          mimeType: one.mimeType,
+          materialFolder: materialFolder,
+          rootKind: kind
+        });
+      } else {
+        if (!fileName) {
+          out.push({ ok: false, fileName: '', message: '缺少 fileName' });
+          continue;
+        }
+        one = readMaterialFile(rootFolderId, materialFolder, fileName, kind);
+        out.push({
+          ok: true,
+          fileName: one.fileName,
+          fileId: one.fileId,
+          content: one.content,
+          mimeType: one.mimeType,
+          materialFolder: one.materialFolder,
+          rootKind: one.rootKind
+        });
+      }
+    } catch (err) {
+      out.push({
+        ok: false,
+        fileName: fileName,
+        materialFolder: materialFolder,
+        fileId: byId,
+        message: String(err && err.message ? err.message : err)
+      });
+    }
+  }
+  return { files: out, rootKind: kind };
+}
+
+/** 直接用 Drive fileId 讀文字（清單已有 fileId 時最快、不依賴資料夾名） */
+function readDriveTextFileById(fileId) {
+  var id = String(fileId || '').trim();
+  if (!id) throw new Error('缺少 fileId');
+  var file = DriveApp.getFileById(id);
+  if (file.isTrashed()) throw new Error('檔案已在垃圾桶');
+  return {
+    fileName: file.getName(),
+    fileId: file.getId(),
+    content: file.getBlob().getDataAsString('UTF-8'),
+    mimeType: file.getMimeType()
   };
 }
 
@@ -403,8 +547,12 @@ function doGet(e) {
       return ContentService.createBinaryOutput(blob.getBytes()).setMimeType(mimeType);
     }
 
-    return ContentService.createTextOutput(JSON.stringify({ status: 'ok', message: 'LogOn GAS Online' }))
-      .setMimeType(ContentService.MimeType.JSON);
+    // 健康檢查：前端若誤拿到這包（status=ok），代表 POST 被轉成 GET、doPost 沒跑到
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'ok',
+      message: 'LogOn GAS Online',
+      hint: 'list_material_masters / read_material_file 必須用 POST 打 doPost；若前端看到此訊息請重新部署 Web App（新版本＋任何人）'
+    })).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: String(err) }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -643,6 +791,17 @@ function doPost(e) {
       var readMaterialFolder = data.materialFolder ? String(data.materialFolder).trim() : '';
       var readFileName = data.fileName ? String(data.fileName).trim() : '';
       var readRootKind = data.rootKind || data.materialsRootKind || 'class';
+      var readByFileId = data.fileId ? String(data.fileId).trim() : '';
+      if (readByFileId) {
+        var byId = readDriveTextFileById(readByFileId);
+        return ContentService.createTextOutput(JSON.stringify({
+          status: 'success',
+          fileName: byId.fileName,
+          fileId: byId.fileId,
+          content: byId.content,
+          rootKind: normalizeMaterialsRootKind(readRootKind)
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
       if (!readClassFolderId || !readFileName) {
         throw new Error('缺少 targetFolderId 或 fileName');
       }
@@ -652,7 +811,26 @@ function doPost(e) {
         fileName: readResult.fileName,
         fileId: readResult.fileId,
         content: readResult.content,
-        rootKind: readResult.rootKind
+        rootKind: readResult.rootKind,
+        materialFolder: readResult.materialFolder
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'read_material_files') {
+      var batchFolderId = data.targetFolderId ? String(data.targetFolderId).trim() : '';
+      var batchRootKind = data.rootKind || data.materialsRootKind || 'class';
+      var batchItems = data.items || data.files || [];
+      if (!batchItems || !batchItems.length) throw new Error('缺少 items');
+      var needFolder = false;
+      for (var bi = 0; bi < batchItems.length; bi++) {
+        if (!batchItems[bi] || !batchItems[bi].fileId) { needFolder = true; break; }
+      }
+      if (needFolder && !batchFolderId) throw new Error('缺少 targetFolderId');
+      var batchResult = readMaterialFiles(batchFolderId || 'unused', batchItems, batchRootKind);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        files: batchResult.files,
+        rootKind: batchResult.rootKind
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -901,6 +1079,80 @@ function readPublishRules(ss) {
   });
 }
 
+/** 讀 _Layout：同教材共用；多列＝多種可選排版。活頁不存在則 []。 */
+function readLayoutProfiles(ss) {
+  var sh = ss.getSheetByName('_Layout');
+  if (!sh) return [];
+  var rows = readSheetAsMap(ss, '_Layout');
+  var profiles = [];
+  rows.forEach(function(r) {
+    if (!isTruthyYN(r.enabled)) return;
+    var pid = String(r.profile_id || '').trim();
+    if (!pid) return;
+    var lpp = Number(r.lines_per_page);
+    if (isNaN(lpp) || lpp <= 0) lpp = 10;
+    profiles.push({
+      profile_id: pid,
+      label: String(r.label || pid).trim(),
+      fields: String(r.fields || '').trim(),
+      fields_answer: String(r.fields_answer || r.answer_fields || '').trim(),
+      lines_per_page: lpp,
+      is_default: isTruthyYN(r.is_default),
+      note: String(r.note || '').trim()
+    });
+  });
+  return profiles;
+}
+
+function buildColMaps(schemas) {
+  var out = {};
+  Object.keys(schemas || {}).forEach(function(sid) {
+    var m = {};
+    (schemas[sid] || []).forEach(function(f) {
+      var col = String(f.excel_col || '').trim().toUpperCase();
+      var key = String(f.semantic_key || '').trim();
+      if (col && key) m[col] = key;
+    });
+    if (Object.keys(m).length) out[sid] = m;
+  });
+  return out;
+}
+
+function buildLayoutPayload(cfg, profiles, publishedAt, schemas) {
+  if (!profiles || !profiles.length) return null;
+  var defaultId = '';
+  for (var i = 0; i < profiles.length; i++) {
+    if (profiles[i].is_default) {
+      defaultId = profiles[i].profile_id;
+      break;
+    }
+  }
+  if (!defaultId) defaultId = profiles[0].profile_id;
+  var colMaps = buildColMaps(schemas || {});
+  var flat = {};
+  Object.keys(colMaps).forEach(function(sid) {
+    var m = colMaps[sid];
+    Object.keys(m).forEach(function(k) { flat[k] = m[k]; });
+  });
+  return {
+    published_at: publishedAt,
+    material_folder: (cfg && cfg.material_folder) || '',
+    default_profile_id: defaultId,
+    col_map: flat,
+    col_maps: colMaps,
+    profiles: profiles.map(function(p) {
+      return {
+        profile_id: p.profile_id,
+        label: p.label,
+        fields: p.fields,
+        fields_answer: p.fields_answer || '',
+        lines_per_page: p.lines_per_page,
+        note: p.note || ''
+      };
+    })
+  };
+}
+
 function getLastDataRow(sheet, colLetter) {
   var col = colLetterToIndex(colLetter);
   if (col < 0) col = 0;
@@ -990,6 +1242,7 @@ function publishMaterialFromWorkbook(sourceFileId, targetFolderId, rootKind) {
     var cfg = readMaterialConfig(ss);
     var schemas = readSchemaDefinitions(ss);
     var rules = readPublishRules(ss);
+    var layoutProfiles = readLayoutProfiles(ss);
     if (rules.length === 0) {
       throw new Error('_Publish 沒有 enabled=Y 的規則');
     }
@@ -1046,12 +1299,18 @@ function publishMaterialFromWorkbook(sourceFileId, targetFolderId, rootKind) {
       });
     }
 
+    var layoutPayload = buildLayoutPayload(cfg, layoutProfiles, now, schemas);
+    if (layoutPayload) {
+      writeDriveTextFile(materialFolder, '_layout.json', JSON.stringify(layoutPayload, null, 2), MimeType.PLAIN_TEXT);
+    }
+
     var manifest = {
       published_at: now,
       source_file_id: sourceFileId,
       material_folder: cfg.material_folder,
       root_kind: kind,
-      outputs: outputs
+      outputs: outputs,
+      layout: layoutPayload ? '_layout.json' : null
     };
     writeDriveTextFile(materialFolder, '_manifest.json', JSON.stringify(manifest, null, 2), MimeType.PLAIN_TEXT);
 
@@ -1059,7 +1318,8 @@ function publishMaterialFromWorkbook(sourceFileId, targetFolderId, rootKind) {
       folderId: materialFolder.getId(),
       folderUrl: materialFolder.getUrl(),
       rootKind: kind,
-      manifest: manifest
+      manifest: manifest,
+      layout: layoutPayload
     };
   } finally {
     if (opened.tempId) {

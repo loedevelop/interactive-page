@@ -67,11 +67,27 @@ window.FeatureTimeline = (() => {
                     rootKind: kind,
                     folderName: pack.folderName,
                     fileName: mf.name,
+                    fileId: mf.fileId || '',
                     label: prefix + (pack.folderName ? pack.folderName + ' / ' : '') + mf.name
                 });
             });
         });
         return options;
+    }
+
+    /** 從已載入的 options 找回 fileId（避免再靠資料夾名找檔） */
+    function lookupMetaFileId(pathStr, materialFolder, fileName) {
+        const opts = _materialMetaOptionsCache[pathStr] || [];
+        const folder = String(materialFolder || '');
+        const name = String(fileName || '');
+        for (let i = 0; i < opts.length; i++) {
+            const o = opts[i];
+            if (!o || !o.fileId) continue;
+            if (String(o.folderName || '') === folder && String(o.fileName || '') === name) {
+                return o.fileId;
+            }
+        }
+        return '';
     }
 
     async function loadMaterialMetaOptions(classId, rootKind) {
@@ -84,7 +100,226 @@ window.FeatureTimeline = (() => {
         return collectMaterialMetaOptions(materials, kind);
     }
 
+    // 班級級 meta 清單快取（依 classId + 根目錄），避免每個節點／每次重繪都手動載
+    const _metaCatalog = {};
+    const _metaCatalogPromises = {};
+    /** 各錄音節點目前下拉用的 options（由 catalog 灌入） */
     const _materialMetaOptionsCache = {};
+
+    function metaCatalogKey(classId, rootKind) {
+        return String(classId || '') + '::' + normalizeMaterialsRootKind(rootKind);
+    }
+
+    function getMetaCatalogEntry(classId, rootKind) {
+        return _metaCatalog[metaCatalogKey(classId, rootKind)] || null;
+    }
+
+    /**
+     * 確保某根目錄的 meta 清單已載入（可 force 重抓）。
+     * 雷區：失敗時不可把 [] 當成功快取，否則之後永遠 0 檔、重整也像沒作用。
+     */
+    async function ensureMetaCatalog(classId, rootKind, opts) {
+        const options = opts || {};
+        const kind = normalizeMaterialsRootKind(rootKind);
+        const key = metaCatalogKey(classId, kind);
+        if (options.force) {
+            delete _metaCatalog[key];
+            delete _metaCatalogPromises[key];
+        }
+        const cached = _metaCatalog[key];
+        // 只有明確成功（ok:true）才用快取；失敗必須可重試
+        if (!options.force && cached && cached.ok === true && Array.isArray(cached.options)) {
+            return cached.options;
+        }
+        if (_metaCatalogPromises[key]) {
+            return _metaCatalogPromises[key];
+        }
+        _metaCatalogPromises[key] = loadMaterialMetaOptions(classId, kind).then(function (list) {
+            _metaCatalog[key] = { options: list || [], error: null, ok: true, loadedAt: Date.now() };
+            return _metaCatalog[key].options;
+        }).catch(function (err) {
+            _metaCatalog[key] = {
+                options: [],
+                error: err,
+                ok: false,
+                loadedAt: Date.now()
+            };
+            throw err;
+        }).finally(function () {
+            delete _metaCatalogPromises[key];
+        });
+        return _metaCatalogPromises[key];
+    }
+
+    /** 雷區：無論 API 成敗，畫面上都必須先有 meta 列（不可 0 列） */
+    function seedMaterialMetaRowsForAllAudioNodes() {
+        const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        if (!bState) return;
+        walkAudioRecordNodes(bState.tasks || [], [], function (task, pathStr) {
+            const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+            if (!rowsEl) return;
+            if (rowsEl.querySelector('.material-meta-row')) return;
+            const packed = readSavedMetaRowsForPath(pathStr, task);
+            const seed = packed.savedRows.length
+                ? packed.savedRows
+                : [{ value: '', range_spec: 'pp. 1~2' }];
+            renderMaterialMetaRows(pathStr, _materialMetaOptionsCache[pathStr] || [], seed);
+            const statusEl = document.getElementById('node-material-status-' + pathStr);
+            if (statusEl && !String(statusEl.textContent || '').trim()) {
+                statusEl.textContent = '⏳ 準備載入 meta 清單…';
+                statusEl.style.color = '#3B82F6';
+            }
+        });
+    }
+
+    /** 預載老師＋班級兩套（切換根目錄不必再手動載） */
+    async function prefetchMetaCatalogs(classId) {
+        const results = await Promise.all([
+            ensureMetaCatalog(classId, 'teacher').then(function (o) { return { kind: 'teacher', options: o, error: null }; })
+                .catch(function (err) { return { kind: 'teacher', options: [], error: err }; }),
+            ensureMetaCatalog(classId, 'class').then(function (o) { return { kind: 'class', options: o, error: null }; })
+                .catch(function (err) { return { kind: 'class', options: [], error: err }; })
+        ]);
+        return results;
+    }
+
+    function readSavedMetaRowsForPath(pathStr, task) {
+        let savedRows = [];
+        const hidden = document.getElementById('node-material-selected-json-' + pathStr);
+        if (hidden && hidden.value) {
+            try {
+                const parsed = JSON.parse(hidden.value);
+                if (Array.isArray(parsed) && parsed.length && typeof parsed[0] === 'object') {
+                    savedRows = parsed;
+                }
+            } catch (_e) {}
+        }
+        const raw = (task && task.raw_data) || {};
+        let refs = Array.isArray(raw.material_refs) && raw.material_refs.length
+            ? raw.material_refs
+            : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
+        refs = ensureMaterialRefsMatchUnits(refs, raw.grading_units, refs[0] || raw.material_ref || {});
+        const restoredFromRefs = refsToSavedRows(refs);
+        if (restoredFromRefs.length > savedRows.length) savedRows = restoredFromRefs;
+        else if (!savedRows.length && restoredFromRefs.length) savedRows = restoredFromRefs;
+
+        // DOM 上若已有列（含範圍），優先保留使用者正在編的內容
+        const fromDom = readMaterialMetaRows(pathStr).map(function (m) {
+            return {
+                value: (m.material_folder || '') + '::' + (m.published_file || ''),
+                range_spec: m.range_spec || '',
+                label: m.label || ''
+            };
+        }).filter(function (r) { return r.value; });
+        if (fromDom.length >= savedRows.length && fromDom.length) savedRows = fromDom;
+
+        return { savedRows: savedRows, refs: refs, raw: raw };
+    }
+
+    /**
+     * 開編輯器／加錄音後自動灌入 meta 下拉（無需手動按「載入」）。
+     * 新建與修改走同一條路。
+     */
+    async function autoPrimeMaterialMetaUI() {
+        const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        if (!bState || !bState.classId) return;
+
+        // 雷區：先同步畫列，再打 API（API 失敗也不能變 0 列）
+        seedMaterialMetaRowsForAllAudioNodes();
+
+        const nodes = [];
+        walkAudioRecordNodes(bState.tasks || [], [], function (task, pathStr) {
+            if (!document.getElementById('node-material-rows-' + pathStr)) return;
+            nodes.push({ task: task, pathStr: pathStr });
+        });
+        if (!nodes.length) return;
+
+        nodes.forEach(function (n) {
+            const statusEl = document.getElementById('node-material-status-' + n.pathStr);
+            if (statusEl) {
+                statusEl.textContent = '⏳ 自動載入 meta 清單（老師＋班級）…';
+                statusEl.style.color = '#3B82F6';
+            }
+        });
+
+        let prefetch = [];
+        try {
+            prefetch = await prefetchMetaCatalogs(bState.classId);
+        } catch (err) {
+            console.warn('[FeatureTimeline] prefetchMetaCatalogs', err);
+            prefetch = [];
+        }
+
+        nodes.forEach(function (n) {
+            try {
+                const pathStr = n.pathStr;
+                // 重繪後 DOM 可能已換：列若不在，再補一次
+                const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+                if (!rowsEl) return;
+
+                const statusEl = document.getElementById('node-material-status-' + pathStr);
+                const rootEl = document.getElementById('node-material-root-' + pathStr);
+                const packed = readSavedMetaRowsForPath(pathStr, n.task);
+                const primary = (packed.refs && packed.refs[0]) || (n.task.raw_data && n.task.raw_data.material_ref);
+                if (rootEl && primary && primary.materials_root_kind) {
+                    rootEl.value = normalizeMaterialsRootKind(primary.materials_root_kind);
+                }
+
+                const kind = readMaterialsRootKind(pathStr);
+                const entry = getMetaCatalogEntry(bState.classId, kind);
+                const options = (entry && entry.options) || [];
+                _materialMetaOptionsCache[pathStr] = options;
+
+                const rangeEl = document.getElementById('node-material-range-' + pathStr);
+                if (rangeEl && !String(rangeEl.value || '').trim()) {
+                    const fromRefs = buildMaterialRangeLabelFromRows(packed.refs);
+                    const fromTitle = String(n.task.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    rangeEl.value = fromRefs || fromTitle || '';
+                }
+
+                const rowsToShow = packed.savedRows.length
+                    ? packed.savedRows
+                    : [{ value: '', range_spec: 'pp. 1~2' }];
+                // 無論 options 是否為空都要 render（雷區）
+                renderMaterialMetaRows(pathStr, options, rowsToShow);
+
+                if (statusEl) {
+                    const teacherEntry = getMetaCatalogEntry(bState.classId, 'teacher');
+                    const classEntry = getMetaCatalogEntry(bState.classId, 'class');
+                    const tCount = (teacherEntry && teacherEntry.options) ? teacherEntry.options.length : 0;
+                    const cCount = (classEntry && classEntry.options) ? classEntry.options.length : 0;
+                    const kindErr = entry && entry.error ? (entry.error.message || String(entry.error)) : '';
+                    const kindFailed = entry && entry.ok === false;
+                    if ((kindFailed || kindErr) && !options.length) {
+                        statusEl.textContent = '⚠️ 「' + (kind === 'teacher' ? '老師' : '班級') + '」清單載入失敗：'
+                            + (kindErr || '未知錯誤')
+                            + '｜列已保留，請按「重新整理清單」（老師 ' + tCount + '／班級 ' + cCount + '）';
+                        statusEl.style.color = '#D97706';
+                    } else if (!options.length) {
+                        statusEl.textContent = '⚠️ 清單是空的（0 個 meta）。請確認 Drive 有 '
+                            + (kind === 'teacher' ? '01_My_Materials' : '00_Class_Materials')
+                            + '，或按「重新整理清單」';
+                        statusEl.style.color = '#D97706';
+                    } else {
+                        statusEl.textContent = '✅ meta 清單已自動載入｜目前根目錄 '
+                            + options.length + ' 個檔｜老師合計 ' + tCount + '／班級合計 ' + cCount
+                            + '｜列 ' + rowsToShow.length
+                            + (packed.raw.snapshot_at ? ('｜snapshot ' + packed.raw.snapshot_at) : '');
+                        statusEl.style.color = '#059669';
+                    }
+                }
+            } catch (nodeErr) {
+                console.warn('[FeatureTimeline] autoPrime node', n.pathStr, nodeErr);
+                // 保底：該節點至少一列
+                const rowsEl = document.getElementById('node-material-rows-' + n.pathStr);
+                if (rowsEl && !rowsEl.querySelector('.material-meta-row')) {
+                    renderMaterialMetaRows(n.pathStr, [], [{ value: '', range_spec: 'pp. 1~2' }]);
+                }
+            }
+        });
+
+        return prefetch;
+    }
 
     function metaStemFromFileName(fileName) {
         const base = String(fileName || '').replace(/\.meta\.json$/i, '').replace(/\.json$/i, '');
@@ -111,7 +346,7 @@ window.FeatureTimeline = (() => {
         if (!opts.length) {
             const fallback = buildFallbackSelectedOptionHtml(selectedVal);
             if (fallback) return '<option value="">— 選 meta —</option>' + fallback;
-            return '<option value="">（尚無 meta，請先載入／發布）</option>';
+            return '<option value="">（尚無 meta，請先發布教材或按重新整理）</option>';
         }
         let matched = false;
         const optionsHtml = opts.map(function (opt) {
@@ -359,13 +594,46 @@ window.FeatureTimeline = (() => {
         const scriptParts = [];
         const displayParts = [];
         const gradingUnits = [];
+        const metaItems = [];
         const refs = [];
+        const metaRowsByStem = {};
+
+        // 一批讀完（含 fileId），避免 N 次 GAS 冷啟動
+        const batchItems = selected.map(function (picker) {
+            const fid = lookupMetaFileId(pathStr, picker.material_folder, picker.published_file);
+            return {
+                materialFolder: picker.material_folder || '',
+                fileName: picker.published_file || '',
+                fileId: fid || ''
+            };
+        });
+        let batchFiles = null;
+        if (typeof window.GasService.readMaterialFiles === 'function') {
+            try {
+                batchFiles = await window.GasService.readMaterialFiles(folderId, batchItems, rootKind);
+            } catch (batchErr) {
+                console.warn('[FeatureTimeline] batch read 失敗，改逐檔', batchErr);
+                batchFiles = null;
+            }
+        }
 
         for (let i = 0; i < selected.length; i++) {
             const picker = selected[i];
-            const fileResult = await window.GasService.readMaterialFile(
-                folderId, picker.material_folder, picker.published_file, rootKind
-            );
+            let fileResult = null;
+            if (batchFiles && batchFiles[i] && batchFiles[i].ok) {
+                fileResult = batchFiles[i];
+            } else if (batchFiles && batchFiles[i] && !batchFiles[i].ok) {
+                throw new Error(
+                    '讀取「' + (picker.material_folder || '') + '/' + (picker.published_file || '') + '」失敗：'
+                    + (batchFiles[i].message || '未知錯誤')
+                );
+            } else {
+                const fid = lookupMetaFileId(pathStr, picker.material_folder, picker.published_file);
+                fileResult = await window.GasService.readMaterialFile(
+                    folderId, picker.material_folder, picker.published_file, rootKind,
+                    fid ? { fileId: fid } : undefined
+                );
+            }
             const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
             const sliceOpts = { range_spec: picker.range_spec, select_mode: 'range_spec' };
             const ctx = Object.assign({}, picker, sliceOpts, {
@@ -375,6 +643,8 @@ window.FeatureTimeline = (() => {
             });
             const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, ctx);
             const stem = picker.label || metaStemFromFileName(picker.published_file);
+            // 完整 meta 列快取：考試「產生線上卷」可離線抽題，不必再打 GAS
+            metaRowsByStem[String(stem || '').toUpperCase()] = rows;
             if (snapshot.original_script) {
                 scriptParts.push('【' + stem + '】\n' + snapshot.original_script);
             }
@@ -387,7 +657,16 @@ window.FeatureTimeline = (() => {
                     gradingUnits.push(u);
                 });
             }
-            refs.push(Object.assign({}, snapshot.material_ref, { range_spec: picker.range_spec, label: stem }));
+            if (Array.isArray(snapshot.meta_items) && snapshot.meta_items.length) {
+                snapshot.meta_items.forEach(function (it) {
+                    metaItems.push(it);
+                });
+            }
+            refs.push(Object.assign({}, snapshot.material_ref, {
+                range_spec: picker.range_spec,
+                label: stem,
+                fileId: fileResult.fileId || lookupMetaFileId(pathStr, picker.material_folder, picker.published_file) || ''
+            }));
         }
 
         const rangeLabel = buildMaterialRangeLabelFromRows(selected);
@@ -402,6 +681,8 @@ window.FeatureTimeline = (() => {
             student_display: displayParts.join('\n\n'),
             student_display_text: displayParts.join('\n\n'),
             grading_units: gradingUnits,
+            meta_items: metaItems,
+            meta_rows_by_stem: metaRowsByStem,
             recording_unit: 'page',
             recording_unit_hint: hint,
             snapshot_at: new Date().toISOString()
@@ -462,104 +743,9 @@ window.FeatureTimeline = (() => {
     }
 
     function hydrateMaterialSnapshotUI() {
-        const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
-        if (!bState || !Array.isArray(bState.tasks)) return;
-
-        const pendingMeta = [];
-        walkAudioRecordNodes(bState.tasks, [], function (task, pathStr) {
-            const raw = task.raw_data || {};
-            let refs = Array.isArray(raw.material_refs) && raw.material_refs.length
-                ? raw.material_refs
-                : (raw.material_ref && raw.material_ref.published_file ? [raw.material_ref] : []);
-            // 老問題：grading_units 還在 A~F，material_refs 卻只剩 A → 用 units 補回列
-            refs = ensureMaterialRefsMatchUnits(refs, raw.grading_units, refs[0] || raw.material_ref || {});
-            const rowsEl = document.getElementById('node-material-rows-' + pathStr);
-            if (!rowsEl) return;
-
-            let savedRows = [];
-            const hidden = document.getElementById('node-material-selected-json-' + pathStr);
-            if (hidden && hidden.value) {
-                try {
-                    const parsed = JSON.parse(hidden.value);
-                    if (Array.isArray(parsed) && parsed.length && typeof parsed[0] === 'object') {
-                        savedRows = parsed;
-                    }
-                } catch (_e) {}
-            }
-            const restoredFromRefs = refsToSavedRows(refs);
-            if (restoredFromRefs.length > savedRows.length) {
-                savedRows = restoredFromRefs;
-            } else if (!savedRows.length && restoredFromRefs.length) {
-                savedRows = restoredFromRefs;
-            }
-
-            // 補回 base 範圍顯示（material_range 被存空時，用 refs／標題還原）
-            const rangeEl = document.getElementById('node-material-range-' + pathStr);
-            if (rangeEl && !String(rangeEl.value || '').trim()) {
-                const fromRefs = buildMaterialRangeLabelFromRows(refs);
-                const fromTitle = String(task.title || '').replace(/<[^>]*>?/gm, '').trim();
-                rangeEl.value = fromRefs || fromTitle || '';
-            }
-
-            pendingMeta.push({
-                pathStr: pathStr,
-                savedRows: savedRows,
-                raw: raw,
-                statusEl: document.getElementById('node-material-status-' + pathStr)
-            });
-        });
-
-        if (pendingMeta.length === 0) return;
-
-        pendingMeta.forEach(function (item) {
-            if (item.statusEl) {
-                item.statusEl.textContent = '⏳ 還原 meta 清單…';
-                item.statusEl.style.color = '#3B82F6';
-            }
-            const rootEl = document.getElementById('node-material-root-' + item.pathStr);
-            // 還原後的 refs 可能比 DB 舊 material_refs 完整（由 grading_units 補回）
-            const primary = (item.savedRows && item.savedRows[0])
-                ? null
-                : ((item.raw.material_refs && item.raw.material_refs[0]) || item.raw.material_ref);
-            if (rootEl && primary && primary.materials_root_kind) {
-                rootEl.value = normalizeMaterialsRootKind(primary.materials_root_kind);
-            }
-            // 若 savedRows 來自 rebuild，同步 root 種類
-            if (rootEl && item.raw.material_ref && item.raw.material_ref.materials_root_kind) {
-                rootEl.value = normalizeMaterialsRootKind(item.raw.material_ref.materials_root_kind);
-            }
-        });
-
-        pendingMeta.forEach(function (item) {
-            const kind = readMaterialsRootKind(item.pathStr);
-            const rowsToShow = item.savedRows.length ? item.savedRows : [{ value: '', range_spec: 'pp. 1~2' }];
-
-            // 🚨 先同步畫出 meta 列（不依賴 GAS／清單 API）。
-            // 曾發生：清單載入失敗時 catch 只改文字、不 render → 畫面 0 列，
-            // 但下方仍有 12 頁批改稿（節點看起來「又壞了」）。
-            renderMaterialMetaRows(item.pathStr, _materialMetaOptionsCache[item.pathStr] || [], rowsToShow);
-            if (item.statusEl && item.raw.snapshot_at) {
-                item.statusEl.textContent = '✅ 已還原 meta 列（' + rowsToShow.length + '）｜載入檔名清單中…';
-                item.statusEl.style.color = '#059669';
-            }
-
-            loadMaterialMetaOptions(bState.classId, kind).then(function (options) {
-                renderMaterialMetaRows(item.pathStr, options, rowsToShow);
-                if (item.statusEl) {
-                    item.statusEl.textContent = item.raw.snapshot_at
-                        ? ('✅ 已還原 snapshot（' + item.raw.snapshot_at + '）｜meta 列 ' + rowsToShow.length)
-                        : ('✅ 已載入 ' + options.length + ' 個 meta 檔｜列 ' + rowsToShow.length);
-                    item.statusEl.style.color = '#059669';
-                }
-            }).catch(function (err) {
-                // 清單失敗仍保留已畫出的列（含 fallback option）
-                renderMaterialMetaRows(item.pathStr, [], rowsToShow);
-                if (item.statusEl) {
-                    item.statusEl.textContent = '⚠️ meta 清單載入失敗：' + (err && err.message ? err.message : err)
-                        + '｜已先還原 ' + rowsToShow.length + ' 列，可稍後再按「載入 meta 清單」';
-                    item.statusEl.style.color = '#D97706';
-                }
-            });
+        // 與新建作業同一條：自動預載老師＋班級清單並灌入各錄音節點
+        autoPrimeMaterialMetaUI().catch(function (err) {
+            console.warn('[FeatureTimeline] autoPrimeMaterialMetaUI', err);
         });
     }
 
@@ -676,7 +862,8 @@ window.FeatureTimeline = (() => {
             const kind = readMaterialsRootKind(pathStr);
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
             if (bState) {
-                loadMaterialMetaOptions(bState.classId, kind).then(function (options) {
+                ensureMetaCatalog(bState.classId, kind).then(function (options) {
+                    _materialMetaOptionsCache[pathStr] = options;
                     const rows = snapshot.material_refs.map(function (r) {
                         return {
                             value: (r.material_folder || '') + '::' + (r.published_file || ''),
@@ -685,7 +872,16 @@ window.FeatureTimeline = (() => {
                         };
                     });
                     renderMaterialMetaRows(pathStr, options, rows);
-                }).catch(function () {});
+                }).catch(function () {
+                    const rows = snapshot.material_refs.map(function (r) {
+                        return {
+                            value: (r.material_folder || '') + '::' + (r.published_file || ''),
+                            range_spec: r.range_spec || '',
+                            label: r.label || ''
+                        };
+                    });
+                    renderMaterialMetaRows(pathStr, _materialMetaOptionsCache[pathStr] || [], rows);
+                });
             }
         }
     }
@@ -1010,7 +1206,20 @@ window.FeatureTimeline = (() => {
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : TPL.getHistoryDropdownHtml(allAssignsForHistory, bState.containerId);
 
         container.innerHTML = TPL.getBuilderFormHtml(bState, classResOpts, tasksContainerHtml, historyHtml);
-        setTimeout(refreshMaterialSliceFieldVisibility, 0);
+        // 雷區：innerHTML 重繪後立刻補 meta 列（不要等 API），避免畫面 0 列
+        try { seedMaterialMetaRowsForAllAudioNodes(); } catch (_seedErr) {}
+        setTimeout(function () {
+            refreshMaterialSliceFieldVisibility();
+            // 再自動灌清單進下拉
+            autoPrimeMaterialMetaUI().catch(function (err) {
+                console.warn('[FeatureTimeline] autoPrime after renderBuilderUI', err);
+                try { seedMaterialMetaRowsForAllAudioNodes(); } catch (_e2) {}
+                if (window.showFlash) {
+                    window.showFlash('自動載入 meta 清單失敗：' + (err && err.message ? err.message : err)
+                        + '（列應仍在，可按重新整理清單）', 'error');
+                }
+            });
+        }, 0);
     }
 
     return {
@@ -1183,13 +1392,23 @@ window.FeatureTimeline = (() => {
         },
 
         addNode: (pathStr, type) => { window.BuilderStore.addNode(pathStr, type); renderBuilderUI(); },
+        addRangeBundle: (pathStr) => { window.BuilderStore.addRangeBundle(pathStr); renderBuilderUI(); },
         removeNode: (pathStr) => { window.BuilderStore.removeNode(pathStr); renderBuilderUI(); },
         moveNodeUp: (pathStr) => { window.BuilderStore.moveNodeUp(pathStr); renderBuilderUI(); },
         moveNodeDown: (pathStr) => { window.BuilderStore.moveNodeDown(pathStr); renderBuilderUI(); },
         moveNodeLeft: (pathStr) => { window.BuilderStore.moveNodeLeft(pathStr); renderBuilderUI(); },
         moveNodeRight: (pathStr) => { window.BuilderStore.moveNodeRight(pathStr); renderBuilderUI(); },
         changeNodeType: (pathStr, newType) => { window.BuilderStore.changeNodeType(pathStr, newType); renderBuilderUI(); },
-        refreshBuilder: () => { if (window.BuilderStore) { window.BuilderStore.sync(); renderBuilderUI(); } },
+        /**
+         * @param {object} [opts]
+         * @param {boolean} [opts.skipSync] 已寫入 BuilderStore、DOM 尚為舊畫面時必須 skip，
+         *   否則 sync 會用舊 DOM 覆寫剛寫入的 exam sections／quiz_paper 相關狀態。
+         */
+        refreshBuilder: (opts) => {
+            if (!window.BuilderStore) return;
+            if (!(opts && opts.skipSync)) window.BuilderStore.sync();
+            renderBuilderUI();
+        },
         updateNodeUrl: (pathStr, val) => { window.BuilderStore.updateNodeUrl(pathStr, val); renderBuilderUI(); },
         copyPrevNodeUrl: (pathStr) => { window.BuilderStore.copyPrevNodeUrl(pathStr); renderBuilderUI(); },
         addResourceTaskAsLink: (pathStr, resId) => {
@@ -1600,52 +1819,71 @@ window.FeatureTimeline = (() => {
             if (!bState) return window.showFlash('請先開啟作業編輯器', 'error');
             const rowsEl = document.getElementById('node-material-rows-' + pathStr);
             const statusEl = document.getElementById('node-material-status-' + pathStr);
-            if (!rowsEl) return;
+            if (!rowsEl) {
+                return window.showFlash('找不到 meta 列容器（請確認文稿來源是 A. meta）', 'error');
+            }
             const rootKind = readMaterialsRootKind(pathStr);
             const destLabel = rootKind === 'teacher' ? '01_My_Materials' : '00_Class_Materials';
+            // 雷區：先保證畫面上有列，再打 GAS
+            const packed0 = readSavedMetaRowsForPath(pathStr, null);
+            const seedRows = packed0.savedRows.length
+                ? packed0.savedRows
+                : [{ value: '', range_spec: 'pp. 1~2' }];
+            if (!rowsEl.querySelector('.material-meta-row')) {
+                renderMaterialMetaRows(pathStr, _materialMetaOptionsCache[pathStr] || [], seedRows);
+            }
             if (statusEl) {
-                statusEl.textContent = '⏳ 載入 ' + destLabel + '…';
+                statusEl.textContent = '⏳ 重新整理 ' + destLabel + '…';
                 statusEl.style.color = '#3B82F6';
             }
             try {
-                let savedRows = readMaterialMetaRows(pathStr).map(function (m) {
-                    return {
-                        value: (m.material_folder || '') + '::' + (m.published_file || ''),
-                        range_spec: m.range_spec || '',
-                        label: m.label || ''
-                    };
-                });
-                const hidden = document.getElementById('node-material-selected-json-' + pathStr);
-                if (!savedRows.length && hidden && hidden.value) {
-                    try {
-                        const parsed = JSON.parse(hidden.value);
-                        if (Array.isArray(parsed) && parsed.length) {
-                            if (typeof parsed[0] === 'object') savedRows = parsed;
-                            else savedRows = parsed.map(function (v) { return { value: v, range_spec: '' }; });
-                        }
-                    } catch (_e) {}
-                }
-                const options = await loadMaterialMetaOptions(bState.classId, rootKind);
-                renderMaterialMetaRows(pathStr, options, savedRows.length ? savedRows : [{ value: '', range_spec: 'pp. 1~2' }]);
+                const options = await ensureMetaCatalog(bState.classId, rootKind, { force: true });
+                prefetchMetaCatalogs(bState.classId).catch(function () {});
+                const packed = readSavedMetaRowsForPath(pathStr, null);
+                const savedRows = packed.savedRows.length
+                    ? packed.savedRows
+                    : seedRows;
+                _materialMetaOptionsCache[pathStr] = options;
+                renderMaterialMetaRows(pathStr, options, savedRows);
                 if (statusEl) {
-                    statusEl.textContent = '✅ 已載入 ' + options.length + ' 個 meta｜用「＋ 新增 meta」加列｜' + destLabel;
-                    statusEl.style.color = '#059669';
+                    statusEl.textContent = options.length
+                        ? ('✅ 已重新整理｜' + options.length + ' 個 meta｜' + destLabel)
+                        : ('⚠️ 已連線但 0 個 meta｜請確認 ' + destLabel + ' 下有教材資料夾與 *.meta.json');
+                    statusEl.style.color = options.length ? '#059669' : '#D97706';
+                }
+                if (!options.length) {
+                    window.showFlash('重新整理完成，但 ' + destLabel + ' 沒有找到 meta 檔', 'warning');
                 }
             } catch (err) {
+                // 失敗仍保留列
+                if (!rowsEl.querySelector('.material-meta-row')) {
+                    renderMaterialMetaRows(pathStr, [], seedRows);
+                }
+                const msg = (err && err.message) ? err.message : String(err);
                 if (statusEl) {
-                    statusEl.textContent = '❌ ' + err.message;
+                    statusEl.textContent = '❌ 重新整理失敗：' + msg;
                     statusEl.style.color = '#DC2626';
                 }
-                window.showFlash('無法載入 Material：' + err.message, 'error');
+                window.showFlash('無法載入 Material：' + msg, 'error');
+                try { window.alert('無法載入 meta 清單：\n' + msg); } catch (_e) {}
             }
         },
 
-        addMaterialMetaRow: function (pathStr) {
+        addMaterialMetaRow: async function (pathStr) {
             const container = document.getElementById('node-material-rows-' + pathStr);
             if (!container) return;
-            const options = _materialMetaOptionsCache[pathStr] || [];
+            const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+            let options = _materialMetaOptionsCache[pathStr] || [];
+            if (!options.length && bState) {
+                try {
+                    options = await ensureMetaCatalog(bState.classId, readMaterialsRootKind(pathStr));
+                    _materialMetaOptionsCache[pathStr] = options;
+                } catch (err) {
+                    return window.showFlash('無法載入 meta 清單：' + (err.message || err), 'error');
+                }
+            }
             if (!options.length) {
-                return window.showFlash('請先按「載入 meta 清單」', 'error');
+                return window.showFlash('此根目錄尚無 meta 檔。請先發布教材，或按「重新整理清單」。', 'error');
             }
             container.appendChild(createMaterialMetaRowEl(pathStr, options, { value: '', range_spec: '' }));
             refreshMaterialRangeLabel(pathStr);
@@ -1711,11 +1949,37 @@ window.FeatureTimeline = (() => {
             toggleMaterialSliceFields(pathStr);
         },
 
-        onMaterialRootChange: function (pathStr) {
-            const rowsEl = document.getElementById('node-material-rows-' + pathStr);
-            if (rowsEl) rowsEl.innerHTML = '';
-            _materialMetaOptionsCache[pathStr] = [];
-            window.FeatureTimeline.loadMaterialMetaSelect(pathStr);
+        onMaterialRootChange: async function (pathStr) {
+            const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+            if (!bState) return;
+            const kind = readMaterialsRootKind(pathStr);
+            const statusEl = document.getElementById('node-material-status-' + pathStr);
+            // 不清空已選列／範圍；只換該根目錄的下拉清單
+            const packed = readSavedMetaRowsForPath(pathStr, null);
+            const savedRows = packed.savedRows.length
+                ? packed.savedRows
+                : [{ value: '', range_spec: 'pp. 1~2' }];
+            if (statusEl) {
+                statusEl.textContent = '⏳ 切換根目錄，載入清單…';
+                statusEl.style.color = '#3B82F6';
+            }
+            try {
+                const options = await ensureMetaCatalog(bState.classId, kind);
+                _materialMetaOptionsCache[pathStr] = options;
+                renderMaterialMetaRows(pathStr, options, savedRows);
+                if (statusEl) {
+                    statusEl.textContent = '✅ 已切換｜' + (kind === 'teacher' ? '老師' : '班級')
+                        + ' ' + options.length + ' 個 meta｜列 ' + savedRows.length;
+                    statusEl.style.color = '#059669';
+                }
+            } catch (err) {
+                _materialMetaOptionsCache[pathStr] = [];
+                renderMaterialMetaRows(pathStr, [], savedRows);
+                if (statusEl) {
+                    statusEl.textContent = '⚠️ 切換後清單載入失敗：' + (err.message || err);
+                    statusEl.style.color = '#D97706';
+                }
+            }
         },
 
         onMaterialMetaCheckChange: function (pathStr) {
