@@ -9,6 +9,7 @@ console.log("🚀 FeatureTimeline v69 載入成功！(強制收納 01_Class_Reso
 
 window.FeatureTimeline = (() => {
     const db = window.TeacherDB;
+    function delay(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
     
     if (db && db.assignments) {
         const originalLength = db.assignments.length;
@@ -490,7 +491,16 @@ window.FeatureTimeline = (() => {
             _autoSnapshotBusy[pathStr] = false;
             if (_autoSnapshotPending[pathStr]) {
                 _autoSnapshotPending[pathStr] = false;
-                scheduleAutoSnapshot(pathStr);
+                // 直接重跑，不要再走 900ms 防抖：busy 期間累積的變更已經等過一次，
+                // 若這裡又排一次全新防抖，老師常在第二輪 GAS 還沒跑完前就以為「只有第一冊」是最終結果
+                // （曾發生 C~F 四冊、老師等完第一輪 C 就離開，沒等到含 D/E/F 的第二輪）。
+                if (statusEl) {
+                    statusEl.textContent = '⏳ 偵測到套用中又有變更，正在重新套用完整範圍…';
+                    statusEl.style.color = '#3B82F6';
+                }
+                autoApplyMaterialSnapshot(pathStr).catch(function (err) {
+                    console.warn('[FeatureTimeline] autoApplyMaterialSnapshot(pending retry)', err);
+                });
             }
         }
     }
@@ -789,22 +799,45 @@ window.FeatureTimeline = (() => {
             }
         }
 
+        // 逐檔讀取（含重試 1 次）：多冊一次送出批次讀取時，GAS／Drive 偶發對「某一冊」
+        // 逾時或速率限制很常見（曾發生 C~F 四冊只有 C 成功，D/E/F 失敗就整批 throw，
+        // 結果畫面停在舊的「只有 C」快取，老師以為自動套用壞了）。
+        // 單檔失敗不可直接讓整批 throw：先重試，仍失敗才真正視為錯誤中斷。
+        async function readOneWithRetry(picker) {
+            const fid = lookupMetaFileId(pathStr, picker.material_folder, picker.published_file);
+            let lastErr = null;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    return await window.GasService.readMaterialFile(
+                        folderId, picker.material_folder, picker.published_file, rootKind,
+                        fid ? { fileId: fid } : undefined
+                    );
+                } catch (err) {
+                    lastErr = err;
+                    if (attempt === 0) await delay(600);
+                }
+            }
+            throw lastErr;
+        }
+
         for (let i = 0; i < selected.length; i++) {
             const picker = selected[i];
             let fileResult = null;
             if (batchFiles && batchFiles[i] && batchFiles[i].ok) {
                 fileResult = batchFiles[i];
-            } else if (batchFiles && batchFiles[i] && !batchFiles[i].ok) {
-                throw new Error(
-                    '讀取「' + (picker.material_folder || '') + '/' + (picker.published_file || '') + '」失敗：'
-                    + (batchFiles[i].message || '未知錯誤')
-                );
             } else {
-                const fid = lookupMetaFileId(pathStr, picker.material_folder, picker.published_file);
-                fileResult = await window.GasService.readMaterialFile(
-                    folderId, picker.material_folder, picker.published_file, rootKind,
-                    fid ? { fileId: fid } : undefined
-                );
+                // batch 沒回這筆、或這筆 ok:false（例如速率限制／逾時）：改走單檔＋重試，
+                // 而不是讓「一冊失敗」拖累其他已成功的冊一起被丟棄。
+                try {
+                    fileResult = await readOneWithRetry(picker);
+                } catch (singleErr) {
+                    const batchMsg = (batchFiles && batchFiles[i] && batchFiles[i].message) || '';
+                    throw new Error(
+                        '讀取「' + (picker.material_folder || '') + '/' + (picker.published_file || '') + '」失敗：'
+                        + (singleErr.message || batchMsg || '未知錯誤')
+                        + '（已自動重試 1 次仍失敗；請稍候再改動任一列範圍以重新觸發，或按「套用 Snapshot」）'
+                    );
+                }
             }
             const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
             const sliceOpts = { range_spec: picker.range_spec, select_mode: 'range_spec' };

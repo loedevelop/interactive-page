@@ -22,6 +22,14 @@ alwaysApply: false
 9. **禁止** 在未確認 `task_completions` 上是否有**重複 webhook** 時狂改 Edge  
    - 曾同時存在：`Trigger AI Audio Grading`（INSERT/UPDATE 都打）＋ `ai_processing_webhook`  
    - 緊急時可 `DISABLE TRIGGER`；恢復前必須先確認不會雙觸發風暴
+10. **禁止** `submit_audio_task_atomic` 對 `audio_segments`／`drive_file_ids`／`submitted_files` 整批覆寫  
+    - 症狀（2026-08-01）：12 頁作業學生先傳 6 個成功，剩下 6 個下次再傳──舊版整批覆寫，
+      第一批的 6 段（含可能已完成的 AI 結果）全部消失，且因前端每次都從 `gradingUnits[0]`
+      對應，第二批還會被誤標成第 1~6 頁（蓋掉真正的第 1~6 頁）
+    - 已修：RPC 依 `unit_key` 合併（新提交蓋過同 key 舊段，其餘舊段保留）；
+      前端 `uploadAudioFilesForGrading` 先排除「已提交過」的 unit_key，新選檔案接續對應剩下的頁
+    - 見 `.cursor/rules/material-snapshot-refs-invariant.mdc` 之外的另一半：這裡是**送出後**的合併，
+      不是套用 Snapshot 時的合併
 
 ## ✅ 正確做法
 
@@ -40,6 +48,9 @@ const shouldContinue = stillPending && claimableAfter >= 0 && segmentsProcessedT
 - 已 `done`＋有 `ai_evaluation` → **跳過**，禁止重打  
 - 教師續跑：保留 done，只重跑未完成；可勾選單一學生  
 - `ai_processing` 必須在補啟或清除可操作；部分完成要顯示 `x/n`
+- 學生分批提交（一頁一檔的多段任務）：新一批只能「補齊」尚未提交的 unit_key，
+  不可讓後一批覆蓋前一批；`submit_audio_task_atomic` 與前端對應邏輯都要用 unit_key 判斷，
+  不能只靠陣列索引
 
 ## 緊急止血（若整站又變慢／無法登入）
 

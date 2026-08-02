@@ -216,7 +216,33 @@ window.FeatureStudentTimeline = (() => {
         if (tempRecord) {
             tempRecord.status = 'ai_processing';
             const prevRaw = tempRecord.raw_data ? tempRecord.raw_data : {};
-            tempRecord.raw_data = Object.assign({}, prevRaw, rawPatch);
+            // 分批提交（一頁一檔）時，本地樂觀快取也要跟 DB 端合併邏輯一致：
+            // 依 unit_key 合併，不能讓第二批直接整組覆寫掉第一批已記錄的頁，
+            // 否則同一個分頁還沒重新整理前，第三批又會誤判成「前面都還沒交」。
+            const prevSegs = Array.isArray(prevRaw.audio_segments) ? prevRaw.audio_segments : [];
+            const newSegs = Array.isArray(rawPatch.audio_segments) ? rawPatch.audio_segments : null;
+            let mergedSegs = newSegs;
+            if (newSegs && prevSegs.length && prevSegs.some(function (s) { return String((s && s.unit_key) || '').trim(); })) {
+                const newKeys = new Set(newSegs.map(function (s) { return String((s && s.unit_key) || '').trim(); }).filter(Boolean));
+                const keptOld = prevSegs.filter(function (s) {
+                    const key = String((s && s.unit_key) || '').trim();
+                    return key && !newKeys.has(key);
+                });
+                mergedSegs = keptOld.concat(newSegs).sort(function (a, b) {
+                    const pa = (a && a.page != null) ? Number(a.page) : 999999;
+                    const pb = (b && b.page != null) ? Number(b.page) : 999999;
+                    return pa - pb;
+                });
+            }
+            const mergedPatch = Object.assign({}, rawPatch);
+            if (mergedSegs) {
+                mergedPatch.audio_segments = mergedSegs;
+                mergedPatch.drive_file_ids = mergedSegs.map(function (s) { return String((s && s.file_id) || ''); }).filter(Boolean);
+                mergedPatch.submitted_files = mergedSegs.map(function (s) {
+                    return { id: (s && s.file_id) || '', mime: (s && s.uploadMime) || 'audio/wav', name: (s && s.name) || '', unit_key: (s && s.unit_key) || '', label: (s && s.label) || '' };
+                });
+            }
+            tempRecord.raw_data = Object.assign({}, prevRaw, mergedPatch);
         } else {
             window._studentTaskCompletions.push({
                 assignment_id: assignmentId,
@@ -366,13 +392,36 @@ window.FeatureStudentTimeline = (() => {
             const items = (fileItems || []).filter(Boolean);
             if (!items.length) throw new Error('未選擇音檔');
 
-            // 選取順序對應 grading_units（一頁一檔）
-            const pairCount = gradingUnits.length
-                ? Math.min(items.length, gradingUnits.length)
+            // 💣 雷區：分批上傳（如 12 頁先傳 6、再傳剩下 6）不能每次都從第 1 頁對應，
+            // 否則第二批會被誤標成第 1~6 頁（蓋掉真正的第 1~6 頁），且第一批的段會被
+            // DB 端合併邏輯判定成「這批沒提交」而清掉。改成：已提交過的頁（不論
+            // 批改中或已完成）一律排除，新選的檔案依序對應「尚未提交」的頁。
+            // 見 .cursor/rules/ai-grading-pipeline-invariants.mdc。
+            const existingCompletion = (window._studentTaskCompletions || []).find(function (c) {
+                return String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId);
+            });
+            const existingSegs = (existingCompletion && existingCompletion.raw_data && Array.isArray(existingCompletion.raw_data.audio_segments))
+                ? existingCompletion.raw_data.audio_segments
+                : [];
+            const existingUnitKeys = new Set(
+                existingSegs.map(function (s) { return String((s && s.unit_key) || '').trim(); }).filter(Boolean)
+            );
+            const remainingUnits = (gradingUnits.length && existingUnitKeys.size > 0)
+                ? gradingUnits.filter(function (u) { return !existingUnitKeys.has(String(u.unit_key || '').trim()); })
+                : gradingUnits;
+            // 所有頁都已提交過（existingUnitKeys 涵蓋全部）→ 視為刻意整份重傳，退回完整 gradingUnits
+            const effectiveUnits = remainingUnits.length ? remainingUnits : gradingUnits;
+            const alreadyDoneCount = gradingUnits.length - effectiveUnits.length;
+
+            // 選取順序對應「尚未提交」的 grading_units（一頁一檔）
+            const pairCount = effectiveUnits.length
+                ? Math.min(items.length, effectiveUnits.length)
                 : items.length;
-            if (gradingUnits.length && items.length !== gradingUnits.length) {
+            if (effectiveUnits.length && items.length !== effectiveUnits.length) {
                 window.showFlash(
-                    `已選 ${items.length} 檔，此作業有 ${gradingUnits.length} 個錄音頁單位；將依選取順序對應前 ${pairCount} 頁。`,
+                    `已選 ${items.length} 檔；此作業共 ${gradingUnits.length} 個錄音頁單位`
+                    + (alreadyDoneCount > 0 ? `（其中 ${alreadyDoneCount} 頁先前已提交，將接續補上剩下的頁）` : '')
+                    + `，將依選取順序對應前 ${pairCount} 個尚未提交的頁。`,
                     'warning'
                 );
             }
@@ -396,7 +445,7 @@ window.FeatureStudentTimeline = (() => {
                 const up = await uploadOneAudioBlobWithRetry(
                     assignmentId, taskId, safeTitleForJS, blob, item.name || `part_${i + 1}.wav`, canSendAI
                 );
-                const unit = gradingUnits[i] || {};
+                const unit = effectiveUnits[i] || {};
                 uploaded.push({
                     file_id: up.fileId,
                     audio_url: up.audioUrl,
@@ -405,7 +454,7 @@ window.FeatureStudentTimeline = (() => {
                     unit_key: unit.unit_key || '',
                     stem: unit.stem || '',
                     page: unit.page != null ? unit.page : null,
-                    label: unit.label || (gradingUnits.length ? `第${i + 1}頁` : ''),
+                    label: unit.label || (effectiveUnits.length ? `第${i + 1}頁` : ''),
                     original_script: String(unit.original_script || '').trim()
                 });
                 // 多檔連續上傳同一資料夾時，稍微間隔可降低撞到 Drive 暫時性存取限制的機率
@@ -911,14 +960,24 @@ window.FeatureStudentTimeline = (() => {
                         }
                     });
                 }
-                const idList = normalizedFiles.map(function (f) { return f.id; });
+                // 與既有已繳交檔案合併（去重，依 id），避免「分批上傳」時後一批
+                // 覆寫掉前一批已成功的檔案紀錄（前一批實體檔案仍在 Drive，只是 raw_data 記錄要保留）
+                const existingFiles = (prevCompletion && prevCompletion.raw_data && Array.isArray(prevCompletion.raw_data.submitted_files))
+                    ? prevCompletion.raw_data.submitted_files
+                    : [];
+                const mergedFilesMap = new Map();
+                existingFiles.forEach(function (f) { if (f && f.id) mergedFilesMap.set(String(f.id), f); });
+                normalizedFiles.forEach(function (f) { if (f && f.id) mergedFilesMap.set(String(f.id), f); });
+                const mergedFiles = Array.from(mergedFilesMap.values());
+
+                const idList = mergedFiles.map(function (f) { return f.id; });
                 let rawData = null;
                 if (idList.length > 0) {
                     rawData = {
                         drive_file_ids: idList,
-                        submitted_files: normalizedFiles
+                        submitted_files: mergedFiles
                     };
-                    const first = normalizedFiles[0];
+                    const first = mergedFiles[0];
                     const mime = (first.mime || '').toLowerCase();
                     const name = (first.name || '').toLowerCase();
                     if (mime.indexOf('audio/') === 0 || /\.(wav|mp3|m4a|ogg|aac|webm|flac)$/.test(name)) {
@@ -1057,35 +1116,55 @@ window.FeatureStudentTimeline = (() => {
 
                 if (filesArray.length > 1 && allAudio) {
                     updateStatus(`⏳ 準備上傳 ${filesArray.length} 個音檔...`, '#F59E0B');
+                    // 逐檔 try/catch：單檔失敗只記錄下來，不中斷整批——否則像 6 選 3 成，
+                    // 若第 4 個檔案失敗，第 5、6 個永遠不會被嘗試（前 3 個已成功的也無法得知）
+                    const failedFiles = [];
                     for (let i = 0; i < filesArray.length; i++) {
                         const file = filesArray[i];
-                        if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB。`);
-                        
-                        const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
-                        const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}_${i+1}${lateSuffixStr}${ext}`;
-                        
-                        let mime = file.type;
-                        if (!mime || mime === '' || mime === 'text/plain') {
-                            const lowExt = ext.toLowerCase();
-                            if (lowExt === '.mp3') mime = 'audio/mpeg';
-                            else if (lowExt === '.wav') mime = 'audio/wav';
-                            else if (lowExt === '.m4a') mime = 'audio/mp4';
-                            else mime = 'audio/mpeg';
+                        try {
+                            if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB`);
+
+                            const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
+                            const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}_${i+1}${lateSuffixStr}${ext}`;
+
+                            let mime = file.type;
+                            if (!mime || mime === '' || mime === 'text/plain') {
+                                const lowExt = ext.toLowerCase();
+                                if (lowExt === '.mp3') mime = 'audio/mpeg';
+                                else if (lowExt === '.wav') mime = 'audio/wav';
+                                else if (lowExt === '.m4a') mime = 'audio/mp4';
+                                else mime = 'audio/mpeg';
+                            }
+                            const finalMimeType = mime;
+
+                            updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
+                            const base64Data = (await readFileAsDataURL(file)).split(',')[1];
+
+                            const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
+                            uploadedFileIds.push({ id: result.fileId, mime: finalMimeType, name: finalFileName });
+                        } catch (fileErr) {
+                            console.error(`[handleFileSelect] 第 ${i + 1} 個檔案「${file.name}」上傳失敗`, fileErr);
+                            failedFiles.push({ index: i + 1, name: file.name, message: fileErr.message || String(fileErr) });
                         }
-                        const finalMimeType = mime;
-                        
-                        updateStatus(`🚀 上傳中 (${i+1}/${filesArray.length})...`, '#3B82F6');
-                        const base64Data = (await readFileAsDataURL(file)).split(',')[1];
-                        
-                        const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, finalMimeType, targetFolderId, assignmentId, taskId);
-                        uploadedFileIds.push({ id: result.fileId, mime: finalMimeType, name: finalFileName }); 
                     }
-                    
-                    updateStatus('✅ 上傳成功', '#10B981');
-                    window.showFlash('上傳成功！檔案已送到您的專屬資料夾。');
-                    setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
-                    resetInput(); 
-                    return; 
+
+                    if (uploadedFileIds.length > 0) {
+                        setTimeout(() => window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploadedFileIds), 500);
+                    }
+
+                    if (failedFiles.length === 0) {
+                        updateStatus('✅ 上傳成功', '#10B981');
+                        window.showFlash('上傳成功！檔案已送到您的專屬資料夾。');
+                    } else if (uploadedFileIds.length > 0) {
+                        const failedDesc = failedFiles.map(f => `第${f.index}個(${f.name})`).join('、');
+                        updateStatus(`⚠️ 成功 ${uploadedFileIds.length}／失敗 ${failedFiles.length}`, '#F59E0B');
+                        window.showFlash(`已上傳 ${uploadedFileIds.length} 檔，但 ${failedDesc} 失敗：${failedFiles[0].message}。請只重新選取失敗的檔案再上傳一次。`, 'error');
+                    } else {
+                        updateStatus('❌ 上傳失敗', '#EF4444');
+                        window.showFlash('音檔上傳失敗: ' + failedFiles[0].message, 'error');
+                    }
+                    resetInput();
+                    return;
                 }
 
                 let base64Data = '', finalMimeType = '', finalFileName = '';

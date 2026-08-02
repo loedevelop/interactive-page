@@ -1,6 +1,6 @@
 ---
-description: Drive 資料夾層級與學生上傳鐵律（禁止再把繳交誤導進 01_Class_Resources）
-globs: gas/Code.gs,020_js_core/api.js,110_teacher_core/api-gas-service.js
+description: Drive 資料夾層級與學生上傳鐵律（禁止再把繳交誤導進 01_Class_Resources；多檔上傳中途失敗不可整批丟）
+globs: gas/Code.gs,020_js_core/api.js,110_teacher_core/api-gas-service.js,120_student_core/feature-student-timeline.js
 alwaysApply: false
 ---
 
@@ -50,6 +50,51 @@ if (subFolderName === '01_Class_Resources' || subFolderName === '01_Materials') 
 - **禁止**無文稿仍呼叫 `submit_audio_task_atomic`／讓 `process-audio-ai` 丟 `Fatal: original_script is missing`（應 skip → status `submitted`）。
 - **學生端音檔播放**：`<audio src>` 必須用 `ApiService.getAudioStreamUrl`（Supabase `stream-audio`）。**禁止**把 GAS Web App URL 當 audio src（會 redirect → `0:00/0:00`）。曾修好又被改壞過，勿再翻。
 - **已繳交確認**：有檔時開「該檔」的 Drive file 連結／內嵌播放／圖片預覽，不要只開 `01_Submissions` 資料夾。
+
+## 多檔上傳（非 AI 批改）中途失敗鐵律
+
+> 2026-08-01：學生反應「6 個檔案不收，3 個可以」。根因：`handleFileSelect` 的多音檔迴圈是單一 `for` 迴圈，
+> 其中一檔 `uploadToGAS` 丟例外（重試 1 次後仍失敗）就整個 `throw`，導致第 4~6 檔完全沒被嘗試；
+> 已成功的第 1~3 檔卻沒有任何「部分成功」訊息，學生只看到失敗、以為全部沒收到。
+> 此路徑**不是** `grading_units` 頁數對應（那是 AI 批改專用的 `uploadAudioFilesForGrading`，見 `ai-grading-pipeline-invariants.mdc`）。
+
+### 症狀
+- 學生選 N 個檔案（無 AI 批改），只有選檔數量較少（如 3 個）時會成功，選多（如 6 個）就在某檔之後全部消失
+- 畫面只顯示紅色失敗，看不出「其實前面幾檔已經上傳成功」
+
+### 不變量
+```
+多檔迴圈中，單一檔案失敗 ≠ 整批失敗：必須逐檔 try/catch，繼續嘗試剩餘檔案
+成功的檔案必須回報進度（updateProgress），不可因後面檔案失敗而整批不呼叫
+task_completions.raw_data.submitted_files 在同一 task 重複呼叫 updateProgress 時，
+  必須與既有已存檔案「合併去重」，不可覆寫掉前一批已成功上傳的紀錄
+失敗訊息必須列出「第幾個／哪個檔名」失敗，讓學生知道只需重傳失敗的部分
+```
+
+### 禁止
+```javascript
+// ❌ 單一 for 迴圈，任何一檔失敗直接 throw，中斷整批
+for (let i = 0; i < filesArray.length; i++) {
+  const result = await window.ApiService.uploadToGAS(...); // 失敗就整個函式 throw
+}
+
+// ❌ updateProgress 用「這次呼叫」的 fileIds 直接覆寫 raw_data.submitted_files
+rawData = { drive_file_ids: idList, submitted_files: normalizedFiles }; // 沒有跟 prevCompletion 合併
+```
+
+### 正確做法
+```javascript
+// ✅ 逐檔 try/catch，收集 failedFiles，成功的照樣 updateProgress
+try { ... uploadToGAS(...) ... uploadedFileIds.push(...) }
+catch (fileErr) { failedFiles.push({ index: i+1, name: file.name, message: fileErr.message }); }
+// 迴圈結束後：有成功就先回報進度；有失敗就明確列出「第幾個檔名」失敗
+
+// ✅ updateProgress 內合併既有 submitted_files（依 id 去重）再存回 raw_data
+const existingFiles = prevCompletion?.raw_data?.submitted_files || [];
+const merged = dedupById(existingFiles, normalizedFiles);
+```
+
+參考實作：`120_student_core/feature-student-timeline.js` 的 `handleFileSelect`（多音檔迴圈）與 `updateProgress`。
 
 ## 改動前自問
 

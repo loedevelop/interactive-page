@@ -16,6 +16,7 @@ alwaysApply: false
 - `grading_units` 仍有多頁／或只剩 A
 - **meta 列只剩 `A.meta.json` 或完全空白**；base 範圍 input 空掉
 - **第二冊**：base 範圍已是 `A…；B…`，凍結卻只有 `A pp.…`，逐頁只有 A（2026-08-01）
+- **多冊（如 C～F 各兩頁）等很久後，只出來 C1 C2**：不是沒自動套用，是套用「跑成功了」但只含第一冊（2026-08-01 再犯，見根因 8、9）
 
 ## 根因（不可再犯）
 
@@ -26,6 +27,8 @@ alwaysApply: false
 5. **自動 Snapshot busy 時直接 `return`**：第一冊 GAS 還在跑，第二冊填完被丟掉，結束後也不重跑（2026-08-01）
 6. **`applySnapshotToNode` 的 async `ensureMetaCatalog.then(renderMaterialMetaRows)`**：A 套用後老師立刻 +B，舊 callback 用只有 A 的 `material_refs` **蓋掉 B 列**
 7. **`BuilderStore.sync` 不合併 `meta_rows_by_stem`**，或用 DOM 殘缺 `grading_units` 縮水冊數 → 考試右欄 B 永遠算不到真可用題
+8. **`buildMergedMaterialSnapshot` 批次讀取多冊時，其中一冊 `ok:false`（GAS／Drive 速率限制或逾時）就直接整批 `throw`**：其餘已成功的冊全部被丟掉，畫面停留在上一次「只有第一冊」的成功結果，看起來像「自動套用又壞了」，其實是這次嘗試整批失敗、根本沒套用新結果（2026-08-01）
+9. **busy→pending 的重跑改走 `scheduleAutoSnapshot`（又排一次全新 900ms 防抖）**：老師等完第一輪（單冊）就以為結束，沒等到 pending 觸發的第二輪（含全部冊），感覺像「等很久只出來一冊」（2026-08-01）
 
 ## 不變量
 
@@ -37,6 +40,8 @@ hydrate：無論清單 API 成敗，都必須先畫出 meta 列
 自動套用：busy 期間變更必須 pending，結束後重跑
 async 重繪 rows：世代號 + DOM 冊數 > snapshot 冊數時禁止縮水
 meta_rows_by_stem：sync 時 merge，禁止用較舊單冊 snap 蓋掉已累積冊
+多冊批次讀取：單冊失敗須重試，仍失敗才整批中斷（不可靜默只套用部分冊，但也不可一冊失敗就無提示地維持舊結果）
+busy 期間累積的 pending 重跑：立刻執行，不可再排一次全新防抖（避免老師等第一輪就誤判為最終結果）
 ```
 
 ## 禁止
@@ -56,6 +61,12 @@ if (_autoSnapshotBusy[path]) return;
 
 // ❌ 不檢查世代就把 snapshot.material_refs 重繪進 DOM
 ensureMetaCatalog().then(opts => renderMaterialMetaRows(path, opts, snapRowsOnlyA));
+
+// ❌ 批次讀取某一冊 ok:false 就直接整批 throw，不重試
+if (batchFiles[i] && !batchFiles[i].ok) throw new Error('讀取失敗');
+
+// ❌ busy 結束後的 pending 重跑又走 900ms 防抖（老師等第一輪就以為結束）
+if (_autoSnapshotPending[path]) { _autoSnapshotPending[path] = false; scheduleAutoSnapshot(path); }
 ```
 
 ## 正確做法
@@ -68,6 +79,8 @@ ensureMetaCatalog().then(opts => renderMaterialMetaRows(path, opts, snapRowsOnly
 // ✅ busy → pending；finally 若 pending 再 scheduleAutoSnapshot
 // ✅ _snapshotApplyGen + liveRows.length > snapRows.length 則跳過重繪
 // ✅ sync：meta_rows_by_stem = Object.assign({}, prev, snap.meta_rows_by_stem)
+// ✅ 批次讀取某冊失敗：改走單檔讀取＋重試 1 次，仍失敗才 throw（明確標出是哪一冊、已重試過）
+// ✅ busy 結束後有 pending：直接呼叫 autoApplyMaterialSnapshot(path) 重跑，不再排新的 900ms 防抖
 ```
 
 ## 改動前自問
@@ -83,3 +96,5 @@ ensureMetaCatalog().then(opts => renderMaterialMetaRows(path, opts, snapRowsOnly
 - 斷網／清單 API 失敗 → 仍看得到已還原的 meta 列（不是空白）  
 - 選 A＋範圍 → 自動套用中立刻 +B＋範圍 → 結束後凍結含 `A…；B…`，逐頁有 B  
 - 考試區段 A 可用題為綠字實數、B 在未進 snap 前顯示「需Snapshot」（不是 `~20` 裝沒事）
+- 一次新增 C～F 四冊（各兩頁）→ 其中一冊模擬讀取失敗一次（仍在重試次數內）→ 最終四冊仍全部進 snapshot，不會停在只有第一冊
+- busy 期間累積 pending → 結束後應立刻看到「正在重新套用完整範圍」狀態文字，不需老師手動再改一次欄位才觸發第二輪
