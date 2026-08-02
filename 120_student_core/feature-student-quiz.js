@@ -1,6 +1,13 @@
 /**
  * 📂 120_student_core/feature-student-quiz.js
  * 學生端線上卷：全螢幕、離開／quit／完成統計、錯題與錯字分析
+ *
+ * 設計決定（2026-08-02 與老師確認）：允許學生「無限次重考」，沒有次數上限或鎖定機制；
+ * 每次開啟（attempt_count）與每次繳交（complete_count／history）都會記錄，不會互相覆蓋。
+ * 老師畫面看到的分數＝最新一次，但完整歷程（含每次分數、離開次數、時間）保留在
+ * quiz_stats.history（上限 40 筆）與 spelling_history／spelling_ledger（上限 250 筆）。
+ * 見 docs/quiz-json-contract-v0.2.md「學生端作答語意」一節。若要改成限制次數，
+ * 需同時更新該文件與此處註解，避免下次改動的人以為現狀是「只能考一次」。
  */
 window.FeatureStudentQuiz = (function () {
     'use strict';
