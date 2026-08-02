@@ -354,17 +354,51 @@ window.TeacherUI = (() => {
         
         renderSidebar();
         const activeTargetId = applyResolvedClassTab();
-        
-        if (window.FeatureClass && typeof window.FeatureClass.updateClassContent === 'function') {
-            window.FeatureClass.updateClassContent(currentClassId);
+
+        // 🚀 效能：換班／重整只載入「目前分頁」，勿同時搶跑進度總表／成員／資源庫
+        // （分頁 click 本來就是懶載入；activateClassView 曾把全部打一遍造成卡頓）
+        loadActiveClassTabData(activeTargetId, staffRole);
+    }
+
+    function loadActiveClassTabData(targetId, staffRole) {
+        if (!currentClassId || !targetId) return;
+        const role = staffRole || 'ta_junior';
+
+        if (targetId === 'view-progress' || targetId === 'view-timeline') {
+            if (window.FeatureTimeline) window.FeatureTimeline.renderTimeline(currentClassId);
+            return;
         }
-        if (window.FeatureTimeline) window.FeatureTimeline.renderTimeline(currentClassId);
-        if (window.FeatureClassMembers) window.FeatureClassMembers.renderStudentManager(currentClassId);
-        if (window.RenderMemberManagerForm) window.RenderMemberManagerForm(currentClassId, staffRole);
-        if (window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
-        if (window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') window.FeatureResource.renderClassResources(currentClassId);
-        if (activeTargetId === 'view-gradebook' && window.FeatureGradebook && typeof window.FeatureGradebook.loadDataForCurrentClass === 'function') {
-            window.FeatureGradebook.loadDataForCurrentClass();
+        if (targetId === 'view-progress-report') {
+            if (window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
+            return;
+        }
+        if (targetId === 'view-settings') {
+            if (window.FeatureClass && typeof window.FeatureClass.renderSettings === 'function') {
+                window.FeatureClass.renderSettings(currentClassId);
+            }
+            if (window.FeatureClass && typeof window.FeatureClass.updateClassContent === 'function') {
+                window.FeatureClass.updateClassContent(currentClassId);
+            }
+            return;
+        }
+        if (targetId === 'view-students') {
+            if (window.FeatureClassMembers) window.FeatureClassMembers.renderStudentManager(currentClassId);
+            if (window.RenderMemberManagerForm) window.RenderMemberManagerForm(currentClassId, role);
+            return;
+        }
+        if (targetId === 'view-resources') {
+            if (window.FeatureResource && typeof window.FeatureResource.renderResourceMap === 'function') {
+                window.FeatureResource.renderResourceMap(currentClassId);
+            }
+            if (window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') {
+                window.FeatureResource.renderClassResources(currentClassId);
+            }
+            return;
+        }
+        if (targetId === 'view-gradebook') {
+            if (window.FeatureGradebook && typeof window.FeatureGradebook.loadDataForCurrentClass === 'function') {
+                window.FeatureGradebook.loadDataForCurrentClass();
+            }
         }
     }
 

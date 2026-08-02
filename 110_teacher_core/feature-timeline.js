@@ -291,15 +291,15 @@ window.FeatureTimeline = (() => {
                     const kindErr = entry && entry.error ? (entry.error.message || String(entry.error)) : '';
                     const kindFailed = entry && entry.ok === false;
                     if ((kindFailed || kindErr) && !options.length) {
-                        statusEl.textContent = '⚠️ 「' + (kind === 'teacher' ? '老師' : '班級') + '」清單載入失敗：'
-                            + (kindErr || '未知錯誤')
-                            + '｜列已保留，請按「重新整理清單」（老師 ' + tCount + '／班級 ' + cCount + '）';
-                        statusEl.style.color = '#D97706';
+                        // 初次開啟常因 GAS 冷啟動失敗，勿用刺眼粉紅；提示可重試
+                        statusEl.textContent = 'ℹ️ meta 清單暫時連不上（' + (kindErr || 'GAS 忙碌')
+                            + '）。列已保留；稍候會自動再試，或按「重新整理清單」。';
+                        statusEl.style.color = '#64748B';
                     } else if (!options.length) {
-                        statusEl.textContent = '⚠️ 清單是空的（0 個 meta）。請確認 Drive 有 '
+                        statusEl.textContent = 'ℹ️ 目前 0 個 meta。請確認 Drive 有 '
                             + (kind === 'teacher' ? '01_My_Materials' : '00_Class_Materials')
                             + '，或按「重新整理清單」';
-                        statusEl.style.color = '#D97706';
+                        statusEl.style.color = '#64748B';
                     } else {
                         statusEl.textContent = '✅ meta 清單已自動載入｜目前根目錄 '
                             + options.length + ' 個檔｜老師合計 ' + tCount + '／班級合計 ' + cCount
@@ -376,9 +376,123 @@ window.FeatureTimeline = (() => {
 
         const fileEl = wrap.querySelector('.material-meta-file');
         const rangeEl = wrap.querySelector('.material-meta-range');
-        if (fileEl) fileEl.addEventListener('change', function () { refreshMaterialRangeLabel(pathStr); });
-        if (rangeEl) rangeEl.addEventListener('input', function () { refreshMaterialRangeLabel(pathStr); });
+        if (fileEl) {
+            fileEl.addEventListener('change', function () {
+                refreshMaterialRangeLabel(pathStr);
+                scheduleAutoSnapshot(pathStr);
+            });
+        }
+        if (rangeEl) {
+            rangeEl.addEventListener('input', function () {
+                refreshMaterialRangeLabel(pathStr);
+                scheduleAutoSnapshot(pathStr);
+            });
+        }
         return wrap;
+    }
+
+    /** 改 meta／範圍後自動套用 Snapshot（防抖，避免連打 GAS） */
+    const _autoSnapshotTimers = {};
+    const _autoSnapshotBusy = {};
+    /** busy 期間若又改了 meta／範圍，結束後必須再跑一次（否則第二冊永遠不會進 snapshot） */
+    const _autoSnapshotPending = {};
+    /** applySnapshotToNode 世代：避免舊的 async 重繪把剛加的第 2 列 meta 蓋掉 */
+    const _snapshotApplyGen = {};
+
+    function scheduleAutoSnapshot(pathStr) {
+        if (_autoSnapshotTimers[pathStr]) clearTimeout(_autoSnapshotTimers[pathStr]);
+        const statusEl = document.getElementById('node-material-status-' + pathStr);
+        if (statusEl) {
+            statusEl.textContent = '⏳ 範圍已變更，即將自動套用 Snapshot…';
+            statusEl.style.color = '#3B82F6';
+        }
+        _autoSnapshotTimers[pathStr] = setTimeout(function () {
+            autoApplyMaterialSnapshot(pathStr).catch(function (err) {
+                console.warn('[FeatureTimeline] autoApplyMaterialSnapshot', err);
+            });
+        }, 900);
+    }
+
+    function metaRowsReadyForSnapshot(pathStr) {
+        const rowsEl = document.getElementById('node-material-rows-' + pathStr);
+        if (!rowsEl) return { ok: false, reason: '找不到 meta 列' };
+        const rowEls = rowsEl.querySelectorAll('.material-meta-row');
+        if (!rowEls.length) return { ok: false, reason: '請先新增 meta 列' };
+        let filled = 0;
+        for (let i = 0; i < rowEls.length; i++) {
+            const fileEl = rowEls[i].querySelector('.material-meta-file');
+            const rangeEl = rowEls[i].querySelector('.material-meta-range');
+            const val = fileEl ? String(fileEl.value || '').trim() : '';
+            const range = rangeEl ? String(rangeEl.value || '').trim() : '';
+            if (!val && !range) continue; // 空列略過
+            if (!val || !range) {
+                return { ok: false, reason: '第 ' + (i + 1) + ' 列請選 meta 並填範圍' };
+            }
+            filled += 1;
+        }
+        if (!filled) return { ok: false, reason: '請先選 meta 並填範圍' };
+        return { ok: true };
+    }
+
+    async function autoApplyMaterialSnapshot(pathStr) {
+        // 第一冊 GAS 還在跑時，第二冊的 change 不能直接 return 丢掉——標記 pending，結束後重跑
+        if (_autoSnapshotBusy[pathStr]) {
+            _autoSnapshotPending[pathStr] = true;
+            return;
+        }
+        const ready = metaRowsReadyForSnapshot(pathStr);
+        const statusEl = document.getElementById('node-material-status-' + pathStr);
+        const previewEl = document.getElementById('node-material-preview-' + pathStr);
+        if (!ready.ok) {
+            if (statusEl) {
+                statusEl.textContent = 'ℹ️ ' + ready.reason + '（填妥後會自動套用）';
+                statusEl.style.color = '#64748B';
+            }
+            return;
+        }
+        const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        if (!bState || !window.MaterialSnapshot) return;
+        _autoSnapshotBusy[pathStr] = true;
+        _autoSnapshotPending[pathStr] = false;
+        try {
+            if (statusEl) {
+                statusEl.textContent = '⏳ 自動套用 Snapshot…';
+                statusEl.style.color = '#3B82F6';
+            }
+            const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
+            applySnapshotToNode(pathStr, snapshot);
+            refreshMaterialRangeLabel(pathStr);
+            if (previewEl) {
+                previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
+                    + String(snapshot.material_range || '').replace(/</g, '&lt;')
+                    + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                    + (snapshot.original_script || '').replace(/</g, '&lt;')
+                    + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+                    + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
+            }
+            if (statusEl) {
+                statusEl.textContent = '✅ 已自動套用 Snapshot｜' + (snapshot.material_range || '')
+                    + '（請記得儲存作業）';
+                statusEl.style.color = '#059669';
+            }
+            // 同層考試可用題跟著刷新
+            if (window.FeatureExamJob && typeof window.FeatureExamJob._refreshAfterAudioSnapshot === 'function') {
+                try { window.FeatureExamJob._refreshAfterAudioSnapshot(pathStr); } catch (_e) {}
+            }
+        } catch (err) {
+            if (statusEl) {
+                statusEl.textContent = '⚠️ 自動 Snapshot 失敗：' + (err.message || err)
+                    + '（可再改範圍重試，或按「套用 Snapshot」）';
+                statusEl.style.color = '#D97706';
+            }
+            if (previewEl) previewEl.textContent = '❌ ' + (err.message || err);
+        } finally {
+            _autoSnapshotBusy[pathStr] = false;
+            if (_autoSnapshotPending[pathStr]) {
+                _autoSnapshotPending[pathStr] = false;
+                scheduleAutoSnapshot(pathStr);
+            }
+        }
     }
 
     function renderMaterialMetaRows(pathStr, options, rows) {
@@ -554,13 +668,71 @@ window.FeatureTimeline = (() => {
         if (!incomplete && rangeEl) {
             rangeEl.value = label;
         }
-        const titleEl = document.getElementById('node-title-' + pathStr);
-        const titleText = titleEl ? String(titleEl.textContent || '').trim() : '';
         const rangeText = (rangeEl && String(rangeEl.value || '').trim()) || label || '';
-        if (titleEl && !titleText && rangeText && !incomplete) {
-            titleEl.textContent = rangeText;
+        if (!incomplete && rangeText) {
+            applyInheritedTitleFromRange(pathStr, rangeText);
+            // 同層考試標題若仍為自動繼承，一併更新
+            syncSiblingExamTitleFromRange(pathStr, rangeText);
         }
         return label;
+    }
+
+    /**
+     * 標題空白、或先前由 base 範圍自動帶入時 → 同步成最新範圍。
+     * 老師手動改過且「仍有字」時不覆寫；若之後把標題刪光，恢復繼承。
+     */
+    function applyInheritedTitleFromRange(pathStr, rangeText) {
+        const titleEl = document.getElementById('node-title-' + pathStr);
+        if (!titleEl || !rangeText) return;
+        const current = String(titleEl.textContent || '').trim();
+        const autoFlag = titleEl.getAttribute('data-title-auto');
+        const prevFrom = String(titleEl.getAttribute('data-title-from-range') || '').trim();
+        // 空白＝一律可繼承（含手動改過再刪光）
+        const shouldAuto = !current || autoFlag === '1' || (prevFrom && current === prevFrom);
+        if (!shouldAuto) return;
+        titleEl.textContent = rangeText;
+        titleEl.setAttribute('data-title-auto', '1');
+        titleEl.setAttribute('data-title-from-range', rangeText);
+    }
+
+    /** 標題輸入：有字＝手動；刪光＝立刻恢復從 base 範圍繼承 */
+    function onNodeTitleInput(pathStr, el) {
+        const titleEl = el || document.getElementById('node-title-' + pathStr);
+        if (!titleEl) return;
+        const current = String(titleEl.textContent || '').trim();
+        if (current) {
+            titleEl.setAttribute('data-title-auto', '0');
+            return;
+        }
+        titleEl.setAttribute('data-title-auto', '1');
+        let rangeText = '';
+        const rangeEl = document.getElementById('node-material-range-' + pathStr)
+            || document.getElementById('node-material-range-manual-' + pathStr);
+        if (rangeEl) rangeText = String(rangeEl.value || '').trim();
+        if (!rangeText && window.FeatureExamJob
+            && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+            rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+        }
+        if (rangeText) applyInheritedTitleFromRange(pathStr, rangeText);
+    }
+
+    function syncSiblingExamTitleFromRange(audioPathStr, rangeText) {
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!bState || !Array.isArray(bState.tasks) || !rangeText) return;
+        const arr = String(audioPathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+        let list = bState.tasks;
+        const base = [];
+        for (let i = 0; i < arr.length - 1; i++) {
+            const node = list[arr[i]];
+            if (!node) return;
+            base.push(arr[i]);
+            list = node.subTasks || [];
+        }
+        for (let i = 0; i < (list || []).length; i++) {
+            const t = list[i];
+            if (!t || t.type !== 'exam') continue;
+            applyInheritedTitleFromRange(base.concat([i]).join('-'), rangeText);
+        }
     }
 
     function readSelectedMaterialMetas(pathStr) {
@@ -857,30 +1029,35 @@ window.FeatureTimeline = (() => {
 
         // rows 是「套用 Snapshot」的輸入來源，理論上應與 snapshot.material_refs 一致；
         // 這裡強制用 snapshot 的結果重繪一次 rows，避免任何時序差導致存檔時讀到不同筆數的 rows。
+        // 💣 雷區：ensureMetaCatalog 是 async；若 A 套用後老師立刻 +B，舊 callback 會把 B 列蓋掉。
+        // 用世代號 +「DOM 已比 snapshot 多冊則不縮水」雙保險。
         const rowsEl = document.getElementById('node-material-rows-' + pathStr);
         if (rowsEl && Array.isArray(snapshot.material_refs) && snapshot.material_refs.length) {
             const kind = readMaterialsRootKind(pathStr);
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+            const applyGen = (_snapshotApplyGen[pathStr] = (_snapshotApplyGen[pathStr] || 0) + 1);
+            const snapRows = snapshot.material_refs.map(function (r) {
+                return {
+                    value: (r.material_folder || '') + '::' + (r.published_file || ''),
+                    range_spec: r.range_spec || '',
+                    label: r.label || ''
+                };
+            });
+            function shouldApplySnapRows() {
+                if (_snapshotApplyGen[pathStr] !== applyGen) return false;
+                const live = readMaterialMetaRows(pathStr);
+                // 畫面已比這次 snapshot 多冊（老師剛加了下一列）→ 禁止用舊 snapshot 縮水
+                if (live.length > snapRows.length) return false;
+                return true;
+            }
             if (bState) {
                 ensureMetaCatalog(bState.classId, kind).then(function (options) {
+                    if (!shouldApplySnapRows()) return;
                     _materialMetaOptionsCache[pathStr] = options;
-                    const rows = snapshot.material_refs.map(function (r) {
-                        return {
-                            value: (r.material_folder || '') + '::' + (r.published_file || ''),
-                            range_spec: r.range_spec || '',
-                            label: r.label || ''
-                        };
-                    });
-                    renderMaterialMetaRows(pathStr, options, rows);
+                    renderMaterialMetaRows(pathStr, options, snapRows);
                 }).catch(function () {
-                    const rows = snapshot.material_refs.map(function (r) {
-                        return {
-                            value: (r.material_folder || '') + '::' + (r.published_file || ''),
-                            range_spec: r.range_spec || '',
-                            label: r.label || ''
-                        };
-                    });
-                    renderMaterialMetaRows(pathStr, _materialMetaOptionsCache[pathStr] || [], rows);
+                    if (!shouldApplySnapRows()) return;
+                    renderMaterialMetaRows(pathStr, _materialMetaOptionsCache[pathStr] || [], snapRows);
                 });
             }
         }
@@ -1276,10 +1453,10 @@ window.FeatureTimeline = (() => {
 
             window.BuilderStore.initEdit(a, cId);
             renderTimeline(a.class_id, 'none');
+            // renderBuilderUI 已 seed＋autoPrime；勿再 hydrateMaterialSnapshotUI（會 double-prime／卡頓）
             renderBuilderUI();
             
             setTimeout(() => {
-                hydrateMaterialSnapshotUI();
                 const editorEl = document.getElementById(`${cId}-editor`);
                 const viewContainer = document.querySelector('.view-section.active');
                 if (editorEl && viewContainer) {
@@ -1939,7 +2116,19 @@ window.FeatureTimeline = (() => {
             try {
                 const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
                 applySnapshotToNode(pathStr, snapshot);
+                const previewEl = document.getElementById('node-material-preview-' + pathStr);
+                if (previewEl) {
+                    previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
+                        + String(snapshot.material_range || '').replace(/</g, '&lt;')
+                        + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                        + (snapshot.original_script || '').replace(/</g, '&lt;')
+                        + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+                        + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
+                }
                 window.showFlash('已寫入 Snapshot：' + (snapshot.material_range || '') + '（請記得儲存作業）');
+                if (window.FeatureExamJob && typeof window.FeatureExamJob._refreshAfterAudioSnapshot === 'function') {
+                    try { window.FeatureExamJob._refreshAfterAudioSnapshot(pathStr); } catch (_e) {}
+                }
             } catch (err) {
                 window.showFlash('套用 Snapshot 失敗：' + err.message, 'error');
             }
@@ -2000,6 +2189,8 @@ window.FeatureTimeline = (() => {
         refreshMaterialRangeLabel: function (pathStr) {
             return refreshMaterialRangeLabel(pathStr);
         },
+
+        onNodeTitleInput: onNodeTitleInput,
 
         onScriptSourceChange: function (pathStr) {
             const sourceEl = document.getElementById('node-script-source-' + pathStr);

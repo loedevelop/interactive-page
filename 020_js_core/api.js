@@ -218,19 +218,30 @@ const ApiService = (() => {
         }
     };
 
-    const syncProgress = async (studentId, taskId, isCompleted) => {
+    const syncProgress = async (studentId, taskId, isCompleted, assignmentId) => {
         try {
-            if (!studentId || !taskId) throw new Error("缺少同步進度所需之參數");
+            if (!studentId || !taskId || !assignmentId) throw new Error("缺少同步進度所需之參數（assignmentId／taskId／studentId 缺一不可）");
+
+            // student_task_progress.class_id 為必填欄位；呼叫端（進度格子）目前不便逐層傳遞 classId，
+            // 這裡用 assignment_id 反查一次，換取上層呼叫鏈（onclick→toggleTask→enqueueTask）維持單純
+            const { data: assignRow, error: assignErr } = await window.supabaseClient
+                .from('assignments')
+                .select('class_id')
+                .eq('id', assignmentId)
+                .single();
+            if (assignErr || !assignRow) throw new Error("找不到對應作業，無法同步進度：" + (assignErr ? assignErr.message : assignmentId));
 
             const { error } = await window.supabaseClient
                 .from('student_task_progress')
                 .upsert({
-                    student_id: studentId,
+                    assignment_id: assignmentId,
+                    class_id: assignRow.class_id,
                     task_id: taskId,
+                    student_id: studentId,
                     is_completed: isCompleted,
                     updated_at: new Date().toISOString()
-                }, { 
-                    onConflict: 'student_id, task_id' 
+                }, {
+                    onConflict: 'assignment_id,task_id,student_id'
                 });
 
             if (error) throw error;
@@ -515,10 +526,54 @@ const ApiService = (() => {
         return '';
     };
 
-    const uploadToGAS = async (base64Data, fileName, mimeType, folderId, assignmentId = null, taskId = null) => {
+    // GAS 上傳成功時是 200+JSON（含業務錯誤如「找不到資料夾」也是 200）；只有真正的網路層／轉址層
+    // 異常（fetch 直接失敗、非 2xx、或回應不是預期的 JSON——常見於 LINE／IG 內建瀏覽器擋掉 Google
+    // 302 轉址到 script.googleusercontent.com 的第三方 Cookie）才值得重試一次，業務錯誤重試無意義。
+    const uploadToGASOnce = async (payload) => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); 
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        try {
+            const response = await fetch(GAS_API_URL, {
+                method: 'POST',
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(payload)
+            });
+            clearTimeout(timeoutId);
 
+            if (!response.ok) {
+                const err = new Error(`連線異常 (HTTP ${response.status})`);
+                err.isRetryable = true;
+                throw err;
+            }
+            const rawText = await response.text();
+            let result;
+            try {
+                result = JSON.parse(rawText);
+            } catch (_parseErr) {
+                const err = new Error('雲端回應格式異常，請稍後再試或通知老師檢查 GAS 部署。');
+                err.isRetryable = true;
+                throw err;
+            }
+
+            if (result.status !== 'success') {
+                throw new Error(result.message || '雲端儲存空間回報未知錯誤');
+            }
+            return result;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error('上傳逾時：檔案可能過大或網路不穩定，請分批上傳或檢查網路連線。');
+            }
+            if (error instanceof TypeError) {
+                error.isRetryable = true; // fetch 層級直接失敗（離線／DNS／CORS），非業務錯誤
+            }
+            throw error;
+        }
+    };
+
+    const uploadToGAS = async (base64Data, fileName, mimeType, folderId, assignmentId = null, taskId = null) => {
         try {
             const cleanFolderId = extractDriveFolderId(folderId);
             if (!cleanFolderId) {
@@ -536,34 +591,22 @@ const ApiService = (() => {
             if (assignmentId) payload.assignmentId = assignmentId;
             if (taskId) payload.taskId = taskId;
 
-            const response = await fetch(GAS_API_URL, {
-                method: 'POST',
-                redirect: 'follow',
-                signal: controller.signal,
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!response.ok) throw new Error(`連線異常 (HTTP ${response.status})`);
-            const rawText = await response.text();
-            let result;
             try {
-                result = JSON.parse(rawText);
-            } catch (_parseErr) {
-                throw new Error('雲端回應格式異常，請稍後再試或通知老師檢查 GAS 部署。');
+                return await uploadToGASOnce(payload);
+            } catch (firstError) {
+                if (!firstError.isRetryable) throw firstError;
+                console.warn("[API Warning - uploadToGAS] 第一次上傳失敗，1.5 秒後自動重試一次：", firstError.message);
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                try {
+                    return await uploadToGASOnce(payload);
+                } catch (secondError) {
+                    if (secondError.isRetryable) {
+                        throw new Error('網路連線不穩定，已自動重試一次仍失敗。請確認網路連線正常，或改用 Chrome／Safari 開啟本頁後再試一次（避免使用 LINE／IG 等 App 內建瀏覽器）。');
+                    }
+                    throw secondError;
+                }
             }
-            
-            if (result.status !== 'success') {
-                throw new Error(result.message || '雲端儲存空間回報未知錯誤');
-            }
-            return result; 
         } catch (error) {
-            clearTimeout(timeoutId);
-            if (error.name === 'AbortError') {
-                throw new Error('上傳逾時：檔案可能過大或網路不穩定，請分批上傳或檢查網路連線。');
-            }
             console.error("[API Error - uploadToGAS]", error);
             throw error;
         }

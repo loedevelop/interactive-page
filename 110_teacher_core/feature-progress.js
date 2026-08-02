@@ -12,32 +12,39 @@ window.FeatureProgress = (() => {
     const DB_NAME = 'LogOn_OfflineDB';
     const STORE_NAME = 'ProgressQueue';
     let localDB = null;
+    /** 避免快速重抓／切班時，舊的 Phase2 覆寫新畫面 */
+    let progressFetchSeq = 0;
 
     function initDB() {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, 1);
+            // v2：鍵改為 [assignment_id, task_id, student_id]，與 student_task_progress 的
+            // UNIQUE (assignment_id, task_id, student_id) 對齊；v1 舊佇列一律捨棄重建
+            // （反正舊項目一直寫入不存在的表，從未真正同步成功過，捨棄無損失）
+            const request = indexedDB.open(DB_NAME, 2);
             request.onerror = event => reject("IndexedDB 開啟失敗");
             request.onsuccess = event => { localDB = event.target.result; resolve(); };
             request.onupgradeneeded = event => {
                 const db = event.target.result;
-                if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    db.createObjectStore(STORE_NAME, { keyPath: ['task_id', 'student_id'] });
+                if (db.objectStoreNames.contains(STORE_NAME)) {
+                    db.deleteObjectStore(STORE_NAME);
                 }
+                db.createObjectStore(STORE_NAME, { keyPath: ['assignment_id', 'task_id', 'student_id'] });
             };
         });
     }
 
-    async function enqueueTask(studentId, taskId, isCompleted) {
+    async function enqueueTask(assignmentId, studentId, taskId, isCompleted) {
         if (!localDB) await initDB();
         return new Promise((resolve, reject) => {
             const tx = localDB.transaction(STORE_NAME, 'readwrite');
             const store = tx.objectStore(STORE_NAME);
-            const item = { 
-                student_id: studentId, 
-                task_id: taskId, 
+            const item = {
+                assignment_id: assignmentId,
+                student_id: studentId,
+                task_id: taskId,
                 is_completed: isCompleted,
                 status: 'pending',
-                timestamp: new Date().getTime() 
+                timestamp: new Date().getTime()
             };
             store.put(item);
             tx.oncomplete = () => resolve();
@@ -61,9 +68,9 @@ window.FeatureProgress = (() => {
 
             for (const item of pendingItems) {
                 try {
-                    await window.ApiService.syncProgress(item.student_id, item.task_id, item.is_completed);
+                    await window.ApiService.syncProgress(item.student_id, item.task_id, item.is_completed, item.assignment_id);
                     const deleteTx = localDB.transaction(STORE_NAME, 'readwrite');
-                    deleteTx.objectStore(STORE_NAME).delete([item.task_id, item.student_id]);
+                    deleteTx.objectStore(STORE_NAME).delete([item.assignment_id, item.task_id, item.student_id]);
                 } catch (err) {
                     console.error("背景同步單筆失敗，將於下次重試:", err);
                 }
@@ -93,20 +100,46 @@ window.FeatureProgress = (() => {
 
         container.innerHTML = '<div style="padding: 40px; text-align:center; color: var(--primary); font-weight:800; font-size: 1.2rem;">⏳ 正在交叉比對全班進度資料，請稍候...</div>';
 
+        const seq = ++progressFetchSeq;
         try {
-            const { data: enrollments, error: enrollError } = await window.supabaseClient
-                .from('student_enrollments')
-                .select(`
-                    user_id,
-                    raw_data,
-                    profiles:user_id (id, name)
-                `)
-                .eq('class_id', classId)
-                .is('deleted_at', null)
-                .order('created_at', { ascending: true });
-                
-            if (enrollError) throw new Error('讀取選課名單失敗: ' + enrollError.message);
+            // Phase 1：輕量並行（格子打勾不需要 raw_data；肥大 AI／quiz JSON 是主因）
+            // 雷區：class_id=UUID；assignment_id 可能 BIGINT——查詢參數沿用 DB 原值，勿強轉 uuid
+            // student_task_progress：無提交機制小項的手動打勾旗標，與 task_completions 是 OR 關係一起判定完成
+            const [enrollRes, assignRes, compLightRes, manualRes] = await Promise.all([
+                window.supabaseClient
+                    .from('student_enrollments')
+                    .select(`
+                        user_id,
+                        raw_data,
+                        profiles:user_id (id, name)
+                    `)
+                    .eq('class_id', classId)
+                    .is('deleted_at', null)
+                    .order('created_at', { ascending: true }),
+                window.supabaseClient
+                    .from('assignments')
+                    .select('id, title, target_date, due_date, tasks, is_published, class_id')
+                    .eq('class_id', classId)
+                    .is('deleted_at', null)
+                    .order('target_date', { ascending: false }),
+                window.supabaseClient
+                    .from('task_completions')
+                    .select('student_id, task_id, assignment_id, status, deleted_at, updated_at')
+                    .eq('class_id', classId)
+                    .is('deleted_at', null)
+                    .neq('status', 'incomplete'),
+                window.supabaseClient
+                    .from('student_task_progress')
+                    .select('assignment_id, task_id, student_id, is_completed')
+                    .eq('class_id', classId)
+            ]);
 
+            if (enrollRes.error) throw new Error('讀取選課名單失敗: ' + enrollRes.error.message);
+            if (assignRes.error) throw new Error('讀取作業清單失敗: ' + assignRes.error.message);
+            if (compLightRes.error) throw new Error('讀取完成紀錄失敗: ' + compLightRes.error.message);
+            if (manualRes.error) console.warn('[FeatureProgress] 讀取手動打勾旗標失敗，僅顯示真實提交狀態', manualRes.error);
+
+            const enrollments = enrollRes.data;
             // 附掛 drive_folder_id（指向該生 01_Submissions），供音檔分割上傳等工具使用
             const students = enrollments
                 ? enrollments.filter(e => e.profiles !== null).map(e => Object.assign({}, e.profiles, {
@@ -114,23 +147,28 @@ window.FeatureProgress = (() => {
                 }))
                 : [];
 
-            const { data: assignments, error: assignError } = await window.supabaseClient
-                .from('assignments')
-                .select('id, title, target_date, due_date, tasks, raw_data, is_published, class_id')
-                .eq('class_id', classId)
-                .is('deleted_at', null)
-                .order('target_date', { ascending: false });
-            if (assignError) throw new Error('讀取作業清單失敗: ' + assignError.message);
+            const assignments = assignRes.data || [];
+            const manualProgress = manualRes.data || [];
+            if (seq !== progressFetchSeq) return;
+            renderGrid(container, students, assignments, compLightRes.data || [], classId, { heavyReady: false }, manualProgress);
 
-            const { data: completions, error: compError } = await window.supabaseClient
+            // Phase 2：背景補 raw_data（AI 補批／音檔分割需要）
+            const heavyRes = await window.supabaseClient
                 .from('task_completions')
                 .select('student_id, task_id, assignment_id, status, raw_data, deleted_at, updated_at')
                 .eq('class_id', classId)
                 .is('deleted_at', null)
                 .neq('status', 'incomplete');
-            if (compError) throw new Error('讀取完成紀錄失敗: ' + compError.message);
-
-            renderGrid(container, students, assignments || [], completions || [], classId);
+            if (seq !== progressFetchSeq) return;
+            if (heavyRes.error) {
+                console.warn('[FeatureProgress] 補載 raw_data 失敗', heavyRes.error);
+                const slot = document.getElementById('progress-heavy-slot');
+                if (slot) {
+                    slot.innerHTML = '<div style="padding:12px; color:#B45309; font-weight:800;">⚠️ AI／音檔工具載入失敗，進度表仍可使用。可按重新整理重試。</div>';
+                }
+                return;
+            }
+            renderGrid(container, students, assignments, heavyRes.data || [], classId, { heavyReady: true }, manualProgress);
 
         } catch (err) {
             console.error("報表產生失敗：", err);
@@ -138,7 +176,9 @@ window.FeatureProgress = (() => {
         }
     }
 
-    function renderGrid(container, students, assignments, completions, classId) {
+    function renderGrid(container, students, assignments, completions, classId, options, manualProgress) {
+        options = options || {};
+        const heavyReady = options.heavyReady !== false;
         if (students.length === 0) {
             container.innerHTML = '<div style="padding: 20px; color:#94A3B8; font-weight:800;">目前班級內沒有有效學生，無法產生進度表。</div>';
             return;
@@ -158,10 +198,40 @@ window.FeatureProgress = (() => {
             return res;
         };
 
+        const parseAssignTasks = (rawTasks) => {
+            if (window.TaskScriptResolver && typeof window.TaskScriptResolver.parseTasks === 'function') {
+                return window.TaskScriptResolver.parseTasks(rawTasks);
+            }
+            if (Array.isArray(rawTasks)) return rawTasks;
+            if (typeof rawTasks === 'string') {
+                try {
+                    const parsed = JSON.parse(rawTasks);
+                    return Array.isArray(parsed) ? parsed : [];
+                } catch (_e) {
+                    return [];
+                }
+            }
+            return [];
+        };
+
+        // O(1) 查表：避免每格都掃完整 completions（學生×任務×完成紀錄）
+        // 鍵含 assignment_id：task.id 雖跨作業幾乎不撞號，但語意上仍應以 (assignment_id, task_id) 複合鍵比對，
+        // 與側表一律用 (assignment_id, task_id) 當自然鍵的原則一致，不留隱性耦合風險
+        const doneKeys = new Set();
+        (completions || []).forEach(function (c) {
+            if (!c || c.deleted_at) return;
+            doneKeys.add(String(c.assignment_id) + '\t' + String(c.student_id) + '\t' + String(c.task_id));
+        });
+        // 無提交機制的小項：老師手動打勾持久化在 student_task_progress，與真實提交是 OR 關係
+        (manualProgress || []).forEach(function (m) {
+            if (!m || !m.is_completed) return;
+            doneKeys.add(String(m.assignment_id) + '\t' + String(m.student_id) + '\t' + String(m.task_id));
+        });
+
         const validAssignments = assignments.map(a => {
             return {
                 ...a,
-                actionableTasks: getActionableTasks(a.tasks || [])
+                actionableTasks: getActionableTasks(parseAssignTasks(a.tasks))
             };
         }).filter(a => a.actionableTasks.length > 0);
 
@@ -213,12 +283,14 @@ window.FeatureProgress = (() => {
                 rowHtml += `<td class="progress-remind-col" onclick="event.stopPropagation(); window.FeatureReminderImage.openSingle('${classId}', '${safeAssignId}', '${safeStudentId}')" style="border:1px solid #BFDBFE; text-align:center; background:#EFF6FF; color:#1D4ED8; font-size:1.35rem; padding:8px 6px; min-width:56px; width:56px; user-select:none; cursor:default;" title="產出 ${safeName} 此作業提醒圖">📬</td>`;
 
                 a.actionableTasks.forEach(t => {
-                    const isDone = completions.some(c => c.student_id === std.id && c.task_id === t.id);
+                    const isDone = doneKeys.has(String(a.id) + '\t' + String(std.id) + '\t' + String(t.id));
+                    const cellId = `cell-${safeAssignId}-${std.id}-${t.id}`;
+                    const toggleCall = `window.FeatureProgress.toggleTask('${safeAssignId}', '${safeStudentId}', '${t.id}')`;
                     if (isDone) {
                         stdDoneCount++;
-                        rowHtml += `<td id="cell-${std.id}-${t.id}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${t.id}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; font-size:1.2rem; background:#ECFDF5; user-select:none; transition:0.2s;" title="點擊取消">✅</td>`;
+                        rowHtml += `<td id="${cellId}" onclick="${toggleCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; font-size:1.2rem; background:#ECFDF5; user-select:none; transition:0.2s;" title="點擊取消">✅</td>`;
                     } else {
-                        rowHtml += `<td id="cell-${std.id}-${t.id}" onclick="window.FeatureProgress.toggleTask('${std.id}', '${t.id}')" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; color:#CBD5E1; font-size:0.8rem; background:#FFF; user-select:none; transition:0.2s;" title="點擊打勾">—</td>`;
+                        rowHtml += `<td id="${cellId}" onclick="${toggleCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; color:#CBD5E1; font-size:0.8rem; background:#FFF; user-select:none; transition:0.2s;" title="點擊打勾">—</td>`;
                     }
                 });
             });
@@ -262,13 +334,18 @@ window.FeatureProgress = (() => {
             </style>
         `;
 
-        const backfillHtml = (window.FeatureAIBackfill && typeof window.FeatureAIBackfill.renderPanel === 'function')
-            ? window.FeatureAIBackfill.renderPanel(classId, validAssignments, completions, students)
-            : '';
-
-        const audioSplitEntryHtml = (window.FeatureAudioSplitUpload && typeof window.FeatureAudioSplitUpload.renderEntryButton === 'function')
-            ? window.FeatureAudioSplitUpload.renderEntryButton(classId, validAssignments, completions, students)
-            : '';
+        let backfillHtml = '';
+        let audioSplitEntryHtml = '';
+        if (heavyReady) {
+            backfillHtml = (window.FeatureAIBackfill && typeof window.FeatureAIBackfill.renderPanel === 'function')
+                ? window.FeatureAIBackfill.renderPanel(classId, validAssignments, completions, students)
+                : '';
+            audioSplitEntryHtml = (window.FeatureAudioSplitUpload && typeof window.FeatureAudioSplitUpload.renderEntryButton === 'function')
+                ? window.FeatureAudioSplitUpload.renderEntryButton(classId, validAssignments, completions, students)
+                : '';
+        } else {
+            backfillHtml = '<div id="progress-heavy-slot" style="margin-top:12px; padding:14px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; color:#92400E; font-weight:800;">⏳ 進度表已就緒，正在載入 AI 補批／音檔工具…</div>';
+        }
 
         const classMeta = (window.TeacherDB && Array.isArray(window.TeacherDB.classes))
             ? window.TeacherDB.classes.find(function (c) { return String(c.id) === String(classId); })
@@ -319,8 +396,8 @@ window.FeatureProgress = (() => {
     // 參、 互動式打勾與 Optimistic UI 邏輯
     // ==========================================
     
-    function toggleTask(studentId, taskId) {
-        const cell = document.getElementById(`cell-${studentId}-${taskId}`);
+    function toggleTask(assignmentId, studentId, taskId) {
+        const cell = document.getElementById(`cell-${assignmentId}-${studentId}-${taskId}`);
         const percentCell = document.getElementById(`percent-${studentId}`);
         if (!cell || !percentCell) return;
 
@@ -351,9 +428,9 @@ window.FeatureProgress = (() => {
         percentCell.style.color = percentColor;
         percentCell.innerHTML = `${newPercentage}%<br><span style="font-size:0.7rem; color:#94A3B8;">(${currentDone}/${total})</span>`;
 
-        enqueueTask(studentId, taskId, willBeDone).catch(err => {
+        enqueueTask(assignmentId, studentId, taskId, willBeDone).catch(err => {
             console.error("無法寫入本地佇列", err);
-            window.ApiService.syncProgress(studentId, taskId, willBeDone).catch(e => console.error("同步失敗", e));
+            window.ApiService.syncProgress(studentId, taskId, willBeDone, assignmentId).catch(e => console.error("同步失敗", e));
         });
     }
 

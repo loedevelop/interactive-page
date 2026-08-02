@@ -15,9 +15,24 @@
     --card-bg: #FFFFFF;
     --text-main: #333;
     --text-muted: #777;
+    /* 空欄舉例／placeholder 統一灰（基準：說明… contenteditable） */
+    --placeholder: #94A3B8;
     --success: #2ECC71;
     --border-color: #F1F1F1;
     --shadow: 0 4px 15px rgba(255, 140, 0, 0.1);
+}
+
+/* 中央統一：所有 input／textarea／contenteditable 空欄提示同一灰色 */
+::placeholder {
+    color: var(--placeholder);
+    opacity: 1;
+}
+::-webkit-input-placeholder { color: var(--placeholder); opacity: 1; }
+::-moz-placeholder { color: var(--placeholder); opacity: 1; }
+:-ms-input-placeholder { color: var(--placeholder); opacity: 1; }
+[contenteditable]:empty:before,
+[contenteditable][data-placeholder]:empty:before {
+    color: var(--placeholder) !important;
 }
 
 * {
@@ -141,6 +156,7 @@ body {
 .form-group { margin-top: 20px; }
 .form-group label { font-weight: 800; display: block; margin-bottom: 8px; }
 .form-control { width: 100%; padding: 12px 15px; border: 2px solid #E2E8F0; border-radius: 8px; font-size: 1rem; }
+.form-control::placeholder { color: var(--placeholder); opacity: 1; }
 
 /* 🌟 灰底表單群組與網格排版 */
 .settings-group {

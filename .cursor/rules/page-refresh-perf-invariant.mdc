@@ -1,0 +1,35 @@
+---
+description: 老師／學生重整卡頓鐵律（勿在隱藏分頁搶跑重活）
+globs: 110_teacher_core/ui-core.js,020_js_core/store.js,120_student_core/feature-student-timeline.js,120_student_core/ui-student-timeline-templates.js
+alwaysApply: false
+---
+
+# 重整效能鐵律（雷區）
+
+> 老師端、學生端「重整有點卡」多半不是單一 bug，而是**開頁把所有分頁的重活一起跑**。
+
+## 禁止
+
+```javascript
+// ❌ 老師 activateClassView：同時 renderTimeline + progress + members + resources
+// ❌ 學生 fetchData 結束必 renderCourses（預設常停在訊息頁）
+// ❌ 開訊息前先 refreshBadgeOnly、render 又抓一次通知
+// ❌ TeacherDB.load 後 AppStore.loadInitialData 再 fetchAssignments(*)
+// ❌ 編輯作業 renderBuilderUI 後又 hydrateMaterialSnapshotUI（double-prime）
+```
+
+## 正確
+
+```
+老師換班／重整 → 只 loadActiveClassTabData(目前分頁)
+學生 fetchData → 僅在 progress／pendingJump 時建時間軸；其餘等 switchView('progress')
+訊息頁 → 由 render() 單次抓通知；非訊息頁才 refreshBadgeOnly
+AppStore → 優先重用 TeacherDB.assignments
+時間軸 audio → preload="none"（勿一進來就打一堆 stream-audio）
+```
+
+## 實測
+
+- 老師停在「課程進度」重整：Network 不應立刻出現進度總表 heavy `task_completions.raw_data`
+- 學生預設訊息頁重整：不應先組整棵進度 DOM
+- 硬重新整理後體感應明顯比改前順

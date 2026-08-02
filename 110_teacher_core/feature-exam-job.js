@@ -41,6 +41,78 @@ window.FeatureExamJob = (function () {
         return name.replace(/\.[^.]+$/, '') || '';
     }
 
+    /** 去掉誤黏在範圍前的活頁字母（例：A pp. 1~2 → pp. 1~2） */
+    function stripSheetPrefixFromRangeSpec(rangeSpec, sheet) {
+        let text = String(rangeSpec || '').trim();
+        if (!text || !sheet) return text;
+        const re = new RegExp('^' + String(sheet).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[:：]?\\s*', 'i');
+        return text.replace(re, '').trim();
+    }
+
+    /**
+     * 用 MaterialSnapshot.parseRangeSpec 解析（支援 pp. 1~2, 5 與 #11~16, 26）。
+     * @returns {{ range_type, start, end, pages?, items? }|null}
+     */
+    function parseSectionRangeFromSpec(rangeSpec, sheetHint) {
+        const sheet = String(sheetHint || '').trim().toUpperCase();
+        let raw = stripSheetPrefixFromRangeSpec(rangeSpec, sheet);
+        if (!raw) return null;
+
+        if (window.MaterialSnapshot && typeof window.MaterialSnapshot.parseRangeSpec === 'function') {
+            try {
+                const spec = window.MaterialSnapshot.parseRangeSpec(raw);
+                if (spec.kind === 'all') {
+                    return { range_type: 'page', start: 1, end: 9999, pages: null, items: null, all: true };
+                }
+                if (spec.kind === 'item') {
+                    const items = spec.items || [];
+                    if (!items.length) return null;
+                    return {
+                        range_type: 'qnum',
+                        start: items[0],
+                        end: items[items.length - 1],
+                        pages: null,
+                        items: items.slice()
+                    };
+                }
+                const pages = spec.pages || [];
+                if (!pages.length) return null;
+                return {
+                    range_type: 'page',
+                    start: pages[0],
+                    end: pages[pages.length - 1],
+                    pages: pages.slice(),
+                    items: null
+                };
+            } catch (_e) { /* fall through */ }
+        }
+
+        // 後備：僅連續起迄
+        let m = raw.match(/^pp?\.?\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/i);
+        if (m) {
+            const start = Number(m[1]);
+            const end = m[2] ? Number(m[2]) : start;
+            if (isNaN(start) || isNaN(end)) return null;
+            const lo = Math.min(start, end);
+            const hi = Math.max(start, end);
+            const pages = [];
+            for (let p = lo; p <= hi; p++) pages.push(p);
+            return { range_type: 'page', start: lo, end: hi, pages: pages, items: null };
+        }
+        m = raw.match(/^#\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/);
+        if (m) {
+            const start = Number(m[1]);
+            const end = m[2] ? Number(m[2]) : start;
+            if (isNaN(start) || isNaN(end)) return null;
+            const lo = Math.min(start, end);
+            const hi = Math.max(start, end);
+            const items = [];
+            for (let n = lo; n <= hi; n++) items.push(n);
+            return { range_type: 'qnum', start: lo, end: hi, pages: null, items: items };
+        }
+        return null;
+    }
+
     /**
      * 從錄音 material_refs 列（A.meta.json + pp. 1~2）→ exam sections
      * 圖二 meta 列的活頁字母在檔名／label，範圍在 range_spec（常不含字母）
@@ -60,37 +132,29 @@ window.FeatureExamJob = (function () {
                 const fromFile = metaStemFromFileName(r.published_file || r.metaFile || '');
                 sheet = String(fromFile || label || '').trim().toUpperCase();
             }
-            const rangeSpec = String(r.range_spec || r.range || '').trim();
-            let range_type = 'page';
-            let start = NaN;
-            let end = NaN;
-            let m = rangeSpec.match(/^pp?\.?\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/i);
-            if (m) {
-                start = Number(m[1]);
-                end = m[2] ? Number(m[2]) : start;
-            } else {
-                m = rangeSpec.match(/^#\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/);
-                if (m) {
-                    range_type = 'qnum';
-                    start = Number(m[1]);
-                    end = m[2] ? Number(m[2]) : start;
-                }
-            }
-            if (!sheet || isNaN(start) || isNaN(end)) return;
-            const key = sheet + ':' + range_type + ':' + start + ':' + end;
+            const parsed = parseSectionRangeFromSpec(r.range_spec || r.range || '', sheet);
+            if (!sheet || !parsed) return;
+            const key = sheet + ':' + parsed.range_type + ':' + parsed.start + ':' + parsed.end
+                + ':' + (parsed.pages ? parsed.pages.join(',') : '')
+                + ':' + (parsed.items ? parsed.items.join(',') : '');
             if (seen[key]) return;
             seen[key] = true;
-            const span = Math.max(1, end - start + 1);
+            const span = parsed.range_type === 'page'
+                ? (parsed.pages && parsed.pages.length ? parsed.pages.length : Math.max(1, parsed.end - parsed.start + 1))
+                : (parsed.items && parsed.items.length ? parsed.items.length : Math.max(1, parsed.end - parsed.start + 1));
             sections.push({
                 sheet_id: sheet,
-                range_type: range_type,
-                start: start,
-                end: end,
-                count: range_type === 'page' ? span * lpp : span,
+                range_type: parsed.range_type,
+                start: parsed.start,
+                end: parsed.end,
+                pages: parsed.pages || null,
+                items: parsed.items || null,
+                count: parsed.range_type === 'page' ? span * lpp : span,
                 lines_per_page: lpp,
                 difficulty: '',
                 include_nums: '',
-                exclude_nums: ''
+                exclude_nums: '',
+                range_spec: String(r.range_spec || r.range || '').trim()
             });
         });
         return sections;
@@ -205,10 +269,10 @@ window.FeatureExamJob = (function () {
     }
 
     /**
-     * 可用題數（網站端可算，不必等 Python）：
-     * - 基準＝頁碼：範圍內各頁 meta 的 item_count 加總
-     * - 基準＝題號(#)：只數 item_no 落在 [起始,結束] 的筆數
-     *   例：該頁 meta 有 #11~20 共 10 題，出題範圍 #16~18 → 可用＝3
+     * 可用題數（與產生線上卷同一套篩選語意）：
+     * 1) 優先 meta_rows_by_stem（完整 meta 列數＝真正可抽題數）
+     * 2) 題號：meta_items / grading_units.item_nos
+     * 3) 頁碼：grading_units.item_count（僅 Snapshot 過的頁）
      */
     function collectMetaItemsFromAudio(audioTask) {
         if (!audioTask || !audioTask.raw_data) return [];
@@ -216,7 +280,6 @@ window.FeatureExamJob = (function () {
         if (Array.isArray(raw.meta_items) && raw.meta_items.length) {
             return raw.meta_items;
         }
-        // 後備：從 grading_units[].item_nos 展開
         const units = Array.isArray(raw.grading_units) ? raw.grading_units : [];
         const out = [];
         units.forEach(function (u) {
@@ -233,37 +296,182 @@ window.FeatureExamJob = (function () {
         return out;
     }
 
-    function countAvailableFromMeta(section, audioTask) {
-        if (!section || !audioTask) return null;
-        const sheet = String(section.sheet_id || '').trim().toUpperCase();
-        if (!sheet) return null;
+    function buildPageSetForSection(section) {
+        if (Array.isArray(section.pages) && section.pages.length) {
+            const set = {};
+            section.pages.forEach(function (p) {
+                const n = Number(p);
+                if (!isNaN(n)) set[n] = true;
+            });
+            return set;
+        }
+        // 若帶原始 range_spec，用完整解析（含不連續頁）
+        if (section.range_spec && window.MaterialSnapshot
+            && typeof window.MaterialSnapshot.parseRangeSpec === 'function') {
+            try {
+                const raw = stripSheetPrefixFromRangeSpec(section.range_spec, section.sheet_id);
+                const spec = window.MaterialSnapshot.parseRangeSpec(raw);
+                if (spec.kind === 'page' && spec.pages && spec.pages.length) {
+                    const set = {};
+                    spec.pages.forEach(function (p) { set[Number(p)] = true; });
+                    return set;
+                }
+            } catch (_e) {}
+        }
         const start = Number(section.start);
         const end = Number(section.end);
         if (isNaN(start) || isNaN(end)) return null;
         const lo = Math.min(start, end);
         const hi = Math.max(start, end);
+        const set = {};
+        for (let p = lo; p <= hi; p++) set[p] = true;
+        return set;
+    }
+
+    function buildItemSetForSection(section) {
+        if (Array.isArray(section.items) && section.items.length) {
+            const set = {};
+            section.items.forEach(function (n) {
+                const v = Number(n);
+                if (!isNaN(v)) set[v] = true;
+            });
+            return set;
+        }
+        if (section.range_spec && window.MaterialSnapshot
+            && typeof window.MaterialSnapshot.parseRangeSpec === 'function') {
+            try {
+                const raw = stripSheetPrefixFromRangeSpec(section.range_spec, section.sheet_id);
+                const spec = window.MaterialSnapshot.parseRangeSpec(raw);
+                if (spec.kind === 'item' && spec.items && spec.items.length) {
+                    const set = {};
+                    spec.items.forEach(function (n) { set[Number(n)] = true; });
+                    return set;
+                }
+            } catch (_e) {}
+        }
+        const start = Number(section.start);
+        const end = Number(section.end);
+        if (isNaN(start) || isNaN(end)) return null;
+        const lo = Math.min(start, end);
+        const hi = Math.max(start, end);
+        const set = {};
+        for (let n = lo; n <= hi; n++) set[n] = true;
+        return set;
+    }
+
+    function countAvailableFromMetaRows(section, rows) {
+        if (!section || !Array.isArray(rows) || !rows.length) return null;
+        const rtype = section.range_type || 'page';
+        const include = String(section.include_nums || '').trim();
+        const exclude = String(section.exclude_nums || '').trim();
+        const includeSet = include
+            ? include.split(/[,，\s]+/).reduce(function (acc, x) {
+                const n = Number(x);
+                if (!isNaN(n)) acc[n] = true;
+                return acc;
+            }, {})
+            : null;
+        const excludeSet = exclude
+            ? exclude.split(/[,，\s]+/).reduce(function (acc, x) {
+                const n = Number(x);
+                if (!isNaN(n)) acc[n] = true;
+                return acc;
+            }, {})
+            : null;
+
+        let pageSet = null;
+        let itemSet = null;
+        if (rtype === 'qnum') itemSet = buildItemSetForSection(section);
+        else if (rtype === 'page') pageSet = buildPageSetForSection(section);
+        // row：不篩頁／題
+
+        let sum = 0;
+        rows.forEach(function (row) {
+            if (!row) return;
+            // 與抽題一致：空 script 仍可能有 display；以「有 script 或 display」算一題
+            const hasBody = String(row.script || '').trim()
+                || String(row.display_zh || row.display || '').trim();
+            if (!hasBody) return;
+            const itemNo = Number(row.item_no != null ? row.item_no : row.itemNo);
+            const page = Number(row.page != null ? row.page : row.Page);
+            if (includeSet && (isNaN(itemNo) || !includeSet[itemNo])) return;
+            if (excludeSet && !isNaN(itemNo) && excludeSet[itemNo]) return;
+            if (rtype === 'qnum') {
+                if (!itemSet || isNaN(itemNo) || !itemSet[itemNo]) return;
+                sum += 1;
+                return;
+            }
+            if (rtype === 'page') {
+                if (!pageSet || isNaN(page) || !pageSet[page]) return;
+                sum += 1;
+                return;
+            }
+            // row
+            sum += 1;
+        });
+        return sum;
+    }
+
+    /** 錄音 material_refs／range 是否已點名該活頁（有點名但無快取＝需再 Snapshot） */
+    function sectionSheetMentionedInAudio(section, audioTask) {
+        const sheet = String((section && section.sheet_id) || '').trim().toUpperCase();
+        if (!sheet || !audioTask || !audioTask.raw_data) return false;
+        const raw = audioTask.raw_data;
+        const refs = Array.isArray(raw.material_refs) ? raw.material_refs : [];
+        for (let i = 0; i < refs.length; i++) {
+            const r = refs[i] || {};
+            const stem = String(r.label || '').trim().toUpperCase()
+                || String(r.published_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+            if (stem === sheet) return true;
+        }
+        const range = String(raw.material_range || '').toUpperCase();
+        if (range) {
+            // 「A PP. 1~2；B PP.…」或開頭即該活頁
+            const re = new RegExp('(?:^|[;；,，\\s])' + sheet + '\\s*PP?\\.?\\s*\\d', 'i');
+            if (re.test(range)) return true;
+        }
+        return false;
+    }
+
+    function countAvailableFromMeta(section, audioTask) {
+        if (!section || !audioTask) return null;
+        const sheet = String(section.sheet_id || '').trim().toUpperCase();
+        if (!sheet) return null;
+        const raw = audioTask.raw_data || {};
+
+        // 1) 完整 meta 快取（與產生線上卷同源）
+        const byStem = raw.meta_rows_by_stem || {};
+        const rows = byStem[sheet] || byStem[String(section.sheet_id || '').trim()];
+        if (Array.isArray(rows) && rows.length) {
+            return countAvailableFromMetaRows(section, rows);
+        }
+
+        const start = Number(section.start);
+        const end = Number(section.end);
+        if (isNaN(start) || isNaN(end)) return null;
         const rtype = section.range_type || 'page';
 
-        // 題號模式：必須跟 # 出題範圍 double check（不是整頁題數）
+        // 2) 題號：meta_items
         if (rtype === 'qnum') {
+            const itemSet = buildItemSetForSection(section);
             const items = collectMetaItemsFromAudio(audioTask);
-            if (!items.length) return null;
+            if (!items.length || !itemSet) return null;
             let sum = 0;
             items.forEach(function (it) {
                 const stem = String((it && it.stem) || '').trim().toUpperCase();
                 if (stem !== sheet) return;
                 const itemNo = Number(it.item_no);
-                if (isNaN(itemNo)) return;
-                if (itemNo >= lo && itemNo <= hi) sum += 1;
+                if (isNaN(itemNo) || !itemSet[itemNo]) return;
+                sum += 1;
             });
             return sum;
         }
 
-        // 頁碼模式：加總該頁 item_count
-        const units = (audioTask.raw_data && Array.isArray(audioTask.raw_data.grading_units))
-            ? audioTask.raw_data.grading_units
-            : [];
+        // 3) 頁碼：grading_units（僅 Snapshot 切過的頁）
+        const units = Array.isArray(raw.grading_units) ? raw.grading_units : [];
         if (!units.length) return null;
+        const pageSet = buildPageSetForSection(section);
+        if (!pageSet) return null;
 
         let sum = 0;
         let hit = false;
@@ -272,20 +480,14 @@ window.FeatureExamJob = (function () {
             const stem = String(u.stem || '').trim().toUpperCase();
             if (stem !== sheet) return;
             const page = Number(u.page);
-            const itemCount = (u.item_count != null && u.item_count !== '')
+            if (isNaN(page) || !pageSet[page]) return;
+            hit = true;
+            let itemCount = (u.item_count != null && u.item_count !== '')
                 ? Number(u.item_count)
-                : 0;
-
-            if (rtype === 'page') {
-                if (!isNaN(page) && page >= lo && page <= hi) {
-                    hit = true;
-                    sum += isNaN(itemCount) ? 0 : itemCount;
-                }
-            } else {
-                // row：尚無列號對應時，先以同活頁全部 item_count
-                hit = true;
-                sum += isNaN(itemCount) ? 0 : itemCount;
-            }
+                : NaN;
+            if (isNaN(itemCount) && Array.isArray(u.item_nos)) itemCount = u.item_nos.length;
+            if (isNaN(itemCount)) itemCount = 0;
+            sum += itemCount;
         });
 
         return hit ? sum : null;
@@ -391,35 +593,55 @@ window.FeatureExamJob = (function () {
         return sections;
     }
 
-    /** 從 grading_units（C p.1 / C p.2）合併成 sections */
+    /** 從 grading_units（優先 stem+page 欄位）合併成 sections */
     function sectionsFromGradingUnits(units, linesPerPage) {
         const lpp = linesPerPage > 0 ? linesPerPage : DEFAULT_LINES_PER_PAGE;
         if (!Array.isArray(units) || !units.length) return [];
         const bySheet = {};
         const order = [];
         units.forEach(function (u) {
-            const label = String((u && (u.label || u.unit_key)) || '').trim();
-            const m = label.match(/^([A-Za-z]+)\s*p(?:p)?\.?\s*(\d+)/i);
-            if (!m) return;
-            const sheet = m[1].toUpperCase();
-            const page = Number(m[2]);
+            if (!u) return;
+            let sheet = String(u.stem || '').trim().toUpperCase();
+            let page = Number(u.page);
+            if (!sheet || isNaN(page)) {
+                const label = String(u.label || u.unit_key || '').trim();
+                const m = label.match(/^([A-Za-z0-9]+)\s*p(?:p)?\.?\s*(\d+)/i);
+                if (!m) return;
+                sheet = m[1].toUpperCase();
+                page = Number(m[2]);
+            }
+            if (!sheet || isNaN(page)) return;
+            let itemCount = (u.item_count != null && u.item_count !== '') ? Number(u.item_count) : NaN;
+            if (isNaN(itemCount) && Array.isArray(u.item_nos)) itemCount = u.item_nos.length;
+            if (isNaN(itemCount)) itemCount = 0;
             if (!bySheet[sheet]) {
-                bySheet[sheet] = { sheet_id: sheet, start: page, end: page };
+                bySheet[sheet] = {
+                    sheet_id: sheet,
+                    start: page,
+                    end: page,
+                    pages: [page],
+                    avail: itemCount
+                };
                 order.push(sheet);
             } else {
-                bySheet[sheet].start = Math.min(bySheet[sheet].start, page);
-                bySheet[sheet].end = Math.max(bySheet[sheet].end, page);
+                const s = bySheet[sheet];
+                s.start = Math.min(s.start, page);
+                s.end = Math.max(s.end, page);
+                if (s.pages.indexOf(page) === -1) s.pages.push(page);
+                s.avail += itemCount;
             }
         });
         return order.map(function (sheet) {
             const s = bySheet[sheet];
-            const pageSpan = Math.max(1, s.end - s.start + 1);
+            s.pages.sort(function (a, b) { return a - b; });
+            const pageSpan = s.pages.length || Math.max(1, s.end - s.start + 1);
             return {
                 sheet_id: s.sheet_id,
                 range_type: 'page',
                 start: s.start,
                 end: s.end,
-                count: pageSpan * lpp,
+                pages: s.pages.slice(),
+                count: s.avail > 0 ? s.avail : (pageSpan * lpp),
                 lines_per_page: lpp
             };
         });
@@ -1250,7 +1472,6 @@ window.FeatureExamJob = (function () {
         const jobId = raw.exam_job_id || job.job_id || '';
         const bankId = job.bank_id || (BANK_CATALOG[0] && BANK_CATALOG[0].id) || '';
         const layoutId = job.layout_profile_id || (LAYOUT_CATALOG[0] && LAYOUT_CATALOG[0].id) || '';
-        const outs = job.outputs || ['pdf', 'answer'];
         let sections = Array.isArray(job.sections) ? job.sections.slice() : [];
 
         // 區段空白時，自動從同層錄音 meta（圖二）繼承 A/B/C…＋pp. 範圍
@@ -1303,31 +1524,48 @@ window.FeatureExamJob = (function () {
         const rows = sections.map(function (s, idx) {
             let avail = countAvailableFromMeta(s, siblingAudio);
             const expected = expectedSlotsForSection(s);
-            // 尚未 Snapshot 該活頁時：用預計格位當暫估值，避免整欄「—」看起來像沒處理
+            // 💣 雷區：已選 B.meta 但 Snapshot 只凍結到 A 時，不可用「~頁數×行數」粉飾成好像有題
+            // （老師會以為 B 也 OK，顯示%卻是 —）。有點名該活頁 → 明示「需Snapshot」。
             let availIsEstimate = false;
-            if (avail == null && expected != null) {
-                avail = expected;
-                availIsEstimate = true;
+            let availNeedsSnap = false;
+            if (avail == null) {
+                if (sectionSheetMentionedInAudio(s, siblingAudio)) {
+                    availNeedsSnap = true;
+                } else if (expected != null) {
+                    // 手加空區段、尚未對到錄音 meta：才用預計格位
+                    avail = expected;
+                    availIsEstimate = true;
+                } else {
+                    availNeedsSnap = true;
+                }
             }
             const countVal = Number(s.count);
             if (!isNaN(countVal)) totalCountSum += countVal;
-            const availStr = avail == null ? '需Snapshot' : (availIsEstimate ? ('~' + avail) : String(avail));
-            const pctStr = formatDisplayPercent(s.count, availIsEstimate ? null : avail);
-            const overAvail = (!availIsEstimate && avail != null && avail >= 0 && !isNaN(countVal) && countVal > avail);
+            const availStr = availNeedsSnap
+                ? '需Snapshot'
+                : (avail == null ? '需Snapshot' : (availIsEstimate ? ('~' + avail) : String(avail)));
+            const pctStr = formatDisplayPercent(
+                s.count,
+                (availIsEstimate || availNeedsSnap) ? null : avail
+            );
+            const overAvail = (!availIsEstimate && !availNeedsSnap && avail != null && avail >= 0
+                && !isNaN(countVal) && countVal > avail);
             const countStyle = overAvail
                 ? 'width:56px; padding:4px; border-color:#EF4444; color:#B91C1C; font-weight:800;'
                 : 'width:56px; padding:4px;';
             const rtypeHint = s.range_type || 'page';
             const loHint = Math.min(Number(s.start) || 0, Number(s.end) || 0);
             const hiHint = Math.max(Number(s.start) || 0, Number(s.end) || 0);
-            const availTitle = availIsEstimate
-                ? ('尚未 Snapshot 活頁 ' + (s.sheet_id || '') + '；暫以頁數×每頁行數＝' + expected)
-                : ((rtypeHint === 'qnum')
-                    ? ('題號 ' + loHint + '~' + hiHint + ' 內的 meta 筆數' + (avail != null ? ('＝' + avail) : '（請先 Snapshot）'))
-                    : ((avail != null && expected != null)
-                        ? ('meta 筆數 ' + avail + '；預計格位 ' + expected)
-                        : '範圍內 meta 實際筆數'));
-            const availColor = availIsEstimate ? '#D97706' : '#0F766E';
+            const availTitle = availNeedsSnap
+                ? ('活頁 ' + (s.sheet_id || '') + ' 已在錄音 meta／範圍中，但尚未進入 Snapshot 快取；請等自動套用完成或按「套用 Snapshot」')
+                : (availIsEstimate
+                    ? ('尚未對到錄音 meta；暫以頁數×每頁行數＝' + expected)
+                    : ((rtypeHint === 'qnum')
+                        ? ('題號 ' + loHint + '~' + hiHint + ' 內的 meta 筆數' + (avail != null ? ('＝' + avail) : '（請先 Snapshot）'))
+                        : ((avail != null && expected != null)
+                            ? ('meta 筆數 ' + avail + '；預計格位 ' + expected)
+                            : '範圍內 meta 實際筆數')));
+            const availColor = (availIsEstimate || availNeedsSnap) ? '#D97706' : '#0F766E';
             const refreshAttr = ' onchange="window.FeatureExamJob._inlineRefreshAvail(\'' + pathStr + '\')"';
             return `
                 <tr data-exam-inline-row="${idx}">
@@ -1359,7 +1597,7 @@ window.FeatureExamJob = (function () {
         return `
             <div id="exam-inline-wrap-${pathStr}" style="margin-top:8px; padding:12px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#0F766E;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
-                    <strong>📝 考試出題區段（作業端設定 → 匯出給 Python）</strong>
+                    <strong>📝 考試出題區段</strong>
                     <span style="font-size:0.75rem; color:#64748B;">job_id：<code id="exam-inline-jobid-${pathStr}">${esc(jobId || '（儲存作業時產生）')}</code></span>
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
@@ -1371,13 +1609,8 @@ window.FeatureExamJob = (function () {
                             onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">${layoutOpts}</select>
                     </label>
                 </div>
-                <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; font-weight:700;">
-                    <label><input id="exam-inline-out-pdf-${pathStr}" type="checkbox" ${outs.indexOf('pdf') !== -1 ? 'checked' : ''}> pdf</label>
-                    <label><input id="exam-inline-out-answer-${pathStr}" type="checkbox" ${outs.indexOf('answer') !== -1 ? 'checked' : ''}> answer</label>
+                <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center;">
                     <label><input id="exam-inline-shuffle-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle === false) ? '' : 'checked'}> shuffle</label>
-                    <label>總題數預設均分 <input id="exam-inline-total-${pathStr}" type="number" class="form-control" style="width:70px; display:inline-block; padding:4px;" placeholder="60">
-                        <button type="button" class="btn" style="padding:2px 8px;" onclick="window.FeatureExamJob._inlineDistribute('${pathStr}')">均分到各區段</button>
-                    </label>
                 </div>
                 <div style="overflow-x:auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:980px;">
@@ -1403,23 +1636,29 @@ window.FeatureExamJob = (function () {
                 </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center;">
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#CCFBF1; color:#0F766E; border:1px solid #99F6E4;"
-                        onclick="window.FeatureExamJob._inlineAddSection('${pathStr}')">＋ 加區段</button>
+                        onclick="window.FeatureExamJob._inlineAddSection('${pathStr}')"
+                        title="在已帶入的基礎上再加一列（常用於同活頁另一段範圍）。日常請先按「從錄音範圍帶入」。">＋ 加區段</button>
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineImportFromSiblingAudio('${pathStr}')">↻ 從同作業錄音範圍帶入</button>
-                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
-                        onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ 下載 exam_job JSON</button>
                     <button type="button" id="exam-inline-gen-btn-${pathStr}" class="btn btn-action" style="padding:4px 10px; background:#0F766E; color:white; border:none;"
                         onclick="window.FeatureExamJob._inlineGeneratePaper('${pathStr}')">📝 產生線上卷</button>
+                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
+                        onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ JSON</button>
                     <span style="margin-left:auto; font-weight:800; color:#134E4A; font-size:0.85rem;">總計考題 ${totalCountSum}${paperCountHint}</span>
                 </div>
                 <div id="exam-inline-gen-status-${pathStr}" style="margin-top:8px; min-height:1.2em; font-size:0.8rem; font-weight:800; color:#0F766E;"></div>
-                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">線上卷：優先用錄音 Snapshot 快取抽題（快）；缺檔才打 Drive。可用題：綠字＝已 Snapshot；橘色 ~N＝尚未 Snapshot 的預估格位。</div>
+                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">請先「從錄音範圍帶入」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。</div>
             </div>
         `;
     }
 
     function readInlineSections(pathStr) {
         const rows = document.querySelectorAll('#exam-inline-tbody-' + pathStr + ' tr[data-exam-inline-row]');
+        const task = getBuilderTaskByPath(pathStr);
+        const prevSecs = (task && task.raw_data && task.raw_data.exam_job
+            && Array.isArray(task.raw_data.exam_job.sections))
+            ? task.raw_data.exam_job.sections
+            : [];
         const sections = [];
         rows.forEach(function (row) {
             const idx = row.getAttribute('data-exam-inline-row');
@@ -1443,6 +1682,17 @@ window.FeatureExamJob = (function () {
             if (difficulty) sec.difficulty = difficulty;
             if (include_nums) sec.include_nums = include_nums;
             if (exclude_nums) sec.exclude_nums = exclude_nums;
+            // 起迄未改時保留不連續 pages/items（來自 range_spec）
+            const prev = prevSecs[Number(idx)];
+            if (prev
+                && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
+                && (prev.range_type || 'page') === rtype
+                && Number(prev.start) === start
+                && Number(prev.end) === end) {
+                if (Array.isArray(prev.pages) && prev.pages.length) sec.pages = prev.pages.slice();
+                if (Array.isArray(prev.items) && prev.items.length) sec.items = prev.items.slice();
+                if (prev.range_spec) sec.range_spec = prev.range_spec;
+            }
             sections.push(sec);
         });
         return sections;
@@ -1455,13 +1705,15 @@ window.FeatureExamJob = (function () {
         const layoutEl = document.getElementById('exam-inline-layout-' + pathStr);
         if (!bankEl && !layoutEl) return; // 非 exam 或尚未渲染
 
-        let jobId = task.raw_data.exam_job_id || (task.raw_data.exam_job && task.raw_data.exam_job.job_id) || '';
+        const prevJob = task.raw_data.exam_job || {};
+        let jobId = task.raw_data.exam_job_id || prevJob.job_id || '';
         if (!jobId) jobId = newJobId();
 
-        const outputs = [];
-        if ((document.getElementById('exam-inline-out-pdf-' + pathStr) || {}).checked) outputs.push('pdf');
-        if ((document.getElementById('exam-inline-out-answer-' + pathStr) || {}).checked) outputs.push('answer');
-        if (!outputs.length) outputs.push('pdf');
+        // 輸出管道之後再做 UI；目前固定線上卷，只暴露 shuffle
+        const outputs = Array.isArray(prevJob.outputs) && prevJob.outputs.length
+            ? prevJob.outputs.filter(function (o) { return o && o !== 'answer'; })
+            : ['online'];
+        if (outputs.indexOf('online') === -1) outputs.unshift('online');
 
         const sections = readInlineSections(pathStr);
         const shuffle = !!(document.getElementById('exam-inline-shuffle-' + pathStr) || {}).checked;
@@ -1496,6 +1748,24 @@ window.FeatureExamJob = (function () {
         return node;
     }
 
+    function getSiblingAudioRangeLabel(examPathStr) {
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!bState) return '';
+        const audio = findPreferredAudioTask((bState.tasks || []), examPathStr);
+        if (!audio || !audio.raw_data) return '';
+        let label = String(audio.raw_data.material_range || '').trim();
+        if (!label && window.FeatureTimeline
+            && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
+            const refs = Array.isArray(audio.raw_data.material_refs) ? audio.raw_data.material_refs : [];
+            label = String(window.FeatureTimeline.buildMaterialRangeLabelFromRows(refs) || '').trim();
+        }
+        if (!label) {
+            label = String(audio.title || '').replace(/<[^>]*>?/gm, '').trim();
+        }
+        if (label === '錄音' || label === '考試') return '';
+        return label;
+    }
+
     function inlineAddSection(pathStr) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
@@ -1503,16 +1773,28 @@ window.FeatureExamJob = (function () {
         syncInlineEditor(pathStr, task);
         const job = task.raw_data.exam_job || { sections: [] };
         if (!Array.isArray(job.sections)) job.sections = [];
+
+        // 日常應先「從錄音範圍帶入」；加區段＝同一活頁再拆一列（例：同活頁另一頁碼／題號範圍）
+        const last = job.sections.length ? job.sections[job.sections.length - 1] : null;
         job.sections.push({
-            sheet_id: '',
-            range_type: 'page',
-            start: 1,
-            end: 1,
+            sheet_id: last ? String(last.sheet_id || '') : '',
+            range_type: (last && last.range_type) || 'page',
+            start: last ? Number(last.end) + 1 || 1 : 1,
+            end: last ? Number(last.end) + 1 || 1 : 1,
             count: 10,
-            lines_per_page: DEFAULT_LINES_PER_PAGE
+            lines_per_page: (last && last.lines_per_page) || DEFAULT_LINES_PER_PAGE,
+            difficulty: '',
+            include_nums: '',
+            exclude_nums: ''
         });
         task.raw_data.exam_job = job;
         refreshExamBuilder();
+        window.showFlash(
+            last && last.sheet_id
+                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數）')
+                : '已加空白區段：請先「從錄音範圍帶入」，或自行填活頁字母',
+            last && last.sheet_id ? 'success' : 'warning'
+        );
     }
 
     function inlineRemoveSection(pathStr, idx) {
@@ -1526,11 +1808,24 @@ window.FeatureExamJob = (function () {
         refreshExamBuilder();
     }
 
+    function clampTotalInput(el) {
+        if (!el) return;
+        const raw = String(el.value || '').trim();
+        if (raw === '') return;
+        let n = Number(raw);
+        if (isNaN(n) || n < 1) {
+            el.value = '';
+            return;
+        }
+        el.value = String(Math.floor(n));
+    }
+
     function inlineDistribute(pathStr) {
         const totalEl = document.getElementById('exam-inline-total-' + pathStr);
+        clampTotalInput(totalEl);
         const total = Number(totalEl && totalEl.value);
         if (!total || total <= 0) {
-            window.showFlash('請先填總題數（例如 60）', 'error');
+            window.showFlash('請先填「希望總題數」（正整數，例如 60），再按均分', 'error');
             return;
         }
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
@@ -1542,6 +1837,25 @@ window.FeatureExamJob = (function () {
         job.sections = distributeTotalCount(job.sections, total);
         refreshExamBuilder();
         window.showFlash('已將 ' + total + ' 題均分到各區段（可再逐列修改）', 'success');
+    }
+
+    function mergeMaterialRefsPreserveMeta(domRefs, existingRefs) {
+        const byKey = {};
+        (existingRefs || []).forEach(function (r) {
+            if (!r) return;
+            const k = String(r.material_folder || '') + '::' + String(r.published_file || '');
+            if (k !== '::') byKey[k] = r;
+        });
+        return (domRefs || []).map(function (d) {
+            const k = String(d.material_folder || '') + '::' + String(d.published_file || '');
+            const old = byKey[k];
+            if (!old) return d;
+            return Object.assign({}, old, d, {
+                fileId: d.fileId || old.fileId || '',
+                schema_id: d.schema_id || old.schema_id || '',
+                materials_root_kind: d.materials_root_kind || old.materials_root_kind || 'teacher'
+            });
+        });
     }
 
     function inlineImportFromSiblingAudio(pathStr) {
@@ -1557,14 +1871,24 @@ window.FeatureExamJob = (function () {
         const rootEl = audioPath ? document.getElementById('node-material-root-' + audioPath) : null;
         const rootKind = rootEl && String(rootEl.value || '').toLowerCase() === 'class' ? 'class' : 'teacher';
 
-        // 優先 DOM meta 列（剛加的第 3 筆還在畫面上、未必已 Snapshot）
-        let sections = [];
+        const existingRefs = (audio && audio.raw_data && Array.isArray(audio.raw_data.material_refs))
+            ? audio.raw_data.material_refs
+            : [];
         const domRefs = audioPath ? readDomMaterialRefs(audioPath, rootKind) : [];
-        if (domRefs.length) {
-            sections = sectionsFromMaterialRefs(domRefs, DEFAULT_LINES_PER_PAGE);
+        // DOM 有值優先（老師剛改的範圍）；否則用已 Snapshot 的 refs
+        const sourceRefs = domRefs.length
+            ? mergeMaterialRefsPreserveMeta(domRefs, existingRefs)
+            : existingRefs;
+
+        let sections = [];
+        if (sourceRefs.length) {
+            sections = sectionsFromMaterialRefs(sourceRefs, DEFAULT_LINES_PER_PAGE);
         }
         if (!sections.length) {
             sections = sectionsFromAudioTask(audio, DEFAULT_LINES_PER_PAGE);
+        }
+        if (!sections.length && audio && Array.isArray(audio.raw_data && audio.raw_data.grading_units)) {
+            sections = sectionsFromGradingUnits(audio.raw_data.grading_units, DEFAULT_LINES_PER_PAGE);
         }
         if (!sections.length) {
             const fakeAssignment = { tasks: bState.tasks || [], title: bState.title || '' };
@@ -1579,47 +1903,38 @@ window.FeatureExamJob = (function () {
             }
         }
 
-        const totalEl = document.getElementById('exam-inline-total-' + pathStr);
-        let total = Number(totalEl && totalEl.value) || 0;
-        if (!total && audio) {
-            const blob = stripHtml((task && task.description) || '') + ' ' + stripHtml((task && task.title) || '');
-            const countMatch = blob.match(/(\d+)\s*題/);
-            if (countMatch) total = Number(countMatch[1]);
-        }
-        if (total > 0 && sections.length) sections = distributeTotalCount(sections, total);
         if (!sections.length) {
             window.showFlash('同作業找不到錄音 meta／範圍可帶入（請先在錄音任務設好 meta 列）', 'warning');
             return;
         }
-        // 依同層錄音 Snapshot 回填可用題，並把超額題數夾回可用數
+
+        // 題數預設＝實際可用題
         sections = sections.map(function (sec) {
             const next = Object.assign({}, sec);
             const avail = countAvailableFromMeta(next, audio);
             if (avail != null && avail >= 0) {
-                const c = Number(next.count);
-                if (!isNaN(c) && c > avail) next.count = avail;
-            } else {
+                next.count = avail;
+            } else if (!(Number(next.count) > 0)) {
                 const expected = expectedSlotsForSection(next);
-                if (expected != null && (!(Number(next.count) > 0))) next.count = expected;
+                if (expected != null) next.count = expected;
             }
             return next;
         });
+
         if (!task.raw_data.exam_job) task.raw_data.exam_job = {};
         task.raw_data.exam_job.sections = sections;
-        // 一併把 DOM refs 寫回錄音，避免產生線上卷仍只看到舊的 2 筆
-        if (audio && domRefs.length) {
+        if (audio && sourceRefs.length) {
             if (!audio.raw_data) audio.raw_data = {};
-            audio.raw_data.material_refs = domRefs;
+            audio.raw_data.material_refs = sourceRefs;
         }
-        if (total && totalEl && !totalEl.value) totalEl.value = String(total);
-        // 不可一般 refreshBuilder：會 sync 舊 DOM 把剛寫入的 3 區段蓋回 2
+        // 不可一般 refreshBuilder：會 sync 舊 DOM 把剛寫入的區段蓋掉
         refreshExamBuilder();
         const missing = sections.filter(function (s) {
             return countAvailableFromMeta(s, audio) == null;
         }).map(function (s) { return s.sheet_id; });
-        let msg = '已從同層錄音 meta 帶入 ' + sections.length + ' 個區段，並更新可用題數';
+        let msg = '已帶入 ' + sections.length + ' 個區段；可用題已依 Snapshot／meta 重算';
         if (missing.length) {
-            msg += '（活頁 ' + missing.join('/') + ' 尚未 Snapshot，可用題為預估～請補 Snapshot）';
+            msg += '（活頁 ' + missing.join('/') + ' 尚無 Snapshot，顯示為預估）';
         }
         window.showFlash(msg, missing.length ? 'warning' : 'success');
     }
@@ -1629,6 +1944,67 @@ window.FeatureExamJob = (function () {
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         syncInlineEditor(pathStr, task);
+        refreshExamBuilder();
+    }
+
+    /** 錄音 Snapshot 後：重算同層考試可用題；標題若為自動繼承則同步 */
+    function refreshAfterAudioSnapshot(audioPathStr) {
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!bState || !Array.isArray(bState.tasks)) return;
+        const arr = String(audioPathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+        let list = bState.tasks;
+        const base = [];
+        for (let i = 0; i < arr.length - 1; i++) {
+            const node = list[arr[i]];
+            if (!node) return;
+            base.push(arr[i]);
+            list = node.subTasks || [];
+        }
+        const audioNode = list[arr[arr.length - 1]];
+        let rangeLabel = (audioNode && audioNode.raw_data)
+            ? String(audioNode.raw_data.material_range || '').trim()
+            : '';
+        if (!rangeLabel && audioNode && window.FeatureTimeline
+            && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
+            const refs = (audioNode.raw_data && Array.isArray(audioNode.raw_data.material_refs))
+                ? audioNode.raw_data.material_refs : [];
+            rangeLabel = String(window.FeatureTimeline.buildMaterialRangeLabelFromRows(refs) || '').trim();
+        }
+        for (let i = 0; i < (list || []).length; i++) {
+            const t = list[i];
+            if (!t || t.type !== 'exam') continue;
+            const examPath = base.concat([i]).join('-');
+            if (rangeLabel) {
+                const titleEl = document.getElementById('node-title-' + examPath);
+                const plain = titleEl
+                    ? String(titleEl.textContent || '').trim()
+                    : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
+                const prevFrom = titleEl
+                    ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
+                    : '';
+                if (!plain || autoFlag === '1' || (prevFrom && plain === prevFrom) || plain === '考試') {
+                    t.title = rangeLabel;
+                    if (titleEl) {
+                        titleEl.textContent = rangeLabel;
+                        titleEl.setAttribute('data-title-auto', '1');
+                        titleEl.setAttribute('data-title-from-range', rangeLabel);
+                    }
+                }
+            }
+            if (!t.raw_data) t.raw_data = {};
+            if (!t.raw_data.exam_job || !Array.isArray(t.raw_data.exam_job.sections)) continue;
+            const audio = findPreferredAudioTask(bState.tasks, examPath);
+            t.raw_data.exam_job.sections = t.raw_data.exam_job.sections.map(function (sec) {
+                const next = Object.assign({}, sec);
+                const avail = countAvailableFromMeta(next, audio);
+                if (avail != null && avail >= 0) {
+                    const c = Number(next.count);
+                    if (isNaN(c) || c > avail || !(c > 0)) next.count = avail;
+                }
+                return next;
+            });
+        }
         refreshExamBuilder();
     }
 
@@ -1986,6 +2362,8 @@ window.FeatureExamJob = (function () {
         _inlineDistribute: inlineDistribute,
         _inlineImportFromSiblingAudio: inlineImportFromSiblingAudio,
         _inlineRefreshAvail: inlineRefreshAvail,
+        _refreshAfterAudioSnapshot: refreshAfterAudioSnapshot,
+        getSiblingAudioRangeLabel: getSiblingAudioRangeLabel,
         _inlineExport: inlineExport,
         _inlineGeneratePaper: inlineGeneratePaper,
         _inlineOnLayoutChange: function (pathStr) {

@@ -1,0 +1,60 @@
+---
+description: assignments.id 統一 UUID 鐵律（混血 bigint／寫死 uuid RPC 雷區）
+globs: supabase/migrations/**,020_js_core/api.js,110_teacher_core/store-assignment-builder.js,120_student_core/feature-student-timeline.js
+alwaysApply: false
+---
+
+# assignments.id＝UUID 鐵律（雷區）
+
+> 建構初期已執行 `20260801140000_unify_assignments_id_to_uuid.sql`。  
+> 之後**禁止**再把作業主鍵當整數，也禁止 RPC 參數與欄位型別漂回混血。
+
+## 曾出現的症狀
+
+- 繳交失敗：`invalid input syntax for type uuid: "155"`
+- RPC `p_assignment_id` 寫死 `uuid`，但 `assignments.id` 曾是 `bigint`（或相反）
+- 前端某一支把 id 當 Number、另一支當字串 UUID
+
+## 不變量（遷移後）
+
+```
+public.assignments.id                     → uuid（default gen_random_uuid()）
+task_completions.assignment_id            → uuid + FK
+user_notifications.assignment_id          → uuid + FK
+student_progress.assignment_id            → uuid + FK
+student_set_task_completion 等 RPC        → p_assignment_id 用 assignments.id%TYPE
+```
+
+## 禁止
+
+```sql
+-- ❌ 新 RPC 再寫死與表不一致的型別
+p_assignment_id uuid   -- 若表又漂成 bigint 會再炸；應 %TYPE
+p_assignment_id bigint -- 遷移後禁止
+```
+
+```javascript
+// ❌ 遷移後仍把作業 id 強制 Number()（UUID 會變 NaN）
+Number(assignmentId)
+```
+
+## 正確做法
+
+```sql
+p_assignment_id public.assignments.id%TYPE
+```
+
+```javascript
+// 前端：字串原樣傳給 PostgREST／RPC；勿假设可 parseInt
+String(assignmentId)
+```
+
+## 改主鍵時（若再遇到型別漂移）
+
+1. **先查**所有指向 `assignments` 的 FK（曾漏掉 `student_progress`）  
+2. 動態卸 FK → 對照表換血 → **逐子表** remap → 掛回 FK  
+3. 重建相關 RPC + `GRANT`  
+4. 全員強制重新整理（舊數字 id 快取失效）
+
+相關 migration：`supabase/migrations/20260801140000_unify_assignments_id_to_uuid.sql`  
+（`20260801110000`／`130000` 為過渡稿，根治以 140000 為準。）

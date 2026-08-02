@@ -132,13 +132,25 @@ window.BuilderStore = (() => {
                     } else if (materialRangeEl) {
                         t.raw_data.material_range = String(materialRangeEl.value || '').trim();
                     }
-                    // 標題（麥克風右側）空白時，改用 base 範圍
-                    const titlePlain = titleEl
-                        ? String(titleEl.textContent || '').trim()
-                        : String(t.title || '').replace(/<[^>]*>/g, '').trim();
-                    if (!titlePlain && t.raw_data.material_range) {
-                        t.title = t.raw_data.material_range;
-                        if (titleEl) titleEl.textContent = t.raw_data.material_range;
+                    // 標題空白或仍為「自動繼承」時，跟 base 範圍同步
+                    if (t.raw_data.material_range) {
+                        const titlePlain = titleEl
+                            ? String(titleEl.textContent || '').trim()
+                            : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                        const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
+                        const prevFrom = titleEl
+                            ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
+                            : '';
+                        const shouldAuto = !titlePlain || autoFlag === '1'
+                            || (prevFrom && titlePlain === prevFrom);
+                        if (shouldAuto) {
+                            t.title = t.raw_data.material_range;
+                            if (titleEl) {
+                                titleEl.textContent = t.raw_data.material_range;
+                                titleEl.setAttribute('data-title-auto', '1');
+                                titleEl.setAttribute('data-title-from-range', t.raw_data.material_range);
+                            }
+                        }
                     }
 
                     const materialUrlEl = document.getElementById(`node-material-url-${pathStr}`);
@@ -213,17 +225,39 @@ window.BuilderStore = (() => {
                                 if (snap.snapshot_at) t.raw_data.snapshot_at = snap.snapshot_at;
                                 if (Array.isArray(snap.grading_units)) t.raw_data.grading_units = snap.grading_units;
                                 if (Array.isArray(snap.meta_items)) t.raw_data.meta_items = snap.meta_items;
+                                // 💣 meta_rows_by_stem：考試「可用題」靠它。sync 必須合併，不可用較舊的
+                                // 單冊 snap JSON 把已累積的 B/C… 快取蓋掉（否則右欄 B 永遠 ~預計）。
+                                if (snap.meta_rows_by_stem && typeof snap.meta_rows_by_stem === 'object') {
+                                    t.raw_data.meta_rows_by_stem = Object.assign(
+                                        {},
+                                        t.raw_data.meta_rows_by_stem || {},
+                                        snap.meta_rows_by_stem
+                                    );
+                                }
                                 // 逐頁批改稿編輯框若存在，代表老師可能微調過內容，優先採用畫面上的最新值
                                 // （否則會被 hidden snapshot json 裡「套用 Snapshot 當下」的舊版蓋回去）
                                 const domGradingUnits = (window.FeatureTimeline && typeof window.FeatureTimeline.collectGradingUnitsFromDom === 'function')
                                     ? window.FeatureTimeline.collectGradingUnitsFromDom(pathStr)
                                     : null;
                                 if (domGradingUnits && domGradingUnits.length) {
-                                    t.raw_data.grading_units = domGradingUnits;
-                                    t.raw_data.original_script = sanitizeScript(domGradingUnits.map(function (u) {
-                                        const label = u.label || u.stem || '';
-                                        return label ? ('【' + label + '】\n' + (u.original_script || '')) : (u.original_script || '');
-                                    }).join('\n\n'));
+                                    const prevUnits = Array.isArray(t.raw_data.grading_units)
+                                        ? t.raw_data.grading_units : [];
+                                    let allowDomUnits = true;
+                                    if (window.FeatureTimeline
+                                        && typeof window.FeatureTimeline.uniqueStemsFromGradingUnits === 'function'
+                                        && prevUnits.length) {
+                                        const prevStemN = window.FeatureTimeline.uniqueStemsFromGradingUnits(prevUnits).length;
+                                        const domStemN = window.FeatureTimeline.uniqueStemsFromGradingUnits(domGradingUnits).length;
+                                        // DOM 冊數較少＝殘缺重繪／第二冊尚未套用完 → 禁止縮水
+                                        if (prevStemN > 1 && domStemN < prevStemN) allowDomUnits = false;
+                                    }
+                                    if (allowDomUnits) {
+                                        t.raw_data.grading_units = domGradingUnits;
+                                        t.raw_data.original_script = sanitizeScript(domGradingUnits.map(function (u) {
+                                            const label = u.label || u.stem || '';
+                                            return label ? ('【' + label + '】\n' + (u.original_script || '')) : (u.original_script || '');
+                                        }).join('\n\n'));
+                                    }
                                 }
                                 if (snap.recording_unit) t.raw_data.recording_unit = snap.recording_unit;
                                 if (snap.recording_unit_hint) t.raw_data.recording_unit_hint = snap.recording_unit_hint;
@@ -333,8 +367,34 @@ window.BuilderStore = (() => {
                     if (!t.raw_data.student_source_type) t.raw_data.student_source_type = 'text';
                 }
 
-                if (t.type === 'exam' && window.FeatureExamJob && typeof window.FeatureExamJob.syncInlineEditor === 'function') {
-                    window.FeatureExamJob.syncInlineEditor(pathStr, t);
+                if (t.type === 'exam') {
+                    // 考試標題空白／自動繼承 → 跟同層錄音 base 範圍
+                    if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+                        const examRange = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+                        if (examRange) {
+                            const titlePlain = titleEl
+                                ? String(titleEl.textContent || '').trim()
+                                : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                            const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
+                            const prevFrom = titleEl
+                                ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
+                                : '';
+                            const shouldAuto = !titlePlain || autoFlag === '1'
+                                || (prevFrom && titlePlain === prevFrom)
+                                || titlePlain === '考試';
+                            if (shouldAuto) {
+                                t.title = examRange;
+                                if (titleEl) {
+                                    titleEl.textContent = examRange;
+                                    titleEl.setAttribute('data-title-auto', '1');
+                                    titleEl.setAttribute('data-title-from-range', examRange);
+                                }
+                            }
+                        }
+                    }
+                    if (window.FeatureExamJob && typeof window.FeatureExamJob.syncInlineEditor === 'function') {
+                        window.FeatureExamJob.syncInlineEditor(pathStr, t);
+                    }
                 }
             }
         });
@@ -463,11 +523,8 @@ window.BuilderStore = (() => {
                 targetArr = parentNode.subTasks;
             }
 
-            let defaultTitle = '';
-            if (window.BuilderStore._isRangeGroupNode(parentNode)) {
-                if (type === 'audio_record') defaultTitle = '錄音';
-                else if (type === 'exam') defaultTitle = '考試';
-            }
+            // 錄音／考試標題預設空白，之後由 base 範圍自動繼承（勿預填「錄音」「考試」）
+            const defaultTitle = '';
 
             let raw = {};
             if (type === 'audio_record') raw = window.BuilderStore._defaultAudioRaw();
@@ -515,8 +572,8 @@ window.BuilderStore = (() => {
                 penalty_percentage: 0,
                 raw_data: { group_role: 'range' },
                 subTasks: [
-                    window.BuilderStore._makeLeafNode('audio_record', '錄音', window.BuilderStore._defaultAudioRaw()),
-                    window.BuilderStore._makeLeafNode('exam', '考試', window.BuilderStore._defaultExamRaw())
+                    window.BuilderStore._makeLeafNode('audio_record', '', window.BuilderStore._defaultAudioRaw()),
+                    window.BuilderStore._makeLeafNode('exam', '', window.BuilderStore._defaultExamRaw())
                 ]
             };
             // 確保子節點 id 不碰撞
@@ -634,7 +691,7 @@ window.BuilderStore = (() => {
             if (snapshot.snapshot_at) rd.snapshot_at = snapshot.snapshot_at;
             if (Array.isArray(snapshot.grading_units)) rd.grading_units = snapshot.grading_units;
             if (Array.isArray(snapshot.meta_items)) rd.meta_items = snapshot.meta_items;
-            // 完整 meta 列快取：考試產生線上卷可直接抽題，不必再連打 GAS
+            // 完整 meta 列快取：考試產生線上卷／可用題靠它。完整套用時以本次 snapshot 為準（可含刪冊）
             if (snapshot.meta_rows_by_stem && typeof snapshot.meta_rows_by_stem === 'object') {
                 rd.meta_rows_by_stem = snapshot.meta_rows_by_stem;
             }

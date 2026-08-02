@@ -57,8 +57,14 @@ const AppStore = (() => {
         }
 
         try {
-            state.assignments = await window.ApiService.fetchAssignments(state.currentUser.id);
-            
+            // 老師頁 TeacherDB.load() 已抓過 assignments；避免重整時再打一輪肥 select('*')
+            if (window.TeacherDB && Array.isArray(window.TeacherDB.assignments)
+                && window.TeacherDB.assignments.length > 0) {
+                state.assignments = window.TeacherDB.assignments;
+            } else {
+                state.assignments = await window.ApiService.fetchAssignments(state.currentUser.id);
+            }
+
             state.progress = {};
             if (window.localforage) {
                 const pendingQueue = await window.localforage.getItem('sync_queue') || [];
@@ -86,6 +92,9 @@ const AppStore = (() => {
 
     /**
      * 切換作業完成狀態 (樂觀更新 + 寫入同步佇列)
+     * ⚠️ 目前全專案沒有任何呼叫端（AppStore.toggleTask 未被學生端 UI 觸發），連同下方
+     * processSyncQueue 的 mark_homework_complete 分支都是孤兒路徑；且 ApiService.syncProgress
+     * 已改為必須帶 assignmentId（見 020_js_core/api.js），若之後要接上真的 UI，這裡也要補傳 assignmentId
      */
     const toggleTask = async (taskId, isCompleted) => {
         if (!state.currentUser) return;

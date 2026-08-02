@@ -1,41 +1,62 @@
 ---
-description: AI 多段批改／補啟鐵律（禁止 continue 空轉風暴、禁止批改中兩邊都動不了）
-alwaysApply: true
+description: AI 批改錯誤做法雷區（曾拖垮整站登入；禁止延遲重試風暴／雙 webhook）
+globs: supabase/functions/process-audio-ai/**,110_teacher_core/feature-ai-backfill.js,120_student_core/feature-student-timeline.js
+alwaysApply: false
 ---
 
-# AI 多段批改管線鐵律（雷區）
+# AI 多段批改管線鐵律（雷區｜錯誤做法）
 
-## 1. Edge self-continue 空轉風暴（曾拖垮整站含登入）
+> 2026-07-31：**錯誤的「自動救援」把整站（含登入）打掛。**  
+> 改 `process-audio-ai`、補啟、webhook、學生送批前必讀。
 
-`process-audio-ai` 若段卡在新鮮 `processing`、本輪 0 段進度，仍立刻 `fetch` 自己 → 空轉打爆 Supabase。
+## ❌ 絕對禁止的錯誤做法
+
+1. **禁止** `stillPending` 就立刻 `fetch` 自己（空轉風暴）
+2. **禁止** 連線失敗／522／timeout 就 `setTimeout` 自動延遲重試再 invoke（會在 DB 不穩時指數放大，拖垮 Auth）
+3. **禁止** 多個 concurrent invoke 各搶一段 pending → 6 段全 `processing`、0 `done` 死鎖
+4. **禁止** 對卡住的多段案呼叫 `submit_audio_task_atomic` 當「續跑」（會把已 done 全打回 pending，浪費 Speechace）
+5. **禁止** 續跑時再疊 `functions.invoke`＋webhook 雙喚醒
+6. **禁止** 把 `ai_processing` 從補啟與清除兩邊都排除（老師動不了）
+7. **禁止** 清除時預設勾選已批完學生（浪費 API）
+8. **禁止** 學生端提供「手動提交／重新提交 AI 批改」按鈕（易誤觸、加重 webhook／Edge 負載；送批只走繳交／上傳成功路徑）
+9. **禁止** 在未確認 `task_completions` 上是否有**重複 webhook** 時狂改 Edge  
+   - 曾同時存在：`Trigger AI Audio Grading`（INSERT/UPDATE 都打）＋ `ai_processing_webhook`  
+   - 緊急時可 `DISABLE TRIGGER`；恢復前必須先確認不會雙觸發風暴
+
+## ✅ 正確做法
 
 ```typescript
-// ❌ 禁止：只要 stillPending（含 processing）就 continue
-if (stillPending) { fetch(self); }
+// 立刻 continue：僅當本輪有進度且仍有可 claim 的 pending／stale
+const shouldContinue = stillPending && claimableAfter >= 0 && segmentsProcessedThisInvoke > 0;
 
-// ✅ 必須：有可 claim 的 pending／stale，且本輪 segmentsProcessedThisInvoke > 0 才 continue
+// 同時只允許一段新鮮 processing；其餘 worker 回 -1
+// 進場可釋放「過期」processing → pending（勿對新鮮 claim 亂釋放）
+
+// 暫時性錯誤：寫 ai_last_error、釋放本輪 claim，status 保持可恢復；
+// 但「不要」自動延遲 re-invoke。改由老師端「續跑」或繳交當下 webhook 單次觸發。
 ```
 
-檔案：`supabase/functions/process-audio-ai/index.ts`  
-改完必須 `supabase functions deploy process-audio-ai`。
+- 六段＝**逐段**分批，不是一次送六檔 Speechace  
+- 已 `done`＋有 `ai_evaluation` → **跳過**，禁止重打  
+- 教師續跑：保留 done，只重跑未完成；可勾選單一學生  
+- `ai_processing` 必須在補啟或清除可操作；部分完成要顯示 `x/n`
 
-## 2. 六段＝逐段分批，不是一次送六檔
+## 緊急止血（若整站又變慢／無法登入）
 
-一 invocation 內迴圈批多段（約 50s wall）；已 `done`＋有 `ai_evaluation` 的段**禁止**重打 Speechace。  
-續跑卡住：保留 done，只重跑未完成；**禁止**對多段案再呼叫會把全段打回 `pending` 的 RPC 當「續跑」。
+1. 部署 `process-audio-ai` **kill-switch**（收到請求立刻 200、不碰 DB）  
+2. `DISABLE TRIGGER` 兩個 AI webhook  
+3. 把卡住的 `ai_processing` 改回 `submitted`  
+4. 網站恢復後再謹慎重開（單 webhook、無延遲自動重試）
 
-## 3. 教師補啟／清除：`ai_processing` 不可兩邊消失
+完整邏輯備份檔名慣例：`supabase/functions/process-audio-ai/index.ts.bak-stable`
 
-- `ai_processing` 必須出現在「補啟／續跑」**或**「清除」可操作列表（不可兩邊都排除）
-- 清除預設只勾批改中／卡住；**禁止**預設連已批完學生一起清（浪費 API）
-- 續跑：**不要**再疊 `functions.invoke`＋webhook 雙喚醒（易放大 continue 風暴）
+## 檔案
 
-檔案：`110_teacher_core/feature-ai-backfill.js`
-
-## 4. 部分完成要看得見
-
-`ai_processing` 且已有段 `done` 時，學生／教師 UI 應顯示 `已完成 x/n` 與部分報告，不可只顯示「批改中…」黑箱。
+- `supabase/functions/process-audio-ai/index.ts`（改完必 deploy）
+- `110_teacher_core/feature-ai-backfill.js`
+- 學生端：**不要**再加回手動提交批改 UI（`ui-student-timeline-templates.js`）
 
 ## 改動前自問
 
-會不會造成：(a) 無進度仍 self-continue？(b) 批改中列表消失？(c) 已 done 段被重打 Speechace？有任一是，停下。
+會不會造成：(a) 自動延遲重試？(b) 無進度 self-continue？(c) 雙 webhook？(d) 學生可手動狂送 AI？  
+有任一是 → **停下**。

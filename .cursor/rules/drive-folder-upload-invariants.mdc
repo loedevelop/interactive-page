@@ -1,6 +1,7 @@
 ---
 description: Drive 資料夾層級與學生上傳鐵律（禁止再把繳交誤導進 01_Class_Resources）
-alwaysApply: true
+globs: gas/Code.gs,020_js_core/api.js,110_teacher_core/api-gas-service.js
+alwaysApply: false
 ---
 
 # Drive／學生上傳鐵律

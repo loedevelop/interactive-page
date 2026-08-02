@@ -75,11 +75,26 @@ window.FeatureStudentTimeline = (() => {
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
     }
 
+    /** 混血型別：classes.id=UUID；assignments.id 可能仍是 BIGINT 或已遷 UUID */
+    function isAssignmentId(value) {
+        const s = String(value == null ? '' : value).trim();
+        if (!s) return false;
+        if (isUuid(s)) return true;
+        return /^\d+$/.test(s);
+    }
+
     function assertAssignmentUuid(assignmentId, label) {
-        if (!isUuid(assignmentId)) {
+        if (!isAssignmentId(assignmentId)) {
             throw new Error((label || '作業 ID') + ' 格式錯誤：' + String(assignmentId)
                 + '。請強制重新整理頁面後再試；若仍失敗請聯絡老師檢查作業設定。');
         }
+    }
+
+    /** BIGINT 作業主鍵傳 Number，UUID 維持字串（給 RPC／寫表用） */
+    function coerceAssignmentIdForDb(assignmentId) {
+        const s = String(assignmentId == null ? '' : assignmentId).trim();
+        if (/^\d+$/.test(s)) return Number(s);
+        return s;
     }
 
     async function ensureJsPDFLoaded() {
@@ -234,7 +249,7 @@ window.FeatureStudentTimeline = (() => {
         if (!window.supabaseClient) throw new Error('系統 API 模組尚未載入');
         const first = segments[0] || {};
         const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
-            p_assignment_id: assignmentId,
+            p_assignment_id: coerceAssignmentIdForDb(assignmentId),
             p_task_id: String(taskId),
             p_student_id: userId,
             p_class_id: classId,
@@ -485,61 +500,89 @@ window.FeatureStudentTimeline = (() => {
         try {
             const { userId, classId } = await getAuthContext();
 
-            const { data: profileData } = await window.supabaseClient
-                .from('profiles')
-                .select('name')
-                .eq('id', userId)
-                .single();
-                
-            studentUsername = profileData?.name || '學生';
+            // 並行拉取（舊版串行 5 趟 RTT 是進度頁偏慢主因之一）
+            // 雷區：class_id=UUID、assignment_id 可能 BIGINT——此處只做查詢，不強轉型別
+            const [profileRes, enrollRes, classRes, assignRes, compRes] = await Promise.all([
+                window.supabaseClient
+                    .from('profiles')
+                    .select('name')
+                    .eq('id', userId)
+                    .single(),
+                window.supabaseClient
+                    .from('student_enrollments')
+                    .select('raw_data, drive_link, drive_url')
+                    .eq('user_id', userId)
+                    .eq('class_id', classId)
+                    .is('deleted_at', null)
+                    .single(),
+                window.supabaseClient
+                    .from('classes')
+                    .select('id, name, calc_mode, meet_days, start_date, end_date, sessions, session_dates, raw_data')
+                    .eq('id', classId)
+                    .single(),
+                window.supabaseClient
+                    .from('assignments')
+                    .select('id, title, target_date, due_date, tasks, raw_data, is_published, class_id')
+                    .eq('class_id', classId)
+                    .eq('is_published', true)
+                    .is('deleted_at', null),
+                window.supabaseClient
+                    .from('task_completions')
+                    .select('assignment_id, task_id, status, raw_data')
+                    .eq('student_id', userId)
+                    .eq('class_id', classId)
+                    .is('deleted_at', null)
+                    .neq('status', 'incomplete')
+            ]);
 
-            const { data: enrollData, error: enrollErr } = await window.supabaseClient
-                .from('student_enrollments')
-                .select('raw_data, drive_link, drive_url')
-                .eq('user_id', userId)
-                .eq('class_id', classId)
-                .is('deleted_at', null)
-                .single();
+            if (assignRes.error) throw assignRes.error;
+            if (compRes.error) throw compRes.error;
 
-            if (enrollErr) console.warn("[DB Warning] 找不到該學生的班級註冊紀錄", enrollErr);
-
-            let enrollRaw = enrollData?.raw_data || {};
-            if (typeof enrollRaw === 'string') {
-                try { enrollRaw = JSON.parse(enrollRaw); } catch(e) { enrollRaw = {}; }
+            // classes 精簡欄位若不存在於舊 schema，退回 select *
+            let classData = classRes.data;
+            if (classRes.error) {
+                console.warn('[FeatureStudentTimeline] classes 精簡查詢失敗，改用 *', classRes.error);
+                const fallback = await window.supabaseClient
+                    .from('classes')
+                    .select('*')
+                    .eq('id', classId)
+                    .single();
+                if (fallback.error) throw fallback.error;
+                classData = fallback.data;
             }
 
-            studentDriveUrl = enrollRaw.drive_folder_id || enrollData?.drive_link || enrollData?.drive_url || null;
+            studentUsername = (profileRes.data && profileRes.data.name)
+                ? profileRes.data.name
+                : '學生';
 
-            const { data: classData } = await window.supabaseClient
-                .from('classes')
-                .select('*')
-                .eq('id', classId)
-                .single();
-            currentClassConfig = classData || {};
+            if (enrollRes.error) console.warn('[DB Warning] 找不到該學生的班級註冊紀錄', enrollRes.error);
 
-            const { data: assignData, error: assignErr } = await window.supabaseClient
-                .from('assignments')
-                .select('*')
-                .eq('class_id', classId)
-                .eq('is_published', true) 
-                .is('deleted_at', null);
+            const enrollData = enrollRes.data;
+            let enrollRaw = (enrollData && enrollData.raw_data) ? enrollData.raw_data : {};
+            if (typeof enrollRaw === 'string') {
+                try { enrollRaw = JSON.parse(enrollRaw); } catch (_e) { enrollRaw = {}; }
+            }
 
-            if (assignErr) throw assignErr;
-            assignments = assignData || [];
+            studentDriveUrl = (enrollRaw && enrollRaw.drive_folder_id)
+                ? enrollRaw.drive_folder_id
+                : (enrollData && (enrollData.drive_link || enrollData.drive_url))
+                    ? (enrollData.drive_link || enrollData.drive_url)
+                    : null;
 
-            const { data: compData, error: compErr } = await window.supabaseClient
-                .from('task_completions')
-                .select('assignment_id, task_id, status, raw_data')
-                .eq('student_id', userId)
-                .eq('class_id', classId)
-                .is('deleted_at', null)
-                .neq('status', 'incomplete');
+            currentClassConfig = classData ? classData : {};
+            assignments = assignRes.data ? assignRes.data : [];
+            window._studentTaskCompletions = compRes.data ? compRes.data : [];
+            completedTasks = (compRes.data ? compRes.data : []).map(function (row) {
+                return String(row.assignment_id) + '_' + String(row.task_id);
+            });
 
-            if (compErr) throw compErr;
-            window._studentTaskCompletions = compData || [];
-            completedTasks = (compData || []).map(row => `${row.assignment_id}_${row.task_id}`);
-
-            renderCourses();
+            // 🚀 效能：預設常停在「訊息」；勿在隱藏的課程進度建整棵時間軸（含 AI 報告 HTML）
+            // 切到 progress 時 switchView 會再 renderCourses()
+            let activeView = '';
+            try { activeView = localStorage.getItem('studentActiveView') || ''; } catch (_e) {}
+            if (activeView === 'progress' || sessionStorage.getItem('pendingJumpAssignmentId')) {
+                renderCourses();
+            }
         } catch (err) {
             console.error("載入學生資料失敗：", err);
             container.innerHTML = `<div style="text-align:center; padding: 40px; color:#EF4444; font-weight:800;">❌ 載入失敗：${err.message}</div>`;
@@ -683,12 +726,14 @@ window.FeatureStudentTimeline = (() => {
                 }
             }
             fetchData().then(function () {
-                if (window.FeatureStudentMessages && typeof window.FeatureStudentMessages.refreshBadgeOnly === 'function') {
-                    window.FeatureStudentMessages.refreshBadgeOnly();
-                }
                 const pendingId = sessionStorage.getItem('pendingJumpAssignmentId');
                 if (pendingId) {
                     sessionStorage.removeItem('pendingJumpAssignmentId');
+                    // 跳轉進度時仍更新訊息紅點（不開訊息頁）
+                    if (window.FeatureStudentMessages
+                        && typeof window.FeatureStudentMessages.refreshBadgeOnly === 'function') {
+                        window.FeatureStudentMessages.refreshBadgeOnly();
+                    }
                     const progressTab = document.querySelector('.tab-link[data-view="progress"]');
                     if (progressTab && typeof window.FeatureStudentTimeline.switchView === 'function') {
                         window.FeatureStudentTimeline.switchView('progress', progressTab);
@@ -702,6 +747,12 @@ window.FeatureStudentTimeline = (() => {
                 let savedView = '';
                 try { savedView = localStorage.getItem('studentActiveView') || ''; } catch (_e) {}
                 if (!allowed[savedView]) savedView = 'messages';
+                // 開訊息頁時 render() 會自己抓通知；勿先 refreshBadgeOnly 再抓一次
+                if (savedView !== 'messages'
+                    && window.FeatureStudentMessages
+                    && typeof window.FeatureStudentMessages.refreshBadgeOnly === 'function') {
+                    window.FeatureStudentMessages.refreshBadgeOnly();
+                }
                 const tab = document.querySelector('.tab-link[data-view="' + savedView + '"]')
                     || document.getElementById('tab-student-messages');
                 if (tab) {
@@ -807,6 +858,7 @@ window.FeatureStudentTimeline = (() => {
 
         // 供「學習分析」頁籤讀取已載入的作業定義（含 material_ref／grading_units），避免重複打 API。
         getAssignments: () => assignments,
+        getAuthContext: getAuthContext,
         getCurrentClassConfig: () => currentClassConfig,
 
         updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
@@ -877,7 +929,7 @@ window.FeatureStudentTimeline = (() => {
 
                 // 優先走 RPC（避開 soft-delete RETURNING 的 RLS 邊角）
                 const { error: rpcErr } = await window.supabaseClient.rpc('student_set_task_completion', {
-                    p_assignment_id: assignmentId,
+                    p_assignment_id: coerceAssignmentIdForDb(assignmentId),
                     p_task_id: taskId,
                     p_class_id: classId,
                     p_completed: !!isChecked,

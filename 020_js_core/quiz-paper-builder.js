@@ -33,6 +33,104 @@ window.QuizPaperBuilder = (function () {
             .trim();
     }
 
+    function tokenizeWords(s) {
+        const n = normalizeAnswer(s);
+        if (!n) return [];
+        return n.split(/[^a-z0-9']+/).filter(Boolean);
+    }
+
+    /**
+     * LCS 對齊後合併相鄰 del+ins → sub
+     * @returns {{ type: 'match'|'sub'|'del'|'ins', expected: string, got: string }[]}
+     */
+    function alignTokens(expTokens, actTokens) {
+        const exp = expTokens || [];
+        const act = actTokens || [];
+        const m = exp.length;
+        const n = act.length;
+        const dp = [];
+        for (let i = 0; i <= m; i++) {
+            dp[i] = [];
+            for (let j = 0; j <= n; j++) dp[i][j] = 0;
+        }
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                dp[i][j] = exp[i - 1] === act[j - 1]
+                    ? dp[i - 1][j - 1] + 1
+                    : Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+        const raw = [];
+        let i = m;
+        let j = n;
+        while (i > 0 || j > 0) {
+            if (i > 0 && j > 0 && exp[i - 1] === act[j - 1]) {
+                raw.push({ type: 'match', expected: exp[i - 1], got: act[j - 1] });
+                i -= 1;
+                j -= 1;
+            } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+                raw.push({ type: 'ins', expected: '', got: act[j - 1] });
+                j -= 1;
+            } else {
+                raw.push({ type: 'del', expected: exp[i - 1], got: '' });
+                i -= 1;
+            }
+        }
+        raw.reverse();
+        const ops = [];
+        for (let k = 0; k < raw.length; k++) {
+            if (raw[k].type === 'del' && raw[k + 1] && raw[k + 1].type === 'ins') {
+                ops.push({ type: 'sub', expected: raw[k].expected, got: raw[k + 1].got });
+                k += 1;
+            } else {
+                ops.push(raw[k]);
+            }
+        }
+        return ops;
+    }
+
+    /**
+     * 錯題分析：拼錯對（應打／誤打）+ 對齊 ops（供紅線刪除顯示）
+     */
+    function analyzeAnswerDiff(expected, got) {
+        const exp = tokenizeWords(expected);
+        const act = tokenizeWords(got);
+        const ops = alignTokens(exp, act);
+        const spelling_pairs = [];
+        ops.forEach(function (op) {
+            if (op.type === 'sub') {
+                spelling_pairs.push({
+                    expected_word: op.expected,
+                    got_word: op.got,
+                    kind: 'wrong'
+                });
+            } else if (op.type === 'del') {
+                spelling_pairs.push({
+                    expected_word: op.expected,
+                    got_word: '',
+                    kind: 'missing'
+                });
+            } else if (op.type === 'ins') {
+                spelling_pairs.push({
+                    expected_word: '',
+                    got_word: op.got,
+                    kind: 'extra'
+                });
+            }
+        });
+        return {
+            expected_tokens: exp,
+            answer_tokens: act,
+            ops: ops,
+            spelling_pairs: spelling_pairs
+        };
+    }
+
+    /** @deprecated 保留舊名，轉呼叫 analyzeAnswerDiff */
+    function analyzeWrongWords(expected, got) {
+        return analyzeAnswerDiff(expected, got);
+    }
+
     function parseNumList(raw) {
         const text = String(raw || '').trim();
         if (!text) return null;
@@ -103,6 +201,24 @@ window.QuizPaperBuilder = (function () {
         const exclude = parseNumList(section.exclude_nums);
         const sheet = String(section.sheet_id || '').trim().toUpperCase();
 
+        // 不連續頁／題（來自 range_spec pp. 1~2, 5）時優先用明確集合
+        let pageSet = null;
+        let itemSet = null;
+        if (rtype === 'page' && Array.isArray(section.pages) && section.pages.length) {
+            pageSet = {};
+            section.pages.forEach(function (p) {
+                const n = Number(p);
+                if (!isNaN(n)) pageSet[n] = true;
+            });
+        }
+        if (rtype === 'qnum' && Array.isArray(section.items) && section.items.length) {
+            itemSet = {};
+            section.items.forEach(function (n) {
+                const v = Number(n);
+                if (!isNaN(v)) itemSet[v] = true;
+            });
+        }
+
         return (rows || []).filter(function (row) {
             if (!row) return false;
             // 若列上有 sheet_id，與區段不一致則略過
@@ -117,6 +233,7 @@ window.QuizPaperBuilder = (function () {
 
             if (rtype === 'qnum') {
                 if (isNaN(itemNo)) return false;
+                if (itemSet) return !!itemSet[itemNo];
                 return itemNo >= lo && itemNo <= hi;
             }
             if (rtype === 'row') {
@@ -125,6 +242,7 @@ window.QuizPaperBuilder = (function () {
             }
             // page
             if (isNaN(page)) return false;
+            if (pageSet) return !!pageSet[page];
             return page >= lo && page <= hi;
         });
     }
@@ -287,19 +405,29 @@ window.QuizPaperBuilder = (function () {
             const okList = [it.answer_en].concat(it.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
             const ok = gotN !== '' && okList.indexOf(gotN) !== -1;
             if (ok) correct += 1;
-            return {
+            const expected = it.answer_en || '';
+            const answer = got == null ? '' : String(got);
+            const row = {
                 item_id: it.item_id,
                 seq: it.seq,
                 ok: ok,
-                answer: got == null ? '' : String(got),
-                expected: it.answer_en || ''
+                answer: answer,
+                expected: expected,
+                prompt_zh: it.prompt_zh || '',
+                source: it.source || null
             };
+            if (!ok) {
+                row.diff = analyzeAnswerDiff(expected, answer);
+            }
+            return row;
         });
+        const wrongItems = details.filter(function (d) { return !d.ok; });
         return {
             total: items.length,
             correct: correct,
             score: items.length ? Math.round((correct / items.length) * 1000) / 10 : 0,
-            details: details
+            details: details,
+            wrong_items: wrongItems
         };
     }
 
@@ -307,6 +435,10 @@ window.QuizPaperBuilder = (function () {
         buildQuizPaper: buildQuizPaper,
         gradeAnswers: gradeAnswers,
         normalizeAnswer: normalizeAnswer,
+        tokenizeWords: tokenizeWords,
+        alignTokens: alignTokens,
+        analyzeAnswerDiff: analyzeAnswerDiff,
+        analyzeWrongWords: analyzeWrongWords,
         FALLBACK_COL_MAP: FALLBACK_COL_MAP
     };
 })();

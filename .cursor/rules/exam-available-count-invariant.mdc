@@ -1,0 +1,66 @@
+---
+description: 考試區段「可用題／顯示%」鐵律（B 顯示 ~20 與 — 的老問題）
+globs: 110_teacher_core/feature-exam-job.js,110_teacher_core/feature-timeline.js,020_js_core/quiz-paper-builder.js
+alwaysApply: false
+---
+
+# 考試可用題／顯示% 鐵律（雷區）
+
+> 右欄：**可用題**、**顯示%**。常與「第二冊 meta 沒進 Snapshot」連動。  
+> 動 `feature-exam-job.js`／錄音 Snapshot／`meta_rows_by_stem` 時必讀。
+
+## 症狀
+
+| 活頁 | 題數 | 可用題 | 顯示% | 意義 |
+|------|------|--------|-------|------|
+| A | 20 | **20**（綠） | 100% | 已從 Snapshot／meta 快取算到真題數 |
+| B | 20 | **~20**（橘）或空白 | **—** | 沒有真快取，被預計格位粉飾／無法算% |
+
+老師以為 A、B 都設好了，其實 B 還沒進 `meta_rows_by_stem`／`grading_units`。
+
+## 可用題怎麼算（優先序）
+
+1. `audio.raw_data.meta_rows_by_stem[SHEET]` 完整列 → 與「產生線上卷」同語意  
+2. 題號：`meta_items`／`grading_units.item_nos`  
+3. 頁碼：`grading_units` 的 `item_count`（僅 Snapshot 切過的頁）  
+4. **都沒有** 才談預估
+
+## 禁止粉飾
+
+```javascript
+// ❌ 錄音已點名 B.meta，但快取沒有 B 時，仍用 頁數×每頁行數 顯示 ~20
+if (avail == null) avail = expected; // 讓老師以為有題
+
+// ❌ sync 時丢掉 meta_rows_by_stem，或用只有 A 的 snap JSON 整包覆寫
+rd.meta_rows_by_stem = snap.meta_rows_by_stem; // snap 若只有 A 會砍 B
+```
+
+## 正確顯示
+
+```
+countAvailableFromMeta == null
+  + 錄音 material_refs／material_range 已含該活頁
+  → 可用題顯示「需Snapshot」，顯示% 為 —（逼老師等自動套用或按套用）
+  + 完全對不到錄音 meta（手加空列）
+  → 才允許 ~預計格位
+```
+
+## 不變量
+
+```
+綠字可用題 ⇔ meta_rows_by_stem 或 grading_units 真有該 stem
+產生線上卷優先讀 meta_rows_by_stem，缺冊才打 GAS
+Snapshot 後必須 refreshAfterAudioSnapshot 重算各區段 count／可用題
+BuilderStore.sync 對 meta_rows_by_stem 只能 merge，不可縮冊覆寫
+```
+
+## 連動雷區
+
+第二冊不進 snap → 見 `material-snapshot-refs-invariant.mdc`（busy/pending、async 重繪縮水）。  
+修好自動 Snapshot 後，B 應變綠字實數且顯示% 有值；在那之前 UI 必須寫「需Snapshot」而不是 `~20`。
+
+## 實測
+
+1. 錄音只凍結 A → 考試 B 列＝「需Snapshot」／顯示%＝—  
+2. 再套用含 A+B 的 Snapshot → B 變綠字實數、顯示% 有值、總計仍合理  
+3. 產生線上卷不應因 B 缺快取而靜默少題（缺則打 GAS 或明確報錯）

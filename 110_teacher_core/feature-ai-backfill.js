@@ -220,12 +220,24 @@ window.FeatureAIBackfill = (function () {
             })));
     }
 
+    function indexCompletionsByAssignTask(completions) {
+        const map = {};
+        (completions || []).forEach(function (c) {
+            if (!c) return;
+            const key = String(c.assignment_id) + '\t' + String(c.task_id);
+            if (!map[key]) map[key] = [];
+            map[key].push(c);
+        });
+        return map;
+    }
+
     function scanBackfillJobs(assignments, completions, students) {
         const jobs = [];
         const studentMap = {};
         (students || []).forEach(function (s) {
             studentMap[s.id] = s;
         });
+        const byAssignTask = indexCompletionsByAssignTask(completions);
 
         (assignments || []).forEach(function (assignment) {
             const tasks = window.TaskScriptResolver
@@ -237,10 +249,9 @@ window.FeatureAIBackfill = (function () {
                 if (!window.TaskScriptResolver.taskSupportsAIGrading(task, tasks)) return;
 
                 const scriptInfo = window.TaskScriptResolver.resolveScriptSource(tasks, task.id);
-                const eligible = (completions || []).filter(function (c) {
-                    return String(c.assignment_id) === String(assignment.id)
-                        && String(c.task_id) === String(task.id)
-                        && isEligibleForBackfill(c);
+                const bucket = byAssignTask[String(assignment.id) + '\t' + String(task.id)] || [];
+                const eligible = bucket.filter(function (c) {
+                    return isEligibleForBackfill(c);
                 }).map(function (c) {
                     return {
                         completion: c,
@@ -273,6 +284,7 @@ window.FeatureAIBackfill = (function () {
         (students || []).forEach(function (s) {
             studentMap[s.id] = s;
         });
+        const byAssignTask = indexCompletionsByAssignTask(completions);
 
         (assignments || []).forEach(function (assignment) {
             const tasks = window.TaskScriptResolver
@@ -281,10 +293,9 @@ window.FeatureAIBackfill = (function () {
             const recordingTasks = flattenRecordingTasks(tasks);
 
             recordingTasks.forEach(function (task) {
-                const withRecord = (completions || []).filter(function (c) {
-                    return String(c.assignment_id) === String(assignment.id)
-                        && String(c.task_id) === String(task.id)
-                        && hasAiRecord(c);
+                const bucket = byAssignTask[String(assignment.id) + '\t' + String(task.id)] || [];
+                const withRecord = bucket.filter(function (c) {
+                    return hasAiRecord(c);
                 }).map(function (c) {
                     return {
                         completion: c,
@@ -406,8 +417,11 @@ window.FeatureAIBackfill = (function () {
                 const existingSegments = (t.completion && t.completion.raw_data && Array.isArray(t.completion.raw_data.audio_segments) && t.completion.raw_data.audio_segments.length > 1)
                     ? t.completion.raw_data.audio_segments
                     : null;
+                const assignKey = (/^\d+$/.test(String(job.assignmentId || '').trim()))
+                    ? Number(job.assignmentId)
+                    : job.assignmentId;
                 const rpcPayload = {
-                    p_assignment_id: job.assignmentId,
+                    p_assignment_id: assignKey,
                     p_task_id: job.taskId,
                     p_student_id: t.student.id,
                     p_class_id: classId,

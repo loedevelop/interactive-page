@@ -115,7 +115,7 @@ window.UIStudentTimelineTemplates = (() => {
                 const streamUrl = resolveStreamUrl(fileId);
                 html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     ${labelChip}
-                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="metadata" style="height:34px; flex:1 1 220px; min-width:180px; max-width:340px; outline:none; border-radius:8px; vertical-align:middle;"></audio>
+                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="none" style="height:34px; flex:1 1 220px; min-width:180px; max-width:340px; outline:none; border-radius:8px; vertical-align:middle;"></audio>
                 </div>`;
             } else if (kind === 'image') {
                 const previewUrl = resolveDrivePreviewUrl(fileId);
@@ -1233,20 +1233,34 @@ window.UIStudentTimelineTemplates = (() => {
                         const quizComp = (window._studentTaskCompletions || []).find(function (c) {
                             return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
                         });
-                        if (quizComp && quizComp.raw_data && quizComp.raw_data.quiz_result) {
-                            const qr = quizComp.raw_data.quiz_result;
-                            quizScoreHtml = `<span style="font-size:0.8rem; font-weight:800; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:2px 8px; border-radius:6px;">${escapeAttr(qr.correct)}/${escapeAttr(qr.total)}（${escapeAttr(qr.score)}%）</span>`;
+                        const quizRaw = (quizComp && quizComp.raw_data) ? quizComp.raw_data : null;
+                        if (quizRaw && (quizRaw.quiz_result || quizRaw.quiz_stats)) {
+                            if (window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.formatStatsSummaryHtml === 'function') {
+                                const summary = window.FeatureStudentQuiz.formatStatsSummaryHtml(quizRaw);
+                                if (summary) {
+                                    quizScoreHtml = `<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:6px 10px; max-width:360px;">${summary}</div>`;
+                                }
+                            } else if (quizRaw.quiz_result) {
+                                const qr = quizRaw.quiz_result;
+                                quizScoreHtml = `<span style="font-size:0.8rem; font-weight:800; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:2px 8px; border-radius:6px;">${escapeAttr(qr.correct)}/${escapeAttr(qr.total)}（${escapeAttr(qr.score)}%）</span>`;
+                            }
                         }
                         if (!itemN) {
                             btn = `<div style="color:#92400E; font-size:0.85rem; font-weight:800; background:#FFFBEB; padding:4px 10px; border-radius:6px; border:1px solid #FDE68A;">老師尚未產生線上卷</div>`;
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
-                            const quizBtnLabel = quizScoreHtml ? '再作一次' : '📝 開始作答';
+                            const hasQuizDone = !!(quizRaw && (quizRaw.quiz_result || (quizRaw.quiz_stats && quizRaw.quiz_stats.complete_count)));
+                            const quizBtnLabel = hasQuizDone ? '再作一次' : '📝 開始作答';
+                            const reviewBtn = hasQuizDone
+                                ? `<button type="button" class="btn-action" style="background:white; color:#0F766E; border:1px solid #99F6E4; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openReviewFromRaw('${safeCourseId}', '${safeTaskId}')">錯題／錯字</button>`
+                                : '';
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
                                     <button type="button" class="btn-action" style="background:#0F766E; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
                                         onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${quizBtnLabel}</button>
+                                    ${reviewBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${itemN} 題</span>
                                 </div>
                             `;

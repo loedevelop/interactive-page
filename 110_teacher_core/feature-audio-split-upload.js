@@ -681,8 +681,11 @@ window.FeatureAudioSplitUpload = (function () {
 
             appendLog('📝 寫回資料庫並啟動 AI 批改…');
 
+            const assignKey = (/^\d+$/.test(String(state.assignmentId || '').trim()))
+                ? Number(state.assignmentId)
+                : state.assignmentId;
             const { error: rpcErr } = await window.supabaseClient.rpc('submit_audio_task_atomic', {
-                p_assignment_id: state.assignmentId,
+                p_assignment_id: assignKey,
                 p_task_id: state.taskId,
                 p_student_id: state.studentId,
                 p_class_id: cachedContext.classId,

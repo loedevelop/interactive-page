@@ -52,7 +52,7 @@ window.TimelineTemplates = (() => {
                 .rte-btn { background: white; font-weight: 900; border: 1px solid #CBD5E1; padding: 2px 8px; border-radius: 4px; cursor: pointer; color: #334155; }
                 .rte-btn:hover { background: #E2E8F0; }
                 .drag-over { border: 2px dashed #10B981 !important; opacity: 0.7; }
-                [contenteditable]:empty:before { content: attr(data-placeholder); color: #94A3B8; pointer-events: none; display: block; }
+                [contenteditable]:empty:before { content: attr(data-placeholder); color: var(--placeholder, #94A3B8); pointer-events: none; display: block; }
                 @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(16,185,129,0.4);} 70% {box-shadow: 0 0 0 8px rgba(16,185,129,0);} 100% {box-shadow: 0 0 0 0 rgba(16,185,129,0);} }
                 .rt-normalize, .rt-normalize * { font-size: inherit !important; font-family: inherit !important; }
                 details > summary::-webkit-details-marker { display: none; }
@@ -441,6 +441,9 @@ window.TimelineTemplates = (() => {
                 }
 
                 let audioInputHtml = '';
+                let audioDisplayTitle = '';
+                let audioTitleIsAuto = false;
+                let audioTitleFromRangeAttr = '';
                 if (t.type === 'audio_record') {
                     const raw = t.raw_data || {};
                     const useAi = raw.use_ai_grading !== false;
@@ -458,7 +461,7 @@ window.TimelineTemplates = (() => {
 
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_display_text || raw.student_display || raw.student_text || '').replace(/"/g, '&quot;');
-                    // 標題（麥克風右側）空白時，改用 base 範圍顯示
+                    // 標題空白時以 base 範圍顯示（data-title-auto 供範圍變更時同步更新）
                     const plainTaskTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                     let materialRefs = Array.isArray(raw.material_refs) && raw.material_refs.length
                         ? raw.material_refs.slice()
@@ -475,15 +478,14 @@ window.TimelineTemplates = (() => {
                     if (!resolvedMaterialRange && window.FeatureTimeline && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
                         resolvedMaterialRange = window.FeatureTimeline.buildMaterialRangeLabelFromRows(materialRefs) || '';
                     }
-                    if (!resolvedMaterialRange) resolvedMaterialRange = plainTaskTitle;
+                    const titleFromRange = String(resolvedMaterialRange || '').trim();
+                    audioTitleIsAuto = !plainTaskTitle && !!titleFromRange;
+                    audioDisplayTitle = plainTaskTitle || titleFromRange || '';
+                    audioTitleFromRangeAttr = titleFromRange.replace(/"/g, '&quot;');
                     const safeMaterialRange = String(resolvedMaterialRange || '').replace(/"/g, '&quot;');
                     const safeMaterialUrl = (raw.material_url || raw.student_drive_url || '').replace(/"/g, '&quot;');
                     const safeStudentDriveUrl = (raw.student_drive_url || raw.material_url || '').replace(/"/g, '&quot;');
                     const safeStudentDriveDesc = (raw.student_drive_desc || resolvedMaterialRange || '').replace(/"/g, '&quot;');
-                    const titleFromRange = String(raw.material_range || raw.student_drive_desc || '').trim();
-                    if (!plainTaskTitle && titleFromRange) {
-                        t.title = titleFromRange;
-                    }
                     const safeStudentLocalDesc = (raw.student_local_desc || '').replace(/"/g, '&quot;');
                     const safeStudentLocalB64 = raw.student_local_b64 || '';
                     const safeStudentLocalMime = raw.student_local_mime || '';
@@ -628,9 +630,10 @@ window.TimelineTemplates = (() => {
                                 <div style="margin-bottom:8px; padding:10px 12px; background:#EEF2FF; border:1px solid #C7D2FE; border-radius:6px; font-size:0.82rem; color:#3730A3; font-weight:700; line-height:1.45;">
                                     🎙 錄音單位提示：以「一頁」為唯一錄音單位。學生同一作業可複選多檔上傳；Snapshot 會依頁準備 AI 批改稿（一頁一份）。
                                 </div>
-                                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')">👁 預覽</button>
-                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#059669; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')">📌 套用 Snapshot</button>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')" title="可選手動預覽；改範圍後也會自動套用並更新預覽">👁 預覽</button>
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#059669; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')" title="可選手動套用；選好 meta 並填範圍後會自動套用">📌 套用 Snapshot</button>
+                                    <span style="font-size:0.75rem; color:#6D28D9; font-weight:700;">選好 meta＋範圍後約 1 秒會自動套用（不必每次手動按）</span>
                                 </div>
                                 <div id="node-material-status-${pathStr}" style="font-size:0.8rem; color:#64748B; margin-bottom:6px;"></div>
                                 <div id="node-material-preview-${pathStr}" style="font-size:0.8rem; color:#475569; background:white; border:1px dashed #CBD5E1; border-radius:6px; padding:8px; max-height:160px; overflow:auto;">${snapshotPreview}</div>
@@ -695,6 +698,30 @@ window.TimelineTemplates = (() => {
                         : '<div style="margin-top:8px; color:#B91C1C;">FeatureExamJob 未載入</div>';
                 }
 
+                // 錄音／考試標題：空白時繼承同層錄音 base 範圍
+                let leafTitleHtml = String(t.title || '');
+                let leafTitleAuto = '0';
+                let leafTitleFromRange = '';
+                if (t.type === 'audio_record') {
+                    leafTitleHtml = String(audioDisplayTitle || '').replace(/</g, '&lt;');
+                    leafTitleAuto = audioTitleIsAuto ? '1' : '0';
+                    leafTitleFromRange = audioTitleFromRangeAttr;
+                } else if (t.type === 'exam') {
+                    const plainExamTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    let examRangeHint = '';
+                    if (window.BuilderStore && typeof window.BuilderStore.getState === 'function'
+                        && window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+                        examRangeHint = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+                    }
+                    if (!plainExamTitle && examRangeHint) {
+                        leafTitleHtml = examRangeHint.replace(/</g, '&lt;');
+                        leafTitleAuto = '1';
+                        leafTitleFromRange = examRangeHint.replace(/"/g, '&quot;');
+                    } else {
+                        leafTitleHtml = String(t.title || '');
+                    }
+                }
+
                 let tLateMode = t.late_mode || 'infinite';
 
                 return `
@@ -702,7 +729,10 @@ window.TimelineTemplates = (() => {
                          style="margin-top: 10px; margin-bottom: 10px; background: white; padding: 12px; border: 1px solid #CBD5E1; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.04); transition: border 0.2s;">
                         <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; margin-bottom: 8px;">
                             <div style="padding-top:4px;">${typeSelectorHtml}</div>
-                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${t.title || ''}</div>
+                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題"
+                                 data-title-auto="${leafTitleAuto}" data-title-from-range="${leafTitleFromRange}"
+                                 oninput="window.FeatureTimeline && window.FeatureTimeline.onNodeTitleInput && window.FeatureTimeline.onNodeTitleInput('${pathStr}', this)"
+                                 style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${leafTitleHtml}</div>
                             
                             <div style="display:flex; align-items:center; gap:10px; padding-top:4px; flex-wrap:wrap;">
                                 <div style="display:flex; align-items:center; gap:5px;">
