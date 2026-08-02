@@ -115,16 +115,26 @@ window.TaskScriptResolver = (function () {
     }
 
     /**
-     * 任務是否「允許」走 AI 發音批改管線（drive 上傳／錄音艙皆可）。
+     * 任務是否「允許」走 AI 發音批改管線。
      * 真正送 AI 前仍須另檢查是否已有文稿。
+     *
+     * 💣 雷區（見 .cursor/rules/ai-grading-pipeline-invariants.mdc）：
+     * 2026-08-01 曾發生老師沒勾 AI 批改，學生端卻照樣跑分段 AI 批改進度條。
+     * 根因是這裡曾對 task.type === 'drive' 無條件回 true——但 drive（純上傳資料夾）
+     * 在教師編輯器裡「沒有任何 AI 批改勾選框」，老師完全無法對 drive 任務表達
+     * 「不要送 AI」，形同永遠強制開啟。改為：drive 一律要求明確 use_ai_grading === true
+     * 才送 AI（目前教師端沒有入口設這個值，故 drive 預設不送 AI，除非未來加上明確入口）。
+     * audio_record 才有實際勾選框，維持「勾選框存的值為準」（不是型別本身）。
      */
     function taskSupportsAIGrading(task, tasksInput) {
         if (!task) return false;
         const raw = task.raw_data || {};
         if (raw.use_ai_grading === false || task.use_ai_grading === false) return false;
-
-        if (task.type === 'audio_record' || task.type === 'drive') return true;
         if (raw.use_ai_grading === true || task.use_ai_grading === true) return true;
+
+        // 沒有明確值時：只有 audio_record（有勾選框、預設視為開啟）才回 true；
+        // drive 沒有勾選框可控，不可預設開啟。
+        if (task.type === 'audio_record') return true;
         return false;
     }
 

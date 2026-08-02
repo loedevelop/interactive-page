@@ -169,9 +169,10 @@ window.FeatureStudentTimeline = (() => {
         }
         const raw = task.raw_data ? task.raw_data : {};
         if (raw.use_ai_grading === false) return false;
-        // drive（上傳資料夾）與 audio_record（錄音艙）都可 AI；有無文稿另檢
-        if (task.type === 'audio_record' || task.type === 'drive') return true;
         if (raw.use_ai_grading === true) return true;
+        // 備援路徑（TaskScriptResolver 未載入時）：只有 audio_record 有勾選框可控，
+        // drive 沒有入口讓老師關閉，不可預設開啟。與上方 TaskScriptResolver 版本同步。
+        if (task.type === 'audio_record') return true;
         return false;
     }
 
@@ -387,7 +388,12 @@ window.FeatureStudentTimeline = (() => {
             const taskConfig = findTaskConfig(assignmentId, taskId);
             const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
             const gradingUnits = getTaskGradingUnits(taskConfig);
-            const canSendAI = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim());
+            const hasScript = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim());
+            // 💣 雷區：這裡曾只看「有沒有文稿」決定 canSendAI，完全沒檢查老師有沒有勾選
+            // 「AI 批改發音」。導致老師沒勾 AI 批改，只要材料 Snapshot 帶了文稿，
+            // 音檔還是會被送進 AI 管線、學生端也會出現「分段進度」批改中訊息。
+            // 見 .cursor/rules/ai-grading-pipeline-invariants.mdc。
+            const canSendAI = hasScript && taskSupportsAIGrading(taskConfig, assignmentId);
 
             const items = (fileItems || []).filter(Boolean);
             if (!items.length) throw new Error('未選擇音檔');
@@ -496,11 +502,12 @@ window.FeatureStudentTimeline = (() => {
                     mime: u.uploadMime || 'audio/wav',
                     name: u.name
                 })));
+                const skipReason = !hasScript ? '無文稿' : '未勾選 AI 批改';
                 if (statusEl) {
-                    statusEl.textContent = `✅ 已上傳 ${uploaded.length} 檔（無文稿，略過 AI）`;
+                    statusEl.textContent = `✅ 已上傳 ${uploaded.length} 檔（${skipReason}，略過 AI）`;
                     statusEl.style.color = '#10B981';
                 }
-                window.showFlash('音檔已上傳到資料夾。此任務尚未設定批改文稿，故未送 AI。');
+                window.showFlash('音檔已上傳到資料夾。此任務' + (!hasScript ? '尚未設定批改文稿' : '未開啟 AI 批改') + '，故未送 AI。');
             }
             renderCourses();
         } catch (err) {
@@ -1309,7 +1316,9 @@ window.FeatureStudentTimeline = (() => {
                         assertAssignmentUuid(assignmentId, '作業 ID');
                         const taskConfig = findTaskConfig(assignmentId, taskId);
                         const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-                        const canSendAI = !!scriptText;
+                        // 同 uploadAudioFilesForGrading：需同時有文稿「且」老師開啟 AI 批改才送 AI。
+                        // 見 .cursor/rules/ai-grading-pipeline-invariants.mdc。
+                        const canSendAI = !!scriptText && taskSupportsAIGrading(taskConfig, assignmentId);
 
                         if (statusEl) {
                             statusEl.textContent = '🚀 錄音上傳中...';
@@ -1345,11 +1354,12 @@ window.FeatureStudentTimeline = (() => {
                                 mime: audioData.mimeType || 'audio/wav',
                                 name: finalFileName
                             }]);
+                            const skipReason = !scriptText ? '無文稿' : '未開啟 AI 批改';
                             if (statusEl) {
-                                statusEl.textContent = '✅ 已上傳（無文稿，略過 AI）';
+                                statusEl.textContent = `✅ 已上傳（${skipReason}，略過 AI）`;
                                 statusEl.style.color = '#10B981';
                             }
-                            window.showFlash('錄音已上傳。此任務尚未設定批改文稿，故未送 AI。');
+                            window.showFlash('錄音已上傳。此任務' + (!scriptText ? '尚未設定批改文稿' : '未開啟 AI 批改') + '，故未送 AI。');
                         }
                         renderCourses();
 

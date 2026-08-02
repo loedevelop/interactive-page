@@ -479,8 +479,11 @@ window.BuilderStore = (() => {
         /** 新作業慣例：教材／群組底下掛「範圍層」，再掛錄音＋考試 */
         _isRangeGroupNode: (node) => !!(node && node.type === 'group' && node.raw_data && node.raw_data.group_role === 'range'),
 
+        // 💣 雷區：曾發生老師沒勾 AI 批改，學生端卻照樣送 AI——因為新建任務預設
+        // use_ai_grading: true，勾選框一開始就是「已勾」，老師沒動它＝以為沒開，實際是開的。
+        // 改為預設 false（需老師明確勾選才送 AI），只影響「新建」任務；已存在資料不動。
         _defaultAudioRaw: () => ({
-            use_ai_grading: true,
+            use_ai_grading: false,
             use_ai_grammar: false,
             capture_studio: true,
             capture_upload: true,
@@ -638,7 +641,7 @@ window.BuilderStore = (() => {
             
             if (newType === 'audio_record') {
                 if (!task.raw_data) task.raw_data = {};
-                if (task.raw_data.use_ai_grading === undefined) task.raw_data.use_ai_grading = true;
+                if (task.raw_data.use_ai_grading === undefined) task.raw_data.use_ai_grading = false;
                 if (task.raw_data.use_ai_grammar === undefined) task.raw_data.use_ai_grammar = false;
                 if (task.raw_data.capture_studio === undefined) task.raw_data.capture_studio = true;
                 if (task.raw_data.capture_upload === undefined) task.raw_data.capture_upload = true;

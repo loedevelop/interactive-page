@@ -11,7 +11,7 @@ alwaysApply: true
 |---|---|---|
 | `modal-overlay-tiers.mdc` | 自製全螢幕遮罩當 popup | 全站（alwaysApply） |
 | `traditional-chinese.mdc` | 溝通語言 | 全站（alwaysApply） |
-| `ai-grading-pipeline-invariants.mdc` | AI 批改拖垮登入／延遲重試風暴／雙 webhook | `process-audio-ai/**`, `feature-ai-backfill.js` |
+| `ai-grading-pipeline-invariants.mdc` | AI 批改拖垮登入／延遲重試風暴／雙 webhook／沒勾AI批改卻照樣送 | `process-audio-ai/**`, `feature-ai-backfill.js`, `task-script-resolver.js`, `store-assignment-builder.js` |
 | `assignment-id-uuid-invariant.mdc` | assignment id 混血 bigint/uuid | `migrations/**`, `api.js`, `store-assignment-builder.js` |
 | `drive-folder-upload-invariants.mdc` | 學生繳交跑進 01_Class_Resources／多檔上傳中途失敗整批丟 | `gas/Code.gs`, `api.js`, `api-gas-service.js`, `feature-student-timeline.js` |
 | `exam-available-count-invariant.mdc` | 可用題顯示 ~20／— 老問題 | `feature-exam-job.js`, `feature-timeline.js`, `quiz-paper-builder.js` |

@@ -1,6 +1,6 @@
 ---
 description: AI 批改錯誤做法雷區（曾拖垮整站登入；禁止延遲重試風暴／雙 webhook）
-globs: supabase/functions/process-audio-ai/**,110_teacher_core/feature-ai-backfill.js,120_student_core/feature-student-timeline.js
+globs: supabase/functions/process-audio-ai/**,110_teacher_core/feature-ai-backfill.js,120_student_core/feature-student-timeline.js,020_js_core/task-script-resolver.js,110_teacher_core/store-assignment-builder.js
 alwaysApply: false
 ---
 
@@ -30,6 +30,32 @@ alwaysApply: false
       前端 `uploadAudioFilesForGrading` 先排除「已提交過」的 unit_key，新選檔案接續對應剩下的頁
     - 見 `.cursor/rules/material-snapshot-refs-invariant.mdc` 之外的另一半：這裡是**送出後**的合併，
       不是套用 Snapshot 時的合併
+11. **禁止**任何任務型別「預設視為可送 AI」而老師端沒有對應勾選框可以關閉  
+    - 症狀（2026-08-01）：老師沒勾「AI 批改發音」，學生端仍出現「📊 分段進度…逐段批改」訊息，
+      音檔仍被送進 AI 批改管線
+    - 根因 1（最直接、影響最大）：`uploadAudioFilesForGrading`／錄音艙上傳 callback
+      （`feature-student-timeline.js`）的 `canSendAI` 曾**只看有沒有文稿**
+      （`!!scriptText || gradingUnits.some(...)`），完全沒檢查 `taskSupportsAIGrading`／
+      `use_ai_grading`。只要材料 Snapshot 帶了文稿，不管老師勾選框是什麼狀態，音檔一律送 AI、
+      「分段進度」條也一律顯示——**這條路徑根本沒讀勾選框**
+    - 根因 2：`taskSupportsAIGrading`（`task-script-resolver.js` 與 `feature-student-timeline.js`
+      各有一份）曾對 `task.type === 'drive'` **無條件回 true**——但 `drive`（純上傳資料夾）在
+      教師編輯器裡**完全沒有** AI 批改勾選框（該勾選框只在 `t.type === 'audio_record'` 才渲染，
+      見 `ui-timeline-templates.js`），等於老師沒有任何入口可以對 drive 任務表達「不要送 AI」
+    - 根因 3：`audio_record` 新建任務的預設值 `_defaultAudioRaw().use_ai_grading` 曾是 `true`，
+      勾選框渲染時就已經是「已勾」（`checked = raw.use_ai_grading !== false`）。老師若沒特別去
+      察覺並取消勾選，會誤以為「我沒勾＝沒開」，但實際上早就是開的
+    - 已修：
+      1. `canSendAI` 改為 `hasScript(有文稿) && taskSupportsAIGrading(...)`，兩個上傳路徑
+         （多檔逐頁／錄音艙單檔）都補上這個檢查
+      2. `drive` 一律要求明確 `use_ai_grading === true` 才送 AI（目前教師端沒有入口設這個值，
+         故 drive 預設不送 AI）
+      3. `audio_record` 新建任務預設改為 `use_ai_grading: false`（改成**老師要明確勾選才送 AI**，
+         不是「勾了才不送」）。已存在、已明確設過值的任務資料不受影響
+    - 若真的要讓某任務型別「預設開啟 AI」，前提是**該型別必須有可見、可關閉的勾選框**，
+      否則等同綁架老師的意願
+    - 改動前自問：任何新增／修改的上傳或送批路徑，是否都經過
+      `hasScript && taskSupportsAIGrading(...)` 這道關卡？只檢查「有沒有文稿」不夠
 
 ## ✅ 正確做法
 
@@ -51,6 +77,8 @@ const shouldContinue = stillPending && claimableAfter >= 0 && segmentsProcessedT
 - 學生分批提交（一頁一檔的多段任務）：新一批只能「補齊」尚未提交的 unit_key，
   不可讓後一批覆蓋前一批；`submit_audio_task_atomic` 與前端對應邏輯都要用 unit_key 判斷，
   不能只靠陣列索引
+- 是否送 AI＝以 `raw_data.use_ai_grading` 明確值為準（`true`/`false`）；沒有明確值時，
+  只有「有勾選框可控」的型別（目前僅 `audio_record`）才能回退用型別預設，其餘型別一律不送
 
 ## 緊急止血（若整站又變慢／無法登入）
 
@@ -69,5 +97,6 @@ const shouldContinue = stillPending && claimableAfter >= 0 && segmentsProcessedT
 
 ## 改動前自問
 
-會不會造成：(a) 自動延遲重試？(b) 無進度 self-continue？(c) 雙 webhook？(d) 學生可手動狂送 AI？  
+會不會造成：(a) 自動延遲重試？(b) 無進度 self-continue？(c) 雙 webhook？(d) 學生可手動狂送 AI？
+(e) 某任務型別沒有勾選框卻被當成預設可送 AI？  
 有任一是 → **停下**。
