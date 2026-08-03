@@ -877,11 +877,22 @@ window.FeatureStudentTimeline = (() => {
         },
 
         switchView: (viewId, btnElement) => {
-            document.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
-            document.querySelectorAll('.tab-link').forEach(b => b.classList.remove('active'));
+            // 🚀 reload 時 index.html 的同步小腳本已依 localStorage 預先套用正確分頁的
+            // active class（見 page-refresh-perf-invariant.mdc）；若這裡目標分頁已經是
+            // active，就不要重新 remove/add class，否則會讓 CSS 的 fadeIn 動畫重播一次，
+            // 出現「畫面已經對了，卻又閃一下」的殘留感。使用者手動點別的分頁時，
+            // viewEl 不會已是 active，仍會走原本的切換＋淡入。
             const viewEl = document.getElementById(`view-${viewId}`);
-            if (viewEl) viewEl.classList.add('active');
-            if (btnElement) btnElement.classList.add('active');
+            const alreadyActive = !!(viewEl && viewEl.classList.contains('active'));
+            if (!alreadyActive) {
+                document.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
+                document.querySelectorAll('.tab-link').forEach(b => b.classList.remove('active'));
+                if (viewEl) viewEl.classList.add('active');
+                if (btnElement) btnElement.classList.add('active');
+            } else if (btnElement && !btnElement.classList.contains('active')) {
+                document.querySelectorAll('.tab-link').forEach(b => b.classList.remove('active'));
+                btnElement.classList.add('active');
+            }
             try { localStorage.setItem('studentActiveView', viewId); } catch (_e) {}
             
             if (viewId === 'progress') {

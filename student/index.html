@@ -111,6 +111,35 @@
         </div>
     </div>
 
+    <script>
+        // 🚀 雷區修復（見 .cursor/rules/page-refresh-perf-invariant.mdc）：
+        // 原本「恢復上次分頁」是等 fetchData() 網路請求全部跑完才 switchView，
+        // 這段等待期間畫面會先停在 HTML 預設的「訊息」分頁（橘色標籤＋空內容），
+        // 感覺像是「先繞路再跳到真正畫面」。這裡在任何重活腳本／網路請求開始前，
+        // 同步（不等資料）依 localStorage／sessionStorage 決定要顯示哪個分頁，
+        // 讓瀏覽器第一次 paint 就是正確分頁，不會先閃過訊息再跳走。
+        // 只動 active class（顯示哪個殼），不打 API、不 render 內容——
+        // 資料仍照舊等 fetchData() 完成後才由 feature-student-timeline.js 補上，
+        // 不違反「勿在隱藏分頁搶跑重活」的效能鐵律。
+        (function () {
+            try {
+                var pendingId = sessionStorage.getItem('pendingJumpAssignmentId');
+                var allowed = { progress: 1, messages: 1, resources: 1, personal: 1, class: 1, analytics: 1 };
+                var target = pendingId ? 'progress' : (localStorage.getItem('studentActiveView') || '');
+                if (!allowed[target]) target = 'messages';
+                if (target === 'messages') return; // HTML 預設就是訊息分頁，不用動
+                var tabs = document.querySelectorAll('.tab-link');
+                var views = document.querySelectorAll('.view-content');
+                for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+                for (var i = 0; i < views.length; i++) views[i].classList.remove('active');
+                var tab = document.querySelector('.tab-link[data-view="' + target + '"]');
+                var view = document.getElementById('view-' + target);
+                if (tab) tab.classList.add('active');
+                if (view) view.classList.add('active');
+            } catch (_e) {}
+        })();
+    </script>
+
     <div id="profile-modal" class="modal-overlay">
         <div class="modal-box">
             <h2 style="margin-top:0; color:#334155; font-weight:900;">👤 個人資料管理</h2>
@@ -182,7 +211,7 @@
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>
     <script defer src="../120_student_core/feature-student-messages.js?v=13"></script>
     <script defer src="../120_student_core/feature-student-quiz.js?v=9"></script>
-    <script defer src="../120_student_core/feature-student-timeline.js?v=98"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=99"></script>
     <script defer src="../120_student_core/feature-student-analytics.js?v=3"></script>
     
     <script defer>

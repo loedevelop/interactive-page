@@ -16,6 +16,8 @@ alwaysApply: false
 // ❌ 開訊息前先 refreshBadgeOnly、render 又抓一次通知
 // ❌ TeacherDB.load 後 AppStore.loadInitialData 再 fetchAssignments(*)
 // ❌ 編輯作業 renderBuilderUI 後又 hydrateMaterialSnapshotUI（double-prime）
+// ❌ 「恢復上次分頁」綁在 fetchData().then() 之後才 switchView（reload 時會先閃過
+//    HTML 預設的訊息分頁，橘色標籤＋空內容，等網路全部跑完才跳到真正分頁，感覺像繞路）
 ```
 
 ## 正確
@@ -26,10 +28,53 @@ alwaysApply: false
 訊息頁 → 由 render() 單次抓通知；非訊息頁才 refreshBadgeOnly
 AppStore → 優先重用 TeacherDB.assignments
 時間軸 audio → preload="none"（勿一進來就打一堆 stream-audio）
+學生「恢復上次分頁」：在任何 defer 腳本／網路請求開始前，同步依 localStorage.studentActiveView／
+  sessionStorage.pendingJumpAssignmentId 先把正確的 .tab-link／.view-content 改成 active
+  （只搬 class，不打 API、不 render 內容）；資料仍照舊等 fetchData() 完成後才補上，
+  不違反「非進度頁不建整棵時間軸」
 ```
+
+## 學生初登入預設訊息頁 vs. reload 恢復上次分頁（勿混為一談）
+
+> 2026-08-03 新增。這兩件事目標不同，改動時要分清楚，別把其中一個改壞了另一個：
+
+```
+情境 A：從未存過 studentActiveView（真正第一次登入）→ 停在「訊息」分頁　　　　　　（既有設計，不要動）
+情境 B：已有 studentActiveView（例如上次在「課程進度」）→ reload 後應直接停在課程進度，
+        不能先閃過訊息分頁再跳過去
+情境 C：sessionStorage.pendingJumpAssignmentId 存在（從訊息點連結跳作業）→ 應直接停在「課程進度」
+```
+
+`student/index.html` 在所有 `.tab-link` / `.view-content` 元素之後，有一段**同步、無外部依賴**的
+inline `<script>`，在任何 `defer` 腳本執行前就先讀 `localStorage.studentActiveView` /
+`sessionStorage.pendingJumpAssignmentId`，把對應的 `active` class 直接搬到正確的 tab／view 上。
+`feature-student-timeline.js` 的 `switchView()` 之後仍會被 `fetchData().then(...)` 呼叫一次
+（用來觸發該分頁真正的資料 render，例如 `renderCourses()`／`FeatureStudentMessages.render()`），
+但如果目標分頁已經是 active（表示 inline script 已經套用過），`switchView` 不會再
+remove/add class，避免 CSS `fadeIn` 動畫重播造成「畫面明明對了，卻又閃一下」的殘留感。
+
+### 禁止
+
+```javascript
+// ❌ 把「決定顯示哪個分頁」也搬進 fetchData() 裡面才做（還是要等網路，等於沒修到）
+// ❌ inline restore script 依賴任何其他模組（它必須在 defer 腳本、supabaseClient 都還沒好時就能跑）
+// ❌ switchView 每次都無條件 remove/add active class（inline script 已設好時會多閃一次 fadeIn）
+```
+
+### 改動前自問
+
+若要動 `student/index.html` 開頭的 inline restore script、或 `feature-student-timeline.js` 的
+`switchView`／`fetchData().then(...)` 分頁恢復邏輯：
+1. 全新帳號（無 `studentActiveView`）reload，是否仍停在「訊息」？
+2. 上次在「課程進度」reload，第一次 paint 是否就是課程進度（不會先閃訊息）？
+3. 從訊息點連結跳作業（`pendingJumpAssignmentId`）reload 後，是否仍直接跳到課程進度並定位到該作業？
+若任一否，停下。
 
 ## 實測
 
 - 老師停在「課程進度」重整：Network 不應立刻出現進度總表 heavy `task_completions.raw_data`
 - 學生預設訊息頁重整：不應先組整棵進度 DOM
 - 硬重新整理後體感應明顯比改前順
+- 全新帳號（清 localStorage）登入 → 停在「訊息」分頁
+- 學生切到「課程進度」後硬重新整理 → 第一次畫面就是課程進度，不會先閃一下橘色訊息標籤
+- 從訊息點連結跳到別班作業（觸發 `pendingJumpAssignmentId` reload）→ 直接停在課程進度並定位到該作業，不會先閃訊息
