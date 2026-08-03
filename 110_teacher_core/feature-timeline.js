@@ -461,24 +461,39 @@ window.FeatureTimeline = (() => {
                 statusEl.style.color = '#3B82F6';
             }
             const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
-            applySnapshotToNode(pathStr, snapshot);
-            refreshMaterialRangeLabel(pathStr);
-            if (previewEl) {
-                previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
-                    + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                    + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
-                    + (snapshot.original_script || '').replace(/</g, '&lt;')
-                    + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
-                    + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
-            }
-            if (statusEl) {
-                statusEl.textContent = '✅ 已自動套用 Snapshot｜' + (snapshot.material_range || '')
-                    + '（請記得儲存作業）';
-                statusEl.style.color = '#059669';
-            }
-            // 同層考試可用題跟著刷新
-            if (window.FeatureExamJob && typeof window.FeatureExamJob._refreshAfterAudioSnapshot === 'function') {
-                try { window.FeatureExamJob._refreshAfterAudioSnapshot(pathStr); } catch (_e) {}
+            // 💣 雷區修復（2026-08-03）：buildMergedMaterialSnapshot 讀 GAS 可能要好幾秒；
+            // 若這段等待期間老師又改了任一列的 meta／範圍，busy-guard 會把 _autoSnapshotPending
+            // 設為 true，但這一輪手上的 snapshot 仍是「用舊 DOM 值」算出來的過期結果。
+            // 若照常套用：① 會把老師剛打好的新範圍蓋回舊值（單列 input 與下方 base 範圍都會跑掉），
+            // ② 更糟的是 finally 的立即重跑會讀到「被這輪覆寫過的」DOM，等於把過期值鎖死，
+            // 永遠回不到老師真正想要的值。這正是「明明填對了，過一會兒又自己跑掉」的根因。
+            // 正確作法：一旦偵測到 pending 已經被設起來，這一輪結果直接捨棄不套用，
+            // 交給 finally 立即重跑那一輪讀「當下最新」DOM 算出正確結果。
+            if (_autoSnapshotPending[pathStr]) {
+                if (statusEl) {
+                    statusEl.textContent = '⏳ 套用期間偵測到範圍又被修改，捨棄這輪結果，改用最新內容重算…';
+                    statusEl.style.color = '#3B82F6';
+                }
+            } else {
+                applySnapshotToNode(pathStr, snapshot);
+                refreshMaterialRangeLabel(pathStr);
+                if (previewEl) {
+                    previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
+                        + String(snapshot.material_range || '').replace(/</g, '&lt;')
+                        + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                        + (snapshot.original_script || '').replace(/</g, '&lt;')
+                        + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+                        + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
+                }
+                if (statusEl) {
+                    statusEl.textContent = '✅ 已自動套用 Snapshot｜' + (snapshot.material_range || '')
+                        + '（請記得儲存作業）';
+                    statusEl.style.color = '#059669';
+                }
+                // 同層考試可用題跟著刷新
+                if (window.FeatureExamJob && typeof window.FeatureExamJob._refreshAfterAudioSnapshot === 'function') {
+                    try { window.FeatureExamJob._refreshAfterAudioSnapshot(pathStr); } catch (_e) {}
+                }
             }
         } catch (err) {
             if (statusEl) {
@@ -1159,6 +1174,9 @@ window.FeatureTimeline = (() => {
             });
             function shouldApplySnapRows() {
                 if (_snapshotApplyGen[pathStr] !== applyGen) return false;
+                // 已有更新的一輪排隊等著重跑（老師在這輪套用完成後、清單載入完成前又改了東西）→
+                // 讓那一輪讀「當下最新」DOM 重繪即可，這裡不要用已經過期的 snapRows 蓋一次。
+                if (_autoSnapshotPending[pathStr]) return false;
                 const live = readMaterialMetaRows(pathStr);
                 // 畫面已比這次 snapshot 多冊（老師剛加了下一列）→ 禁止用舊 snapshot 縮水
                 if (live.length > snapRows.length) return false;

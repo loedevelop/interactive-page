@@ -2423,6 +2423,8 @@ window.FeatureExamJob = (function () {
         openModal: openModal,
         renderInlineEditorHtml: renderInlineEditorHtml,
         syncInlineEditor: syncInlineEditor,
+        listExamTasks: listExamTasks,
+        findTaskById: findTaskById,
         _close: closeModal,
         _onFieldChange: onFieldChange,
         _onRangeTypeChange: onRangeTypeChange,

@@ -19,5 +19,6 @@ alwaysApply: true
 | `page-refresh-perf-invariant.mdc` | 重整卡頓／隱藏分頁搶跑重活 | `ui-core.js`, `store.js`, `feature-student-timeline.js`, `ui-student-timeline-templates.js` |
 | `skeleton-unit-invariant.mdc` | 錄音「單元骨架」（E 選項）先建結構後補文稿／AI 依 index 抓稿風險 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `process-audio-ai/**` |
 | `material-publish-setup-format.mdc` | 教材發布 `_Setup` 合併格式／同活頁多區塊誤填 LAST／last_row_column 沒對齊實際欄位 | `material_templates/**` |
+| `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

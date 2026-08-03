@@ -154,6 +154,54 @@ window.TaskScriptResolver = (function () {
         return false;
     }
 
+    /**
+     * 依 id 在任務樹中找到節點（唯讀）。不 clone，回傳的是傳入樹裡的原始參照。
+     */
+    function findTaskInTree(tasksInput, taskId) {
+        const tasks = parseTasks(tasksInput);
+        let found = null;
+        function walk(list) {
+            if (!Array.isArray(list) || found) return;
+            for (let i = 0; i < list.length; i++) {
+                const t = list[i];
+                if (t && String(t.id) === String(taskId)) { found = t; return; }
+                if (t && t.type === 'group' && Array.isArray(t.subTasks)) walk(t.subTasks);
+                if (found) return;
+            }
+        }
+        walk(tasks);
+        return found;
+    }
+
+    /**
+     * 依 id 在任務樹「深拷貝」後找到節點並用 mutator 就地修改，回傳新樹。
+     * 用途：老師端要局部改寫單一任務的 raw_data（例如 quiz_paper 加可接受答案），
+     * 不需要打開整個作業編輯器、也不會動到樹裡其他任務。
+     * 呼叫端仍需自行把回傳的 tasks 寫回 assignments.tasks（本函式不做 I/O）。
+     */
+    function patchTaskRawDataInTree(tasksInput, taskId, mutator) {
+        const tasks = JSON.parse(JSON.stringify(parseTasks(tasksInput)));
+        let patched = false;
+        let patchedTask = null;
+        function walk(list) {
+            if (!Array.isArray(list) || patched) return;
+            for (let i = 0; i < list.length; i++) {
+                const t = list[i];
+                if (t && String(t.id) === String(taskId)) {
+                    t.raw_data = t.raw_data || {};
+                    mutator(t);
+                    patched = true;
+                    patchedTask = t;
+                    return;
+                }
+                if (t && t.type === 'group' && Array.isArray(t.subTasks)) walk(t.subTasks);
+                if (patched) return;
+            }
+        }
+        walk(tasks);
+        return { tasks: tasks, patched: patched, task: patchedTask };
+    }
+
     function patchTaskScriptInTree(tasksInput, taskId, scriptText, scriptLinkUrl) {
         const tasks = JSON.parse(JSON.stringify(parseTasks(tasksInput)));
         let patched = false;
@@ -188,6 +236,8 @@ window.TaskScriptResolver = (function () {
         isRecordingTaskType: isRecordingTaskType,
         getTaskTypeIcon: getTaskTypeIcon,
         taskSupportsAIGrading: taskSupportsAIGrading,
-        patchTaskScriptInTree: patchTaskScriptInTree
+        patchTaskScriptInTree: patchTaskScriptInTree,
+        findTaskInTree: findTaskInTree,
+        patchTaskRawDataInTree: patchTaskRawDataInTree
     };
 })();

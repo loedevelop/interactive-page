@@ -218,9 +218,17 @@ window.FeatureProgress = (() => {
         // 鍵含 assignment_id：task.id 雖跨作業幾乎不撞號，但語意上仍應以 (assignment_id, task_id) 複合鍵比對，
         // 與側表一律用 (assignment_id, task_id) 當自然鍵的原則一致，不留隱性耦合風險
         const doneKeys = new Set();
+        // 考試任務的分數：Phase 1（輕量）沒有 raw_data，此 Map 會是空的；Phase 2 補 raw_data 後
+        // renderGrid 會整個重跑一次，到時才顯示分數。跟 doneKeys 同一輪 completions 建，不額外查詢。
+        const examResultByKey = new Map();
         (completions || []).forEach(function (c) {
             if (!c || c.deleted_at) return;
-            doneKeys.add(String(c.assignment_id) + '\t' + String(c.student_id) + '\t' + String(c.task_id));
+            const key = String(c.assignment_id) + '\t' + String(c.student_id) + '\t' + String(c.task_id);
+            doneKeys.add(key);
+            const raw = c.raw_data;
+            if (raw && raw.quiz_result && raw.quiz_result.total != null) {
+                examResultByKey.set(key, raw.quiz_result);
+            }
         });
         // 無提交機制的小項：老師手動打勾持久化在 student_task_progress，與真實提交是 OR 關係
         (manualProgress || []).forEach(function (m) {
@@ -286,11 +294,31 @@ window.FeatureProgress = (() => {
                 rowHtml += `<td class="progress-remind-col" onclick="event.stopPropagation(); window.FeatureReminderImage.openSingle('${classId}', '${safeAssignId}', '${safeStudentId}')" style="border:1px solid #BFDBFE; text-align:center; background:#EFF6FF; color:#1D4ED8; font-size:1.35rem; padding:8px 6px; min-width:56px; width:56px; user-select:none; cursor:default;" title="產出 ${safeName} 此作業提醒圖">📬</td>`;
 
                 a.actionableTasks.forEach(t => {
-                    const isDone = doneKeys.has(String(a.id) + '\t' + String(std.id) + '\t' + String(t.id));
+                    const key = String(a.id) + '\t' + String(std.id) + '\t' + String(t.id);
+                    const isDone = doneKeys.has(key);
                     const cellId = `cell-${safeAssignId}-${std.id}-${t.id}`;
+                    if (isDone) stdDoneCount++;
+
+                    if (t.type === 'exam') {
+                        // 考試：格子不是手動打勾，是「查看／批改考卷」入口（見 feature-exam-review.js）
+                        const openCall = `window.FeatureExamReview && window.FeatureExamReview.openReview('${classId}', '${safeAssignId}', '${t.id}', '${safeStudentId}')`;
+                        const qr = examResultByKey.get(key);
+                        let cellContent = isDone ? '✅' : '—';
+                        let scoreStyle = 'color:#CBD5E1; font-size:0.8rem;';
+                        if (qr) {
+                            const score = qr.score;
+                            const color = score >= 80 ? '#10B981' : (score >= 50 ? '#F59E0B' : '#EF4444');
+                            cellContent = score + '%';
+                            scoreStyle = `color:${color}; font-size:1rem; font-weight:900;`;
+                        } else if (isDone) {
+                            scoreStyle = 'font-size:1.2rem;';
+                        }
+                        rowHtml += `<td id="${cellId}" onclick="${openCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; background:${isDone ? '#ECFDF5' : '#FFF'}; user-select:none; transition:0.2s; ${scoreStyle}" title="點擊查看／批改考卷">${cellContent}</td>`;
+                        return;
+                    }
+
                     const toggleCall = `window.FeatureProgress.toggleTask('${safeAssignId}', '${safeStudentId}', '${t.id}')`;
                     if (isDone) {
-                        stdDoneCount++;
                         rowHtml += `<td id="${cellId}" onclick="${toggleCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; font-size:1.2rem; background:#ECFDF5; user-select:none; transition:0.2s;" title="點擊取消">✅</td>`;
                     } else {
                         rowHtml += `<td id="${cellId}" onclick="${toggleCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; color:#CBD5E1; font-size:0.8rem; background:#FFF; user-select:none; transition:0.2s;" title="點擊打勾">—</td>`;
@@ -303,7 +331,7 @@ window.FeatureProgress = (() => {
 
             tbodyHtml += `
                 <tr>
-                    <td class="progress-sticky-name" style="border:1px solid #CBD5E1; padding:10px; background:white; font-weight:800; color:#1E293B; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${sIndex + 1}. ${std.name}</td>
+                    <td class="progress-sticky-name" title="${String(std.name || '').replace(/"/g, '&quot;')}" style="border:1px solid #CBD5E1; padding:10px; background:white; font-weight:800; color:#1E293B; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${sIndex + 1}. ${std.name}</td>
                     <td class="progress-sticky-pct" id="percent-${std.id}" data-done="${stdDoneCount}" data-total="${totalTasks}" style="border:1px solid #CBD5E1; padding:10px; background:white; text-align:center; font-weight:900; color:${percentColor}; box-shadow: 2px 0 5px rgba(0,0,0,0.05);">${percentage}%<br><span style="font-size:0.7rem; color:#94A3B8;">(${stdDoneCount}/${totalTasks})</span></td>
                     ${rowHtml}
                 </tr>
@@ -316,18 +344,26 @@ window.FeatureProgress = (() => {
                 .progress-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; }
                 .progress-table thead tr:first-child th { position: sticky; top: 0; z-index: 3; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
                 .progress-table thead tr:nth-child(2) th { position: sticky; top: 52px; z-index: 3; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+                /* 💣 雷區：左凍結欄（姓名／總達成率）必須「橫向＋縱向雙凍結」都蓋不住。
+                   曾發生：下面 .progress-sticky-name/.progress-sticky-pct 想在 thead 內把
+                   z-index 覆寫成 6，但選擇器只有 1 個型別選擇器（thead），specificity 反而輸給
+                   上面「.progress-table thead tr:first-child th」（3 個型別選擇器），z-index
+                   實際仍是 3、跟第二列的 📬 提醒欄／各作業表頭同分，DOM 順序較晚的提醒欄／
+                   作業表頭就會蓋過總達成率。這裡用 !important 確保姓名／總達成率永遠最上層，
+                   不要再移除或只靠選擇器數 class 賭 specificity。 */
                 .progress-table .progress-sticky-name {
-                    position: sticky; left: 0; z-index: 4;
-                    min-width: 120px; width: 120px; background: #F8FAFC;
+                    position: sticky; left: 0; z-index: 20 !important;
+                    min-width: 120px; width: 120px; max-width: 120px; background: #F8FAFC;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                 }
                 .progress-table .progress-sticky-pct {
-                    position: sticky; left: 120px; z-index: 4;
-                    min-width: 80px; width: 80px; background: #F8FAFC;
+                    position: sticky; left: 120px; z-index: 20 !important;
+                    min-width: 92px; width: 92px; background: #F8FAFC;
                 }
                 .progress-table thead .progress-sticky-name,
-                .progress-table thead .progress-sticky-pct { z-index: 6; background: #F8FAFC; }
+                .progress-table thead .progress-sticky-pct { background: #F8FAFC; }
                 .progress-table tbody .progress-sticky-name,
-                .progress-table tbody .progress-sticky-pct { background: white; z-index: 2; }
+                .progress-table tbody .progress-sticky-pct { background: white; }
                 .progress-table tbody tr:hover td { background: #F8FAFC !important; }
                 .progress-table tbody tr:hover .progress-sticky-name,
                 .progress-table tbody tr:hover .progress-sticky-pct { background: #F1F5F9 !important; }
@@ -357,6 +393,12 @@ window.FeatureProgress = (() => {
         const examJobEntryHtml = (window.FeatureExamJob && typeof window.FeatureExamJob.renderEntryButton === 'function')
             ? window.FeatureExamJob.renderEntryButton(classId, validAssignments, className)
             : '';
+        const hasExamTask = validAssignments.some(function (a) {
+            return a.actionableTasks.some(function (t) { return t.type === 'exam'; });
+        });
+        const examReviewEntryHtml = (hasExamTask && window.FeatureExamReview && typeof window.FeatureExamReview.renderEntryButton === 'function')
+            ? window.FeatureExamReview.renderEntryButton(classId)
+            : '';
 
         container.innerHTML = `
             ${styleHtml}
@@ -369,6 +411,7 @@ window.FeatureProgress = (() => {
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="button" id="btn-open-class-reminders" class="btn btn-action" onclick="window.FeatureReminderImage.openPopup('${classId}')" style="background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; font-weight:800;">📬 家長提醒圖</button>
                         ${examJobEntryHtml}
+                        ${examReviewEntryHtml}
                         ${audioSplitEntryHtml}
                         <button class="btn btn-action" onclick="window.FeatureProgress.refresh('${classId}')" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1;">🔄 重新整理資料</button>
                     </div>

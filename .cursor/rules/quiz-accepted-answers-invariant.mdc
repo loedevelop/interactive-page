@@ -1,0 +1,118 @@
+---
+description: 考試批改（老師查看／改答案／改分）多標準答案存哪一層、全班重批範圍、ModalOverlay 重繪別把 state 清空
+globs: 020_js_core/quiz-paper-builder.js,110_teacher_core/feature-exam-review.js,110_teacher_core/api-quiz-review.js,120_student_core/feature-student-quiz.js,110_teacher_core/feature-progress.js
+alwaysApply: false
+---
+
+# 考試批改（accepted_answers 多標準答案）鐵律
+
+> 2026-08-03 新增。老師端在此之前**完全沒有**查看／改考卷的介面，只有出題器
+> （`feature-exam-job.js`）。這裡新增「老師看考卷、勾選學生答案也算對、改標準答案、
+> 全班同任務自動重批」。動考卷批改／accepted_answers／quiz_result 重算時必讀。
+
+## 不變量
+
+```
+多標準答案只存在 quiz_paper.items[].accepted_answers（考卷快照層，assignments.tasks JSON 裡）
+不做「只改這個學生分數」的旁路開關——所有調整都是「改 accepted_answers／answer_en → 用
+  QuizPaperBuilder.regradeCompletionRawData 重新算分」，分數永遠等於重算結果，不手動兜
+老師勾選「這個答案也算對」或新增答案 → 存檔時自動找同一 (assignment_id, task_id) 下所有
+  已作答的 completion 一起重新批改；只寫入真的變動的（regradeCompletionRawData 回傳的
+  changed），沒受影響的學生不要動（數千數萬學生規模下，全寫是浪費）
+修改主答案（setPrimaryAnswer）時，舊主答案要自動併入 accepted_answers（除非已存在），
+  否則已經照舊寫法寫對的學生會被老師的訂正打成錯的
+師生兩端的錯字 diff 上色渲染共用 QuizPaperBuilder.renderAnswerDiffHtml／
+  renderSpellingPairsHtml，不要各自維護一份（曾經 renderStudentStrikeHtml 只在
+  feature-student-quiz.js 私有，老師端要重用時才發現拿不到）
+```
+
+## 症狀（若未來又踩到）
+
+- 老師勾了「也算對」，這次分數變了，但**其他班上寫一樣答案的學生**分數沒變——因為只改了
+  這個學生的 `task_completions.raw_data`，沒有回頭改 `quiz_paper.items[].accepted_answers`
+  （改錯層，只救到眼前這一個人，「以後」仍會判錯）
+- 改了主答案（訂正錯字）後，原本寫對的其他學生反而變成錯的——因為沒把舊答案併入
+  `accepted_answers`
+- 全班重批寫成「整批不管有沒有變動都 update」——幾百個學生的任務，老師開一次修正就整批
+  寫入，效能與稽核紀錄都不必要地肥大
+- Modal 打開後點一下「新增可接受答案」，畫面整個消失／`state` 變成 `null`、後續互動全部
+  沒反應——見下方「ModalOverlay 重繪陷阱」
+
+## ModalOverlay 重繪陷阱（曾差點踩到，寫下來避免下次真的犯）
+
+`ModalOverlay.open({ id, ... })` 對**同一個 id** 再次呼叫時，內部會先
+`close(activeId)`，這會觸發**上一次註冊的 `onClose`**才繼續開新的。如果每次互動
+（勾選、加答案、改主答案）都重新呼叫 `ModalOverlay.open(...)` 來重繪整個 modal，而
+`onClose` 又寫了 `state = null`（用來在使用者真正關閉視窗時清狀態），會變成：
+
+```javascript
+// ❌ 每次互動都呼叫 open() 重繪 → 觸發舊 onClose → 自己把 state 清空
+function renderModal() {
+    window.ModalOverlay.open({ id: MODAL_ID, tier: 'B', contentHtml: buildHtml(), onClose: function () { state = null; } });
+}
+```
+
+正確做法：只在**第一次**開啟時呼叫 `ModalOverlay.open`（註冊 `isDirty`／`onClose`
+一次），後續互動觸發的重繪改成直接寫 DOM（`document.getElementById(id).innerHTML = ...`），
+不要再呼叫 `open()`：
+
+```javascript
+// ✅ 有就直接改 innerHTML，沒有才第一次 open()
+function mountOrPatchModal(contentHtml) {
+    const existing = document.getElementById(MODAL_ID);
+    if (existing) { existing.innerHTML = contentHtml; return; }
+    window.ModalOverlay.open({ id: MODAL_ID, tier: 'B', contentHtml: contentHtml, isDirty: ..., onClose: function () { state = null; } });
+}
+```
+
+## 正確做法（新增可接受答案／改主答案／重批）
+
+```javascript
+// ✅ 新增可接受答案／移除／改主答案：都是純函式，操作 quiz_paper 裡的 item 物件
+window.QuizPaperBuilder.addAcceptedAnswer(item, text);
+window.QuizPaperBuilder.removeAcceptedAnswer(item, text);
+window.QuizPaperBuilder.setPrimaryAnswer(item, text); // 舊答案自動併入 accepted_answers
+
+// ✅ 存檔：先存考卷快照層（若有改），再重批「這個學生」，最後找同任務其他已作答的人，
+//    只挑真的 changed 的才寫回
+await ApiQuizReview.saveQuizPaperPatch(assignmentId, taskId, paper);
+const r = window.QuizPaperBuilder.regradeCompletionRawData(paper, completion.raw_data);
+await ApiQuizReview.saveCompletionRawData(completion.id, r.rawData, r.nextScore);
+// ...其餘同任務 completions：只在 r.changed 時才 push 進批次寫入清單
+```
+
+## 禁止
+
+```javascript
+// ❌ 只改這個學生的 quiz_result，不動 quiz_paper.accepted_answers
+//    → 下次重考、或其他學生寫一樣答案，仍然判錯
+completion.raw_data.quiz_result.correct += 1; // 手動兜分數，跳過 regradeCompletionRawData
+
+// ❌ 全班同任務的 completions 不篩 changed，整批 update
+allCompletions.forEach(c => save(c)); // 幾百個學生規模下是浪費寫入
+```
+
+## 實測
+
+1. 開某個學生的錯題，勾選「這個答案也算對」→ 存檔 → 該生分數上升；再開**另一個**寫一樣
+   答案、目前判錯的學生 → 應該已經自動變成對的（不用老師再手動勾一次）
+2. 用「✏️」訂正主答案的錯字（例如 `beleive` → `believe`）→ 存檔 → 原本寫 `beleive`
+   且被判對的學生分數不變（因為舊寫法自動進了 accepted_answers）
+3. 開 modal 後連續點「新增可接受答案」「勾選也算對」「移除某個 chip」幾次，不關視窗，
+   確認畫面每次都正確重繪、`儲存` 按鈕的 disabled 狀態跟著變化（沒有變更時應該是灰的、
+   不能按）
+4. 存檔時如果班上有 30 個學生已作答但只有 2 個人的分數真的因為這次修改而改變，確認只有
+   那 2 筆 `task_completions` 被 UPDATE（可用 `updated_at` 或瀏覽器 Network 面板確認）
+
+## 改動前自問
+
+若要動 `quiz-paper-builder.js`（`gradeAnswers`／`accepted_answers` 相關函式）、
+`feature-exam-review.js`、`api-quiz-review.js`：
+
+1. 新增可接受答案的動作，是不是真的寫進 `quiz_paper.items[].accepted_answers`（考卷層），
+   而不是只塞進某一筆 `task_completions.raw_data`？
+2. 全班重批是不是只寫「真的變動」的學生，沒受影響的人有沒有被誤觸寫入？
+3. 如果要重繪一個已經開著的 `ModalOverlay`，是不是直接改 DOM，而不是再呼叫一次
+   `ModalOverlay.open` 同一個 id（會觸發舊 `onClose`）？
+
+若任一否，停下。

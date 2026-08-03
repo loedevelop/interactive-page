@@ -210,32 +210,16 @@ window.FeatureStudentQuiz = (function () {
         stats.spelling_ledger = ledger;
     }
 
-    /** 學生句：錯的／多打的紅線刪除；缺漏顯示淡紅〔缺〕 */
+    /**
+     * 學生句 diff 上色／拼錯紀錄：改呼叫 QuizPaperBuilder 共用渲染（師生兩端同一份，
+     * 避免各自維護一份、之後長歪）。這兩個函式名保留給下方既有呼叫點沿用。
+     */
     function renderStudentStrikeHtml(ops) {
-        if (!ops || !ops.length) return '<span style="color:#94A3B8;">（未作答）</span>';
-        return ops.map(function (op) {
-            if (op.type === 'match') {
-                return '<span style="color:#1E293B; font-weight:700;">' + esc(op.got) + '</span>';
-            }
-            if (op.type === 'sub' || op.type === 'ins') {
-                return '<span style="color:#DC2626; font-weight:800; text-decoration:line-through; text-decoration-thickness:2px;">'
-                    + esc(op.got) + '</span>';
-            }
-            // del：學生沒寫到
-            return '<span style="color:#F87171; font-weight:700; font-size:0.85em;">〔缺〕</span>';
-        }).join(' ');
+        return window.QuizPaperBuilder.renderAnswerDiffHtml(ops);
     }
 
     function renderSpellingPairsHtml(pairs) {
-        if (!pairs || !pairs.length) return '';
-        return '<div style="margin-top:6px; font-size:0.78rem; color:#9A3412; font-weight:700; line-height:1.5;">拼錯紀錄：'
-            + pairs.map(function (p) {
-                const should = p.expected_word ? esc(p.expected_word) : '（無）';
-                const wrote = p.got_word ? esc(p.got_word) : '（未寫）';
-                return '<span style="display:inline-block; margin:2px 6px 2px 0; padding:2px 8px; border-radius:6px; background:#FFF7ED; border:1px solid #FED7AA;">應打 <b>'
-                    + should + '</b> → 寫成 <b style="color:#DC2626;">' + wrote + '</b></span>';
-            }).join('')
-            + '</div>';
+        return window.QuizPaperBuilder.renderSpellingPairsHtml(pairs);
     }
 
     function ensureItemDiff(item) {

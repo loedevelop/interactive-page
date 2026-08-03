@@ -17,6 +17,7 @@ alwaysApply: false
 - **meta 列只剩 `A.meta.json` 或完全空白**；base 範圍 input 空掉
 - **第二冊**：base 範圍已是 `A…；B…`，凍結卻只有 `A pp.…`，逐頁只有 A（2026-08-01）
 - **多冊（如 C～F 各兩頁）等很久後，只出來 C1 C2**：不是沒自動套用，是套用「跑成功了」但只含第一冊（2026-08-01 再犯，見根因 8、9）
+- **兩列 meta 範圍明明填對了（如 L pp.11~16、M pp.1~10），下方 base 範圍一度也正確，過一會兒卻自己跑掉、兩列全變成同一個範圍**（2026-08-03，見根因 10）
 
 ## 根因（不可再犯）
 
@@ -29,6 +30,7 @@ alwaysApply: false
 7. **`BuilderStore.sync` 不合併 `meta_rows_by_stem`**，或用 DOM 殘缺 `grading_units` 縮水冊數 → 考試右欄 B 永遠算不到真可用題
 8. **`buildMergedMaterialSnapshot` 批次讀取多冊時，其中一冊 `ok:false`（GAS／Drive 速率限制或逾時）就直接整批 `throw`**：其餘已成功的冊全部被丟掉，畫面停留在上一次「只有第一冊」的成功結果，看起來像「自動套用又壞了」，其實是這次嘗試整批失敗、根本沒套用新結果（2026-08-01）
 9. **busy→pending 的重跑改走 `scheduleAutoSnapshot`（又排一次全新 900ms 防抖）**：老師等完第一輪（單冊）就以為結束，沒等到 pending 觸發的第二輪（含全部冊），感覺像「等很久只出來一冊」（2026-08-01）
+10. **`autoApplyMaterialSnapshot` 用「呼叫當下」的 DOM 值算 snapshot，但 GAS 讀取要好幾秒；這幾秒內老師若又改了範圍，busy-guard 只設 `_autoSnapshotPending=true`，這一輪手上「已經過期」的 snapshot 卻照樣被套用回畫面**：① 把老師剛打好的新範圍蓋回舊值（單列 input + 下方 base 範圍都跑掉），② finally 的立即重跑又讀到「被這輪覆寫過」的 DOM，等於把過期值鎖死、永遠回不去。這就是「填對了、過一會兒又自己跑掉」的根因（2026-08-03）
 
 ## 不變量
 
@@ -42,6 +44,8 @@ async 重繪 rows：世代號 + DOM 冊數 > snapshot 冊數時禁止縮水
 meta_rows_by_stem：sync 時 merge，禁止用較舊單冊 snap 蓋掉已累積冊
 多冊批次讀取：單冊失敗須重試，仍失敗才整批中斷（不可靜默只套用部分冊，但也不可一冊失敗就無提示地維持舊結果）
 busy 期間累積的 pending 重跑：立刻執行，不可再排一次全新防抖（避免老師等第一輪就誤判為最終結果）
+GAS 讀取期間若又被標成 pending：這一輪的 snapshot 視為過期，禁止套用回畫面（rows／base 範圍／preview 都不套），
+  直接交給 finally 立即重跑的那一輪讀「當下最新」DOM 重算
 ```
 
 ## 禁止
@@ -67,6 +71,11 @@ if (batchFiles[i] && !batchFiles[i].ok) throw new Error('讀取失敗');
 
 // ❌ busy 結束後的 pending 重跑又走 900ms 防抖（老師等第一輪就以為結束）
 if (_autoSnapshotPending[path]) { _autoSnapshotPending[path] = false; scheduleAutoSnapshot(path); }
+
+// ❌ await 完 GAS 之後，不檢查這段等待期間是否已被標成 pending，直接套用回畫面
+// → 老師剛打好的新範圍被這輪「過期」的 snapshot 蓋掉，之後的立即重跑又讀到被蓋掉的 DOM，永遠回不去
+const snapshot = await buildMergedMaterialSnapshot(path, classId);
+applySnapshotToNode(path, snapshot); // 沒檢查 _autoSnapshotPending[path]
 ```
 
 ## 正確做法
@@ -81,6 +90,9 @@ if (_autoSnapshotPending[path]) { _autoSnapshotPending[path] = false; scheduleAu
 // ✅ sync：meta_rows_by_stem = Object.assign({}, prev, snap.meta_rows_by_stem)
 // ✅ 批次讀取某冊失敗：改走單檔讀取＋重試 1 次，仍失敗才 throw（明確標出是哪一冊、已重試過）
 // ✅ busy 結束後有 pending：直接呼叫 autoApplyMaterialSnapshot(path) 重跑，不再排新的 900ms 防抖
+// ✅ await 完 GAS 後，先檢查 _autoSnapshotPending[path]；true 就整輪捨棄（不套用 rows／base 範圍／preview），
+//    讓 finally 的立即重跑用最新 DOM 重算才套用；連 applySnapshotToNode 內部 async 重繪 rows 的
+//    shouldApplySnapRows() 也要一併檢查 pending，兩處都要擋，才不會其中一處漏網
 ```
 
 ## 改動前自問
@@ -98,3 +110,4 @@ if (_autoSnapshotPending[path]) { _autoSnapshotPending[path] = false; scheduleAu
 - 考試區段 A 可用題為綠字實數、B 在未進 snap 前顯示「需Snapshot」（不是 `~20` 裝沒事）
 - 一次新增 C～F 四冊（各兩頁）→ 其中一冊模擬讀取失敗一次（仍在重試次數內）→ 最終四冊仍全部進 snapshot，不會停在只有第一冊
 - busy 期間累積 pending → 結束後應立刻看到「正在重新套用完整範圍」狀態文字，不需老師手動再改一次欄位才觸發第二輪
+- 兩列 meta 分別填不同範圍（如 L pp.11~16、M pp.1~10），刻意在自動套用等待 GAS 期間（狀態文字顯示「⏳ 自動套用 Snapshot…」時）再改一次某一列的範圍 → 應看到「捨棄這輪結果」狀態文字，最終兩列與 base 範圍都停在老師最後打的值，不會被打回舊值

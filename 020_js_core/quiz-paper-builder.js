@@ -475,6 +475,172 @@ window.QuizPaperBuilder = (function () {
         };
     }
 
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    /**
+     * 學生句：對的黑字；錯的／多打的紅線刪除；缺漏顯示淡紅〔缺〕。
+     * 師生兩端共用同一份渲染，避免各自維護一份、之後長歪（曾發生過）。
+     */
+    function renderAnswerDiffHtml(ops) {
+        if (!ops || !ops.length) return '<span style="color:#94A3B8;">（未作答）</span>';
+        return ops.map(function (op) {
+            if (op.type === 'match') {
+                return '<span style="color:#1E293B; font-weight:700;">' + escHtml(op.got) + '</span>';
+            }
+            if (op.type === 'sub' || op.type === 'ins') {
+                return '<span style="color:#DC2626; font-weight:800; text-decoration:line-through; text-decoration-thickness:2px;">'
+                    + escHtml(op.got) + '</span>';
+            }
+            return '<span style="color:#F87171; font-weight:700; font-size:0.85em;">〔缺〕</span>';
+        }).join(' ');
+    }
+
+    function renderSpellingPairsHtml(pairs) {
+        if (!pairs || !pairs.length) return '';
+        return '<div style="margin-top:6px; font-size:0.78rem; color:#9A3412; font-weight:700; line-height:1.5;">拼錯紀錄：'
+            + pairs.map(function (p) {
+                const should = p.expected_word ? escHtml(p.expected_word) : '（無）';
+                const wrote = p.got_word ? escHtml(p.got_word) : '（未寫）';
+                return '<span style="display:inline-block; margin:2px 6px 2px 0; padding:2px 8px; border-radius:6px; background:#FFF7ED; border:1px solid #FED7AA;">應打 <b>'
+                    + should + '</b> → 寫成 <b style="color:#DC2626;">' + wrote + '</b></span>';
+            }).join('')
+            + '</div>';
+    }
+
+    /**
+     * 找出「跟學生答案最接近」的候選正確答案（含 accepted_answers），供標紅顯示用。
+     * ties 時偏好主答案（answer_en），因為它排第一個。
+     */
+    function bestDiffForAnswer(item, got) {
+        const candidates = [item.answer_en].concat(item.accepted_answers || []).filter(function (s) {
+            return s != null && String(s).trim() !== '';
+        });
+        if (!candidates.length) candidates.push(item.answer_en || '');
+        let best = null;
+        candidates.forEach(function (cand) {
+            const diff = analyzeAnswerDiff(cand, got);
+            const cost = diff.ops.reduce(function (n, op) {
+                return n + (op.type === 'match' ? 0 : 1);
+            }, 0);
+            if (!best || cost < best.cost) best = { expected: cand, diff: diff, cost: cost };
+        });
+        return best;
+    }
+
+    /**
+     * 💣 雷區（見 .cursor/rules/quiz-accepted-answers-invariant.mdc）：
+     * 多標準答案只改考卷快照層 items[].accepted_answers，不要另開「只改這個學生分數」的
+     * 旁路開關——否則分數會跟 gradeAnswers 的重算結果不一致，之後重考/重批又會被打回原狀。
+     */
+
+    /** 新增一個可接受答案（不含主答案本身；去重以 normalizeAnswer 比對）。回傳是否有變動。 */
+    function addAcceptedAnswer(item, text) {
+        const val = String(text || '').trim();
+        if (!val) return false;
+        const n = normalizeAnswer(val);
+        if (!n) return false;
+        const existing = [item.answer_en].concat(item.accepted_answers || []).map(normalizeAnswer);
+        if (existing.indexOf(n) !== -1) return false;
+        if (!Array.isArray(item.accepted_answers)) item.accepted_answers = [];
+        item.accepted_answers.push(val);
+        return true;
+    }
+
+    /** 移除一個可接受答案（只能移除 accepted_answers 裡的，不能移除主答案）。回傳是否有變動。 */
+    function removeAcceptedAnswer(item, text) {
+        if (!Array.isArray(item.accepted_answers) || !item.accepted_answers.length) return false;
+        const n = normalizeAnswer(text);
+        const before = item.accepted_answers.length;
+        item.accepted_answers = item.accepted_answers.filter(function (a) {
+            return normalizeAnswer(a) !== n;
+        });
+        return item.accepted_answers.length !== before;
+    }
+
+    /**
+     * 修改主答案（訂正錯字用）。舊主答案會自動併入 accepted_answers（除非已存在），
+     * 確保已經照舊寫法寫對的學生不會因為老師訂正主答案而變成錯的。回傳是否有變動。
+     */
+    function setPrimaryAnswer(item, text) {
+        const val = String(text || '').trim();
+        if (!val) return false;
+        const oldVal = String(item.answer_en || '').trim();
+        if (normalizeAnswer(val) === normalizeAnswer(oldVal)) {
+            if (val !== oldVal) { item.answer_en = val; return true; }
+            return false;
+        }
+        if (oldVal) addAcceptedAnswer(item, oldVal);
+        item.answer_en = val;
+        removeAcceptedAnswer(item, val); // 若新答案原本就在 accepted_answers 裡，升格為主答案後移除重複
+        return true;
+    }
+
+    /**
+     * 用「目前」的 paper（含老師剛編輯過的 accepted_answers／answer_en）重新批改一份
+     * 學生 completion 的 raw_data。只動 quiz_result／quiz_stats 裡跟批改直接相關的欄位，
+     * 其餘（leave_log、spelling_history 等）原樣保留。
+     * @returns {{ rawData: object, changed: boolean, prevScore: number|null, nextScore: number }}
+     */
+    function regradeCompletionRawData(paper, rawData) {
+        const src = rawData || {};
+        const answers = src.quiz_answers || {};
+        const result = gradeAnswers(paper, answers);
+        const prevResult = src.quiz_result || null;
+        const prevScore = prevResult ? prevResult.score : null;
+        const prevCorrect = prevResult ? prevResult.correct : null;
+        const changed = prevScore !== result.score || prevCorrect !== result.correct;
+
+        const wrongItemsCompact = result.wrong_items.map(function (d) {
+            return {
+                item_id: d.item_id,
+                seq: d.seq,
+                answer: d.answer,
+                expected: d.expected,
+                prompt_zh: d.prompt_zh,
+                ops: (d.diff && d.diff.ops) || [],
+                spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
+            };
+        });
+
+        const nextRawData = Object.assign({}, src);
+        nextRawData.quiz_result = Object.assign({}, prevResult || {}, {
+            score: result.score,
+            correct: result.correct,
+            total: result.total,
+            wrong_items: wrongItemsCompact,
+            regraded_at: new Date().toISOString()
+        });
+
+        const stats = Object.assign({}, src.quiz_stats || {});
+        stats.wrong_items = wrongItemsCompact;
+        if (changed) {
+            const history = Array.isArray(stats.history) ? stats.history.slice() : [];
+            history.push({
+                at: new Date().toISOString(),
+                type: 'regrade',
+                score: result.score,
+                correct: result.correct,
+                total: result.total
+            });
+            while (history.length > 40) history.shift();
+            stats.history = history;
+        }
+        nextRawData.quiz_stats = stats;
+
+        return {
+            rawData: nextRawData,
+            changed: changed,
+            prevScore: prevScore,
+            nextScore: result.score
+        };
+    }
+
     return {
         buildQuizPaper: buildQuizPaper,
         gradeAnswers: gradeAnswers,
@@ -484,6 +650,14 @@ window.QuizPaperBuilder = (function () {
         analyzeAnswerDiff: analyzeAnswerDiff,
         analyzeWrongWords: analyzeWrongWords,
         parseNumList: parseNumList,
-        FALLBACK_COL_MAP: FALLBACK_COL_MAP
+        FALLBACK_COL_MAP: FALLBACK_COL_MAP,
+        escHtml: escHtml,
+        renderAnswerDiffHtml: renderAnswerDiffHtml,
+        renderSpellingPairsHtml: renderSpellingPairsHtml,
+        bestDiffForAnswer: bestDiffForAnswer,
+        addAcceptedAnswer: addAcceptedAnswer,
+        removeAcceptedAnswer: removeAcceptedAnswer,
+        setPrimaryAnswer: setPrimaryAnswer,
+        regradeCompletionRawData: regradeCompletionRawData
     };
 })();
