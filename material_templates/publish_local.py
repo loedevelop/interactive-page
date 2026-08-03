@@ -52,18 +52,14 @@ def is_empty(v) -> bool:
     return v is None or (isinstance(v, str) and v.strip() == "")
 
 
-def sheet_as_maps(wb, sheet_name: str) -> list[dict]:
-    if sheet_name not in wb.sheetnames:
-        raise SystemExit(f"找不到活頁：{sheet_name}")
-    ws = wb[sheet_name]
-    rows_iter = ws.iter_rows(values_only=True)
-    try:
-        headers_raw = next(rows_iter)
-    except StopIteration:
-        return []
-    headers = [str(h or "").strip().lower() for h in headers_raw]
+def rows_to_maps(headers_raw, data_rows) -> list[dict]:
+    """
+    共用轉換：第一列當表頭（轉小寫），其餘列轉成 {表頭: 值} 的 dict。
+    供舊格式（單一活頁 iter_rows）與新格式（合併 _Setup 活頁切段）共用。
+    """
+    headers = [str(h or "").strip().lower() for h in (headers_raw or [])]
     out = []
-    for row in rows_iter:
+    for row in data_rows:
         obj = {}
         empty = True
         for i, key in enumerate(headers):
@@ -78,9 +74,68 @@ def sheet_as_maps(wb, sheet_name: str) -> list[dict]:
     return out
 
 
-def read_config(wb) -> dict:
+def sheet_as_maps(wb, sheet_name: str) -> list[dict]:
+    if sheet_name not in wb.sheetnames:
+        raise SystemExit(f"找不到活頁：{sheet_name}")
+    ws = wb[sheet_name]
+    rows_iter = ws.iter_rows(values_only=True)
+    try:
+        headers_raw = next(rows_iter)
+    except StopIteration:
+        return []
+    return rows_to_maps(headers_raw, rows_iter)
+
+
+# 合併活頁（_Setup）的區段標記：一列裡第一格是 #_Config／#_Schema／#_Publish／#_Layout
+# （前面的 # 可有可無、大小寫不拘），下一列當表頭，再往下讀到下一個標記或空白列為止。
+SETUP_SHEET_NAME = "_Setup"
+SETUP_SECTION_NAMES = ("_Config", "_Schema", "_Publish", "_Layout")
+_SETUP_MARKER_RE = re.compile(r"^#?_?(config|schema|publish|layout)\s*$", re.IGNORECASE)
+
+
+def _setup_marker_section(cell_value) -> str | None:
+    text = str(cell_value or "").strip()
+    m = _SETUP_MARKER_RE.match(text)
+    if not m:
+        return None
+    return "_" + m.group(1).capitalize()
+
+
+def find_setup_sections(wb) -> dict[str, list[dict]] | None:
+    """
+    偵測並解析合併格式的 `_Setup` 活頁：把 _Config／_Schema／_Publish／_Layout
+    四小段從同一個活頁切出來，各自轉成跟舊格式 sheet_as_maps 一樣的 list[dict]。
+    沒有 `_Setup` 活頁時回傳 None（呼叫端會改用舊的 4 分頁各自讀取）。
+    """
+    if SETUP_SHEET_NAME not in wb.sheetnames:
+        return None
+    matrix = load_sheet_matrix(wb[SETUP_SHEET_NAME])
+    sections: dict[str, list[dict]] = {name: [] for name in SETUP_SECTION_NAMES}
+    i = 0
+    n = len(matrix)
+    while i < n:
+        row = matrix[i]
+        marker = _setup_marker_section(row[0] if row else None)
+        if marker is None:
+            i += 1
+            continue
+        header_row = matrix[i + 1] if i + 1 < n else ()
+        data_rows = []
+        j = i + 2
+        while j < n:
+            row_j = matrix[j]
+            if _setup_marker_section(row_j[0] if row_j else None) is not None:
+                break
+            data_rows.append(row_j)
+            j += 1
+        sections[marker] = rows_to_maps(header_row, data_rows)
+        i = j
+    return sections
+
+
+def read_config(rows: list[dict]) -> dict:
     cfg = {"material_folder": "GEPT-2_vocab", "last_row_column": "A"}
-    for r in sheet_as_maps(wb, "_Config"):
+    for r in rows:
         k = str(r.get("key") or "").strip()
         v = r.get("value")
         if k == "material_folder" and not is_empty(v):
@@ -90,9 +145,9 @@ def read_config(wb) -> dict:
     return cfg
 
 
-def read_schemas(wb) -> dict:
+def read_schemas(rows: list[dict]) -> dict:
     by_schema: dict[str, list] = {}
-    for r in sheet_as_maps(wb, "_Schema"):
+    for r in rows:
         sid = str(r.get("schema_id") or "").strip()
         if not sid:
             continue
@@ -107,19 +162,17 @@ def read_schemas(wb) -> dict:
     return by_schema
 
 
-def read_publish_rules(wb) -> list[dict]:
-    return [r for r in sheet_as_maps(wb, "_Publish") if is_truthy_yn(r.get("enabled"))]
+def read_publish_rules(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if is_truthy_yn(r.get("enabled"))]
 
 
-def read_layout_profiles(wb) -> list[dict]:
+def read_layout_profiles(rows: list[dict]) -> list[dict]:
     """
-    讀 _Layout 活頁：同一教材共用一份；列＝可選的排版／欄位組合。
-    活頁不存在時回傳 []（不阻斷發布）。
+    讀 _Layout 段落／活頁：同一教材共用一份；列＝可選的排版／欄位組合。
+    沒有列時回傳 []（不阻斷發布）。
     """
-    if "_Layout" not in wb.sheetnames:
-        return []
     profiles = []
-    for r in sheet_as_maps(wb, "_Layout"):
+    for r in rows:
         if not is_truthy_yn(r.get("enabled")):
             continue
         pid = str(r.get("profile_id") or "").strip()
@@ -302,10 +355,21 @@ def publish(xlsx_path: Path, out_root: Path | None) -> Path:
     print(f"讀取：{xlsx_path}")
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
 
-    cfg = read_config(wb)
-    schemas = read_schemas(wb)
-    rules = read_publish_rules(wb)
-    layout_profiles = read_layout_profiles(wb)
+    setup_sections = find_setup_sections(wb)
+    if setup_sections is not None:
+        print(f"偵測到合併活頁 `{SETUP_SHEET_NAME}`（新格式）")
+        cfg = read_config(setup_sections["_Config"])
+        schemas = read_schemas(setup_sections["_Schema"])
+        rules = read_publish_rules(setup_sections["_Publish"])
+        layout_profiles = read_layout_profiles(setup_sections["_Layout"])
+    else:
+        print("偵測到傳統 4 分頁格式（_Config／_Schema／_Publish／_Layout 各自獨立）")
+        cfg = read_config(sheet_as_maps(wb, "_Config"))
+        schemas = read_schemas(sheet_as_maps(wb, "_Schema"))
+        rules = read_publish_rules(sheet_as_maps(wb, "_Publish"))
+        layout_profiles = read_layout_profiles(
+            sheet_as_maps(wb, "_Layout") if "_Layout" in wb.sheetnames else []
+        )
     if not rules:
         raise SystemExit("_Publish 沒有 enabled=Y 的規則（請把要發布的列改成 Y）")
 

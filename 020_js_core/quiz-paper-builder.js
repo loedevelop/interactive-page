@@ -131,11 +131,20 @@ window.QuizPaperBuilder = (function () {
         return analyzeAnswerDiff(expected, got);
     }
 
+    /**
+     * 解析「141~145,150」「141-145, 150」這類題號清單／範圍字串。
+     * 💣 雷區：ASCII 半形 "-" 曾未被當範圍分隔符號，"141-160" 會整段解析失敗
+     * 變成「有填但沒抽到任何題號」的空集合，害「可用題」誤判為 0（老師分不出
+     * 是真的沒題，還是輸入格式沒吃到）。這裡把數字與數字之間的 "-" 也視同 "~"。
+     */
     function parseNumList(raw) {
         const text = String(raw || '').trim();
         if (!text) return null;
+        const normalized = text
+            .replace(/[～〜－—–]/g, '~')
+            .replace(/(\d)\s*-\s*(\d)/g, '$1~$2');
         const set = {};
-        text.replace(/[～〜－—–]/g, '~').split(/[,，、\s]+/).forEach(function (part) {
+        normalized.split(/[,，、\s]+/).forEach(function (part) {
             const p = String(part || '').trim();
             if (!p) return;
             const m = p.match(/^(\d+)\s*~\s*(\d+)$/);
@@ -193,11 +202,16 @@ window.QuizPaperBuilder = (function () {
         return profiles[0];
     }
 
+    /**
+     * 範圍（pool）只由 start／end（或 pages／items／range_spec）決定。
+     * 💣 雷區：include_nums（必考#）不可再拿來「縮小範圍」──它的語意是
+     * 「這幾題保證出現」，範圍外的題號本來就抽不到，不該影響 pool 大小。
+     * 見 .cursor/rules/exam-available-count-invariant.mdc。
+     */
     function filterRowsForSection(rows, section) {
         const rtype = section.range_type || 'page';
         const lo = Math.min(Number(section.start), Number(section.end));
         const hi = Math.max(Number(section.start), Number(section.end));
-        const include = parseNumList(section.include_nums);
         const exclude = parseNumList(section.exclude_nums);
         const sheet = String(section.sheet_id || '').trim().toUpperCase();
 
@@ -228,7 +242,6 @@ window.QuizPaperBuilder = (function () {
             const itemNo = toNum(row.item_no);
             const page = toNum(row.page);
 
-            if (include && (isNaN(itemNo) || !include[itemNo])) return false;
             if (exclude && !isNaN(itemNo) && exclude[itemNo]) return false;
 
             if (rtype === 'qnum') {
@@ -331,6 +344,7 @@ window.QuizPaperBuilder = (function () {
 
         const picked = [];
         const metaCache = {};
+        const notices = [];
 
         for (let sIdx = 0; sIdx < sections.length; sIdx++) {
             const sec = sections[sIdx] || {};
@@ -351,9 +365,38 @@ window.QuizPaperBuilder = (function () {
                 throw new Error('活頁 ' + sheetId + ' 在範圍內沒有可用題（' +
                     (sec.range_type || 'page') + ' ' + sec.start + '~' + sec.end + '）');
             }
-            if (shuffle) pool = shuffleInPlace(pool.slice());
+
+            // 必考題（include_nums）：從 pool 內挑出保證入選，其餘題數才隨機補。
+            const includeSet = parseNumList(sec.include_nums);
+            let mandatoryRows = [];
+            let restPool = pool;
+            if (includeSet) {
+                mandatoryRows = pool.filter(function (row) {
+                    const n = toNum(row.item_no);
+                    return !isNaN(n) && includeSet[n];
+                });
+                restPool = pool.filter(function (row) {
+                    const n = toNum(row.item_no);
+                    return isNaN(n) || !includeSet[n];
+                });
+                const foundNos = {};
+                mandatoryRows.forEach(function (row) { foundNos[toNum(row.item_no)] = true; });
+                const missingNos = Object.keys(includeSet).filter(function (n) { return !foundNos[n]; });
+                if (missingNos.length) {
+                    throw new Error('活頁 ' + sheetId + ' 指定必考題號 ' + missingNos.join(',') +
+                        ' 不在範圍 ' + (sec.range_type || 'page') + ' ' + sec.start + '~' + sec.end + ' 內，請確認');
+                }
+            }
+
+            if (shuffle) restPool = shuffleInPlace(restPool.slice());
             const want = Math.max(0, Number(sec.count) || 0);
-            const take = want > 0 ? pool.slice(0, Math.min(want, pool.length)) : pool;
+            const fillWant = want > 0 ? Math.max(0, want - mandatoryRows.length) : restPool.length;
+            const filled = restPool.slice(0, Math.min(fillWant, restPool.length));
+            const take = mandatoryRows.concat(filled);
+            if (want > 0 && mandatoryRows.length > want) {
+                notices.push('活頁 ' + sheetId + ' 必考題號共 ' + mandatoryRows.length +
+                    ' 題，已超過設定題數 ' + want + '，已自動全部納入（實際 ' + mandatoryRows.length + ' 題）');
+            }
 
             take.forEach(function (row) {
                 // 確保 sheet_id 在列上（若 Excel 有 D 欄會已有；否則補上）
@@ -391,7 +434,8 @@ window.QuizPaperBuilder = (function () {
                 fields_answer: fieldsAnswer || '',
                 lines_per_page: (profile && profile.lines_per_page) || 10
             },
-            items: picked
+            items: picked,
+            notices: notices
         };
     }
 
@@ -439,6 +483,7 @@ window.QuizPaperBuilder = (function () {
         alignTokens: alignTokens,
         analyzeAnswerDiff: analyzeAnswerDiff,
         analyzeWrongWords: analyzeWrongWords,
+        parseNumList: parseNumList,
         FALLBACK_COL_MAP: FALLBACK_COL_MAP
     };
 })();

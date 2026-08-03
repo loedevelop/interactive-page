@@ -183,6 +183,23 @@ window.BuilderStore = (() => {
                         t.raw_data.student_display_text = '';
                         t.raw_data.student_text = '';
                         if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
+                    } else if (scriptSource === 'skeleton') {
+                        // E：反向流程──先手動定義單元路徑（不需要 meta 檔），文稿可留空、之後回來補。
+                        // 💣 見 .cursor/rules/skeleton-unit-invariant.mdc：grading_units 由 DOM 表格整份覆寫，
+                        // 老師刪列＝真的刪單元，這是骨架模式的預期行為（跟 A 的「禁止縮水覆寫」不同語意）。
+                        const skeletonUnits = (window.FeatureTimeline && typeof window.FeatureTimeline.collectSkeletonUnitsFromDom === 'function')
+                            ? window.FeatureTimeline.collectSkeletonUnitsFromDom(pathStr)
+                            : (Array.isArray(t.raw_data.grading_units) ? t.raw_data.grading_units : []);
+                        t.raw_data.grading_units = skeletonUnits;
+                        t.raw_data.original_script = sanitizeScript(skeletonUnits.map(function (u) {
+                            const label = u.label || u.stem || '';
+                            const script = u.original_script || '';
+                            return script ? ('【' + label + '】\n' + script) : '';
+                        }).filter(Boolean).join('\n\n'));
+                        // 骨架模式沒有「合併學生顯示文稿」概念；學生端看單元路徑＋（選填）PDF 對照
+                        t.raw_data.student_display = '';
+                        t.raw_data.student_display_text = '';
+                        t.raw_data.student_text = '';
                     } else {
                         if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
                         if (studentTextEl) {

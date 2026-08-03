@@ -359,25 +359,44 @@ window.FeatureExamJob = (function () {
         return set;
     }
 
+    function parseNumListLocal(raw) {
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.parseNumList === 'function') {
+            return window.QuizPaperBuilder.parseNumList(raw);
+        }
+        // Fallback（QuizPaperBuilder 未載入時）：與其 parseNumList 同邏輯，支援半形 "-" 範圍
+        const text = String(raw || '').trim();
+        if (!text) return null;
+        const normalized = text.replace(/[～〜－—–]/g, '~').replace(/(\d)\s*-\s*(\d)/g, '$1~$2');
+        const set = {};
+        normalized.split(/[,，、\s]+/).forEach(function (part) {
+            const p = String(part || '').trim();
+            if (!p) return;
+            const m = p.match(/^(\d+)\s*~\s*(\d+)$/);
+            if (m) {
+                let a = Number(m[1]);
+                let b = Number(m[2]);
+                if (a > b) { const t = a; a = b; b = t; }
+                for (let i = a; i <= b; i++) set[i] = true;
+                return;
+            }
+            const n = Number(p);
+            if (!isNaN(n)) set[n] = true;
+        });
+        return set;
+    }
+
+    /**
+     * 「可用題」＝範圍（start～end／pages／items）內、扣除 exclude_nums 後的 meta 筆數。
+     * 💣 雷區：include_nums（必考#）不可再拿來篩選／縮小這個數字──它的語意是
+     * 「這幾題保證出現」，範圍外的題號本來就抽不到；用它篩可用題會讓老師誤以為
+     * 「範圍內沒題」（曾發生：範圍與必考題號對不齊時可用題直接掉成 0）。
+     * 與 020_js_core/quiz-paper-builder.js 的 filterRowsForSection 同語意，
+     * 見 .cursor/rules/exam-available-count-invariant.mdc。
+     */
     function countAvailableFromMetaRows(section, rows) {
         if (!section || !Array.isArray(rows) || !rows.length) return null;
         const rtype = section.range_type || 'page';
-        const include = String(section.include_nums || '').trim();
-        const exclude = String(section.exclude_nums || '').trim();
-        const includeSet = include
-            ? include.split(/[,，\s]+/).reduce(function (acc, x) {
-                const n = Number(x);
-                if (!isNaN(n)) acc[n] = true;
-                return acc;
-            }, {})
-            : null;
-        const excludeSet = exclude
-            ? exclude.split(/[,，\s]+/).reduce(function (acc, x) {
-                const n = Number(x);
-                if (!isNaN(n)) acc[n] = true;
-                return acc;
-            }, {})
-            : null;
+        const excludeSet = parseNumListLocal(section.exclude_nums);
 
         let pageSet = null;
         let itemSet = null;
@@ -394,7 +413,6 @@ window.FeatureExamJob = (function () {
             if (!hasBody) return;
             const itemNo = Number(row.item_no != null ? row.item_no : row.itemNo);
             const page = Number(row.page != null ? row.page : row.Page);
-            if (includeSet && (isNaN(itemNo) || !includeSet[itemNo])) return;
             if (excludeSet && !isNaN(itemNo) && excludeSet[itemNo]) return;
             if (rtype === 'qnum') {
                 if (!itemSet || isNaN(itemNo) || !itemSet[itemNo]) return;
@@ -410,6 +428,34 @@ window.FeatureExamJob = (function () {
             sum += 1;
         });
         return sum;
+    }
+
+    /**
+     * 檢查 include_nums（必考#）裡的題號，是否都能在該區段的 meta 筆數／範圍內找到。
+     * 找不到 → 回傳缺的題號陣列（UI 用來標紅提示，避免老師以為必考已生效）。
+     */
+    function missingIncludeNums(section, rows) {
+        const includeSet = parseNumListLocal(section && section.include_nums);
+        if (!includeSet) return [];
+        const wantNos = Object.keys(includeSet).map(Number);
+        if (!wantNos.length) return [];
+        if (!Array.isArray(rows) || !rows.length) return wantNos;
+        const rtype = (section.range_type || 'page');
+        let pageSet = null;
+        let itemSet = null;
+        if (rtype === 'qnum') itemSet = buildItemSetForSection(section);
+        else if (rtype === 'page') pageSet = buildPageSetForSection(section);
+        const found = {};
+        rows.forEach(function (row) {
+            if (!row) return;
+            const itemNo = Number(row.item_no != null ? row.item_no : row.itemNo);
+            const page = Number(row.page != null ? row.page : row.Page);
+            if (isNaN(itemNo) || !includeSet[itemNo]) return;
+            if (rtype === 'qnum' && (!itemSet || !itemSet[itemNo])) return;
+            if (rtype === 'page' && (!pageSet || isNaN(page) || !pageSet[page])) return;
+            found[itemNo] = true;
+        });
+        return wantNos.filter(function (n) { return !found[n]; });
     }
 
     /** 錄音 material_refs／range 是否已點名該活頁（有點名但無快取＝需再 Snapshot） */
@@ -1550,9 +1596,38 @@ window.FeatureExamJob = (function () {
             );
             const overAvail = (!availIsEstimate && !availNeedsSnap && avail != null && avail >= 0
                 && !isNaN(countVal) && countVal > avail);
+
+            // 必考#（include_nums）：範圍內找不到的題號要標紅，避免老師以為已生效
+            let missingInc = [];
+            if (!availIsEstimate && !availNeedsSnap && String(s.include_nums || '').trim()) {
+                const sheetKey = String(s.sheet_id || '').trim().toUpperCase();
+                const rowsForSheet = siblingAudio && siblingAudio.raw_data && siblingAudio.raw_data.meta_rows_by_stem
+                    ? (siblingAudio.raw_data.meta_rows_by_stem[sheetKey] || siblingAudio.raw_data.meta_rows_by_stem[s.sheet_id])
+                    : null;
+                if (Array.isArray(rowsForSheet) && rowsForSheet.length) {
+                    missingInc = missingIncludeNums(s, rowsForSheet);
+                }
+            }
+            const incStyle = missingInc.length
+                ? 'width:64px; padding:4px; border-color:#EF4444; color:#B91C1C; font-weight:800;'
+                : 'width:64px; padding:4px;';
+            const incTitle = missingInc.length
+                ? ('必考題號 ' + missingInc.join(',') + ' 在此範圍內找不到對應 meta，不會出現在考卷中，請確認題號或起迄範圍')
+                : '必考題號（範圍內一定會出現；用逗號或~區隔，如 141~145,150）。剩餘題數才從範圍內隨機抽。';
+            const incSet = parseNumListLocal(s.include_nums);
+            const mandatoryCount = incSet ? Object.keys(incSet).length : 0;
+            const mandatoryOverCount = mandatoryCount > 0 && !isNaN(countVal) && mandatoryCount > countVal;
             const countStyle = overAvail
                 ? 'width:56px; padding:4px; border-color:#EF4444; color:#B91C1C; font-weight:800;'
-                : 'width:56px; padding:4px;';
+                : (mandatoryOverCount
+                    ? 'width:56px; padding:4px; border-color:#D97706; color:#92400E; font-weight:800;'
+                    : 'width:56px; padding:4px;');
+            const countTitle = overAvail
+                ? '題數超過可用題數'
+                : (mandatoryOverCount
+                    ? ('必考題號共 ' + mandatoryCount + ' 題，超過此處設定的題數，產生時會自動全部納入（實際題數＝' + mandatoryCount + '）')
+                    : '');
+
             const rtypeHint = s.range_type || 'page';
             const loHint = Math.min(Number(s.start) || 0, Number(s.end) || 0);
             const hiHint = Math.max(Number(s.start) || 0, Number(s.end) || 0);
@@ -1584,9 +1659,9 @@ window.FeatureExamJob = (function () {
                     <td style="padding:4px;"><input id="exam-inline-start-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.start)}" style="width:56px; padding:4px;"${refreshAttr}></td>
                     <td style="padding:4px;"><input id="exam-inline-end-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.end)}" style="width:56px; padding:4px;"${refreshAttr}></td>
                     <td style="padding:4px;"><input id="exam-inline-diff-${pathStr}-${idx}" class="form-control" value="${esc(s.difficulty || '')}" style="width:64px; padding:4px;" placeholder="—"></td>
-                    <td style="padding:4px;"><input id="exam-inline-inc-${pathStr}-${idx}" class="form-control" value="${esc(s.include_nums || '')}" style="width:64px; padding:4px;" placeholder="—"></td>
-                    <td style="padding:4px;"><input id="exam-inline-exc-${pathStr}-${idx}" class="form-control" value="${esc(s.exclude_nums || '')}" style="width:64px; padding:4px;" placeholder="—"></td>
-                    <td style="padding:4px;"><input id="exam-inline-count-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.count)}" style="${countStyle}" title="${overAvail ? '題數超過可用題數' : ''}"${refreshAttr}></td>
+                    <td style="padding:4px;"><input id="exam-inline-inc-${pathStr}-${idx}" class="form-control" value="${esc(s.include_nums || '')}" style="${incStyle}" placeholder="—" title="${esc(incTitle)}"${refreshAttr}></td>
+                    <td style="padding:4px;"><input id="exam-inline-exc-${pathStr}-${idx}" class="form-control" value="${esc(s.exclude_nums || '')}" style="width:64px; padding:4px;" placeholder="—" title="排除題號：範圍內這些題號一定不會出現"${refreshAttr}></td>
+                    <td style="padding:4px;"><input id="exam-inline-count-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.count)}" style="${countStyle}" title="${esc(countTitle)}"${refreshAttr}></td>
                     <td style="padding:4px; color:${availColor}; font-size:0.78rem; font-weight:800; text-align:center;" title="${esc(availTitle)}">${esc(availStr)}</td>
                     <td style="padding:4px; color:#64748B; font-size:0.75rem; text-align:center;">${esc(pctStr)}</td>
                     <td style="padding:4px;"><button type="button" class="btn" style="padding:2px 6px; color:#B91C1C;" onclick="window.FeatureExamJob._inlineRemoveSection('${pathStr}', ${idx})">刪</button></td>
@@ -1623,8 +1698,8 @@ window.FeatureExamJob = (function () {
                                 <th style="padding:4px;">起始</th>
                                 <th style="padding:4px;">結束</th>
                                 <th style="padding:4px;">難度</th>
-                                <th style="padding:4px;">指定#</th>
-                                <th style="padding:4px;">排除#</th>
+                                <th style="padding:4px;" title="必考題號：範圍內這些題號一定會出現，剩餘題數才隨機抽">必考#</th>
+                                <th style="padding:4px;" title="排除題號：範圍內這些題號一定不會出現">排除#</th>
                                 <th style="padding:4px;">題數</th>
                                 <th style="padding:4px;">可用題</th>
                                 <th style="padding:4px;">顯示%</th>
@@ -2327,10 +2402,13 @@ window.FeatureExamJob = (function () {
             }
 
             refreshExamBuilder();
+            const noticeTxt = (Array.isArray(paper.notices) && paper.notices.length)
+                ? ('｜⚠ ' + paper.notices.join('；'))
+                : '';
             const msg = '✅ 已產生線上卷 ' + (paper.items || []).length
-                + ' 題。請立刻按「儲存作業」，學生端才看得到。';
-            setGenerateStatus(pathStr, msg, 'success');
-            window.showFlash(msg, 'success');
+                + ' 題。請立刻按「儲存作業」，學生端才看得到。' + noticeTxt;
+            setGenerateStatus(pathStr, msg, noticeTxt ? 'warn' : 'success');
+            window.showFlash(msg, noticeTxt ? 'warning' : 'success');
         } catch (err) {
             console.error('[FeatureExamJob] generate paper', err);
             const msg = '產生線上卷失敗：' + (err.message || err);

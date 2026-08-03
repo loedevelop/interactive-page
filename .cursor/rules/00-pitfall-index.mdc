@@ -14,8 +14,10 @@ alwaysApply: true
 | `ai-grading-pipeline-invariants.mdc` | AI 批改拖垮登入／延遲重試風暴／雙 webhook／沒勾AI批改卻照樣送 | `process-audio-ai/**`, `feature-ai-backfill.js`, `task-script-resolver.js`, `store-assignment-builder.js` |
 | `assignment-id-uuid-invariant.mdc` | assignment id 混血 bigint/uuid | `migrations/**`, `api.js`, `store-assignment-builder.js` |
 | `drive-folder-upload-invariants.mdc` | 學生繳交跑進 01_Class_Resources／多檔上傳中途失敗整批丟 | `gas/Code.gs`, `api.js`, `api-gas-service.js`, `feature-student-timeline.js` |
-| `exam-available-count-invariant.mdc` | 可用題顯示 ~20／— 老問題 | `feature-exam-job.js`, `feature-timeline.js`, `quiz-paper-builder.js` |
+| `exam-available-count-invariant.mdc` | 可用題顯示 ~20／— 老問題／必考題號（include_nums）被誤當限縮用、範圍算成 0 | `feature-exam-job.js`, `feature-timeline.js`, `quiz-paper-builder.js` |
 | `material-snapshot-refs-invariant.mdc` | Snapshot 存檔後只剩 A／第二冊不進 snap | `store-assignment-builder.js`, `feature-timeline.js`, `ui-timeline-templates.js` |
 | `page-refresh-perf-invariant.mdc` | 重整卡頓／隱藏分頁搶跑重活 | `ui-core.js`, `store.js`, `feature-student-timeline.js`, `ui-student-timeline-templates.js` |
+| `skeleton-unit-invariant.mdc` | 錄音「單元骨架」（E 選項）先建結構後補文稿／AI 依 index 抓稿風險 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `process-audio-ai/**` |
+| `material-publish-setup-format.mdc` | 教材發布 `_Setup` 合併格式／同活頁多區塊誤填 LAST／last_row_column 沒對齊實際欄位 | `material_templates/**` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

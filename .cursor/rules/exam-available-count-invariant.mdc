@@ -64,3 +64,76 @@ BuilderStore.sync 對 meta_rows_by_stem 只能 merge，不可縮冊覆寫
 1. 錄音只凍結 A → 考試 B 列＝「需Snapshot」／顯示%＝—  
 2. 再套用含 A+B 的 Snapshot → B 變綠字實數、顯示% 有值、總計仍合理  
 3. 產生線上卷不應因 B 缺快取而靜默少題（缺則打 GAS 或明確報錯）
+
+## `include_nums`（必考#）語意（2026-08-02 修正，曾反覆搞混）
+
+### 症狀
+
+老師在「指定#」填 `141-160`（半形連字號），範圍 頁碼 11~16 明明有對應題，**可用題卻顯示 0（紅字）**，且無任何錯誤訊息。
+
+### 根因（雙重雷）
+
+1. **解析失敗**：`parseNumList`／`feature-exam-job.js` 舊版只認全形／特殊連字號
+   （`～〜－—–`），半形 ASCII `-` 沒被當範圍分隔符號 → `"141-160"` 整段解析成
+   `NaN` → 產生一個**空物件** `{}`（非 `null`，仍是 truthy）。
+2. **舊語意是「限縮」不是「必考」**：`includeSet` truthy 時，`countAvailableFromMetaRows`／
+   `filterRowsForSection` 會把它當白名單，`!includeSet[itemNo]` 一律 `return`／`false`；
+   空物件 = 所有題號都不在白名單內 → 全部濾掉 → 可用題 0。就算解析正確，
+   「限縮」語意本身也違反直覺：老師要的是「範圍內這幾題保證出現」，不是
+   「只能考這幾題」——範圍已經由起始／結束定義過一次，不該被指定# 二次收窄。
+
+### 不變量（現行版本）
+
+```
+出題「範圍」= start~end（或 pages／items／range_spec），只受 exclude_nums 影響縮小
+include_nums（必考#）= 從範圍算出的 pool 裡「保證納入」的題號子集，不縮小 pool
+可用題／顯示% 的計算 = 範圍 − exclude_nums；include_nums 完全不參與這個數字
+產生線上卷：mandatoryRows（include_nums 命中）先保留，其餘 count - mandatoryRows.length
+  才從 restPool 隨機抽；必考題號數 > count 時，自動全部納入（不砍必考題）
+必考題號在範圍內找不到對應 meta → 明確報錯／標紅，不可靜默忽略
+數字範圍解析必須同時吃 "141~160" 與 "141-160"（ASCII 連字號）
+```
+
+### 禁止
+
+```javascript
+// ❌ include_nums 拿來篩可用題／篩 pool（限縮語意）
+if (includeSet && !includeSet[itemNo]) return; // 在 countAvailableFromMetaRows／filterRowsForSection 裡都禁止
+
+// ❌ 範圍解析只吃全形／特殊連字號，半形 "-" 會整段變空集合又不報錯
+text.replace(/[～〜－—–]/g, '~') // 缺了 ASCII "-"，"141-160" 解析失敗但 UI 無感
+
+// ❌ 必考題號數超過 count 時直接截斷必考（違反「保證出現」）
+take = pool.slice(0, count); // 必考題可能被切掉
+```
+
+### 正確做法
+
+```javascript
+// ✅ 範圍解析：先把 digit-"-"-digit 也正規化成 "~"
+text.replace(/[～〜－—–]/g, '~').replace(/(\d)\s*-\s*(\d)/g, '$1~$2')
+
+// ✅ 可用題只看 exclude_nums，不看 include_nums
+countAvailableFromMetaRows(section, rows) // 內部不再檢查 includeSet
+
+// ✅ 產生線上卷：必考優先保留，其餘從 restPool 隨機補
+const mandatoryRows = pool.filter(inIncludeSet);
+const restPool = pool.filter(notInIncludeSet);
+const filled = shuffle(restPool).slice(0, Math.max(0, count - mandatoryRows.length));
+const take = mandatoryRows.concat(filled); // take.length 可能 > count（必考題多時）
+```
+
+### 產出面已知落差（跨系統，非本站可單方保證）
+
+`include_nums`／`exclude_nums` 也會原樣寫進匯出給 Python 排版的 `exam_job` JSON
+（`⬇ JSON`／`_inlineExport`）。**本站對 `include_nums` 的「必考＋隨機補」語意，
+Python 端腳本是否同步支援尚未確認**——若 Python 那邊仍是舊的「限縮」語意，
+「產生線上卷」（本站）與匯出 PDF（Python）在同一 `include_nums` 下可能抽出不同結果。
+若之後要讓兩邊行為一致，需同步改 Python 端出題腳本，不是本檔案能單方修好的。
+
+### 實測
+
+1. 指定# 填 `141-160`（半形）→ 可用題應反映「範圍 − 排除」的真實筆數，不再是 0  
+2. 指定# 填的題號在範圍內能找到對應 meta → 產生線上卷時這些題號一定出現在 `items` 裡  
+3. 指定# 題號數 > 題數設定 → 線上卷實際題數 = 必考題號數（不是原題數），且有提示訊息  
+4. 指定# 填了範圍外／meta 找不到的題號 → 產生線上卷時明確報錯（不是默默漏題或吃到別的題）

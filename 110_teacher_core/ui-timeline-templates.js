@@ -115,10 +115,12 @@ window.TimelineTemplates = (() => {
     }
 
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf) {
-        let iconStr = t.type === 'check' ? '📌'
-            : (t.type === 'link' ? '🔗'
-            : (t.type === 'audio_record' ? '🎙️'
-            : (t.type === 'exam' ? '📝' : '📁')));
+        let iconStr = window.TaskScriptResolver
+            ? window.TaskScriptResolver.getTaskTypeIcon(t.type)
+            : (t.type === 'check' ? '📌'
+                : (t.type === 'link' ? '🔗'
+                : (t.type === 'audio_record' ? '🎙️'
+                : (t.type === 'exam' ? '📝' : '📁'))));
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
         let extraTag = '';
@@ -563,6 +565,26 @@ window.TimelineTemplates = (() => {
                     const showRangeOnly = scriptSource === 'range_only';
                     const showPaste = scriptSource === 'paste';
                     const showResource = scriptSource === 'resource';
+                    const showSkeleton = scriptSource === 'skeleton';
+
+                    // E. 單元骨架：反向流程──先手動定義單元路徑（不需要 meta 檔），文稿可留空、之後再補。
+                    // 沿用 grading_units 同一個欄位存放（跟 A 的 Snapshot 單元共用 shape，只是來源不同）。
+                    const skeletonUnits = Array.isArray(raw.grading_units) ? raw.grading_units : [];
+                    const skeletonRowsSource = (showSkeleton && !skeletonUnits.length) ? [{}] : skeletonUnits;
+                    const skeletonRowsHtml = skeletonRowsSource.map(function (u, uIdx) {
+                        const uPathLabel = String(u.path_label || u.label || (u.stem
+                            ? (u.stem + (Array.isArray(u.sub_path) && u.sub_path.length ? '/' + u.sub_path.join('/') : ''))
+                            : '')).replace(/"/g, '&quot;');
+                        const uScript = String(u.original_script || '').replace(/"/g, '&quot;');
+                        return `
+                            <div class="skeleton-unit-row" data-idx="${uIdx}" style="display:flex; gap:8px; align-items:flex-start; background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px; margin-bottom:8px;">
+                                <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;">
+                                    <input type="text" class="form-control skeleton-unit-path" style="padding:6px; font-size:0.85rem; font-weight:800; color:#4338CA;" placeholder="單元路徑，如 Ch2/p15/Ex3/#1" value="${uPathLabel}" oninput="window.FeatureTimeline.refreshSkeletonRangeLabel('${pathStr}')">
+                                    <textarea class="form-control skeleton-unit-script" style="width:100%; min-height:48px; padding:8px; font-size:0.85rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="批改文稿（可留空，之後再補）">${uScript}</textarea>
+                                </div>
+                                <button type="button" class="btn" style="padding:6px 8px; color:#B91C1C;" onclick="window.FeatureTimeline.removeSkeletonUnitRow(this, '${pathStr}')" title="刪除此列">🗑</button>
+                            </div>`;
+                    }).join('');
 
                     audioInputHtml = `
                         <div style="margin-top:15px; width:100%; background:#F8FAFC; padding:15px; border-radius:8px; border:1px solid #E2E8F0;">
@@ -596,13 +618,16 @@ window.TimelineTemplates = (() => {
                                     <option value="range_only" ${scriptSource === 'range_only' ? 'selected' : ''}>B. 無 meta + base 範圍（僅範圍，無文稿本體）</option>
                                     <option value="paste" ${scriptSource === 'paste' ? 'selected' : ''}>C. 無 meta + 自行貼上 + base 範圍</option>
                                     <option value="resource" ${scriptSource === 'resource' ? 'selected' : ''}>D. 無 meta + 資源（如 PDF）+ base 範圍 → 班級 01</option>
+                                    <option value="skeleton" ${scriptSource === 'skeleton' ? 'selected' : ''}>E. 單元骨架（無 meta，先建結構，文稿現在或之後補；可選掛 PDF）</option>
                                 </select>
                                 <div style="font-size:0.78rem; color:#64748B; margin-top:6px;">老師指哪裡就讀哪裡；班級真相是 Snapshot。有 meta 時學生可收起文稿，只留錄音鍵。</div>
                             </div>
 
                             <div id="node-base-range-wrap-${pathStr}" style="display:${showMeta ? 'none' : 'flex'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">
-                                <span style="font-weight:900; color:#92400E; font-size:0.9rem;">📍 base 範圍（必填）</span>
-                                <input type="text" id="node-material-range-manual-${pathStr}" class="form-control" style="flex:1; min-width:200px; padding:8px;" value="${safeMaterialRange}" placeholder="例：A pp. 1~2 B pp. 1~2">
+                                <span style="font-weight:900; color:#92400E; font-size:0.9rem; flex:0 0 100%;">📍 base 範圍（必填）</span>
+                                <input type="text" id="node-material-range-manual-${pathStr}" class="form-control" style="flex:1; min-width:160px; padding:8px;" value="${safeMaterialRange}" placeholder="${showSkeleton ? '依下方單元路徑自動整理（可手動微調）' : '例：A pp. 1~2 B pp. 1~2'}">
+                                ${showSkeleton ? `<button type="button" class="btn-action" style="flex:0 0 auto; font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer; white-space:nowrap;" onclick="window.FeatureTimeline.refreshSkeletonRangeLabel('${pathStr}')">🔄 依路徑重算</button>` : ''}
+                                ${showSkeleton ? `<div style="flex:0 0 100%; font-size:0.75rem; color:#92400E; margin-top:2px;">💡 書名（如 Azar-2）請寫在最上面的「✏️ 標題」欄，不要寫在這裡——這裡是依下方單元路徑自動整理出來的範圍摘要，路徑異動會被覆寫。</div>` : ''}
                             </div>
 
                             <div id="script-source-panel-meta-${pathStr}" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">
@@ -652,7 +677,7 @@ window.TimelineTemplates = (() => {
                             </div>
 
                             <div id="script-source-panel-range_only-${pathStr}" style="display:${showRangeOnly ? 'block' : 'none'}; margin-bottom:14px; padding:12px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:8px; font-size:0.85rem; color:#475569;">
-                                僅交代學生念哪一段（上方 base 範圍）。無顯示文稿本體；若要 AI 請改選 C 貼上或 A meta。
+                                僅交代學生念哪一段（上方 base 範圍）。無顯示文稿本體；若要 AI 請改選 C 貼上、A meta，或 E 單元骨架（可拆成多個單元、文稿之後補）。
                             </div>
 
                             <div id="script-source-panel-paste-${pathStr}" style="display:${showPaste ? 'block' : 'none'}; margin-bottom:14px;">
@@ -669,8 +694,8 @@ window.TimelineTemplates = (() => {
                                 </div>
                             </div>
 
-                            <div id="script-source-panel-resource-${pathStr}" style="display:${showResource ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
-                                <div style="font-weight:900; color:#334155; margin-bottom:8px;">📁 資源（PDF 等）→ 班級 01_Class_Resources</div>
+                            <div id="script-source-panel-resource-${pathStr}" style="display:${(showResource || showSkeleton) ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
+                                <div style="font-weight:900; color:#334155; margin-bottom:8px;">📁 資源（PDF 等）→ 班級 01_Class_Resources${showSkeleton ? '（選填，給學生對照；AI 不會讀 PDF）' : ''}</div>
                                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
                                     <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:2; min-width:180px; padding:8px; font-size:0.85rem;" placeholder="Drive／資源網址" value="${safeMaterialUrl}">
                                     ${resOptsHtmlForResource}
@@ -685,6 +710,19 @@ window.TimelineTemplates = (() => {
                                     <input type="hidden" id="node-student-drive-url-${pathStr}" value="${safeStudentDriveUrl}">
                                     <input type="hidden" id="node-student-drive-desc-${pathStr}" value="${safeStudentDriveDesc}">
                                     <input type="hidden" id="node-student-source-type-${pathStr}" value="${studentSourceTypeHidden}">
+                                </div>
+                            </div>
+
+                            <div id="script-source-panel-skeleton-${pathStr}" style="display:${showSkeleton ? 'block' : 'none'}; margin-bottom:14px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px;">
+                                <div style="font-weight:900; color:#5B21B6; margin-bottom:6px;">🧩 單元骨架（自訂路徑，不需要 meta 檔）</div>
+                                <div style="font-size:0.78rem; color:#64748B; margin-bottom:10px; line-height:1.5;">
+                                    每列＝一個可錄音／可批改的單元。路徑自由填，用 <code>/</code> 分層，例如 <code>Ch2/p15/Ex3/#1</code>；第一段會當成分組鍵（給之後考試出題沿用）。
+                                    文稿可先留空，之後回來這裡補；補完文稿的舊繳交，需用「課程進度」的「補啟 AI 批改」才會真正送 AI（不會自動觸發）。
+                                </div>
+                                <div id="node-skeleton-units-${pathStr}">${skeletonRowsHtml}</div>
+                                <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.addSkeletonUnitRow('${pathStr}')">＋ 加一列單元</button>
+                                    <span style="font-size:0.75rem; color:#94A3B8;">${skeletonUnits.length ? ('目前 ' + skeletonUnits.length + ' 個單元') : '尚未新增任何單元'}</span>
                                 </div>
                             </div>
                         </div>

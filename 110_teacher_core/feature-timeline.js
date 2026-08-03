@@ -553,6 +553,75 @@ window.FeatureTimeline = (() => {
         }).filter(Boolean).join('；');
     }
 
+    /** 從 DOM 讀骨架單元列（E 選項），回傳 grading_units[]（供存檔／即時重算 base 範圍共用） */
+    function collectSkeletonUnitsFromDom(pathStr) {
+        const container = document.getElementById('node-skeleton-units-' + pathStr);
+        if (!container) return [];
+        const units = [];
+        const seenKeys = {};
+        container.querySelectorAll('.skeleton-unit-row').forEach(function (row) {
+            const pathInput = row.querySelector('.skeleton-unit-path');
+            const scriptInput = row.querySelector('.skeleton-unit-script');
+            const pathLabel = pathInput ? String(pathInput.value || '').trim() : '';
+            if (!pathLabel) return; // 空路徑列不存
+            const segments = pathLabel.split('/').map(function (s) { return s.trim(); }).filter(Boolean);
+            const stem = segments[0] || pathLabel;
+            const subPath = segments.slice(1);
+            const unitKey = stem + ':' + subPath.join('/');
+            const pageGuess = subPath.length ? Number(String(subPath[0]).replace(/[^\d]/g, '')) : NaN;
+            if (seenKeys[unitKey]) {
+                window.showFlash('單元路徑重複：「' + pathLabel + '」，請確認每列路徑不同', 'warning');
+            }
+            seenKeys[unitKey] = true;
+            units.push({
+                unit_key: unitKey,
+                stem: stem,
+                sub_path: subPath,
+                page: isNaN(pageGuess) ? null : pageGuess,
+                path_label: pathLabel,
+                label: pathLabel,
+                original_script: scriptInput ? String(scriptInput.value || '').trim() : '',
+                item_count: 1,
+                item_nos: []
+            });
+        });
+        return units;
+    }
+
+    /** 骨架單元（stem 分組＋sub_path 列出）→ base 範圍摘要文字，跟 A 的 buildMaterialRangeLabelFromRows 同角色 */
+    function buildSkeletonRangeLabelFromRows(units) {
+        const order = [];
+        const groups = {};
+        (units || []).forEach(function (u) {
+            const stem = String((u && u.stem) || '').trim();
+            if (!stem) return;
+            if (!groups[stem]) { groups[stem] = []; order.push(stem); }
+            const sub = Array.isArray(u.sub_path) && u.sub_path.length ? u.sub_path.join('/') : '';
+            if (sub) groups[stem].push(sub);
+        });
+        return order.map(function (stem) {
+            const subs = groups[stem];
+            return subs.length ? (stem + '（' + subs.join('、') + '）') : stem;
+        }).join('；');
+    }
+
+    /**
+     * 💣 雷區提醒：base 範圍在骨架模式下是「依路徑自動整理」的計算結果，
+     * 跟 A（meta）模式的 refreshMaterialRangeLabel 同角色──每次路徑列變動都會重新整理並覆寫，
+     * 不是留給老師手打書名的欄位（書名該打在任務最上面的「✏️ 標題」，那裡不會被這裡覆寫）。
+     */
+    function refreshSkeletonRangeLabel(pathStr) {
+        const units = collectSkeletonUnitsFromDom(pathStr);
+        const label = buildSkeletonRangeLabelFromRows(units);
+        const rangeEl = document.getElementById('node-material-range-manual-' + pathStr);
+        if (rangeEl) rangeEl.value = label;
+        if (label) {
+            applyInheritedTitleFromRange(pathStr, label);
+            syncSiblingExamTitleFromRange(pathStr, label);
+        }
+        return label;
+    }
+
     /** grading_units 裡有幾種 stem（A/B/C…） */
     function uniqueStemsFromGradingUnits(units) {
         const order = [];
@@ -944,6 +1013,18 @@ window.FeatureTimeline = (() => {
         if (!bState || !Array.isArray(bState.tasks)) return;
         walkAudioRecordNodes(bState.tasks, [], function (_task, pathStr) {
             toggleMaterialSliceFields(pathStr);
+        });
+    }
+
+    /** 開啟編輯器時，骨架模式（E）base 範圍也要跟 A 一樣自動依現有單元路徑整理一次，不留給老師手動觸發才看得到 */
+    function refreshAllSkeletonRangeLabels() {
+        const bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        if (!bState || !Array.isArray(bState.tasks)) return;
+        walkAudioRecordNodes(bState.tasks, [], function (task, pathStr) {
+            const raw = task.raw_data || {};
+            if (raw.script_source !== 'skeleton') return;
+            if (!document.getElementById('node-skeleton-units-' + pathStr)) return;
+            refreshSkeletonRangeLabel(pathStr);
         });
     }
 
@@ -1420,6 +1501,7 @@ window.FeatureTimeline = (() => {
         try { seedMaterialMetaRowsForAllAudioNodes(); } catch (_seedErr) {}
         setTimeout(function () {
             refreshMaterialSliceFieldVisibility();
+            refreshAllSkeletonRangeLabels();
             // 再自動灌清單進下拉
             autoPrimeMaterialMetaUI().catch(function (err) {
                 console.warn('[FeatureTimeline] autoPrime after renderBuilderUI', err);
@@ -2228,13 +2310,75 @@ window.FeatureTimeline = (() => {
         onScriptSourceChange: function (pathStr) {
             const sourceEl = document.getElementById('node-script-source-' + pathStr);
             const source = sourceEl ? sourceEl.value : 'meta';
-            const panels = ['meta', 'range_only', 'paste', 'resource'];
+            const panels = ['meta', 'range_only', 'paste', 'skeleton'];
             panels.forEach(function (key) {
                 const el = document.getElementById('script-source-panel-' + key + '-' + pathStr);
                 if (el) el.style.display = (source === key) ? 'block' : 'none';
             });
+            // 資源／PDF 面板：D 專用，E 骨架模式下當「選填對照」共用同一組欄位
+            const resourceEl = document.getElementById('script-source-panel-resource-' + pathStr);
+            if (resourceEl) resourceEl.style.display = (source === 'resource' || source === 'skeleton') ? 'block' : 'none';
             const baseWrap = document.getElementById('node-base-range-wrap-' + pathStr);
             if (baseWrap) baseWrap.style.display = (source === 'meta') ? 'none' : 'flex';
+            // 骨架模式：至少給一個空白列，避免老師誤以為要先按別的按鈕才能開始
+            if (source === 'skeleton') {
+                const listEl = document.getElementById('node-skeleton-units-' + pathStr);
+                if (listEl && !listEl.querySelector('.skeleton-unit-row')) {
+                    window.FeatureTimeline.addSkeletonUnitRow(pathStr);
+                } else {
+                    refreshSkeletonRangeLabel(pathStr);
+                }
+            }
+        },
+
+        addSkeletonUnitRow: function (pathStr) {
+            const container = document.getElementById('node-skeleton-units-' + pathStr);
+            if (!container) return;
+            const idx = container.querySelectorAll('.skeleton-unit-row').length;
+            const row = document.createElement('div');
+            row.className = 'skeleton-unit-row';
+            row.setAttribute('data-idx', String(idx));
+            row.style.cssText = 'display:flex; gap:8px; align-items:flex-start; background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px; margin-bottom:8px;';
+            row.innerHTML = `
+                <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;">
+                    <input type="text" class="form-control skeleton-unit-path" style="padding:6px; font-size:0.85rem; font-weight:800; color:#4338CA;" placeholder="單元路徑，如 Ch2/p15/Ex3/#1">
+                    <textarea class="form-control skeleton-unit-script" style="width:100%; min-height:48px; padding:8px; font-size:0.85rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="批改文稿（可留空，之後再補）"></textarea>
+                </div>
+                <button type="button" class="btn" style="padding:6px 8px; color:#B91C1C;" onclick="window.FeatureTimeline.removeSkeletonUnitRow(this, '${pathStr}')" title="刪除此列">🗑</button>
+            `;
+            const pathInputEl = row.querySelector('.skeleton-unit-path');
+            if (pathInputEl) {
+                pathInputEl.addEventListener('input', function () { refreshSkeletonRangeLabel(pathStr); });
+            }
+            container.appendChild(row);
+            refreshSkeletonRangeLabel(pathStr);
+        },
+
+        // 用 btnEl.closest() 找到實際被點擊的那一列，避免 data-idx 在多次新增／刪除後重複造成刪錯列
+        removeSkeletonUnitRow: function (btnEl, pathStr) {
+            const row = btnEl && btnEl.closest ? btnEl.closest('.skeleton-unit-row') : null;
+            const container = document.getElementById('node-skeleton-units-' + pathStr);
+            if (!row || !container) return;
+            if (container.querySelectorAll('.skeleton-unit-row').length <= 1) {
+                // 至少留一列（清空即可，避免存檔時整個骨架消失又要重按「加一列」）
+                const pathInput = row.querySelector('.skeleton-unit-path');
+                const scriptInput = row.querySelector('.skeleton-unit-script');
+                if (pathInput) pathInput.value = '';
+                if (scriptInput) scriptInput.value = '';
+            } else {
+                row.remove();
+            }
+            refreshSkeletonRangeLabel(pathStr);
+        },
+
+        /** 從 DOM 讀骨架單元列，回傳 grading_units[]（供存檔時寫入 t.raw_data.grading_units） */
+        collectSkeletonUnitsFromDom: function (pathStr) {
+            return collectSkeletonUnitsFromDom(pathStr);
+        },
+
+        /** 依目前路徑列重新整理 base 範圍（跟 A 的「依列重算」同角色，供 SSR 模板 oninput／重算鈕呼叫） */
+        refreshSkeletonRangeLabel: function (pathStr) {
+            return refreshSkeletonRangeLabel(pathStr);
         }
     };
 })();

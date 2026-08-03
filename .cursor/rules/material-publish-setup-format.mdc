@@ -1,0 +1,84 @@
+---
+description: 教材發布 Excel 有兩種設定格式（合併 _Setup／舊 4 分頁）；同活頁多區塊時 LAST 亂用會吃到別段資料
+globs: material_templates/**
+alwaysApply: false
+---
+
+# 教材發布 `_Setup` 合併格式 ／ 同活頁多區塊雷區
+
+## 症狀
+
+- 教材（如單字表）同一個內容活頁裡，不同題號範圍要用不同欄位語意（例如前半段 AK/AM/AN/AO、後半段 AL/AN/AO/AP），一開始誤以為要拆成不同活頁或改 `_Publish`／`_Layout` 結構才能做。
+- `_Config.last_row_column` 隨手填 `A`，但該教材實際欄位（如題號）在 `AB`，`LAST` 算出來永遠是第 1 列，導致 `row_end=LAST` 那一段整段失敗（`列範圍無效：V (6-LAST)`）。
+- 同一活頁多段都填 `row_end=LAST`：前面段落也用 `LAST` 會抓到全表最底列，把後面段落的資料也吃進來。
+- 老師誤以為要改 `.meta.json`／`_layout.json` 才能切換設定格式，其實已發布、已派給學生的作業完全不受影響。
+
+## 根因
+
+- `publish_local.py` 的「教材單位」在下游（考試出題 `stem`、`meta_rows_by_stem`）看的是 **`output_meta` 檔名**，不是 Excel 分頁名稱（見 `feature-exam-job.js` 的 `metaStemFromFileName`）。所以同一個 `source_sheet` 本來就能被 `_Publish` 開多列、各自 `row_start`／`row_end`／`schema_id`／`output_meta` 切成獨立單元，不需要改 `_Publish`／`_Layout` 結構。
+- `get_last_data_row_from_matrix()`（`material_templates/publish_local.py`）算 `LAST` 時，只看 `cfg["last_row_column"]` 那一欄「整張表」最底下有值的列，不會意識到「這是第幾段」。
+- 設定資料格式（`_Config`／`_Schema`／`_Publish`／`_Layout` 4 分頁 vs 合併 1 個 `_Setup` 分頁）只影響 `publish_local.py` 怎麼**讀 Excel**；產出的 `.meta.json`／`.script.txt`／`_layout.json`／`_manifest.json` 內容不變，老師端 Snapshot 只讀這些產出檔。
+
+## 不變量
+
+```
+同活頁多區塊 = _Schema 開多個 schema_id ＋ _Publish 開多列指向同一個 source_sheet
+              （不改 _Config／_Layout 結構；output_meta 檔名互不相同）
+row_end=LAST 只能給「同一活頁裡最後一段」用；其餘段落必須填明確結束列數字
+last_row_column 必須指到「整份教材真的有資料一路到最底列」的那一欄（通常是題號欄），不是預設 A
+_Setup 合併格式 與 舊 4 分頁格式：讀出的 rows 一致 → 下游 read_config/read_schemas/read_publish_rules/read_layout_profiles
+  都吃 list[dict]，格式差異只在 publish() 怎麼組出這些 rows，不重複實作欄位解析邏輯
+兩種格式產出的 meta/layout/manifest 必須逐位元組相同（除 published_at 時間戳）；已發布教材切換格式不需要重新派作業
+```
+
+## 禁止
+
+```python
+# ❌ 同一活頁想切多區塊，就去改 _Publish／_Layout 的欄位結構（不需要，多開列/多開 schema_id 就好）
+
+# ❌ last_row_column 沒對照實際教材欄位，隨手留預設 "A"
+cfg = {"material_folder": "...", "last_row_column": "A"}  # 若該教材資料不在 A 欄，LAST 會失效
+
+# ❌ 同活頁多段每段都填 row_end=LAST
+# Y,V,2,LAST,Vocab_Set1.meta.json,...   ← 錯，會吃到 Set2 的列
+# Y,V,6,LAST,Vocab_Set2.meta.json,...
+```
+
+## 正確
+
+```python
+# ✅ _Schema 開兩個 schema_id，各自宣告自己的 excel_col
+# vocab-set1: display_zh=AK, pos=AM, article=AN, script=AO
+# vocab-set2: display_zh=AL, pos=AN, article=AO, script=AP
+
+# ✅ _Publish 兩列指向同一 source_sheet，只有最後一段用 LAST
+# Y,V,2,840,Vocab_Set1.meta.json,Vocab_Set1.script.txt,vocab-set1
+# Y,V,841,LAST,Vocab_Set2.meta.json,Vocab_Set2.script.txt,vocab-set2
+
+# ✅ last_row_column 指到真的有資料到底的欄（此例是題號欄 AB）
+# last_row_column,AB
+```
+
+```python
+# ✅ publish_local.py：兩種輸入格式收斂成同一份 list[dict] 再往下處理
+setup_sections = find_setup_sections(wb)  # 有 _Setup 分頁 → dict[str, list[dict]]；沒有則回 None
+if setup_sections is not None:
+    cfg = read_config(setup_sections["_Config"])
+else:
+    cfg = read_config(sheet_as_maps(wb, "_Config"))  # 舊格式：4 個獨立分頁各自讀
+```
+
+## 實測
+
+1. 用 `material_templates/_Setup.csv` 當內容貼一份測試 Excel（含同活頁兩個 schema_id 區塊），跑 `publish_local.sh`，確認兩個 `output_meta` 各自列數正確、`article` 欄位在形容詞列會自動省略（不是空字串鍵）。
+2. 同一份資料改成舊 4 分頁格式跑一次，兩次輸出的 `.meta.json`／`_layout.json`（忽略 `published_at`）逐位元組相同。
+3. 用 `convert_to_setup.py` 把舊格式檔轉成新格式，跑 `publish_local.py` 確認輸出仍與轉換前一致，且其他內容活頁／公式沒有跑掉。
+4. 故意把非最後一段填 `row_end=LAST`，確認會吃到下一段的列（用來提醒自己這是陷阱，不是要修掉這個「行為」——後段本就該留給教師自己填對）。
+
+## 改動前自問
+
+若要動到 `material_templates/publish_local.py`、`convert_to_setup.py`、或任何 `_Setup`／舊 4 分頁的欄位解析邏輯：
+1. 兩種輸入格式跑完，輸出的 `.meta.json`／`.script.txt`／`_layout.json`／`_manifest.json` 是否仍逐位元組相同（除時間戳）？
+2. 是否還是靠 `output_meta` 檔名（不是活頁名稱）當下游教材單元的唯一識別？
+3. 舊格式（4 分頁）是否仍能正常讀取，不強制任何人立刻轉換？
+若任一否，停下。

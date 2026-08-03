@@ -115,6 +115,22 @@ window.TaskScriptResolver = (function () {
     }
 
     /**
+     * 任務類型 → 圖示。老師端多處（進度表表頭、催交提醒圖、時間軸唯讀列表）都要顯示
+     * 同一套圖示分辨「這是錄音／考試／自行打勾…」，改一處全站同步，避免各自維護漂移。
+     */
+    const TASK_TYPE_ICON = {
+        check: '📌',
+        link: '🔗',
+        audio_record: '🎙️',
+        exam: '📝',
+        drive: '📁'
+    };
+
+    function getTaskTypeIcon(type) {
+        return TASK_TYPE_ICON[type] || '📁';
+    }
+
+    /**
      * 任務是否「允許」走 AI 發音批改管線。
      * 真正送 AI 前仍須另檢查是否已有文稿。
      *
@@ -170,6 +186,7 @@ window.TaskScriptResolver = (function () {
         findSiblingScriptLink: findSiblingScriptLink,
         resolveScriptSource: resolveScriptSource,
         isRecordingTaskType: isRecordingTaskType,
+        getTaskTypeIcon: getTaskTypeIcon,
         taskSupportsAIGrading: taskSupportsAIGrading,
         patchTaskScriptInTree: patchTaskScriptInTree
     };

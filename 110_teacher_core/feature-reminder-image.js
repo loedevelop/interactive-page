@@ -81,7 +81,7 @@ window.FeatureReminderImage = (() => {
                 out.push({ kind: 'group', title: stripHtml(t.title) || '未命名群組', depth: depth });
                 collectTaskRows(t.subTasks, depth + 1, out);
             } else {
-                out.push({ kind: 'task', id: t.id, title: stripHtml(t.title) || '未命名', depth: depth });
+                out.push({ kind: 'task', id: t.id, type: t.type, title: stripHtml(t.title) || '未命名', depth: depth });
             }
         });
     }
@@ -439,11 +439,13 @@ window.FeatureReminderImage = (() => {
                 const isDone = row.id != null && row.id !== ''
                     && doneSet.has(sid + '_' + aid + '_' + String(row.id));
                 const icon = isDone ? '✅' : '⬜';
+                // 同一作業的錄音／考試小項常共用幾乎相同的範圍文字，補上類型圖示分辨（同 feature-progress.js 表頭作法）
+                const typeIcon = window.TaskScriptResolver ? window.TaskScriptResolver.getTaskTypeIcon(row.type) : '📁';
                 const pad = row.depth * 14;
                 const color = isDone ? '#065F46' : '#334155';
                 tasksHtml += '<div style="display:flex;align-items:flex-start;gap:8px;margin-top:4px;margin-left:' + pad + 'px;font-size:16px;line-height:1.45;color:' + color + ';">'
                     + '<span style="flex-shrink:0;">' + icon + '</span>'
-                    + '<span>' + escapeHtml(row.title) + '</span>'
+                    + '<span>' + typeIcon + ' ' + escapeHtml(row.title) + '</span>'
                     + '</div>';
             });
         }

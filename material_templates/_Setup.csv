@@ -1,0 +1,26 @@
+#_Config
+key,value,note
+material_folder,GEPT-2_vocab,輸出／上傳資料夾名（01_My_Materials 或 00_Class_Materials 下）
+last_row_column,AB,計算 LAST 時以哪一欄為準；此教材題號在 AB，不是 A（務必指到真的有資料到底的欄）
+
+#_Schema
+schema_id,semantic_key,excel_col,send_to_ai,display,note
+vocab-set1,item_no,AB,N,N,題號
+vocab-set1,display_zh,AK,N,Y,中文
+vocab-set1,pos,AM,N,Y,詞性
+vocab-set1,article,AN,N,Y,前置詞 a/an（沒有就留空，例如形容詞）
+vocab-set1,script,AO,Y,N,英文（必填；AI 稿）
+vocab-set2,item_no,AB,N,N,題號
+vocab-set2,display_zh,AL,N,Y,中文
+vocab-set2,pos,AN,N,Y,詞性
+vocab-set2,article,AO,N,Y,前置詞 a/an（沒有就留空，例如形容詞）
+vocab-set2,script,AP,Y,N,英文（必填；AI 稿）
+
+#_Publish
+enabled,source_sheet,row_start,row_end,output_meta,output_txt,schema_id,note
+Y,V,2,840,Vocab_Set1.meta.json,Vocab_Set1.script.txt,vocab-set1,第一段（同一活頁，明確結束列，不可用 LAST）
+Y,V,841,LAST,Vocab_Set2.meta.json,Vocab_Set2.script.txt,vocab-set2,同一活頁的最後一段，才能用 LAST
+
+#_Layout
+enabled,profile_id,label,fields,fields_answer,lines_per_page,is_default,note
+Y,vocab-basic,單字卡,"AL, AN","AK",10,Y,fields=題卷；fields_answer=答卷／提示版；同教材所有段落共用

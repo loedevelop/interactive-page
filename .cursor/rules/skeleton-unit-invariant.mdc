@@ -1,0 +1,118 @@
+---
+description: 錄音作業「單元骨架」（E 選項，無 meta 先建結構）unit_key 相容格式與 AI 抓稿時機鐵律
+globs: 110_teacher_core/ui-timeline-templates.js,110_teacher_core/feature-timeline.js,110_teacher_core/store-assignment-builder.js,supabase/functions/process-audio-ai/**
+alwaysApply: false
+---
+
+# 錄音作業「單元骨架」（E 選項）鐵律
+
+> 2026-08-02 新增。這是「反向流程」──先手動定義單元路徑（不需要 meta 檔），
+> 文稿可以現在或之後補上。跟 A（meta + Snapshot）共用 `grading_units` 這個欄位，
+> 但**產生方式完全不同**：A 是 Snapshot 從 meta 檔切出來的，E 是老師手動打的。
+> 動「文稿來源」下拉、`grading_units`、或 `process-audio-ai` 抓稿邏輯時必讀。
+
+## 症狀（若未來又踩到）
+
+- 老師在骨架表格刪掉中間一列（例如已有學生交過 p15、p20、p25 三段錄音，老師刪掉 p20 那列）後，
+  之後老師補文稿並「補啟 AI 批改」，結果 p25 那段錄音被拿 p20（現在變成陣列第 2 位）的文稿去批改，AI 回饋文不對題。
+- 老師以為補完文稿要有額外「刷新」按鈕才會生效，實際上不需要，只是没意識到要用既有「🤖 補啟 AI 批改」續跑。
+
+## 根因
+
+- `task.raw_data.grading_units[]`（`script_source === 'skeleton'`）是**老師表格整份覆寫**（見下方存檔語意），跟 A 模式「禁止縮水覆寫」剛好相反。
+- `supabase/functions/process-audio-ai/index.ts.bak-stable` 的 `buildSegments()` 對每個 `audio_segments[idx]` 用 `taskGradingUnits[idx]`（**陣列位置**，不是 `unit_key` 對應）去補 fallback 文稿：
+
+```640:648:supabase/functions/process-audio-ai/index.ts.bak-stable
+      return rawSegs.map((s: any, idx: number) => {
+        const unit = taskGradingUnits[idx] || {};
+        return {
+          ...s,
+          original_script: String(s.original_script || unit.original_script || "").trim(),
+          unit_key: s.unit_key || unit.unit_key || "",
+          ...
+```
+
+  `taskGradingUnits` 每次呼叫都重新從資料庫抓最新的 `assignment.tasks[].raw_data.grading_units`，所以老師事後補文稿存檔後，**不需要額外刷新功能**——但如果表格列的順序／數量在學生交件之後被改動，`idx` 對應的單元就會錯位。
+- 已用 `110_teacher_core/feature-ai-backfill.js` 的 `isEligibleForBackfill`（92~207 行）驗證：`status === 'submitted'`（缺稿被略過的狀態）**不會**被排除在補啟名單外，只有已經有完整 `ai_evaluation` 且狀態是 `ai_ready/completed/graded` 才會被排除，所以既有「🤖 補啟 AI 批改」面板就是老師事後補稿的正確入口，不用另做功能。
+- 驗證方式：本次是**程式碼路徑靜態驗證**，因為 `process-audio-ai` 目前是 kill-switch（未上線，見 `ai-grading-pipeline-invariants.mdc`），無法做真實端對端測試。
+
+## 資料結構
+
+```javascript
+// task.raw_data.grading_units[]（script_source === 'skeleton' 時）
+{
+  unit_key: "Ch2:p15/Ex3/#1",    // stem + ':' + sub_path.join('/')，格式跟 A 的 "stem:page" 相容
+  stem: "Ch2",                    // 路徑第一段；之後考試出題沿用它當 sheet_id
+  sub_path: ["p15", "Ex3", "#1"], // stem 之後任意深度，沒有寫死 chapter/exercise 欄位名
+  page: 15,                       // best-effort：sub_path[0] 抽出數字，不保證有
+  path_label: "Ch2/p15/Ex3/#1",   // 老師原始輸入，UI 重開編輯時用這個還原輸入框
+  label: "Ch2/p15/Ex3/#1",
+  original_script: "",            // 可留空，之後回來這裡補
+  item_count: 1,
+  item_nos: []
+}
+```
+
+`unit_key` 刻意維持 `"X:Y"` 格式，因為多檔上傳配對／`submit_audio_task_atomic` merge-by-unit_key／AI 抓稿都只把它當**不透明字串**比對，沒有程式碼會拆開解析內容——這是骨架模式可以直接沿用整條既有管線、不用改比對邏輯的原因。
+
+## base 範圍 ≠ 書名（曾經搞混過一次）
+
+E 模式的「base 範圍」欄位（`node-material-range-manual-${pathStr}`）跟 A 模式的「base 範圍」同角色：
+**依下方單元路徑列自動整理出來的摘要文字**（`buildSkeletonRangeLabelFromRows` + `refreshSkeletonRangeLabel`，
+在路徑列 `input` 事件、加/刪列、開啟編輯器時都會重新計算並覆寫），不是老師手打書名的地方。
+
+書名（如 `Azar-2`）要打在任務最上面的「✏️ 標題」欄——那裡是獨立欄位，`data-title-auto` 一旦被手動輸入蓋成 `'0'`
+就不會被 base 範圍同步覆寫。**不要**又把書名塞回 base 範圍輸入框，否則下一次路徑列變動就會把書名蓋掉。
+
+## 不變量
+
+```
+unit_key 格式固定是 "stem:subpath.join('/')"，不可拆解成其他分隔符或型別
+base 範圍（node-material-range-manual）在骨架模式下永遠是路徑列的計算結果，
+  不是老師手打的書名／自訂文字；書名放在任務標題欄
+E（skeleton）存檔＝表格整份覆寫 grading_units；A（meta）存檔＝禁止縮水覆寫。
+  兩者語意相反，不能把 A 的 ensureMaterialRefsMatchUnits 套到 E 上面。
+已有學生繳交後，骨架單元列表只能「在最後加新列」；
+  禁止刪除／插入中間列、禁止調換既有列順序
+  （否則舊 segment 的 index 會對到別的單元，AI 之後抓到錯的文稿）
+若真的需要修正某一列，只能「就地編輯該列」的路徑或文稿文字，不能刪掉重建
+```
+
+## 禁止
+
+```javascript
+// ❌ 學生已交件後，老師在骨架表格刪除中間某一列
+// （後面所有列 index 往前移，AI 之後抓稿會抓錯單元的文稿）
+
+// ❌ 把 A 模式「禁止縮水覆寫」的 ensureMaterialRefsMatchUnits 套到 E 存檔邏輯上
+// （E 的整份覆寫是刻意設計，不是 bug）
+
+// ❌ 以為補完文稿需要另外開發「重新整理」按鈕才會生效
+// （process-audio-ai 每次呼叫都重抓最新 grading_units，不需要）
+```
+
+## 正確
+
+```
+新增單元：一律用「＋ 加一列單元」加在最後
+修正某列：直接編輯該列的路徑／文稿文字，不要刪除重建
+已有提交後要調整結構：先確認該列是否已有學生繳交；沒有才能安全刪除／搬動
+老師補完文稿：存檔即可，用既有「課程進度」→「🤖 補啟 AI 批改」→ 續跑／重送 觸發重新批改
+```
+
+## 實測
+
+1. 建立骨架單元（路徑填一半、文稿留空）→ 存檔 → 重開任務，表格仍顯示原本列與空文稿
+2. 事後在某列補上文稿 → 存檔 → 用「🤖 補啟 AI 批改」對已略過（缺稿）的學生續跑 → 該生該段從
+   `skipped(original_script_missing)` 變成正常送 AI（此步驟需在 `process-audio-ai` 恢復上線後才能實測，
+   目前僅完成程式碼路徑驗證，見上方「根因」）
+3. 已有學生繳交後，在最後加一列＋補文稿 → 舊有已完成的段落不受影響
+
+## 改動前自問
+
+若本次會動到 `ui-timeline-templates.js` 的骨架表格 UI、`store-assignment-builder.js` 的 `scriptSource === 'skeleton'` 分支、或 `process-audio-ai` 的 `buildSegments()`：
+
+1. 骨架單元的刪除／新增／排序邏輯，是否仍保證「已有繳交的單元絕不改變其陣列位置」？
+2. 若要讓 AI 抓稿從「陣列 index 對應」改成「`unit_key` 對應」，是否已確認 `process-audio-ai` 尚未恢復上線、且改動範圍夠小可獨立驗證？（目前刻意不動這支高風險檔案，只記錄風險）
+
+若任一否，停下。
