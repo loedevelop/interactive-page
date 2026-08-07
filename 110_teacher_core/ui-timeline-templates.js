@@ -548,7 +548,15 @@ window.TimelineTemplates = (() => {
                             label: r.label || ''
                         };
                     }).filter(function (r) { return r.value && r.value !== '::'; });
-                    const materialRootKind = primaryRef.materials_root_kind === 'class' ? 'class' : 'teacher';
+                    // 已存過 materials_root_kind 就用原值；沒存過（新任務）才帶老師個人跨班預設
+                    // （見 020_js_core/teacher-prefs.js getCachedSync；快取沒抓到就維持原字面預設 teacher）
+                    let materialRootKind;
+                    if (primaryRef.materials_root_kind === 'class' || primaryRef.materials_root_kind === 'teacher') {
+                        materialRootKind = primaryRef.materials_root_kind;
+                    } else {
+                        const teacherRootDefaults = window.TeacherPrefs ? window.TeacherPrefs.getCachedSync() : {};
+                        materialRootKind = teacherRootDefaults.default_materials_root_kind === 'class' ? 'class' : 'teacher';
+                    }
                     const selectedMetaJson = JSON.stringify(selectedMetaRows).replace(/"/g, '&quot;');
                     const snapshotPreview = raw.snapshot_at
                         ? ('已凍結 snapshot：' + raw.snapshot_at + (safeMaterialRange ? ('｜' + safeMaterialRange) : ''))

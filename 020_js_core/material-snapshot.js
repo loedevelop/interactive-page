@@ -27,28 +27,39 @@ window.MaterialSnapshot = (function () {
 
     /**
      * 解析範圍字串：
-     *   "pp. 1~2, 5, 10"  → 頁 1–2、5、10
+     *   "pp. 1~2, 5, 10"  → 頁 1–2、5、10（p./pp./p/pp 皆可，大小寫不拘）
      *   "#11~16, 26"      → 題 #11–16、#26
      *   "all"             → 全部
+     * 分隔距離："-"／"~" 皆可（含全形變體）。
+     * 雷區：不接受裸數字（如單獨的 "1"）——沒有 p./pp./# 前綴無法判斷是頁碼還是題號，
+     * 曾經被默默當頁碼解析，老師完全不知道自己選錯了，故意在此明確拒絕並要求補前綴。
      */
     function parseRangeSpec(raw) {
         var text = String(raw || '').trim();
-        if (!text) throw new Error('請填寫範圍（例：pp. 1~2, 5, 10 或 #11~16, 26）');
+        if (!text) throw new Error('請填寫範圍（例：p. 1、pp. 1~2, 5, 10 或 #11~16, 26）');
         if (/^all$/i.test(text) || text === '全部' || text === '全部列') {
             return { kind: 'all', pages: null, items: null, label: 'all' };
         }
 
-        var hasPageHint = /pp\.?/i.test(text);
-        var hasItemHint = /#/.test(text);
-        var kind = hasItemHint && !hasPageHint ? 'item' : 'page';
-        if (hasItemHint && hasPageHint) {
+        // 前綴只認開頭那一個：# → 題號；p./pp.（含無點、大小寫）→ 頁碼。裸數字一律拒絕。
+        var itemPrefixMatch = text.match(/^\s*#\s*/);
+        var pagePrefixMatch = !itemPrefixMatch ? text.match(/^\s*pp?\.?\s*(?=\d)/i) : null;
+        if (!itemPrefixMatch && !pagePrefixMatch) {
+            throw new Error('範圍請加註前綴：頁碼用 p. 或 pp.，題號用 #（例：p. 1、pp. 1~2, 5 或 #11~16, 26）；不接受單獨數字，避免頁碼／題號不清');
+        }
+        var kind = itemPrefixMatch ? 'item' : 'page';
+        var body = text.slice((itemPrefixMatch || pagePrefixMatch)[0].length);
+
+        // 混用檢查放在去前綴之後，訊息才準確（例："pp. 1~2, #5" 拆到 body 還留著 #5）
+        if (kind === 'page' && /#/.test(body)) {
+            throw new Error('同一列請勿混用頁碼（pp.）與題號（#），請拆成兩列');
+        }
+        if (kind === 'item' && /pp?\.?\s*\d/i.test(body)) {
             throw new Error('同一列請勿混用頁碼（pp.）與題號（#），請拆成兩列');
         }
 
-        var cleaned = text
-            .replace(/pp\.?/ig, ' ')
-            .replace(/#/g, ' ')
-            .replace(/[～〜－—–]/g, '~')
+        var cleaned = body
+            .replace(/[～〜－—–-]/g, '~')
             .replace(/\s+/g, ' ')
             .trim();
 
@@ -69,6 +80,8 @@ window.MaterialSnapshot = (function () {
                 }
                 return;
             }
+            // 只接受純數字片段；混了殘留文字（例如前綴沒抓乾淨）一律明確報錯，不可靜默轉成奇怪的小數
+            if (!/^\d+$/.test(part)) throw new Error('無法解析範圍片段：' + part);
             var n = toNumber(part);
             if (isNaN(n)) throw new Error('無法解析範圍片段：' + part);
             if (kind === 'item') items[n] = true;

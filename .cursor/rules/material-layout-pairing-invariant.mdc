@@ -1,0 +1,1058 @@
+---
+description: 教材↔考試 layout 搭配（中央管理端）鐵律
+globs: 110_teacher_core/feature-material-layout-pairing.js,110_teacher_core/feature-exam-job.js,110_teacher_core/feature-material-publish.js,gas/Code.gs
+alwaysApply: false
+---
+
+# 教材↔Layout 搭配鐵律（雷區）
+
+> 2026-08-04：老師要求中央管理端要有「教材跟考試 layout 做搭配」的地方。
+> 動 `feature-material-layout-pairing.js`／`feature-exam-job.js` 的 `layout_profile_id`
+> 下拉時必讀。
+
+## 定位（不可誤解）
+
+```
+這裡登記的是「建議」，不是強制規則。
+exam_job.layout_profile_id 是「整份考卷」層級的預設欄位（對外 Python 排版契約，見
+downloadJson()/saveAndExport() 的 payload 形狀，仍保留、不可移除）。
+2026-08-04 追加：exam_job.sections[].layout_profile_id 是「選填的逐區段覆蓋」，
+留空＝沿用上面的 job 層級預設；填了＝這個區段自己的 layout。
+```
+
+## 一個檔案＝一個活頁；活頁要套用兩個 layout 時怎麼辦（2026-08-04 老師實測釐清）
+
+```
+1 個 .meta.json 檔 = 1 個活頁（= 1 份資料，例如 Vocab_Set1.meta.json）
+活頁可以有「兩個 layout」的意思是：同一份資料，出題時想同時輸出
+「整句翻譯」＋「單字無圖」兩種卷面 —— 這是「同一活頁、兩種呈現」，
+不是「這份資料本身有兩份」，所以：
+
+✅ meta 檔數量 = 不變，還是 1 個（不要因為要套兩個 layout 就複製 meta 檔）
+✅ 開兩個「區段」（sections[]，同一個 sheet_id、同一個考試任務或分兩個任務都可以），
+   各自的 sec.layout_profile_id 各設一個
+❌ 不要誤解成要新增第二個 .meta.json（meta 是資料，layout 是呈現，兩件事分開）
+```
+
+## 禁止
+
+```javascript
+// ❌ 舊版做法：完全不给 sections[] 覆蓋 layout 的能力，老師只能開兩個「考試任務」
+//    才能讓同一活頁吃到兩種 layout —— 已於 2026-08-04 用逐區段覆蓋取代，見下方正確做法
+
+// ❌ 把「建議」變成強制鎖住 layout_profile_id 下拉，選了資料夾後只能選建議的那幾個
+//    （使用者已明確選 suggest_only：只排到最前面＋標「⭐建議」，其餘 LAYOUT_CATALOG 仍可選）
+
+// ❌ quiz-paper-builder.js 在 for 迴圈外算一次 fields/quizPrompt/quizAnswer/quizMode 給全部區段共用
+//    （這樣逐區段覆蓋會失效，每個區段都會被迫吃到 job 層級預設的那一個 layout）
+```
+
+## 正確做法
+
+```javascript
+// ✅ 儲存位置沿用 profiles.raw_data.material_layout_pairs（不新增資料表，
+//    跟 020_js_core/teacher-prefs.js 同一套模式：getCachedSync() 給同步渲染函式用）
+window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds(materialFolder, sheetIds)
+
+// ✅ feature-exam-job.js 的 layoutOpts 只是把 LAYOUT_CATALOG 依建議排序＋加「⭐」標籤，
+//    value 集合不變，老師隨時能選回其他 layout
+
+// ✅ 逐區段覆蓋（新增，additive、不影響舊資料）：
+//    UI：每個區段列多一個「layout（可覆蓋）」下拉，預設「（沿用上方預設）」＝空字串
+//    讀取：readInlineSections() 只在有選值時才寫 sec.layout_profile_id，沒選就不寫這個欄位
+//    產生線上卷：quiz-paper-builder.js 的 buildQuizPaper() 逐區段解析
+//      const profile = sec.layout_profile_id ? pickProfile(layout, sec.layout_profile_id) : defaultProfile;
+//    對外 Python 契約：sections[].layout_profile_id 是新增的選填欄位，
+//      舊的 exam_job.layout_profile_id（job 層級）維持不變，舊系統忽略新欄位即可相容
+```
+
+## 資料模型
+
+```
+pair = { id, material_folder, root_kind('teacher'|'class'), class_id(''='teacher'時不用),
+         sheet_id(''=整個資料夾), layout_profile_ids: [] }
+比對優先序：活頁完全比對（sheet_id 相符）> 資料夾萬用（sheet_id 空白）
+```
+
+## 禁止（2026-08-04 補：低級錯誤重犯）
+
+```javascript
+// ❌ 教材資料夾／活頁又用純文字輸入框要老師手打！這裡跟獨立考試教材來源是同一個坑，
+//    已經在 exam-standalone-material-invariant.mdc 犯過一次，這裡不可再犯
+<input class="mlp-folder" placeholder="例如 MasonLiu_SeanCheng">
+<input class="mlp-sheet" placeholder="例如 VOCAB_SET1">
+
+// ❌ LAYOUT_CATALOG 只保留舊的 2~3 個，忘記老師之前已經明確給過 5 個模板類型
+//   （整句翻譯／句子填空／單字帶圖／單字無圖／新版擴充，見「老師個人中央考試模板」規劃）
+```
+
+## 正確做法（下拉來源，2026-08-04 補）
+
+```javascript
+// ✅ 教材資料夾／活頁下拉重用 FeatureExamJob 已暴露的 helper（不新寫一份 Drive 讀檔邏輯）
+window.FeatureExamJob.getUniqueFolderNames(classId, rootKind)
+window.FeatureExamJob.getSheetStemsForFolder(classId, rootKind, materialFolder)
+// rootKind === 'class' 時必須先選「班級」（class_id）才能查對應班級資源夾，
+// 沒選班級前資料夾下拉要 disabled + 顯示「請先選班級」，不可憑空給錯清單
+// 兩者都保留 "__manual__" 逃生口 + 找不到清單時保留原值（⚠️ 標記），不憑空清空已存值
+
+// ✅ LAYOUT_CATALOG（feature-exam-job.js）目前應含 6 項：
+//   sentence-translate-4col（整句翻譯）／sentence-cloze-4col（句子填空）／
+//   gept-translate-5col（舊 id）／vocab-no-image（單字無圖）／
+//   vocab-with-image（單字帶圖，🚧 占位無圖片渲染）／v2-extended（新版擴充，🚧 占位）
+```
+
+## 本機 Excel 讀活頁／欄位小工具（2026-08-04 新增，刻意分階段）
+
+> 老師要求：中央管理端要能「選本機 Excel → 列出所有活頁 → 點活頁列出所有欄位 → 勾選需要用到的欄位
+> → 按「確定選取」→ 欄位勾選區塊收起來（不是消失，還能展開改） → 下面出現欄位對應設定：
+> 行數起／行數末（`LAST(欄位)` 語法）＋ 每個已勾選欄位各自用下拉選「資料項名稱」（semantic_key）。
+> 2026-08-04 第二輪追加：同一活頁可以按「＋新增一組」再產生一組獨立的「欄位勾選＋對應設定」
+> （對應 README「同一活頁、多區塊」：前後段欄位語意不同時，各自一組）。
+> 2026-08-04 第三輪修正（老師明確更正儲存單位）：「大區塊」**不是**存成一個獨立具名 layout，
+> 而是存成一筆「教材資料夾／檔案／活頁 ＋ layout」——活頁清單改成**可勾選、可多選**
+> （欄位結構一樣的活頁可以一次勾好幾個，一次套用同一組欄位設定，不用每個活頁各存一份）；
+> 識別鍵＝材料資料夾＋活頁清單（相同＝覆蓋更新，不同＝新增一筆），不再需要老師另外幫 layout 取名。
+> **目前只做到「存起來」這一步，還沒有下一步的實際套用**（例如寫回 `_Schema`／`_Publish` CSV、
+> 真的產出 meta.json 等）。**不要自己延伸加更多功能**，等老師下一步指示再接。
+
+> 2026-08-05 第四輪修正（真正的功能 bug，不是老師誤會）：老師實測附圖證實「欄位對應設定」
+> 沒有出現，根因是舊版欄位勾選區塊同時放了「▲收起／▼展開」跟「✅確定選取」兩顆長得很像的按鈕，
+> 「收起」不會設定 `seg.confirmed`，按錯這顆就走到死路且畫面無任何提示。同一輪也發現：
+> (a) 頂層 `render()` 用 `await Promise.all([ensureMetaCatalog(...)])` 卡住才 `paint()`，
+> GAS 這個呼叫本來就慢，等於整頁重整卡住；(b) 本機 Excel 用 `XLSX.read(data,{type:'array'})`
+> 整份工作簿全部分頁下去解析，老師的檔案常有一堆用不到的分頁（錯題本／列印範本／DB 舊資料…），
+> 越多分頁、資料越大就越慢。三個問題已在 2026-08-05 修好，見下方「正確做法」。
+
+> 2026-08-05 第五輪修正（老師實測第四輪的成果後回報三件事）：
+> (a) 老師仍要求「欄位選項要能收合」——第四輪為了避免誤觸把「收合」整個拿掉（確認前只剩確定選取），
+>     但 194 欄勾選時要一路往下滑很不方便。修法：收合連結**確認前後都要在**，但改成純文字底線連結
+>     （無框無底色），跟大顆實心的「✅確定選取」按鈕視覺完全不同、位置也分開，不會再誤觸；
+> (b) 教材資料夾下拉仍然是空的，但只顯示「⚠️ 清單載入失敗，可用『其他』手動輸入」——**手動輸入不是
+>     解方，沒有老師記得資料夾全名**。要顯示 `err.message` 真正的失敗原因（GAS 部署版本／權限／逾時
+>     各自訊息不同，才有機會定位問題），並且**一定要有「🔄 重新載入」按鈕**，讓老師能反覆重試、
+>     不必整頁重新整理；GAS 有回應但清單真的是空的（跟連線失敗是兩種情況）也要給重試按鈕；
+> (c) 老師回報「修正一（收起按鈕陷阱）全數失敗，但看不出畫面哪裡失敗」。真正原因：194 欄的格線
+>     收合／展開／確定選取後 `renderExcelSegments()` 整個 `innerHTML` 重繪，卡片高度瞬間大幅變化，
+>     捲動位置（像素）沒有跟著內容走——原本畫面上那個位置現在對應到頁面完全不同的地方（甚至捲到
+>     頁面底部、跑到別的區塊），老師會覺得「按了沒反應」，其實欄位對應設定真的畫出來了，只是跑到
+>     螢幕看不到的地方。修法：收合／展開／確定選取後都呼叫 `scrollSegmentIntoView(seg)` 把該卡片
+>     捲回可視範圍。
+
+> 2026-08-05 第六輪修正（老師邏輯提問）：「如何取消選取？那個確認選取按鍵，不應該選完就消失。」
+> 第二輪把「確定選取」設計成「按一次就永久消失，只剩一段文字」，導致確認後完全沒有回頭路——
+> 想改變心意（誤按確認、想整組重來）沒有任何按鍵可以按。修法：同一個位置永遠都有一顆按鈕，
+> 只是文字／動作依 `seg.confirmed` 狀態切換，不是「用完即棄」：
+> - 未確認：「✅ 確定選取」（主色實心）
+> - 已確認：「↩️ 取消選取（可重新編輯欄位）」（灰色外框，同一個位置、同一個 class 選擇器慣例：
+>   `.mlp-excel-confirm-cols` 只在未確認時出現、`.mlp-excel-cancel-confirm` 只在已確認時出現，
+>   兩者互斥地佔用同一個版位，永遠有一顆可按）
+> 取消後 `confirmed=false`＋自動展開格線，但 `checks`／`mapping`（行數起迄、資料項名稱）**不清空**，
+> 下面的欄位對應設定會因為 `confirmed=false` 而收起，重新按「確定選取」會用回同一份資料。
+
+> 2026-08-05 第七輪修正（老師明確更正資料模型，**推翻第三輪的儲存單位設計**）：老師確認
+> 「每一組（segment）本身就是一份獨立的 layout」，要求：
+> (a) 每一組要有**自己的**活頁勾選清單（不是整個 Excel 共用一份），不同組可以套用到不同活頁；
+> (b) 每一組要能**單獨命名、單獨儲存**（同名＝覆蓋更新，新名＝新增一筆），儲存按鈕要放在
+>     「第 N 組欄位設定」白色卡片**裡面**、綠色欄位對應框**外面**（卡片最底部）；
+> (c) 教材資料夾／檔案仍是整份 Excel 共用一份，但位置要移到「選擇檔案」正下方（跟每一組的
+>     設定分開，不要摻在某一組卡片裡）；
+> (d) 「▲收起／▼展開欄位清單」連結要跟「✅確定選取／↩️取消選取」放同一行、在它左邊
+>     （原本另起一行，老師要求合併）。
+> **這個決定直接推翻第三輪「儲存單位＝教材資料夾／檔案／活頁＋layout（不給名字）」的設計**——
+> 若之後又看到類似「不要給名字，用資料夾＋活頁清單當識別鍵」的舊描述，以這一輪、以及本檔最新的
+> 「資料模型」／「實測」段落為準，不要照抄第三輪的說法。
+
+```javascript
+// ✅ 前端純解析，不上傳檔案，用 teacher/index.html 已載入的 SheetJS（window.XLSX）
+window.XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' })
+wb.SheetNames                         // 活頁清單
+window.XLSX.utils.decode_range(sheet['!ref'])   // 該活頁的欄位範圍
+window.XLSX.utils.encode_col(c)       // 欄位字母（A, B, ...）
+
+// ❌ 不要做成上傳到後端解析（老師的教材可能含未發布內容，且違反「本機發布」既有動線）
+// ❌ 不要自己另外 npm install 一個 xlsx 套件／CDN，teacher/index.html 已經有一份
+// ❌ 按「確定選取」後不可把欄位勾選區塊整個 innerHTML 清掉——老師要的是「收起來」（可展開改選），
+//    不是「換掉」；用 segment.gridCollapsed + 隱藏該組的 .mlp-excel-cols-grid，不要移除 DOM
+// ❌ 「資料項名稱」下拉的選項不可寫死死板幾個就結束——要包含老師手動輸入過的新名稱
+//    （見 _sessionSemanticKeys／rememberSemanticKey，同一次操作內累積、跨組／跨活頁分頁共用）
+// ❌ 2026-08-05 補：確認前不可同時出現「收起／展開」跟「確定選取」兩顆按鈕——
+//    「收起」不會設定 confirmed，兩顆長得像又並排，老師一定會按錯（已實測發生過）；
+//    確認前只能有一顆「✅確定選取」，「▼展開修改／▲收起」只在 seg.confirmed===true 之後才出現
+// ❌ 2026-08-05 補：render() 不可 await 完整個教材 meta catalog（GAS 呼叫，本來就慢）才 paint()——
+//    要先用目前已知（可能是空）的清單畫出整頁，folder 下拉用背景載入＋⏳/⚠️ 狀態補（見 refreshFolderSelect／refreshExcelFolderSelect），不可整頁卡住等 GAS
+// ❌ 2026-08-05 補：XLSX.read() 不可整份工作簿下去解析——選檔第一次只能用 { bookSheets: true }
+//    拿活頁名稱（極快），老師勾選某活頁要預覽欄位時才用 { sheets: [name] } 針對那一個活頁單獨解析＋快取
+//    （parseSheetColumns 的 _excelSheetColumnsCache），不要因為工作簿裡一堆用不到的分頁被拖慢
+// ❌ 一個活頁只能有一組欄位勾選＋對應設定——同一活頁前後段欄位語意不同時要能「＋新增一組」
+//    （_excelSegments 是陣列，不是單一物件）
+// ❌ 活頁選擇做成單選（點一個換一個）——老師明確要求可勾選、可多選
+// ⚠️ 2026-08-05 第七輪推翻：「儲存單位做成教材資料夾／檔案／活頁＋layout（不給名字），
+//    識別鍵＝material_folder＋sheet_ids」是**第三輪**的設計，已被**第七輪**推翻，不要再照做！
+//    第七輪之後：每一組（segment）本身就是一份獨立、有名字的 layout，識別鍵＝name（同名覆蓋），
+//    活頁勾選是每組自己的（seg.checkedSheets），不是整個 Excel 共用一份（見下方最新資料模型）
+// ❌ 2026-08-05 第五輪補：folder 下拉失敗只顯示「⚠️ 清單載入失敗，可用『其他』手動輸入」就結束——
+//    手動輸入不是解方（沒有老師記得資料夾全名）。必須顯示 err.message 真正原因＋一定要有
+//    「🔄 重新載入」按鈕（見 refreshFolderSelect／refreshExcelFolderSelect 的 renderFolderRetryButtonHtml），
+//    GAS 有回應但清單真的是空的也要給重試按鈕，不能跟連線失敗混在一起變成同一句話
+// ❌ 2026-08-05 第五輪補：收合欄位清單的連結不可整個拿掉（確認前完全不給收合）——
+//    194 欄要一路往下滑很不方便，收合連結要「確認前後都在」，但必須跟「✅確定選取」用完全不同的
+//    視覺語言（純文字底線連結，無框無底色），不可再做成兩顆並排、長得像的按鈕
+// ❌ 2026-08-05 第五輪補：收合／展開／確定選取後只重繪 DOM 就結束、不管捲動位置——
+//    194 欄的格線收合會讓卡片高度暴增/暴減，捲動位置（像素）沒跟著內容走，老師會以為「按了沒反應」
+//    （其實內容真的畫出來了，只是跑到螢幕看不到的地方）。這三個操作後都要呼叫 scrollSegmentIntoView(seg)
+// ❌ 2026-08-05 第六輪補：「確定選取」按一次就永久消失、只剩一段文字——沒有任何按鍵可以回頭，
+//    誤按確認或想整組重來時無路可走。同一個版位必須永遠有一顆按鈕，已確認時要換成
+//    「↩️ 取消選取（可重新編輯欄位）」，不能讓按鈕整個消失
+// ❌ 2026-08-05 第七輪補：活頁勾選清單放在整個 Excel 區塊層級（所有組共用）——要下放到
+//    每一組（renderSegmentSheetChecklistHtml(seg) 用 seg.checkedSheets，不是模組層級的
+//    _excelCheckedSheets），不同組才能各自套用到不同活頁
+// ❌ 2026-08-05 第七輪補：儲存按鈕放在整個 Excel 區塊最下面（跟所有組共用一顆）——要下放到
+//    每一組自己的卡片裡（renderSegmentSaveAreaHtml(seg)），位置在該組的綠色欄位對應框「外面」、
+//    白色卡片「裡面」（卡片最底部），每組各自命名、各自儲存、互不影響
+// ❌ 2026-08-05 第七輪補：教材資料夾／檔案選擇器放在某一組卡片裡面——它是整份 Excel 共用的，
+//    要獨立成 #mlp-excel-folderfile，位置在「選擇檔案」input 正下方，在所有組卡片「之前」
+// ❌ 2026-08-05 第七輪補：「▲收起／▼展開欄位清單」連結跟「✅確定選取／↩️取消選取」分成兩行——
+//    老師要求合併成同一行，展開/收合連結在左、確定/取消按鈕在右（見 renderColsAreaHtml）
+// ❌ 2026-08-05 第八輪補：欄位對應設定裡每一欄只有「資料項名稱」下拉，沒有標示這欄是印卷用的
+//    「題目」欄位還是「答案」欄位——要在每個下拉右邊加兩個獨立勾選框（題目／答案，可都勾/都不勾），
+//    存檔時每欄要多存 is_question／is_answer（見 renderMappingAreaHtml、handleSaveSegment）
+// ❌ 2026-08-05 第九輪補：「確定選取」按鈕只在格線最上面一顆——194 欄的格線很長，勾到最下面
+//    要滑回最上面才能按到，要在格線下面也放一顆一樣的按鈕（同一個 class，bindSegmentEvents
+//    用 querySelectorAll 兩顆都綁，不能只 querySelector 綁到第一顆）
+// ❌ 2026-08-05 第九輪補：「確定選取」用橘色實心＋✅ 綠色勾勾——那顆✅視覺上太像「已經確認過」，
+//    跟語意（要按了才算數）衝突；改成拿掉✅、用跟「已確定選取」同色系的淺薄荷綠（背景#ECFDF5、
+//    邊框#6EE7B7、文字#0F766E），視覺柔和、不再像警示用按鈕（見 renderConfirmColsButtonHtml）
+// ❌ 2026-08-05 第九輪補：Layout 名稱／儲存按鈕（renderSegmentSaveAreaHtml）不能在
+//    seg.confirmed=false 時就先單獨出現——要跟欄位對應設定（renderMappingAreaHtml）掛在同一個
+//    confirmed 條件下，兩塊「同時」出現或同時收起，不能讓儲存區塊看起來比欄位對應設定先出現
+// ❌ 2026-08-05 第九輪補：「＋新增一組」按鈕永遠顯示——要擋到「目前最後一組已經成功存過至少
+//    一次 layout」（seg.savedOnce）才能出現，否則老師會同時開兩組半成品互相搞混；存檔成功／
+//    刪除某組後都要呼叫 refreshAddSegmentButtonVisibility() 更新這顆按鈕的顯示狀態
+// ❌ 2026-08-05 第十輪補（已被第十一輪推翻，整段是錯誤教訓，故意留著提醒自己別再犯）：
+//    當時把「訊息」做成「題目＋答案都勾」的 UI 捷徑／別名——勾訊息＝自動把 question/answer
+//    都設 true，資料層只有 colRole:{question,answer} 兩個布林值，沒有第三個獨立欄位。
+//    結果訊息勾出來的資料跟老師自己手動勾兩個一模一樣，老師直接怒斥「這當然是bug，
+//    兩個都要勾我自己勾就行，幹嘛要一個訊息」。教訓：「這欄要印在哪張紙上」
+//    （question/answer）跟「這欄是不是被考的內容」（info）是兩個不同的語意軸，
+//    不能把後者實作成前兩者的組合，否則等於沒有新增任何資訊量。
+// ❌ 2026-08-05 第十一輪補（正解）：colRole 必須是 {question, answer, info} 三個完全獨立、
+//    互不連動的布林值；UI 三顆勾選框各自只改自己的值，勾一個不會自動勾/取消另外兩個。
+//    存檔的 columns[] 要多存 is_info（跟 is_question/is_answer 同輩，不是衍生值）。
+//    vBK_name／page／item_no 這類參考資訊應該「只勾訊息」（is_info=true，
+//    is_question=is_answer=false）——不是「訊息+題目+答案都勾」，也不是「題目+答案都勾但沒有訊息」
+// ❌ 2026-08-05 第十二輪補：勾選活頁後，checkbox 打勾這個動作直接靠 renderExcelSegments()
+//    整個重繪來反映——但重繪過程裡 renderSegmentCardHtml 會呼叫 parseSheetColumns(參考活頁)，
+//    這個活頁如果還沒被解析過（快取沒命中），XLSX.read 要重新讀整份原始檔案位元組，
+//    28 個活頁、檔案不小時這段是同步、會卡住主執行緒，老師會覺得「勾了但畫面呆住半天才打勾」。
+//    不能誤判成「勾選框本身很慢」就去改 checkbox 本身；真正原因是「這次重繪連帶觸發了一次
+//    沒被快取過的重新解析」。修法：checkbox 勾選瞬間先直接用 DOM 改自己的顏色（不等重繪），
+//    再判斷參考活頁是否已快取——命中就直接重繪（快）；沒命中才顯示「⏳ 處理中…」＋用
+//    deferHeavyWork()（rAF＋setTimeout 兩輪）把重繪排到下一次畫面繪製之後，
+//    讓「打勾」跟「處理中文字」先被畫出來，不是整段時間畫面完全靜止
+```
+
+資料狀態（2026-08-05 第七輪更新，取代之前的版本）：
+
+```
+// 只存在記憶體，尚未套用（勾選／編輯中）
+_excelRawData                              // 選檔時存下的原始位元組，供之後單獨解析某活頁用
+_excelWb                                   // 第一階段 { bookSheets: true } 的結果，只有 SheetNames，沒有欄位資料
+_excelSheetColumnsCache = { 活頁名稱: [{letter, header, sample}] }  // 第二階段單獨解析結果的快取，同活頁不重複解析
+_excelMaterialFolder / _excelFileName      // 整份 Excel 共用（所有組都是同一個檔案），渲染在 #mlp-excel-folderfile
+_excelSegments = [                          // 每一組＝一份獨立的 layout，各自的活頁勾選＋欄位＋名字＋儲存
+  { id, name, checkedSheets:{活頁名稱:bool}, checks:{colLetter:bool}, gridCollapsed, confirmed,
+    savedOnce,                                                        // 2026-08-05 第九輪新增，見下方「＋新增一組」規則
+    mapping:{ rowStart, rowEnd, colSemantic:{colLetter:semanticKey},
+              colRole:{colLetter:{question:bool, answer:bool, info:bool}} } },  // info 為第十一輪新增，三者互不連動
+  ... // ＋新增一組＝再建一份獨立 layout（可以套用到跟第一組完全不同的活頁）
+]
+// 「＋新增一組」按鈕：只有 _excelSegments 最後一組 savedOnce===true 才會顯示
+// （canAddMoreSegments()／refreshAddSegmentButtonVisibility()，2026-08-05 第九輪）
+_sessionSemanticKeys   // 本次操作新輸入過的 semantic_key，併入下拉選項
+// 欄位勾選／預覽用「這一組自己已勾選的第一個活頁」當參考（getReferenceSheetNameForSegment(seg)），
+// 欄位對應只存欄位字母（letter），跟哪個活頁無關，換參考活頁不影響已勾選/已對應的內容
+
+// 已持久化（按每組自己的「💾 儲存這個 layout」才會寫）：profiles.raw_data.material_field_templates
+[{ id, name, material_folder, file_name, sheet_ids: [], row_start, row_end,
+   columns: [{letter, semantic_key, is_question, is_answer, is_info}], updated_at }]
+// 每一筆＝一份獨立的 layout（不再是「大區塊」裡塞一個 segments 陣列）
+// 覆蓋規則：name 完全相同 → 覆蓋同一筆；不同名 → 新增一筆
+// is_question／is_answer／is_info 三個完全獨立、可任意組合的旗標（第十一輪修正，不是彼此的衍生值）：
+//   is_question／is_answer 對應對外 Python 印卷契約既有的 fields（題目欄位清單）／
+//   fields_answer（答案欄位清單）；is_info＝這欄是參考資訊（活頁名/頁碼/題號），不是被考的內容，
+//   跟 is_question/is_answer 無關——之後若要把 info 併入 fields/fields_answer 輸出（因為要印在兩張紙上），
+//   應該在「套用到實際考卷」那一層做 fields = cols(is_question||is_info)、
+//   fields_answer = cols(is_answer||is_info) 的轉換，不要在這個小工具的儲存階段就把 info 蓋掉
+//   question/answer 本身的值
+```
+
+## 實測
+
+1. 中央管理端新增一筆搭配（歸屬＝老師個人，資料夾用下拉選、不是打字）→ 活頁下拉應列出該資料夾真實 stem
+2. 歸屬切成「班級」→ 資料夾下拉應先 disabled 顯示「請先選班級」，選了班級後才出現該班真實資料夾清單
+3. 勾兩個 layout → 儲存後重新整理頁面仍在，資料夾／活頁/班級選擇都還原正確
+4. 該資料夾底下任何活頁的獨立考試／combo 考試，layout_profile_id 下拉最上面應出現對應「⭐」選項，且應能看到全部 6 個模板選項（不是只有舊的 3 個）
+5. 老師仍可選清單中其他未標星的 layout，存檔／匯出不受影響
+6. 沒有任何搭配紀錄時，下拉行為應與改動前完全一致（純字母序、無星號）
+7. 同一活頁開兩個區段（同一個 sheet_id），區段 1 的「layout（可覆蓋）」選 A、區段 2 選 B →
+   產生線上卷後兩個區段的題目應分別吃到 A／B 各自的 quiz_prompt／quiz_answer／fields
+8. 兩個區段都留空「（沿用上方預設）」→ 行為應與改動前完全一致（都吃 job 層級 layout_profile_id）
+9. 本機 Excel 小工具：選檔 → 教材資料夾／檔案（在檔案選擇器正下方，不在任何一組卡片裡）→
+   第 1 組：勾選要套用的活頁 → 勾欄位 → 確定選取 → 欄位勾選區塊收起（按「▼展開」能再打開改選）
+10. 按「＋新增一組」→ 出現獨立的第二組（自己的活頁勾選＋欄位勾選＋對應設定＋名字＋儲存按鈕），
+    跟第一組互不影響；第二組可以勾選跟第一組完全不同的活頁
+11. （2026-08-05 第七輪）第 1 組勾選活頁 A＋B（欄位結構相同）→ 「這組要套用到哪些活頁」清單
+    應同時列出 A、B；已勾選的欄位／已填的行數起迄／資料項名稱不應被清空或重置
+12. （2026-08-05 第七輪）第 1 組打好欄位對應後，在該組卡片最底部（綠色框外、白色卡片內）
+    選/輸入 layout 名稱 → 按「💾 儲存這個 layout」→ 下方「已儲存的 layout」清單應立刻出現這一筆，
+    正確列出名稱／資料夾／檔名／活頁清單／幾欄；第 2 組用不同名字儲存 → 應變成兩筆獨立紀錄，
+    不會互相覆蓋
+13. （2026-08-05 第七輪）同一組改用「已有 layout 名稱」下拉選到之前存過的名字 → 按儲存 →
+    應覆蓋更新那一筆（不是多新增一筆）；改回手動輸入一個新名字 → 應新增一筆
+14. （2026-08-05 第七輪）「▲收起／▼展開欄位清單」連結應跟「✅確定選取／↩️取消選取」同一行，
+    在它左邊，不是分成兩行
+15. （2026-08-05）進「教材/Layout 搭配」頁：整頁應立刻出現（不等 GAS），教材資料夾若還沒載完
+    應顯示「⏳ 載入資料夾清單…」，載完自動補上真實清單；GAS 失敗要顯示「⚠️ 清單載入失敗」而不是靜默空清單
+16. （2026-08-05）選一份有 10+ 個分頁、其中一個分頁有上百欄的大 Excel → 選檔本身應接近瞬間完成
+    （只做 bookSheets），勾選要用的那個活頁後才會有明顯的解析等待，且只解析那一個活頁
+17. （2026-08-05）已確定選取後，再多勾一個欄位 → 下面欄位對應設定要立刻多出一列該欄位的資料項名稱下拉，
+    不用重新按一次「確定選取」
+18. 未勾任何活頁、或未選教材資料夾、或沒有取名字、或沒按過「確定選取」→ 按儲存應各自出現對應錯誤訊息，不送出
+19. （2026-08-05 第五輪）確認前勾幾個欄位後按「▲收起欄位清單」→ 格線收起，摘要仍顯示已勾選內容，
+    畫面自動捲回這張卡片頂端（不會停在原本的像素位置變成看起來像沒反應）；再按「▼展開欄位清單」
+    格線展開、已勾選狀態不變，也會捲回卡片頂端
+20. （2026-08-05 第五輪）確認前的「▲收起欄位清單」跟「✅確定選取」視覺必須明顯不同
+    （一個是純文字底線連結、一個是實心主色按鈕），按「收起」不會設定 confirmed；只有按
+    「✅確定選取」才會讓下面出現「欄位對應設定」，且畫面會自動捲到看得到該區塊的位置
+21. （2026-08-05 第五輪）刻意讓 GAS 呼叫失敗（例如暫時改錯 GAS_WEB_APP_URL 或斷網）→
+    教材資料夾下拉旁應顯示具體錯誤訊息（不是空泛的「清單載入失敗」）＋「🔄 重新載入」按鈕；
+    恢復正常後按重新載入，應成功補上真實資料夾清單且錯誤訊息消失
+22. （2026-08-05 第五輪）GAS 有正常回應、但這個帳號底下真的沒有任何教材資料夾 → 應顯示
+    「⚠️ 這個帳號目前抓不到任何教材資料夾（不是連線錯誤）」＋重新載入按鈕，跟連線失敗的文字要不同，
+    不能讓老師誤判成「網路又斷了」
+23. （2026-08-05 第六輪）勾欄位＋按「✅確定選取」→ 該按鈕原位置應變成「↩️取消選取（可重新編輯欄位）」
+    （不是整個消失只剩文字）；按下取消 → 格線自動展開、下面欄位對應設定收起、原按鈕位置變回
+    「✅確定選取」，但已勾選的欄位／已填的行數起迄／資料項名稱都還在；再按一次確定選取應該
+    完整還原剛剛的欄位對應設定內容，不用重打一次
+24. （2026-08-05 第八輪）欄位對應設定每一列「資料項名稱」下拉右邊應出現「題目」「答案」兩個勾選框；
+    勾「題目」不會自動連動「答案」，兩個可以同時勾、都不勾、或只勾一個；取消選取再重新確定選取，
+    這兩個勾選狀態應該還在（不會被清空）
+25. （2026-08-05 第八輪）勾好題目／答案後按「💾 儲存這個 layout」→ 下方「已儲存的 layout」清單
+    該筆應顯示「題目 N／答案 M」的正確計數；重新編輯同一組改變某欄的題目／答案勾選後再存同名 layout
+    （覆蓋）→ 清單上的計數應更新成新的數字，不是維持舊值
+26. （2026-08-05 第九輪）勾選欄位（尚未確定選取）時，格線上方跟下方應該都能看到「確定選取」按鈕，
+    兩顆按鈕視覺一致（淺薄荷綠、無✅），點任何一顆都會確定選取＋收合格線＋捲到卡片頂端；
+    格線收合時下方按鈕應消失（因為格線本身也看不到了），上方按鈕仍在
+27. （2026-08-05 第九輪）尚未按「確定選取」時，往下捲動不應該看到「Layout 名稱／儲存這個 layout」
+    區塊；按下確定選取後，欄位對應設定＋Layout 名稱／儲存按鈕應該同時一起出現在畫面上
+28. （2026-08-05 第九輪）第一次進小工具（第 1 組還沒存過任何 layout）→ 不應該看到「＋新增一組」
+    按鈕；把第 1 組存成功一次後 → 「＋新增一組」按鈕應立刻出現（不用重新整理頁面）；按下後產生
+    第 2 組，這時第 2 組還沒存過 → 「＋新增一組」按鈕應再次消失，直到第 2 組也存過才會再出現
+29. （2026-08-05 第十一輪）某欄只勾「🏷️訊息」→「題目」「答案」都應該維持未勾，不會被連動勾上；
+    反過來，只勾「題目」「答案」→「🏷️訊息」應該維持未勾，不會被自動勾上。三顆勾選框互相
+    完全獨立，任何一顆改變都不影響另外兩顆
+30. （2026-08-05 第十一輪）某欄同時勾「題目」＋「🏷️訊息」（兩個都要，例如老師刻意讓某參考資訊
+    也顯示在題目卷上）→ 應該可以同時勾成功，存檔後 is_question=true 且 is_info=true，
+    is_answer 仍是 false（不會被連動勾上）
+31. （2026-08-05 第十一輪）存一筆只勾「🏷️訊息」的欄位（例如 vBK_name／page／item_no）→
+    「已儲存的 layout」清單要顯示「訊息 N」的計數，且該欄不應該被算進「題目」或「答案」的計數裡
+32. （2026-08-05 第十二輪）選一個有 20＋ 個活頁、其中至少一個活頁欄位很多的大 Excel → 第一次
+    勾選一個「還沒被當過參考活頁」的活頁 → 勾選框應該幾乎立刻變色（打勾生效），旁邊要看到
+    「⏳ 處理中…」文字，過一小段時間後欄位清單／欄位對應才更新完成，「處理中」文字應消失；
+    不應該整段時間（勾選到欄位清單更新完成之間）畫面完全沒有任何變化
+33. （2026-08-05 第十二輪）勾選一個「已經被解析過」的活頁（例如取消勾選再重新勾選同一個，
+    或勾第二個但參考活頁沒變）→ 應該幾乎瞬間完成，不應該出現「⏳ 處理中」文字
+    （代表快取命中判斷邏輯正確，沒有每次都顯示處理中造成沒必要的延遲感）
+
+## 2026-08-05 第十三輪：架構修正——Template 必須能脫離檔案獨立存在（重大，推翻部分舊資料模型）
+
+> 老師實測回報「對應的欄位，怎麼又不見了！！！」「儲存好的 layout 如何叫出來，並修改」，
+> 追查後發現這不是渲染 bug，是**設計缺陷**：舊版「已儲存的 layout」清單只掛在 Excel 小工具
+> 底下（`#mlp-excel-saved-list`），沒有選 Excel 檔案／`_excelWb` 是 null 時整個清單連 DOM 都不存在，
+> 等於「存起來的東西沒有地方可以叫出來看，更別說編輯」。老師明確更正：
+> 「layout 是被套用的概念，既是套用，本就該獨立存在，怎麼可以依附在某個檔案裡」。
+
+### 問題根因（不可再犯）
+
+```
+❌ Template（欄位對應規則）跟「用來設計它的 Excel 檔案」耦合在同一個 UI 生命週期裡——
+   沒有檔案 = 看不到已存的 Template，等於無法回頭編輯/刪除已經存在的規則
+❌ Template 資料本身塞了 row_start/row_end（「套用到某個檔案時的行數」）——
+   這是「用某規則讀某檔案」才有意義的資訊，寫死在規則本身會讓同一份 Template
+   沒辦法套用到「資料筆數不同」的另一個檔案（第二個檔案的行數起迄注定跟第一個不一樣）
+```
+
+### 正解：拆成兩個獨立概念
+
+```
+Template（規則，profiles.raw_data.material_field_templates）：
+  跟任何檔案脫鉤，永遠可以獨立被看到／新增／編輯／刪除，不需要載入任何 Excel 檔案。
+  { id, name, columns: [{letter, semantic_key, is_question, is_answer, is_info}],
+    designed_from: { material_folder, file_name, sheet_ids } | null,   // 純參考資訊，可空
+    updated_at }
+
+Application（套用紀錄，NEW: profiles.raw_data.material_template_applications）：
+  「這份 Template 實際用在哪個檔案，那次套用的行數起迄」，跟 Template 本身分開存，
+  同一份 Template 可以有多筆 Application（套到多個不同檔案，各自行數不同）。
+  { id, template_id, template_name, root_kind:'teacher'|'class', class_id,
+    material_folder, sheet_id, row_start, row_end, updated_at }
+```
+
+### UI 三個獨立區塊（`feature-material-layout-pairing.js`，由上到下）
+
+```
+1. 🧩 Layout Template（永遠顯示，不需要任何 Excel 檔案）
+   - 「＋新增 Template」／清單每筆「✏️編輯」「🗑️刪除」→ 都會叫出同一個自包含編輯表單
+     （renderTemplateEditor）：名稱 + 欄位列（letter 自由文字、semantic_key 下拉、
+     題目/答案/訊息三個獨立勾選），欄位列可自由新增/刪除（不綁定任何 Excel 欄位偵測）
+   - 這是唯一「儲存好的 layout 要怎麼叫出來改」的地方，不再依附 Excel 小工具
+
+2. 🧾 從本機 Excel 讀取活頁／欄位（設計 Template 的輔助小工具，維持原有 Excel 解析/勾選流程）
+   - 確定選取後只設計「欄位」（拿掉 row_start/row_end 輸入），存檔時寫入上面 Template 的新形狀，
+     教材資料夾/檔名/活頁清單只當 designed_from（選填、純參考，不擋存檔）
+   - 這裡不再有自己的「已儲存的 layout」清單（#mlp-excel-saved-list 已移除）——
+     存好之後一律去第 1 區塊看/改，不要在這裡重複維護第二份清單
+
+3. 📎 套用到教材（Template ↔ 實際檔案，決定行數起迄）
+   - 選 Template（下拉，選項＝第 1 區塊存的名字）+ 選教材資料夾/活頁
+     （沿用既有 uniqueFolderNames／sheetStemsForFolder，不是文字輸入框）+ 行數起/行數末
+   - 跟「教材／考試 Layout 搭配」（material_layout_pairs，決定 layout_profile_id 建議）
+     是兩個不相關的東西，UI 保持分開、資料表也分開，不要合併
+```
+
+### 禁止
+
+```javascript
+// ❌ Template 的「已儲存清單」只掛在 Excel 小工具裡、依賴 _excelWb 存在才能看到
+//    （第十三輪的根本問題，已改成永遠獨立顯示的 #mlp-template-list）
+
+// ❌ 存 Template 時要求老師一定要先選教材資料夾／勾活頁才能存
+//    （materialFolder/sheetIds 只是 designed_from，選填、純參考，不該擋存檔）
+
+// ❌ row_start/row_end 存在 Template.columns 或 Template 本身裡
+//    （行數是「套用」層級的產物，屬於 material_template_applications，不屬於 Template）
+
+// ❌ 編輯既有 Template 時用「名字」比對找回原紀錄
+//    （老師編輯時可能順便改名字，用名字比對會在改名時變成新增一筆而不是更新原本那一筆；
+//    要用 record.id 比對，只有「新增」流程才用名字比對决定覆蓋或新增）
+```
+
+### 資料相容性
+
+```
+舊資料（第七輪～第十二輪存的）：{ id, name, material_folder, file_name, sheet_ids,
+  row_start, row_end, columns:[...] } —— 讀取時仍能顯示（renderTemplateList 只讀
+  t.columns/t.designed_from，沒有 designed_from 就顯示空白，不會報錯）；
+一旦用新版「Layout Template 管理」區塊編輯並存檔，就會被覆寫成新形狀（去掉
+row_start/row_end，material_folder/file_name/sheet_ids 收進 designed_from），
+屬於自然遷移，不需要寫遷移腳本批次轉換舊資料。
+```
+
+### 實測（第十三輪）
+
+34. 完全不選任何 Excel 檔案、直接進「教材/Layout 搭配」頁 → 上方「🧩 Layout Template」區塊應該
+    照樣顯示已經存過的 Template 清單（不是空白、不是要等 Excel 檔案才出現）
+35. 按「＋新增 Template」→ 出現自包含的編輯表單（名稱＋欄位列），按「＋新增欄位列」可以加空列，
+    手動打欄位代號＋選資料項名稱＋勾題目/答案/訊息，不需要載入任何 Excel 檔案就能存成功
+36. 清單裡任一筆按「✏️編輯」→ 表單帶出該筆現有的名稱＋欄位設定，改個名字後存檔 →
+    應該是「覆蓋更新同一筆」（用 id 比對），不會變成清單多一筆新紀錄
+37. 清單裡任一筆按「🗑️刪除」→ 應該先跳確認對話框，確認後才真的從清單移除並存回 Supabase
+38. Excel 小工具「確定選取」後的欄位對應設定裡，不應該再看到「行數起／行數末」輸入框；
+    存檔按鈕文案／存檔成功訊息應該引導老師「到上方 Layout Template 區塊查看」
+39. 用 Excel 小工具存一筆新 Template（沒選教材資料夾、沒勾任何活頁）→ 應該能存成功
+    （designed_from 為 null 或缺 folder，不因為沒有檔案資訊就擋下存檔）
+40. 「📎 套用到教材」區塊：Template 下拉應該列出第 1 區塊已存的名字；選好 Template＋歸屬＋
+    教材資料夾（下拉，不是文字框）＋活頁（下拉）＋行數起迄 → 按「💾 儲存」→ 重新整理頁面後
+    這筆套用紀錄應該還在，資料正確還原
+41. 同一份 Template 建立兩筆套用紀錄，分別對應到不同的教材資料夾／活頁、填不同的行數起迄 →
+    兩筆應該互不影響，各自存到 material_template_applications 裡的行數不同
+42. 先在 Excel 小工具存一筆新 Template，立刻切到「📎 套用到教材」區塊新增套用列 →
+    Template 下拉應該能選到剛剛新存的那個名字（不需要重新整理整頁）
+
+## 2026-08-06 補：正在編輯中的那一筆，清單不該「照常顯示」
+
+> 老師實測附圖：按「編輯」叫出上方編輯表單後，下方清單那一筆看起來跟平常一模一樣
+> （一樣有可以按的「✏️編輯」「🗑️刪除」），感覺像是清單裡還有另一份獨立的資料，容易誤按
+> 導致跟編輯器內容打架（例如又點一次編輯、或直接把正在編輯的那筆刪掉但編輯器還開著）。
+
+### 正確做法
+
+```javascript
+// ✅ renderTemplateList() 逐筆比對 _templateEditorState.id === t.id（且不是新增中）→
+//    該筆改成 highlight 樣式（橘色框＋淺黃底），「編輯」「刪除」兩顆按鈕換成
+//    一段不可點的「✏️ 編輯中…」文字（不是按鈕），不給二次進入編輯或誤刪
+// ✅ 開始編輯（openTemplateEditorForNew／openTemplateEditorForExisting）、
+//    取消編輯（mlp-tpl-cancel）、儲存成功、刪除成功，都要呼叫 renderTemplateList()，
+//    讓 highlight 狀態即時反映 _templateEditorState 目前是否有值／是哪一筆
+// ✅ 編輯區塊內（僅編輯既有那筆時，st.id 有值且非新增）多一顆「🗑️ 刪除這個 Template」，
+//    直接呼叫既有 handleDeleteTemplate(st.id)（沿用同一套 confirm() 二次確認＋刪除後
+//    自動清空編輯器＋刷新清單／套用區塊下拉的邏輯，不要另外寫一套刪除流程）
+```
+
+### 禁止
+
+```javascript
+// ❌ 正在編輯的那一筆，清單仍顯示跟其他筆一樣可點的「編輯」「刪除」按鈕——
+//    老師會以為是兩份獨立資料，或誤按導致跟編輯器內容衝突
+// ❌ 新增 Template（isNew===true，還沒有 id）時，把清單裡任何一筆誤判成「正在編輯」——
+//    highlight 判斷必須同時檢查 !_templateEditorState.isNew && _templateEditorState.id === t.id
+```
+
+### 實測
+
+43. 清單裡任一筆按「✏️編輯」→ 上方出現編輯表單的同時，下方清單該筆應該立刻變成橘色/黃底
+    highlight，原本的「編輯」「刪除」按鈕消失，改成一段「✏️ 編輯中…」文字（不可點擊）；
+    清單裡其他筆不受影響，仍可正常編輯／刪除
+44. 編輯中按「取消」→ 該筆的 highlight 應該消失，恢復成正常樣式、「編輯」「刪除」按鈕恢復可點
+45. 在編輯表單內按「🗑️ 刪除這個 Template」→ 應該跳同一個 confirm() 二次確認（跟清單那顆刪除鍵
+    文字一致），確認後編輯表單應自動關閉、清單裡該筆整個消失、「套用到教材」區塊的 Template
+    下拉也應同步移除這個已刪除的名字
+46. 按「＋新增 Template」（isNew=true）時，清單裡任何一筆都不應該被誤判成「編輯中」
+    （因為新增的 st.id 是 null，不會等於清單裡任何一筆的 t.id）
+
+## 2026-08-06 補：複製 Template
+
+> 老師要求同一份欄位設定常常只是「小改一點」（例如帶圖版 vs 無圖版），
+> 每次都從零重新打欄位列太累，需要「複製」既有 Template 當起點。
+
+### 正確做法
+
+```javascript
+// ✅ 複製＝把原本那筆的 columns/designed_from 深拷貝一份，帶進「新增」編輯器
+//    （_templateEditorState.isNew=true、id=null），自動取名「原名（複製）」（重複再加序號 (2)(3)…），
+//    讓老師確認/改名後自己按「儲存」才真正落地——複製動作本身不會馬上寫進 Supabase，
+//    按「取消」就跟沒發生過一樣，不會留下垂圾資料
+window.FeatureMaterialLayoutPairing 內部：openTemplateEditorForDuplicate(t) / buildDuplicateTemplateName(name)
+
+// ✅ 清單每筆按鈕順序：✏️編輯／📋複製／🗑️刪除（三顆並列，複製跟刪除一樣不影響原本那一筆）
+```
+
+### 禁止
+
+```javascript
+// ❌ 複製按下去就立刻直接寫入 Supabase 存成新的一筆——沒給老師確認/改名的機會，
+//    誤按會馬上多一筆重複資料，要先進編輯器讓老師確認後自己按儲存
+// ❌ 複製後開新編輯器卻沒生成不重複的名稱——同名會在儲存時被「新增比對名字」的邏輯誤判成
+//    覆蓋更新原本那筆（見 handleSaveTemplateFromEditor 的「新增用名字比對」規則）
+```
+
+### 實測
+
+47. 清單裡任一筆按「📋 複製」→ 上方應立刻出現「➕ 新增 Layout Template」表單（不是「✏️ 編輯」），
+    名稱自動填「原名稱（複製）」，欄位列跟原本那筆一模一樣（欄位代號／資料項名稱／題目/答案/訊息
+    勾選都相同）；原本那一筆在清單裡應保持不變、不會被標記成「編輯中」
+48. 不改名字直接按「儲存這個 Template」→ 應該新增一筆（不是覆蓋原本那筆），清單應變成兩筆
+    （原本＋複製出來的新的一筆），兩筆欄位內容相同但 id 不同
+49. 複製後改了名字、也調整了幾欄的題目／答案／訊息勾選再儲存 → 應該只新增這一筆調整後的版本，
+    原本被複製的那一筆完全不受影響
+50. 對同一筆連續按兩次「📋 複製」→ 第二次應該自動變成「原名稱（複製）(2)」，不會跟第一次複製
+    出來的名稱衝突
+51. 複製後不按儲存、直接按「取消」→ 應該什麼都不會發生，清單筆數不變，Supabase 裡也不會多一筆
+
+## 2026-08-06 第十四輪：「套用到教材」把兩種不同的檔案概念混成一個，且活頁只能單選（老師更正規劃邏輯）
+
+> 老師原話：「應該是有 來源檔案 (可 local 可 google drive) （檔案／活頁）（活頁可複選) 歸屬檔案
+> (當然是 google drive) layout template + 設定行數起始 你目前的規劃邏輯，有問題」。
+> 第十三輪的「📎 套用到教材」把「這筆套用實際指向哪裡」跟「怎麼知道要套用哪些活頁」揉在同一組
+> 教材資料夾／活頁單選下拉裡，而且活頁只能選一個——但同一個 Template＋同一段行數常常要一次
+> 套用到好幾個活頁，逼老師一個活頁存一筆是浪費工。
+
+### 問題根因（不可再犯）
+
+```
+❌ 只有一組「教材資料夾＋活頁」欄位，混用來同時表達「歸屬」跟「來源」兩件事——
+   歸屬一定是 Google Drive（考試/批改系統實際運作只認 Drive 上的真檔案），
+   但挑活頁時，老師手上可能只有本機 Excel 可以核對活頁名稱（Drive 還沒上傳/還沒同步）
+❌ 活頁欄位是單選下拉（.mlp-app-sheet + sheet_id 字串）——
+   一次套用只能對到一個活頁，逼老師把同一份 Template／同一段行數重複存好幾筆
+```
+
+### 正解：拆成「歸屬檔案」（一定 Drive）＋「活頁來源」（可 local 可 Drive，活頁可複選）
+
+```
+📁 歸屬檔案（一定是 Google Drive，套用紀錄實際指向哪裡）：
+   歸屬(root_kind) + 班級(僅 root_kind='class' 時顯示) + 教材資料夾（Drive 下拉，沿用
+   uniqueFolderNames，不是文字輸入框）——這組欄位決定 Application 存進 Supabase 後，
+   feature-exam-job.js／批改系統實際會去哪裡找檔案，不能是本機路徑。
+
+📄 活頁來源（可複選，兩個模式互斥，用小工具列的切換鈕決定）：
+   - ☁️ 用上面歸屬資料夾的活頁：清單來自 sheetStemsForFolder(歸屬檔案的 root/class/folder)
+   - 🖥️ 改用本機 Excel 掃描活頁名稱：選一個本機檔案，只用 XLSX.read(..., {bookSheets:true})
+     快速掃活頁名稱（不需要解析欄位內容），純粹輔助核對「這幾個活頁該勾誰」
+   兩種模式下都是 checkbox 清單（跟 Excel 設計小工具的 seg.checkedSheets 同一套視覺／精神），
+   一次可以勾多個活頁，存檔時收斂成 sheet_ids（陣列）。
+
+Layout Template（下拉，選項＝上面「🧩 Layout Template」區塊存的名字）+ 行數起／行數末：跟第十三輪一樣不變。
+```
+
+### 資料模型（profiles.raw_data.material_template_applications 每筆形狀，第十四輪改版）
+
+```
+{ id, template_id, template_name,
+  root_kind:'teacher'|'class', class_id, material_folder,   // 📁 歸屬檔案，一定 Drive
+  sheet_ids: [],                                              // 📄 活頁來源勾選結果，陣列可複選
+  source_kind: 'drive'|'local', source_file_name,             // 只是記錄「當時用哪種方式挑活頁」，純參考
+  row_start, row_end, updated_at }
+
+舊格式相容：第十三輪存的是單選 sheet_id（字串）——fetchTemplateApplications 讀取時
+自動轉成 sheet_ids:[sheet_id]（見 fetchTemplateApplications 內的 .map 正規化），
+不用寫遷移腳本，舊資料一存檔就會自然變成新格式。
+```
+
+### 禁止
+
+```javascript
+// ❌ 活頁只能單選（sheet_id 字串、<select> 而非 checkbox 清單）——
+//    同一個 Template＋同一段行數常常要一次套用到好幾個活頁，必須可複選
+
+// ❌ 「歸屬檔案」允許選本機檔案——批改／考試系統只認 Google Drive 上的真實檔案，
+//    本機 Excel 只能是「活頁來源」的輔助挑選手段，不能變成套用紀錄的真正落點
+
+// ❌ 切換「活頁來源」模式（drive/local）時，不重置已勾的活頁——
+//    換了來源＝活頁名單整個換了，保留舊勾選只會讓 sheet_ids 存進一堆對不上的名字
+//    （唯一例外：initial load 時，local 模式沒有實際檔案可解析，用上次存檔的 sheet_ids
+//    當起始清單顯示，這不是「保留舊勾選」而是「還原上次結果」，兩者要分清楚）
+
+// ❌ 本機 Excel 只是拿來看活頁名稱，卻沿用 Excel 設計小工具那套完整欄位解析（bookSheets:false）——
+//    這裡不需要欄位內容，只需要 SheetNames，永遠用 { bookSheets: true } 快速讀取
+```
+
+### 實測（第十四輪）
+
+52. 新增一筆套用：先在「📁 歸屬檔案」選好歸屬／教材資料夾 → 下面「📄 活頁來源」預設是
+    「☁️ 用上面歸屬資料夾的活頁」，應該直接列出該資料夾偵測到的活頁 checkbox 清單，
+    可以勾多個 → 存檔後重新整理頁面，這幾個活頁應該都還是勾選狀態（sheet_ids 陣列還原）
+53. 點「🖥️ 改用本機 Excel 掃描活頁名稱」→ 應該出現檔案選取框，選一個本機 Excel 後，
+    很快（不用等整個工作表解析）列出該檔案所有活頁名稱的 checkbox 清單，可複選
+54. 本機模式勾好活頁存檔後，重新整理頁面 → 該筆套用應該還原成「🖥️ 本機」模式，且原本勾過的
+    活頁名稱直接以勾選狀態顯示（即使沒有重新選檔案，因為 sheet_ids 本身已經存住勾選結果）
+55. 换了教材資料夾（歸屬檔案那組下拉）→ 下面「📄 活頁來源」若是 Drive 模式，清單應該立刻換成
+    新資料夾偵測到的活頁，且之前勾的（可能對不上新資料夾）應該清空重新勾選，不是殘留舊勾選
+56. 一個活頁都沒勾直接按「💾 儲存」→ 這筆不應該被存進 Supabase（collectAppsFromDom 的
+    filter 要求 sheet_ids.length > 0），不會產生一筆「查無活頁」的空紀錄
+57. 同一份 Template 用同一段行數起迄，一次勾 5 個活頁存檔 → 應該存成 1 筆 Application
+    （sheet_ids 有 5 個元素），不是自動拆成 5 筆
+
+## 2026-08-06 補：教材資料夾下拉顯示舊資料，要自動重抓，不能等老師按重試
+
+> 老師實測回報「讀取的資料不對哦，應該要自動重新讀取最新的資料」——附圖「教材資料夾」下拉
+> 只列出 2 個舊資料夾。根因：`FeatureTimeline._metaCatalog` 只要曾經成功載入過（`ok:true`）
+> 就永遠當快取有效，不會自己過期。老師在 Drive 新增/改名資料夾後，只要這個帳號的 catalog
+> 快取還在（可能是幾分鐘前逛「班級進度」時就順便載入過），這頁看到的永遠是舊清單，過去只有
+> 「清單是 0 筆」才會自動重抓，不是 0 筆（只是舊）就不會主動重抓，必須手動按重試按鈕。
+
+### 正確做法
+
+```javascript
+// ✅ render() 每次進頁都呼叫 refreshMetaCatalogsInBackground(container, pairs, apps)：
+//    先用 pairs/apps 裡實際用到的 {classId, rootKind} 組合去重成唯一 key 清單（一定含
+//    老師個人），對每個 key 只呼叫一次 ensureMetaCatalog(classId, rootKind, {force:true})，
+//    resolve 後才悄悄呼叫 refreshFolderSelect／refreshAppFolderSelect／refreshExcelFolderSelect
+//    重畫符合這個 key 的下拉——畫面先用舊快取正常出現（不擋 paint），抓到新清單再更新，
+//    老師整個流程中不需要自己按任何重試按鈕
+```
+
+### 禁止
+
+```javascript
+// ❌ 每一列各自呼叫一次 force:true——ensureMetaCatalog 用同一個 key 對應同一份 promise
+//    cache，在同一個 tick 裡對同一個 key 連續呼叫兩次 force，第二次會把第一次剛存的
+//    promise 刪掉，變成對同一個資料夾清單重複打兩次 GAS（浪費且沒有任何好處）
+// ❌ render() 直接 await 這個背景刷新才 paint()——這樣又會退回第四輪修好的「整頁卡住等
+//    GAS 回應才出現」問題，一定要背景跑、paint() 先用現有快取顯示
+```
+
+### 實測
+
+58. Drive 上老師個人資料夾底下新增一個資料夾（例如剛 publish_local 一份新教材）→ 不重新整理
+    瀏覽器、直接切到「班級進度總表」再切回「教材／Layout 搭配」→ 「歸屬檔案」的教材資料夾
+    下拉應該幾秒內自動出現新資料夾，不需要按任何重試按鈕
+59. 開這頁時 Network 應該對同一個 root_kind/class_id 只看到一次教材清單相關請求（不是同一個
+    帳號在同一次進頁時被打兩次以上）
+
+## 2026-08-06：教材資料夾下拉「載入／空清單／失敗重試」抽成共用模組（老師提問「是否做成模組」）
+
+> 老師提問「那些一樣及相似的功能，是否有做成模組，這樣以後維護才會方便」。盤點後發現同一套
+> 「歸屬（老師個人/班級）→ 教材資料夾下拉 → 空清單/失敗自動重試」邏輯，在 4 個地方各自重複
+> 寫了一份（其中 `feature-exam-job.js` 那份甚至完全沒有重試按鈕），修一次錯誤訊息/重試行為
+> 就要記得改 4 次，容易漏改、行為不一致（見上面幾輪「教材資料夾下拉是空的」反覆出錯的歷史）。
+
+### 正解：只抽共用「行為」，不強迫統一「畫面形狀」
+
+```
+新檔案：020_js_core/material-folder-picker.js → window.MaterialFolderPicker
+  - retryButtonHtml(btnId, label) / bindRetryButton(btnId, onClick)：重試按鈕統一外觀＋綁定
+  - refreshDropdown(p)：單一 key（某 root_kind + class_id）的下拉刷新控制器——
+    p.getSelectEl()/p.getStatusEl() 找 DOM、p.listCurrentOptions() 同步列出目前快取、
+    p.renderOptionsHtml(list, currentValue) 由呼叫端決定畫面形狀、p.onAfterUpdate() 讓呼叫端
+    接著刷新下一層（活頁下拉/活頁來源子區塊）。空清單跟連線失敗分開講清楚，兩種都附重試按鈕。
+
+四個呼叫端改成呼叫同一份 refreshDropdown，各自只保留「這裡的下拉長什麼樣子」：
+  - feature-material-layout-pairing.js：refreshFolderSelect（教材/考試搭配列，分離歸屬+資料夾）
+  - feature-material-layout-pairing.js：refreshAppFolderSelect（套用到教材列，同上＋活頁來源子區塊）
+  - feature-material-layout-pairing.js：refreshExcelFolderSelect（Excel 小工具，固定老師個人）
+  - feature-exam-job.js：ensureExamMaterialFolderCatalog（獨立考試，優雙 catalog + optgroup 合併
+    下拉，形狀跟前三個不同，沒有硬套 refreshDropdown，但補上原本缺的重試按鈕，改用
+    window.MaterialFolderPicker.retryButtonHtml/bindRetryButton，且新增「兩邊都成功但都是
+    0 筆」也要給重試按鈕（原本只有 ok:false 才報錯，清單真的是空的會被誤判成正常狀態沉默過去）
+```
+
+### 為什麼不強迫這 4 個變成「同一個 widget」
+
+```
+教材/考試搭配列、套用到教材列、Excel 小工具：都是「頁面層級的中央管理」，老師可以任選
+任何一個班級，所以需要「歸屬」下拉＋「班級」下拉＋「教材資料夾」下拉分開三層。
+
+獨立考試的教材資料夾：這個下拉已經綁在某個特定班級的任務底下（不需要再選一次班級），
+所以合理地把「老師個人」跟「班級資源」兩組 folder 直接用 optgroup 合併進同一個下拉，
+value 用 "teacher::資料夾名"／"class::資料夾名" 編碼。
+
+硬把這兩種畫面形狀統一成同一種，只會製造不合理的抽象（要不就是逼考試任務多長一個沒用的
+「選班級」下拉，要不就是逼中央管理頁失去跨班選擇能力）——該共用的是「行為」不是「畫面」。
+```
+
+### 禁止
+
+```javascript
+// ❌ 之後任何地方要新增「教材資料夾下拉＋重試」都不可以再手刻一份（現在已經是第 5 次了）——
+//    一定要呼叫 window.MaterialFolderPicker.refreshDropdown（或至少共用 retryButtonHtml/
+//    bindRetryButton），不然又會變成第 5 個要一起改的地方
+// ❌ 幫某個呼叫端硬套 refreshDropdown 卻犧牲它原本合理的畫面形狀（例如把 exam-job 的
+//    optgroup 合併下拉拆成三層，卻讓考試任務多一個不需要的「選班級」下拉）
+```
+
+### 實測
+
+60. 教材/考試搭配列、套用到教材列、Excel 小工具三處的「⚠️ 清單載入失敗」「⚠️ 抓不到任何
+    教材資料夾」文案跟重試按鈕外觀應該長得完全一樣（同一顆共用元件）
+61. 獨立考試的教材資料夾下拉：故意讓老師個人跟班級資源都抓到 0 筆（非連線錯誤）→ 應該顯示
+    「⚠️ 這個帳號目前抓不到任何教材資料夾」並附重試按鈕，不是像修改前那樣顯示已載入 0 個／
+    0 個就沒有下文
+62. 按下獨立考試教材資料夾旁新增的重試按鈕 → 應該重新強制抓一次兩個 catalog，成功後下拉更新、
+    狀態文字恢復正常（不需要重新整理整頁）
+
+## 2026-08-06 第十六輪：Excel 小工具正名——唯一產出物就是 meta.json／script.txt，終端機 publish_local 停用
+
+> 老師看了舊系統實際產出的 meta.json，確認「內容其實都是不正確的」，並明確下令：
+> 「我要屏棄之前的做法。新的做法，🧾 從本機 Excel 讀取活頁／欄位（設計 Template 小工具）
+> => 正名，其產出物，就是 meta 跟 script」。追問「終端機 publish_local 之後還要留著備用嗎？」，
+> 老師選 **no_browser_only**：以後只有瀏覽器這條路，終端機版停用。
+
+### 根因（舊「內容不正確」從哪來）
+
+```
+老師端課程基本資料頁一直留著一塊「📦 教材發布」面板（feature-material-publish.js），
+呼叫 GAS 的 publishMaterial → publishMaterialFromWorkbook，這條路徑：
+1. 只認 _Config/_Schema/_Publish/_Layout 四個各自獨立命名的活頁，完全不懂新版合併格式
+   `_Setup`（老師現在的教材檔案就是 _Setup 格式）
+2. 完全不知道 is_question/is_answer/is_info/is_ai_ref 這套新欄位角色系統
+docs/Material_Publish_Spec.md 早就明文把「上傳 Excel → GAS 轉 Sheets 再發布」標記為
+「舊誤路徑，已廢棄」——但這塊面板當時沒有真的被拔掉，老師還按得到，於是繼續生出
+跟現在的 Template／欄位角色完全對不上的錯誤 meta.json。
+```
+
+### 正確做法：瀏覽器「套用到教材」區塊直接產生＋上傳，取代兩套舊工具
+
+```
+唯一產線（不可再分岔）：
+🧩 Layout Template（欄位對應＋is_question/is_answer/is_info/is_ai_ref 角色）
+  → 📎 套用到教材（選 Template＋歸屬 Drive 資料夾＋活頁來源(local/drive,可複選)＋行數起迄）
+  → 🚀 產生預覽 → 確認無誤 → ☁️ 確認上傳到 Drive（GasService.uploadMaterialFile 直寫進歸屬資料夾）
+
+is_ai_ref 是這條產線的樞紐（等同舊版 _Schema 的 semantic_key==='script'）：
+  - 決定哪些列算「有效列」（該欄有值才收進 meta.json，同時是 script.txt 的內容來源）
+  - buildGenerationForSheet() 邏輯照搬 material_templates/publish_local.py 的
+    build_rows_from_matrix：公式字串（"="開頭、未被 Excel 快取結果）視為空值並警告；
+    row_start 預設 2；row_end 支援空白(=到最後一列)／LAST／LAST(欄位)／純數字
+  - meta.json = JSON.stringify(rows, null, 2)，rows 是 [{semantic_key: value}]（跟
+    publish_local.py 的 clean_rows 同形狀）；script.txt = scriptLines.join('\n') + '\n'
+
+停用（不是刪檔案，是砍產線）：
+  - 終端機 material_templates/publish_local.py（老師選 no_browser_only，之後只留檔案本身
+    當歷史參考／manifest.json 格式範例，不再是任何人日常會執行的路徑）
+  - feature-material-publish.js 面板（renderPanel 改成停用公告，見檔案頂端註解；
+    runPublish 呼叫直接顯示錯誤導引到新流程，不再真的打 GAS publishMaterial）
+```
+
+### 資料流（新函式，都在 feature-material-layout-pairing.js）
+
+```javascript
+// 套用列（.mlp-app-row）本機 Excel 模式才會出現「🚀 產生 meta / script 並上傳到 Drive」子區塊：
+_appRowState[appId] = {
+  ...,                          // sourceKind/checkedSheets/localSheetNames/localFileName 不變
+  localRawData: Uint8Array,     // 選檔時存下的原始位元組，供逐列完整解析（跟只掃活頁名稱的
+                                 // bookSheets 階段是兩個不同解析階段，不能共用 Excel 設計小工具的
+                                 // 模組層級 _excelRawData——同一頁可能同時開多列套用，各自檔案不同）
+  sheetMatrixCache: { 活頁名稱: matrix },  // header:1 完整逐列矩陣，row1=matrix[0]
+  gen: { 活頁名稱: { previewed, ok, rows, scriptLines, warnings, error,
+                     outputMeta, outputScript, uploadStatus } }
+}
+
+colLetterToIndex0(letter)                 // 欄位代號→0-based index
+parseAppSheetMatrix(appId, sheetName)     // 依快取取得/解析矩陣
+resolveRowEndRow(matrix, rowEndStr, fallbackColLetter) / getLastDataRowInMatrix(matrix, colLetter)
+buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr)  // 核心算列邏輯
+handleGeneratePreview(rowEl, appId)       // 依目前勾選活頁逐一算 state.gen[name]，只是預覽、不上傳
+resolveOrCreateAppFolderId(rowEl)         // 有 folderId 直接用（FeatureExamJob.getFolderIdForFolder）
+                                            // 沒有就 GasService.ensureMaterialFolder 現場建立
+                                            // （getOrCreateSubFolder 天生 idempotent，重複呼叫安全）
+handleConfirmUpload(rowEl, appId)         // 逐活頁呼叫 GasService.uploadMaterialFile 兩次
+                                            // （meta.json + script.txt），完成後強制刷新
+                                            // FeatureTimeline.ensureMetaCatalog({force:true})
+                                            // 讓其他下拉（獨立考試教材／活頁選單）看到新檔案
+```
+
+### 禁止
+
+```javascript
+// ❌ 繼續讓老師走「上傳 Excel 到 Drive → GAS publishMaterial → 轉 Sheets 讀 _Config/_Schema/
+//    _Publish/_Layout 四個獨立活頁」這條舊路徑——它不懂 _Setup 合併格式也不懂欄位角色系統，
+//    是「meta 內容不正確」的根因，已於 feature-material-publish.js 停用（面板留骨架＋停用公告，
+//    不要重新接回 runPublish 真的呼叫 GAS）
+
+// ❌ 「產生並上傳」允許在 sourceKind==='drive' 模式下按——Drive 活頁清單只是檔名字串，
+//    瀏覽器沒有原始儲存格資料可讀，必須是 sourceKind==='local' 且已選好本機檔案
+
+// ❌ Template 沒有指定 is_ai_ref 欄位時，讓「產生預覽」硬產出一份看起來正常但全空的 meta——
+//    必須直接回錯誤訊息擋下來，逼老師先回 Layout Template 補上 is_ai_ref（buildGenerationForSheet
+//    的第一個檢查就是這個）
+
+// ❌ 「確認上傳到 Drive」按鈕在還沒按過「產生預覽」、或預覽有任何一個活頁是 0 列／有錯誤時
+//    仍可以按——canConfirmUpload() 必須逐活頁檢查 previewed && !error && rows.length > 0
+
+// ❌ 上傳用 GasService.uploadStudentLocalFile 或任何帶預設 subFolderName='01_Class_Resources'
+//    的呼叫——一定要用 uploadMaterialFile（明確不傳 subFolderName，直寫進 folderId 本身）
+
+// ❌ 上傳完成後不刷新 FeatureTimeline._metaCatalog——老師剛產生的新 .meta.json 在同一頁
+//    的獨立考試／其他下拉會繼續顯示「舊清單」，直到下次意外觸發背景刷新才會出現
+```
+
+### 實測
+
+63. 「套用到教材」某一列切到「🖥️ 改用本機 Excel 掃描活頁名稱」且尚未選檔案 → 「🚀 產生 meta /
+    script 並上傳」子區塊應顯示「請先選擇本機 Excel 檔案」，不出現任何按鈕
+64. 選好本機檔案＋勾選 1～2 個活頁、但這列選的 Layout Template 還沒有任何欄位設定 is_ai_ref
+    → 按「🔍 產生預覽」後，每個活頁都應顯示明確錯誤「尚未指定「🎤 AI對照稿」欄位」，「☁️ 確認
+    上傳到 Drive」按鈕應保持 disabled
+65. 換一個已經正確指定 is_ai_ref 的 Template，填好行數起迄，按「🔍 產生預覽」→ 每個勾選的活頁
+    應各自顯示「共 N 列…script.txt N 行」＋前 3 列 JSON 預覽；此時「☁️ 確認上傳到 Drive」應變成
+    可按（enabled）
+66. 故意把行數起迄留成會落到「有列公式字串尚未被 Excel 快取」的範圍 → 預覽應出現黃色警告文字，
+    但仍能算出其他有值的欄位（不會整段失敗）
+67. 按「☁️ 確認上傳到 Drive」→ 應先確保/建立歸屬資料夾（若原本不存在），逐活頁顯示上傳進度，
+    完成後每個活頁下方各自顯示「✅ 已上傳：xxx.meta.json、xxx.script.txt」；重新整理頁面後
+    再切到「獨立考試」的教材資料夾/活頁下拉，應該看得到剛剛上傳的新活頁（不需要手動按重試）
+68. 上傳過程中若某個活頁上傳失敗（例如刻意斷網一瞬間）→ 該活頁應顯示「❌ 上傳失敗：…」，
+    其他活頁不受影響、按鈕結束後恢復可再次按（不會整批卡死在 disabled）
+69. 取消勾選某個原本已經有預覽結果的活頁 → 該活頁的舊預覽結果應被清除（不會殘留在
+    state.gen 裡誤導老師以為還能上傳到不該上傳的東西）
+70. 進「課程基本資料」頁 → 「📦 教材發布」面板應顯示紅色停用公告＋導引文字，不再出現任何
+    輸入框或「🚀 發布」按鈕
+
+## 2026-08-06：「教材資料夾」下拉還是空的——GAS 端解析教材根資料夾太脆弱（不是前端過濾）
+
+> 老師怒吼「就跟你說了，要去資料夾裡，建資料，還在那裡給我沒資料就不列出資料夾」。
+> 前端 `collectMaterialMetaOptions`／`listMaterialMasters` 早就已經是「不論有沒有
+> `.meta.json` 都列出資料夾」，問題不在這裡——是 GAS `resolveMaterialsRoot` 找
+> `01_My_Materials`／`00_Class_Materials` 這一層本身就很脆弱，只要下面兩個條件其中一個
+> 不成立，後面「列出所有子資料夾」的程式碼根本沒機會執行到（等於整層都消失，不是只濾掉
+> 沒資料的那幾個）：
+
+```
+❌ findSubFolder 用 DriveApp getFoldersByName 是精確字串比對——教材根資料夾名稱只要跟系統
+   期待的 "01_My_Materials"/"00_Class_Materials" 有一點大小寫或空白差異就找不到
+❌ listMaterialMasters 舊行為傳 createIfMissing=false——教材根資料夾這一層如果還沒被任何
+   流程建立過（例如全新帳號），resolveMaterialsRoot 直接回 null，
+   listMaterialMasters 直接回 { materials: [] }，跟老師在裡面真的建了多少子資料夾完全無關
+```
+
+### 正確做法（已修，gas/Code.gs）
+
+```javascript
+// ✅ resolveMaterialsRoot 找教材根改用 findSubFolderInsensitive（不分大小寫/去頭尾空白）
+// ✅ listMaterialMasters 呼叫 resolveMaterialsRoot(rootFolder, kind, true)——
+//    教材根本身不存在就現場建立（getOrCreateSubFolder 天生 idempotent，不會動到既有資料），
+//    保證這層資料夾一定存在、一定能往下列出子資料夾，不會卡在「根本找不到根」這一步就回空陣列
+// ✅ listMaterialMasters 本身列子資料夾 (mastersRoot.getFolders()) 早就是無條件列出，
+//    不需要 metaFiles.length>0 才 push——這部分維持不變，不要因為查這個 bug 又加回過濾條件
+```
+
+### ⚠️ 這是 GAS 後端程式碼，改完必須重新部署才會生效
+
+```
+git push 不會更新線上 Web App。若老師測試後仍看到空清單，第一件事是確認 Code.gs 的異動
+是否已經照 drive-folder-upload-invariants.mdc「改完 Code.gs 後：必須重新部署 GAS」整套
+步驟部署到 Google Apps Script 專案（貼上→存檔→管理部署作業→編輯→版本選「新版本」→部署），
+不要急著再改一次前端程式碼——90% 機率只是忘記部署，不是又有新 bug。
+```
+
+### 實測
+
+71. 全新／未曾用過此功能的老師帳號 → 進「教材/Layout 搭配」頁的「教材資料夾」下拉，即使
+    01_My_Materials 資料夾原本不存在，也不應該報錯或停在空清單——應自動建立該資料夾（可能
+    仍是 0 個子資料夾，這是正常的，因為老師還沒在裡面建任何東西）
+72. 老師在 Drive 網頁上手動於 01_My_Materials 底下新建一個子資料夾（不放任何檔案）→ 不重新
+    整理瀏覽器，切到別的分頁再切回來 → 「教材資料夾」下拉應該幾秒內自動列出這個新資料夾
+    （不需要裡面有任何檔案／.meta.json）
+73. 故意把資料夾命名成跟系統期待的 "01_My_Materials" 大小寫不同（例如手動改一個字母大小寫）
+    → resolveMaterialsRoot 仍應該找到它（不分大小寫比對），不會因為大小寫差異就視為不存在
+    而另外建一個重複的資料夾
+
+## 2026-08-06 續：Drive 裡確認真的有子資料夾，下拉還是空的——快取「成功但空」被永久信任
+
+> 老師附截圖證實 `2logonenglish_e002 > 01_My_Materials` 底下真的有 3 個子資料夾
+> （GEPT-2_sentence／vBK_JessieChuang／vBK_MasonLiu-SeanCheng），質問「之前怎麼做的？
+> 現在無法再做一次嗎？」「載入時，請提供訊息！」。上一輪修的是 GAS 端解析教材根資料夾的
+> 脆弱點（大小寫比對／createIfMissing），這一輪找到的是**前端快取**的另一個雷區——兩者
+> 是不同的 bug，都要修才夠：
+
+### 根因
+
+```
+ensureMetaCatalog 的快取信任條件舊版是「ok:true 就永久信任，不再重查」——
+但「ok:true」只代表「這次 GAS 呼叫本身沒有丟例外」，不代表「查到的清單有意義」。
+只要曾經有一次（不管什麼原因：GAS 冷啟動慢一拍、Drive API 短暫吃不到、
+resolveMaterialsRoot 那一刻剛好沒解析到）真的查到空清單並被快取成 { ok:true, options:[] }，
+之後任何非 force 呼叫（例如 Excel 小工具的「教材資料夾」下拉）都會直接吃這個空快取，
+永遠不會再真的打一次 GAS——即使 Drive 裡後來真的有資料夾也一樣。老師感覺就是
+「怎麼樣都救不回來」，因為在使用者能感知的操作範圍內（不硬重新整理整頁）真的救不回來。
+```
+
+### 正確做法（已修）
+
+```javascript
+// ✅ feature-timeline.js ensureMetaCatalog：只有「有真內容」（options.length > 0）才長期
+//    信任快取；「成功但空」只在 5 秒內免重複打 GAS（擋同一批畫面連續問好幾次），超過 5 秒
+//    的任何一次詢問都會自動再查一次，不需要老師手動按重試或整頁重新整理
+const cacheHasRealContent = cached.ok === true && cached.options.length > 0;
+const cacheIsFreshEmpty = cached.ok === true && cached.options.length === 0
+    && (Date.now() - cached.loadedAt < 5000);
+if (!options.force && (cacheHasRealContent || cacheIsFreshEmpty)) return cached.options;
+
+// ✅ Excel 小工具選好本機檔案後第一次顯示「教材資料夾」下拉：refreshExcelFolderSelect(true)
+//    直接 force，不賭快取——這是老師會第一眼檢視的下拉，寧可多打一次 GAS 也要保證最新
+```
+
+### 「載入時請提供訊息」——不能有任何真正沉默的狀態
+
+```javascript
+// ✅ GasService.listMaterialMasters 回傳的陣列附掛 debugVersion/resolvedRootId/
+//    resolvedRootName/subFolderCount（來自 gas/Code.gs listMaterialMasters 新增的
+//    LIST_MATERIAL_MASTERS_DEBUG_VERSION 與 mastersRoot.getId()/getName()）
+// ✅ FeatureTimeline.getMetaCatalogDebugText(classId, rootKind) 把上面欄位組成一行字：
+//    「🔍 v=xxx｜查詢資料夾ID=...｜實際解析到=01_My_Materials（folderId）｜GAS 數到 N 個子資料夾」
+//    —— 沒看到 v= 戳記＝GAS Web App 還在跑舊部署（要重新部署，不是程式碼問題）；
+//    resolvedRootId 可以直接貼進 drive.google.com/drive/folders/<ID> 跟老師自己看到的
+//    資料夾網址比對，一秒判斷系統是不是真的在看老師以為的那個資料夾
+// ✅ MaterialFolderPicker.refreshDropdown 空清單警告文字後面自動附上這行除錯字；
+//    fetch 超過 20 秒還沒回應（GAS 冷啟動／連線卡住）也要額外補一行提示，
+//    不能讓「⏳ 載入資料夾清單…」停在畫面上像沒人管
+```
+
+### 禁止
+
+```javascript
+// ❌ ensureMetaCatalog 對 ok:true 一律永久信任（不分清單有沒有內容）——
+//    「成功但空」跟「成功且有內容」是完全不同的可信度，空結果必須有時效性、允許自動重查
+// ❌ 空清單／連線失敗的警告訊息只寫死一句話，不附任何可驗證的技術細節——
+//    老師沒有 Apps Script 執行紀錄的存取權，唯一能回報給我的就是畫面上顯示的文字，
+//    文字裡沒有 debugVersion/resolvedRootId 這種可比對的線索，只能靠截圖來回猜
+// ❌ Excel 小工具「教材資料夾」下拉初次顯示還沿用 force:false——這是本輪問題第一個
+//    被檢視的下拉，值得用一次額外的 GAS 呼叫換取「保證看到最新資料」
+```
+
+### 實測
+
+74. 刻意讓某個 root_kind/classId 組合先查到空清單（例如暫時斷網一瞬間讓它 catch 到）→
+    5 秒內再問一次應該直接吃快取（不會立刻又打一次 GAS）；超過 5 秒後再問一次應該會自動
+    重新打 GAS，不需要老師按任何重試按鈕或重新整理頁面
+75. 教材資料夾下拉顯示「⚠️ 抓不到任何教材資料夾」時，下面應該多一行灰色小字，內容包含
+    `v=` 版本戳記、查詢資料夾ID、實際解析到的資料夾名稱與ID、GAS 數到的子資料夾數
+76. 把 `resolvedRootId` 貼到瀏覽器網址 `https://drive.google.com/drive/folders/<ID>` →
+    應該直接打開跟老師預期一致的 `01_My_Materials` 資料夾（用來驗證系統跟老師看的是不是
+    同一個資料夾）
+77. 故意讓 GAS 回應延遲超過 20 秒（或暫時斷網）→ 「⏳ 載入資料夾清單…」下面應該在 20 秒後
+    自動補上「已經等超過 20 秒…」的提示，不會整段時間畫面上什麼提示都沒有
+78. 選好本機 Excel 檔案後，「教材資料夾」下拉第一次出現時就應該是強制重抓（不吃可能過期的
+    快取），若這個帳號的 01_My_Materials 底下真的有子資料夾，應該直接列出，不需要老師多按
+    一次重新載入
+
+## 2026-08-06 又續：🎤 AI對照稿 ≠ 書寫解答，不能再拿它當「有效列」的判斷依據
+
+> 老師明確澄清：「AI 對照稿，跟所謂的書寫解答，並不一定 identical。AI 對照稿，是特別
+> 作為口語批改的基準，但書寫解答可能與 AI 對照稿不同。例如同一題，書寫解答是 to/a park
+> （結合兩個欄位 pre+" "+script），AI 批改稿會是 to park a park（這樣的結合規則還需要
+> 時間整理，目前先做成可貼上的 txt 就好，現階段也允許留空）。」
+
+### 舊設計的錯誤假設（已淘汰）
+
+```
+buildGenerationForSheet 舊版把 is_ai_ref 欄當成「這列算不算有效列」的唯一判斷依據
+（照搬 publish_local.py 的 semantic_key==='script' 語意）——這個假設把兩件不同的事
+綁死在一起：
+  1. 「這列有沒有實際內容」（應該看題目／答案／訊息欄，跟 AI對照稿無關）
+  2. 「這列有沒有 AI對照稿」（口語批改用，可能還沒整理好結合規則，允許長期留空）
+一旦 AI對照稿整批留空（老師目前的真實狀況），舊邏輯會讓整份 meta.json 變成 0 列，
+即使書寫解答／題目都填得好好的。
+```
+
+### 正確模型
+
+```
+AI對照稿（is_ai_ref）是完全獨立、選填的一欄，跟「答案」（is_answer，書寫解答，印在
+考卷上的內容）是兩件事，兩者可以相同也可以不同：
+  - 「有效列」的判斷：這列只要 fieldMap 裡任何一欄有值就算有效列，跟 is_ai_ref 完全無關
+  - is_ai_ref 欄本身：現階段就是一個「可以貼上文字」的普通 Excel 欄位，老師人工把整理好的
+    口語批改對照稿貼進去；結合 pre+" "+script 之類的自動生成規則屬於老師之後才會整理的
+    邏輯，目前不由系統自動計算，維持「留空也完全合法」
+  - script.txt：跟 meta.json 逐列對應（同一個 rows 陣列算出來的），某列的 AI對照稿留白，
+    script.txt 那一行就是空行，不是整行被跳過——這樣之後老師陸續補上內容時，行號不會全部
+    跟 meta.json 錯位
+  - Template 甚至可以完全不指定 is_ai_ref 欄（例如還沒設計好這塊）——不再擋「產生預覽」，
+    只給提示「script.txt 會整份留白」
+```
+
+### 正確做法（已修，`110_teacher_core/feature-material-layout-pairing.js`）
+
+```javascript
+// ✅ buildGenerationForSheet：row 有效性看 fieldMap 裡任何一欄有值（hasAnyValue），
+//    不再檢查 airefCol 有沒有值；airefCol 可以是 undefined（Template 沒指定這欄）
+// ✅ scriptLines 逐列 push airefVal ? String(airefVal).trim() : ''——永遠跟 rows 等長
+// ✅ resolveRowEndRow 裸寫 LAST（沒指定欄位）時，fallback 改成 getLastDataRowAnyField
+//    （看 fieldMap 任何一欄有值的最後一列），不再 fallback 到 airefCol.letter——否則
+//    AI對照稿整批留空時，裸 LAST 會把 row_end 誤判成第 1 列，漏掉後面明明有資料的列
+// ✅ 「🎤 AI對照稿」radio（Excel 小工具 + 獨立 Template 編輯器）都各加一顆「✕ 清除已選的
+//    AI對照稿欄」按鈕——radio 天生點自己不能取消勾選，選填欄位必須有辦法退回「沒有指定」
+```
+
+### 禁止
+
+```javascript
+// ❌ 拿 is_ai_ref 欄有沒有值來決定「這列算不算有效列」——那是舊版 publish_local.py 的
+//    semantic_key==='script' 語意，跟老師現在明確澄清的「AI對照稿≠書寫解答」矛盾
+// ❌ script.txt 只收「AI對照稿有值」的那幾行（行數比 meta.json rows 少）——會讓行號跟
+//    meta.json 對不上，之後補資料時無法簡單靠行號比對回去
+// ❌ Template 沒有指定 is_ai_ref 欄就擋住整個「產生預覽」（return {ok:false, error:...}）——
+//    現階段允許整份 Template 都還沒設計這塊，只給提示，不擋流程
+// ❌ resolveRowEndRow 的裸 LAST fallback 繼續綁在 is_ai_ref 欄（AI對照稿常態留空的情況下，
+//    這欄「最後有值列」可能遠早於真正資料的最後一列，會漏掉後面的列）
+```
+
+### 實測
+
+79. Template 的欄位設定裡完全沒有勾選任何「🎤 AI對照稿」→ 選好本機檔案＋活頁＋行數起迄，
+    按「🔍 產生預覽」→ 應該正常算出 N 列（N＝有資料的列數，跟答案／題目欄有沒有值一致），
+    只顯示藍色提示「尚未指定 AI對照稿欄位，script.txt 會整份留白」，不擋「確認上傳」
+80. Template 有指定「🎤 AI對照稿」欄，但這欄在多數列都是空白（只有少數幾列老師手動貼了對照
+    稿文字）→ 預覽應該顯示「N 列裡有 M 列 AI對照稿留白」的藍色提示，rows 仍是 N 列（不是只
+    剩下有對照稿的那幾列），script.txt 也應該是 N 行（留白的那幾列是空行，不是被跳過）
+81. 行數末留空或打 `LAST`（沒指定欄位字母），而 AI對照稿欄整批留空、答案欄卻一路填到 Excel
+    最後一列 → row_end 應該抓到答案欄真正的最後一列，不會因為 AI對照稿欄很早就沒資料而
+    提早在第 1～2 列就截斷
+82. 已經在某一欄點選「🎤 AI對照稿」radio 之後，按旁邊「✕ 清除已選的 AI對照稿欄」→ 該欄
+    radio 應變回未選取狀態，資料層 is_ai_ref 全部變 false，等同這個 Template 沒有指定
+    AI對照稿欄
+83. 之前存過、且已經指定了 is_ai_ref 欄、大部分列都全空的舊 Template（例如舊資料只有
+    AI對照稿欄有值時才被記錄成有效列的年代存下來的檔案）→ 用新邏輯重新產生預覽，列數應該
+    不會比之前少（只要答案／題目／訊息任一欄有值，這列就該被算進去）

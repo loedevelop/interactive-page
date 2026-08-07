@@ -183,6 +183,55 @@ window.FeatureProfile = (() => {
                     `;
                 }
 
+                // 🧩 老師個人跨班預設值：只影響「新建」班級／任務的初始值，不會回頭改已存在的資料
+                let crossClassDefaultsSectionHtml = '';
+                if (canSetNameMode) {
+                    const defaultCalcMode = rawData.default_calc_mode || 'single';
+                    const defaultWeekStart = rawData.default_week_start_day || 'sunday';
+                    const defaultUseAiGrading = rawData.default_use_ai_grading === true;
+                    const defaultMaterialsRoot = rawData.default_materials_root_kind || 'teacher';
+                    crossClassDefaultsSectionHtml = `
+                        <div style="margin-bottom: 25px; padding: 15px; background: #F8FAFC; border: 2px dashed #CBD5E1; border-radius: 8px;">
+                            <label style="display:block; font-weight:800; color:#3B82F6; margin-bottom:5px;">🧩 我的班級／任務預設值</label>
+                            <p style="color:#64748B; font-size: 0.85rem; margin-top:0; margin-bottom: 15px;">只影響「之後新建」的班級／任務初始值；已存在的班級或任務不受影響，各班／各任務仍可個別覆寫。</p>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px;">
+                                <div>
+                                    <label style="display:block; font-weight:800; color:#475569; margin-bottom:8px; font-size:0.9rem;">🔄 新班級排程結算模式</label>
+                                    <div style="display:flex; gap:16px;">
+                                        <label style="font-weight:700; cursor:pointer;"><input type="radio" name="prof_default_calc_mode" value="single" ${defaultCalcMode === 'single' ? 'checked' : ''} style="transform: scale(1.1); margin-right: 6px;">單堂結算</label>
+                                        <label style="font-weight:700; cursor:pointer;"><input type="radio" name="prof_default_calc_mode" value="weekly" ${defaultCalcMode === 'weekly' ? 'checked' : ''} style="transform: scale(1.1); margin-right: 6px;">按週結算</label>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-weight:800; color:#475569; margin-bottom:8px; font-size:0.9rem;">🗓️ 新班級一週起始日</label>
+                                    <div style="display:flex; gap:16px;">
+                                        <label style="font-weight:700; cursor:pointer;"><input type="radio" name="prof_default_week_start" value="sunday" ${defaultWeekStart === 'sunday' ? 'checked' : ''} style="transform: scale(1.1); margin-right: 6px;">週日起算</label>
+                                        <label style="font-weight:700; cursor:pointer;"><input type="radio" name="prof_default_week_start" value="monday" ${defaultWeekStart === 'monday' ? 'checked' : ''} style="transform: scale(1.1); margin-right: 6px;">週一起算</label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                                <div>
+                                    <label style="display:block; font-weight:800; color:#475569; margin-bottom:8px; font-size:0.9rem;">🤖 新錄音任務 AI 批改</label>
+                                    <label style="font-weight:700; cursor:pointer; display:flex; align-items:center;">
+                                        <input type="checkbox" id="prof-default-use-ai-grading" ${defaultUseAiGrading ? 'checked' : ''} style="transform: scale(1.1); margin-right: 8px;">
+                                        新建錄音任務預設勾選「送 AI 批改」
+                                    </label>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-weight:800; color:#475569; margin-bottom:8px; font-size:0.9rem;">📂 新任務／教材預設歸屬</label>
+                                    <div style="display:flex; gap:16px;">
+                                        <label style="font-weight:700; cursor:pointer;"><input type="radio" name="prof_default_materials_root" value="teacher" ${defaultMaterialsRoot === 'teacher' ? 'checked' : ''} style="transform: scale(1.1); margin-right: 6px;">👤 老師個人</label>
+                                        <label style="font-weight:700; cursor:pointer;"><input type="radio" name="prof_default_materials_root" value="class" ${defaultMaterialsRoot === 'class' ? 'checked' : ''} style="transform: scale(1.1); margin-right: 6px;">🏫 班級</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
                 profileContainer.innerHTML = `
                     <div style="background: white; padding: 25px; border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);" class="settings-card">
                         <h3 style="margin-top: 0; margin-bottom: 20px; color: var(--primary-dark); display: flex; align-items: center; gap: 8px; border-bottom: 2px solid #F1F5F9; padding-bottom: 10px;">
@@ -243,6 +292,8 @@ window.FeatureProfile = (() => {
                         </div>
 
                         ${nameModeSectionHtml}
+
+                        ${crossClassDefaultsSectionHtml}
 
                         <div style="margin-bottom: 20px;">
                             <label style="display:block; font-weight:800; color:#475569; margin-bottom:5px;">專屬 Google Drive 連結（老師工作區最頂層，唯讀）</label>
@@ -356,6 +407,23 @@ window.FeatureProfile = (() => {
                             newNameMode = modeRadio.value;
                         }
                     }
+
+                    // 🧩 我的班級／任務預設值：只有 canSetNameMode（非 ta_junior）才有這組表單，
+                    // ta_junior 沒渲染這幾個 input，保留原值不動，避免誤寫成預設字面值
+                    let newDefaultCalcMode = rawData.default_calc_mode || 'single';
+                    let newDefaultWeekStart = rawData.default_week_start_day || 'sunday';
+                    let newDefaultUseAiGrading = rawData.default_use_ai_grading === true;
+                    let newDefaultMaterialsRoot = rawData.default_materials_root_kind || 'teacher';
+                    if (canSetNameMode) {
+                        const calcModeRadio = document.querySelector('input[name="prof_default_calc_mode"]:checked');
+                        if (calcModeRadio) newDefaultCalcMode = calcModeRadio.value;
+                        const weekStartRadio = document.querySelector('input[name="prof_default_week_start"]:checked');
+                        if (weekStartRadio) newDefaultWeekStart = weekStartRadio.value;
+                        const aiGradingEl = document.getElementById('prof-default-use-ai-grading');
+                        if (aiGradingEl) newDefaultUseAiGrading = !!aiGradingEl.checked;
+                        const materialsRootRadio = document.querySelector('input[name="prof_default_materials_root"]:checked');
+                        if (materialsRootRadio) newDefaultMaterialsRoot = materialsRootRadio.value;
+                    }
                     
                     // 以預覽文字框的值作為基礎 name 的寫入保底
                     const finalFallbackName = document.getElementById('prof-sysDisplayName').value.trim() || fullCN || nameEN;
@@ -375,7 +443,11 @@ window.FeatureProfile = (() => {
                             passportLast: passLast,
                             passportFirst: passFirst,
                             lastNameCN: lastCN,
-                            firstNameCN: firstCN
+                            firstNameCN: firstCN,
+                            default_calc_mode: newDefaultCalcMode,
+                            default_week_start_day: newDefaultWeekStart,
+                            default_use_ai_grading: newDefaultUseAiGrading,
+                            default_materials_root_kind: newDefaultMaterialsRoot
                         };
 
                         // 執行 Supabase 雲端資料更新
@@ -389,6 +461,9 @@ window.FeatureProfile = (() => {
                             .eq('id', user.id);
 
                         if (updateErr) throw updateErr;
+
+                        // 跨班預設值可能改了，讓建立新班級／新任務等流程下次讀到新值
+                        if (window.TeacherPrefs) window.TeacherPrefs.invalidate();
 
                         if (newPwd && window.ProfileForm) {
                             await window.ProfileForm.updatePasswordIfProvided(newPwd);

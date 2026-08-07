@@ -194,6 +194,12 @@ def read_layout_profiles(rows: list[dict]) -> list[dict]:
                 "label": str(r.get("label") or pid).strip(),
                 "fields": str(r.get("fields") or "").strip(),
                 "fields_answer": fields_answer,
+                # quiz_prompt／quiz_answer：專供「線上卷」單一提示／單一答案用，跟
+                # fields／fields_answer（印刷多欄排版）分開；沒填時線上卷退回舊的
+                # 「fields 第2欄＝提示、第3欄＝答案」慣例（相容 GEPT 句子翻譯教材）。
+                # 見 .cursor/rules/material-publish-setup-format.mdc。
+                "quiz_prompt": str(r.get("quiz_prompt") or "").strip(),
+                "quiz_answer": str(r.get("quiz_answer") or "").strip(),
                 "lines_per_page": lpp,
                 "is_default": is_truthy_yn(r.get("is_default")),
                 "note": str(r.get("note") or "").strip(),
@@ -246,6 +252,8 @@ def build_layout_payload(
                 "label": p["label"],
                 "fields": p["fields"],
                 "fields_answer": p.get("fields_answer") or "",
+                "quiz_prompt": p.get("quiz_prompt") or "",
+                "quiz_answer": p.get("quiz_answer") or "",
                 "lines_per_page": p["lines_per_page"],
                 "note": p.get("note") or "",
             }

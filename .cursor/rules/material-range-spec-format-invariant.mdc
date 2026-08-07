@@ -1,0 +1,86 @@
+---
+description: 錄音 meta「範圍」文字格式解析鐵律（p./pp./# 前綴、- 與 ~ 分隔）
+globs: 020_js_core/material-snapshot.js,110_teacher_core/feature-timeline.js,110_teacher_core/feature-exam-job.js
+alwaysApply: false
+---
+
+# 錄音 meta 範圍格式解析鐵律（雷區）
+
+> 2026-08-04：老師填「p. 1」被靜默解析成頁碼 0.1 → 找不到任何列；
+> 填「#1-10」（半形連字號）因分隔符沒被正規化而報錯。
+> 動 `MaterialSnapshot.parseRangeSpec` 或它的呼叫端（Snapshot meta 列、考試區段從錄音帶入）時必讀。
+
+## 症狀（修正前）
+
+| 輸入 | 舊行為 | 老師看到的結果 |
+|---|---|---|
+| `p. 1` | `hasPageHint` 只認 `pp.`（兩個 p），`p.` 沒被當前綴剝掉，`toNumber("p. 1")` 靜默吃出 `0.1` | 套用 Snapshot 報「此範圍找不到任何列」，老師不知道為什麼 |
+| `1`（裸數字） | 沒有前綴也默默當頁碼 1 接受 | 頁碼／題號分不清，老師以為是題號結果被當頁碼 |
+| `#1-10`（半形連字號） | 只有 `[～〜－—–]` 被轉成 `~`，ASCII `-` 沒被轉 | `toNumber("1-10")` 直接 `NaN` → 報「無法解析範圍片段」 |
+
+## 根因
+
+1. `hasPageHint = /pp\.?/i.test(text)` 硬性要求兩個 `p`，`p.`／`p`（單一 p）永遠判斷失敗，
+   之後 `.replace(/pp\.?/ig, ' ')` 也剝不掉單 p 前綴，殘字混進 `toNumber()` 被悄悄吃成小數。
+2. 裸數字沒有前綴防呆，`toNumber()` 一律成功，導致「1 到底是頁碼還是題號」完全看程式碼猜，
+   不同呼叫端猜的結果還可能不一致。
+3. 分隔符正規化只列了全形變體（`～〜－—–`），漏了最常打的 ASCII 半形 `-`。
+
+## 不變量（修正後）
+
+```
+前綴只認開頭一個：# → 題號；p./pp./p/pp（大小寫、有無點皆可，後面須緊接數字）→ 頁碼
+裸數字（無前綴）一律拒絕，丟出明確錯誤要求補 p./pp./#（不可默默當頁碼或題號）
+範圍分隔符 "-" 與 "~"（含全形 ～〜－—–）皆可互換使用
+剝除前綴後的片段只接受純數字或「數字(分隔符)數字」，不可再讓殘留文字流進 toNumber() 變小數
+同一列混用頁碼與題號前綴 → 明確報錯，請老師拆成兩列
+```
+
+## 禁止
+
+```javascript
+// ❌ 只認兩個 p，單一 p. 前綴判斷失敗
+var hasPageHint = /pp\.?/i.test(text);
+
+// ❌ 裸數字沒有前綴防呆，靜默當頁碼接受
+var kind = hasItemHint && !hasPageHint ? 'item' : 'page'; // 沒有 hasPageHint 也會落到 'page'
+
+// ❌ 分隔符正規化漏掉 ASCII "-"
+text.replace(/[～〜－—–]/g, '~')  // "#1-10" 的 "-" 沒被轉換
+
+// ❌ 剝前綴失敗時讓殘留文字流進 toNumber()，靜默吃出詭異小數
+toNumber("p. 1") // → 0.1，不報錯，下游「找不到任何列」讓老師摸不著頭腦
+```
+
+## 正確做法
+
+```javascript
+// ✅ 前綴偵測 = 剝除用同一個 regex，p/pp/p./pp. 皆可，後面必須接數字
+var itemPrefixMatch = text.match(/^\s*#\s*/);
+var pagePrefixMatch = !itemPrefixMatch ? text.match(/^\s*pp?\.?\s*(?=\d)/i) : null;
+if (!itemPrefixMatch && !pagePrefixMatch) {
+    throw new Error('範圍請加註前綴：頁碼用 p. 或 pp.，題號用 #…（不接受單獨數字）');
+}
+
+// ✅ 分隔符一次正規化涵蓋全形＋半形
+body.replace(/[～〜－—–-]/g, '~')
+
+// ✅ 剝前綴之後的片段只接受純數字，非數字殘留直接報錯（不可轉小數）
+if (!/^\d+$/.test(part)) throw new Error('無法解析範圍片段：' + part);
+```
+
+## 連動
+
+- `feature-exam-job.js` 的 `parseSectionRangeFromSpec` 後備 regex（`/^pp?\.?\s*(\d+).../i`）
+  本來就已經支援 `p./pp.` 與 `-/~`，這次是讓 `MaterialSnapshot.parseRangeSpec`（主要解析路徑）
+  跟它對齊，避免兩邊對同一個字串的判斷不一致。
+- 跟 `exam-available-count-invariant.mdc` 的 `include_nums` 分隔符正規化是同一類問題
+  （半形 `-` 常被漏掉），改其中一處時建議順手檢查另一處是否也需要同步。
+
+## 實測
+
+1. Snapshot meta 列範圍填 `p. 1` → 套用成功，AI 稿／學生顯示內容為該頁真實內容（不是找不到任何列）
+2. 填 `1`（裸數字，無前綴）→ 明確報錯要求補 `p./pp./#`，不會被默默當頁碼接受
+3. 填 `#1-10`（半形連字號）→ 與 `#1~10` 結果一致，都能正確切出題號 1~10
+4. 填 `pp 1`、`p 1`（無點）與 `pp. 1`、`p. 1`（有點）四種寫法結果一致
+5. 同一列填 `pp. 1~2, #5`（混用）→ 明確報錯要求拆成兩列，不會默默漏題或報無關錯誤

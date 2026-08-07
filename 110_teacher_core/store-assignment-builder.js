@@ -499,16 +499,22 @@ window.BuilderStore = (() => {
         // 💣 雷區：曾發生老師沒勾 AI 批改，學生端卻照樣送 AI——因為新建任務預設
         // use_ai_grading: true，勾選框一開始就是「已勾」，老師沒動它＝以為沒開，實際是開的。
         // 改為預設 false（需老師明確勾選才送 AI），只影響「新建」任務；已存在資料不動。
-        _defaultAudioRaw: () => ({
-            use_ai_grading: false,
-            use_ai_grammar: false,
-            capture_studio: true,
-            capture_upload: true,
-            script_source: 'meta',
-            material_range: '',
-            ai_source_type: 'text',
-            student_source_type: 'text'
-        }),
+        // 🧩 若老師本人在「系統帳號設定」設過跨班預設「新錄音任務預設勾 AI 批改」，這裡改用該值；
+        // 快取還沒抓到之前一律維持安全預設 false（見 020_js_core/teacher-prefs.js getCachedSync）。
+        _defaultAudioRaw: () => {
+            const teacherDefaults = window.TeacherPrefs ? window.TeacherPrefs.getCachedSync() : {};
+            const useAiDefault = teacherDefaults.default_use_ai_grading === true;
+            return {
+                use_ai_grading: useAiDefault,
+                use_ai_grammar: false,
+                capture_studio: true,
+                capture_upload: true,
+                script_source: 'meta',
+                material_range: '',
+                ai_source_type: 'text',
+                student_source_type: 'text'
+            };
+        },
 
         _defaultExamRaw: () => ({
             exam_job_id: '',

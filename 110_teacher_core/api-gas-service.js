@@ -250,6 +250,71 @@ window.GasService = (function() {
     },
 
     /**
+     * 📤「教材/Layout 搭配」的「產生並上傳」專用：把瀏覽器現算出來的 meta.json／script.txt
+     * 直接寫進「已知 folderId」的那個教材資料夾本身——刻意**不**傳 subFolderName（留空／不傳），
+     * 對接 Code.gs upload_file 的「else：不動 folder」直寫分支（跟學生 ApiService.uploadToGAS
+     * 直寫 01_Submissions 同一套語意）。⚠️ 不要沿用 uploadStudentLocalFile 的預設參數呼叫這裡——
+     * 它的 subFolderName 預設是 '01_Class_Resources'，若疏忽沒覆寫會把教材檔案寫進資料夾
+     * 底下多一層 01_Class_Resources 子夾，而不是直接寫進該教材資料夾本身。
+     */
+    async uploadMaterialFile(base64, fileName, mimeType, folderId) {
+      try {
+        const payload = {
+          action: 'upload_file',
+          fileData: base64,
+          fileName: fileName,
+          mimeType: mimeType,
+          folderId: folderId
+        };
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'GAS 伺服器上傳失敗');
+        }
+        return { fileId: result.fileId, fileUrl: result.fileUrl, finalFileName: result.finalFileName };
+      } catch (error) {
+        console.error('[GasService] 教材檔案上傳發生錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
+     * 📁「教材/Layout 搭配」的「產生並上傳」專用：確保「教材根／某個教材資料夾名稱」這條路徑
+     * 存在（不存在就沿路建立），對接既有 create_folder 路由的 folderPath 陣列參數
+     * （resolveFolderPath：從 parentFolderId 開始，依序 getOrCreateSubFolder 每一段）。
+     * rootFolderId 必須是「老師個人 Drive 根」或「班級 Drive 根」（FeatureTimeline.
+     * resolveMaterialsRootFolderId 拿到的那一層，不是 01_My_Materials/00_Class_Materials 本身）；
+     * materialsRootName 決定中間那一層是 01_My_Materials 還是 00_Class_Materials。
+     */
+    async ensureMaterialFolder(rootFolderId, materialsRootName, materialFolderName) {
+      try {
+        const payload = {
+          action: 'create_folder',
+          folderName: materialFolderName,
+          parentFolderId: rootFolderId,
+          folderPath: [materialsRootName]
+        };
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (result.status !== 'success') {
+          throw new Error(result.message || 'GAS 伺服器建立教材資料夾失敗');
+        }
+        return { folderId: result.folderId, folderUrl: result.folderUrl };
+      } catch (error) {
+        console.error('[GasService] 建立教材資料夾發生錯誤:', error);
+        throw error;
+      }
+    },
+
+    /**
      * 🔐 確保資料夾為「知道連結可編輯」，並可選加入學生 Google 信箱
      */
     async ensureFolderSharing(folderId, options = {}) {
@@ -311,13 +376,27 @@ window.GasService = (function() {
       }
     },
 
+    /**
+     * 回傳值刻意仍是「陣列」（相容既有呼叫端 collectMaterialMetaOptions(materials, kind) 直接
+     * forEach 用），但額外把除錯欄位（debugVersion/resolvedRootId/resolvedRootName/
+     * subFolderCount）掛在陣列物件本身上（JS 陣列本質是物件，掛額外屬性不影響
+     * forEach/map/length 等陣列語意）——2026-08-06：老師連續回報「教材資料夾下拉是空的」，
+     * 但看不到 GAS 執行環境，前端只能猜。這幾個欄位讓「清單是空的」變成可驗證、可回報的
+     * 具體線索：debugVersion 沒出現＝GAS 網頁應用程式還在跑舊部署（要重新部署，不是程式碼問題）；
+     * resolvedRootId 可直接貼進 drive.google.com/drive/folders/<ID> 比對系統到底看到哪個資料夾。
+     */
     async listMaterialMasters(targetFolderId, rootKind = 'class') {
       const result = await postGasJson({
         action: 'list_material_masters',
         targetFolderId: targetFolderId,
         rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
       });
-      return result.materials || [];
+      const materials = result.materials || [];
+      materials.debugVersion = result.debugVersion || '';
+      materials.resolvedRootId = result.resolvedRootId || '';
+      materials.resolvedRootName = result.resolvedRootName || '';
+      materials.subFolderCount = (typeof result.subFolderCount === 'number') ? result.subFolderCount : materials.length;
+      return materials;
     },
 
     /**

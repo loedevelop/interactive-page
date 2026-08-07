@@ -58,15 +58,39 @@ window.FeatureTimeline = (() => {
         return classFolderId;
     }
 
+    /**
+     * 💣 雷區（2026-08-06）：以前這裡只在 pack.metaFiles 有內容時才推進 options——導致「還沒有
+     * 任何 .meta.json 的資料夾」永遠不會出現在任何教材資料夾下拉（教材/Layout 搭配、套用到教材、
+     * 獨立考試）。這在「產生 meta/script 並上傳」這個新功能裡是致命的雞生蛋問題：老師要選的
+     * 目標資料夾，正是「還沒有 meta 檔」的那個空資料夾（要對著它寫入第一份 meta.json），
+     * 但下拉卻因為它是空的而永遠看不到它，逼老師只能手動輸入資料夾全名（正是要根除的壞流程）。
+     * 修法：資料夾即使 0 個 .meta.json 也要推進一筆佔位 option（fileName 留空），讓
+     * uniqueFolderNamesFromEntry（只看 folderName）能撈到它；只依賴 fileName 算「活頁 stem」
+     * 的函式（examSheetStemsForFolder／getRawFileNamesForFolder）本來就會 filter 掉空字串，
+     * 不會因此長出假的活頁。同時每筆都夾帶 folderId，供「產生並上傳」直接指定 Drive 寫入目標，
+     * 不用再多一次「用資料夾名稱反查 ID」的 GAS 往返。
+     */
     function collectMaterialMetaOptions(materials, rootKind) {
         const kind = normalizeMaterialsRootKind(rootKind);
         const prefix = kind === 'teacher' ? '👤老師 ' : '🏫班級 ';
         const options = [];
         (materials || []).forEach(function (pack) {
+            if (!pack.metaFiles || !pack.metaFiles.length) {
+                options.push({
+                    rootKind: kind,
+                    folderName: pack.folderName,
+                    folderId: pack.folderId || '',
+                    fileName: '',
+                    fileId: '',
+                    label: prefix + (pack.folderName || '（未命名）') + '（尚無 .meta.json）'
+                });
+                return;
+            }
             (pack.metaFiles || []).forEach(function (mf) {
                 options.push({
                     rootKind: kind,
                     folderName: pack.folderName,
+                    folderId: pack.folderId || '',
                     fileName: mf.name,
                     fileId: mf.fileId || '',
                     label: prefix + (pack.folderName ? pack.folderName + ' / ' : '') + mf.name
@@ -91,14 +115,29 @@ window.FeatureTimeline = (() => {
         return '';
     }
 
-    async function loadMaterialMetaOptions(classId, rootKind) {
+    /**
+     * 回傳 { options, debug } 而不是單純 options 陣列——2026-08-06 老師連續回報「教材資料夾
+     * 下拉是空的」，但看不到 GAS 執行環境，前端只能猜。debug 帶著 GasService.listMaterialMasters
+     * 掛在陣列上的 debugVersion/resolvedRootId/resolvedRootName/subFolderCount，讓「清單是空的」
+     * 這件事變成可驗證、可回報的具體線索（見 ensureMetaCatalog／getMetaCatalogDebugText）。
+     */
+    async function loadMaterialMetaOptionsWithDebug(classId, rootKind) {
         const kind = normalizeMaterialsRootKind(rootKind);
         if (!window.GasService || typeof window.GasService.listMaterialMasters !== 'function') {
             throw new Error('GasService 尚未載入');
         }
         const folderId = await resolveMaterialsRootFolderId(classId, kind);
         const materials = await window.GasService.listMaterialMasters(folderId, kind);
-        return collectMaterialMetaOptions(materials, kind);
+        return {
+            options: collectMaterialMetaOptions(materials, kind),
+            debug: {
+                queriedFolderId: folderId,
+                debugVersion: materials.debugVersion || '',
+                resolvedRootId: materials.resolvedRootId || '',
+                resolvedRootName: materials.resolvedRootName || '',
+                subFolderCount: (typeof materials.subFolderCount === 'number') ? materials.subFolderCount : materials.length
+            }
+        };
     }
 
     // 班級級 meta 清單快取（依 classId + 根目錄），避免每個節點／每次重繪都手動載
@@ -116,8 +155,33 @@ window.FeatureTimeline = (() => {
     }
 
     /**
+     * 把 ensureMetaCatalog 存的 debug 資訊格式化成一行文字，給「教材資料夾清單是空的」的警告
+     * 訊息附加在後面——2026-08-06 老師連續回報「明明有資料夾，下拉還是空的」，這行字讓老師
+     * 下次遇到同樣狀況時，可以直接把畫面上這段文字複製貼給我，不用再靠截圖互相猜測：
+     * - 沒有出現 v= 版本戳記＝GAS Web App 還在跑舊部署，要先重新部署，不是程式碼問題
+     * - resolvedRootId 可以直接貼進 drive.google.com/drive/folders/<ID> 打開，跟自己在
+     *   Drive 裡看到的資料夾網址比對，一秒判斷系統是不是真的在看老師以為的那個資料夾
+     */
+    function getMetaCatalogDebugText(classId, rootKind) {
+        const entry = getMetaCatalogEntry(classId, rootKind);
+        const debug = entry && entry.debug;
+        if (!debug) return '（🔍 尚未取得除錯資訊，可能是連線失敗或還在載入中——若一直是這樣，代表 GAS 還在跑舊部署，未回傳除錯欄位）';
+        return '🔍 v=' + (debug.debugVersion || '未知') + '｜查詢資料夾ID=' + (debug.queriedFolderId || '未知')
+            + '｜實際解析到=' + (debug.resolvedRootName || '未知') + '（' + (debug.resolvedRootId || '未知') + '）'
+            + '｜GAS 數到 ' + (typeof debug.subFolderCount === 'number' ? debug.subFolderCount : '未知') + ' 個子資料夾';
+    }
+
+    /**
      * 確保某根目錄的 meta 清單已載入（可 force 重抓）。
      * 雷區：失敗時不可把 [] 當成功快取，否則之後永遠 0 檔、重整也像沒作用。
+     *
+     * 💣 2026-08-06 補（老師實測回報「明明 Drive 裡真的有子資料夾，下拉還是空的」）：
+     * 「成功但清單是空的」（ok:true, options:[]）以前跟「有真內容」用同一條件永久信任快取——
+     * 只要曾經有一次（不管什麼原因）真的查到空清單，之後任何非 force 呼叫都會直接吃這個空
+     * 快取，永遠不會再真的打一次 GAS，即使 Drive 裡後來真的有資料夾也一樣，老師感覺就是
+     * 「怎麼樣都救不回來，只能整頁重新整理甚至也沒用」。修法：只有「有真內容」（options.length>0）
+     * 才長期信任快取；「成功但空」只在 5 秒內免重複打 GAS（擋同一批畫面在極短時間連續問好幾次），
+     * 超過 5 秒的任何一次詢問都會自動再查一次，直到查到真內容或明確失敗為止。
      */
     async function ensureMetaCatalog(classId, rootKind, opts) {
         const options = opts || {};
@@ -128,22 +192,25 @@ window.FeatureTimeline = (() => {
             delete _metaCatalogPromises[key];
         }
         const cached = _metaCatalog[key];
-        // 只有明確成功（ok:true）才用快取；失敗必須可重試
-        if (!options.force && cached && cached.ok === true && Array.isArray(cached.options)) {
+        const cacheHasRealContent = cached && cached.ok === true && Array.isArray(cached.options) && cached.options.length > 0;
+        const cacheIsFreshEmpty = cached && cached.ok === true && Array.isArray(cached.options) && cached.options.length === 0
+            && (Date.now() - (cached.loadedAt || 0) < 5000);
+        if (!options.force && (cacheHasRealContent || cacheIsFreshEmpty)) {
             return cached.options;
         }
         if (_metaCatalogPromises[key]) {
             return _metaCatalogPromises[key];
         }
-        _metaCatalogPromises[key] = loadMaterialMetaOptions(classId, kind).then(function (list) {
-            _metaCatalog[key] = { options: list || [], error: null, ok: true, loadedAt: Date.now() };
+        _metaCatalogPromises[key] = loadMaterialMetaOptionsWithDebug(classId, kind).then(function (result) {
+            _metaCatalog[key] = { options: result.options || [], error: null, ok: true, loadedAt: Date.now(), debug: result.debug || null };
             return _metaCatalog[key].options;
         }).catch(function (err) {
             _metaCatalog[key] = {
                 options: [],
                 error: err,
                 ok: false,
-                loadedAt: Date.now()
+                loadedAt: Date.now(),
+                debug: null
             };
             throw err;
         }).finally(function () {
@@ -371,7 +438,9 @@ window.FeatureTimeline = (() => {
             + buildMetaOptionsHtml(options, rowData.value || '')
             + '</select>'
             + '<input type="text" class="form-control material-meta-range" style="flex:1.4; min-width:200px; padding:6px; font-size:0.85rem; font-weight:700;" '
-            + 'placeholder="pp. 1~2, 5, 10 或 #11~16, 26" value="' + escapeAttr(rowData.range_spec || '') + '">'
+            + 'placeholder="pp. 1~2, 5, 10 或 #11-16, 26" '
+            + 'title="頁碼請用 p. 或 pp. 開頭，題號請用 # 開頭；範圍可用 - 或 ~ 分隔（例：p. 1、pp. 1~2 或 #11-16）。不接受單獨數字。" '
+            + 'value="' + escapeAttr(rowData.range_spec || '') + '">'
             + '<button type="button" class="btn-action" style="padding:6px 10px; background:#FEE2E2; color:#B91C1C; border:none; border-radius:6px; font-weight:900; cursor:pointer;" '
             + 'onclick="window.FeatureTimeline.removeMaterialMetaRow(this, \'' + safePath + '\')">×</button>';
 
@@ -659,7 +728,14 @@ window.FeatureTimeline = (() => {
         if (!stems.length) return [];
         const tpl = templateRef || {};
         const folder = tpl.material_folder || '';
-        const rootKind = tpl.materials_root_kind === 'class' ? 'class' : 'teacher';
+        // 已存過就沿用；沒存過才帶老師個人跨班預設（見 020_js_core/teacher-prefs.js getCachedSync）
+        let rootKind;
+        if (tpl.materials_root_kind === 'class' || tpl.materials_root_kind === 'teacher') {
+            rootKind = tpl.materials_root_kind;
+        } else {
+            const teacherRootDefaults = window.TeacherPrefs ? window.TeacherPrefs.getCachedSync() : {};
+            rootKind = teacherRootDefaults.default_materials_root_kind === 'class' ? 'class' : 'teacher';
+        }
         const tplFile = tpl.published_file || (stems[0] + '.meta.json');
         const pageMap = {};
         (units || []).forEach(function (u) {
@@ -2219,6 +2295,18 @@ window.FeatureTimeline = (() => {
         rebuildMaterialRefsFromGradingUnits: rebuildMaterialRefsFromGradingUnits,
         uniqueStemsFromGradingUnits: uniqueStemsFromGradingUnits,
         buildMaterialRangeLabelFromRows: buildMaterialRangeLabelFromRows,
+
+        // 供其他模組（如獨立考試教材資料夾下拉）重用同一套「老師個人／班級資源」清單快取，
+        // 避免各自各刻一份 GasService.listMaterialMasters 呼叫（見 exam-standalone-material-invariant.mdc）
+        ensureMetaCatalog: ensureMetaCatalog,
+        getMetaCatalogEntry: getMetaCatalogEntry,
+        // 2026-08-06：教材資料夾清單「查到空的」時的除錯文字（GAS 版本戳記／實際解析到的
+        // 資料夾 ID／子資料夾數），給 MaterialFolderPicker 等下拉的 emptyMessage 用
+        getMetaCatalogDebugText: getMetaCatalogDebugText,
+        // 供「教材/Layout 搭配」的「產生並上傳」功能取得教材根目錄（01_My_Materials／00_Class_Materials
+        // 的上一層）的 Drive folderId，才能在目標資料夾還不存在時用 GAS create_folder 的
+        // folderPath 建出來，不用另寫一份「怎麼找到教材根」的邏輯
+        resolveMaterialsRootFolderId: resolveMaterialsRootFolderId,
 
         previewMaterialSnapshot: async function (pathStr) {
             const bState = window.BuilderStore ? window.BuilderStore.getState() : null;

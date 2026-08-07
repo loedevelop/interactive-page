@@ -1,6 +1,6 @@
 /**
  * 📂 020_js_core/layout-fields-eval.js
- * 購物車「欄位」公式求值：頂層逗號＝輸出網格欄；支援 STACK / FONTSIZE / SUBSTITUTE / & / Excel 欄代號。
+ * 購物車「欄位」公式求值：頂層逗號＝輸出網格欄；支援 STACK / FONTSIZE / SUBSTITUTE / TEXTJOIN / & / Excel 欄代號。
  */
 window.LayoutFieldsEval = (function () {
     'use strict';
@@ -77,17 +77,39 @@ window.LayoutFieldsEval = (function () {
         return map;
     }
 
-    function lookupColumn(row, letter, colMap) {
-        const L = String(letter || '').trim().toUpperCase();
-        if (!L) return '';
+    /**
+     * 💣 雷區（見 .cursor/rules/material-publish-setup-format.mdc）：
+     * 同一份教材若有多個 schema_id（同活頁不同區塊，各自 excel_col 位置不同，例如
+     * vocab-set1 用 AK=中文，vocab-set2 用 AL=中文），`_Layout.fields` 若寫「Excel 欄字母」
+     * （如 `AL, AN`），這串字母對其中一個 schema 是對的，對另一個 schema 卻會對到
+     * 完全不同的語意欄位（曾經 `AN` 在 set1 是 article、在 set2 卻是 pos）——
+     * 「同教材所有段落共用一份 _Layout」的設計，靠欄字母做不到真正共用。
+     *
+     * 正確做法：`fields`／`fields_answer` 一律優先用 `_Schema.semantic_key`
+     * （例如 `display_zh, pos, article`，大小寫不拘）——這才是跨 schema 都通用的
+     * 「共同詞彙」，不管實際 Excel 欄位在哪裡都能正確對應。Excel 欄字母僅保留給
+     * 「單一 schema、沒有多區塊」的舊教材相容用，多 schema 教材不要再用欄字母寫 `_Layout`。
+     */
+    function lookupColumn(row, name, colMap) {
+        const raw = String(name || '').trim();
+        if (!raw) return '';
+        const upper = raw.toUpperCase();
+        // ① 優先當作語意欄位鍵（semantic_key，大小寫不拘）：跨 schema 皆可共用，建議寫法
+        if (row) {
+            const rowKeys = Object.keys(row);
+            for (let i = 0; i < rowKeys.length; i++) {
+                if (rowKeys[i].toUpperCase() === upper) {
+                    const v = row[rowKeys[i]];
+                    if (v != null && String(v).trim() !== '') return v;
+                }
+            }
+        }
+        // ② 相容：把「Excel 欄字母」透過 colMap 轉成語意欄位再查（僅單一 schema 教材安全）
         const map = resolveColMap(colMap);
-        const semantic = map[L];
+        const semantic = map[upper];
         if (semantic && row && row[semantic] != null && String(row[semantic]).trim() !== '') {
             return row[semantic];
         }
-        // 相容：列上直接以欄字母當 key
-        if (row && row[L] != null && String(row[L]).trim() !== '') return row[L];
-        if (row && row[letter] != null && String(row[letter]).trim() !== '') return row[letter];
         if (semantic && row && row[semantic] != null) return row[semantic];
         return '';
     }
@@ -261,6 +283,15 @@ window.LayoutFieldsEval = (function () {
                 if (!oldS) return asRich(text);
                 // 全取代（類似 Excel SUBSTITUTE 未指定 instance）
                 return asRich(text.split(oldS).join(newS));
+            }
+            if (fn === 'TEXTJOIN') {
+                // 用法同 Excel TEXTJOIN(分隔符, 欄位1, 欄位2, ...)：自動跳過空值，
+                // 避免 pre 沒填（如名詞不需要 a/an）時整段答案被 & 的防呆規則吃成空字串。
+                const sep = cellText(args[0]);
+                const parts = args.slice(1).map(cellText).map(function (t) {
+                    return String(t || '').trim();
+                }).filter(Boolean);
+                return asRich(parts.join(sep));
             }
             throw new Error('未知函式：' + fn);
         }

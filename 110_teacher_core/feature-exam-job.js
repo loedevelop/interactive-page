@@ -13,11 +13,20 @@ window.FeatureExamJob = (function () {
         { id: 'gept2-v1', label: 'GEPT-2 v1', aliases: ['GEPT-2', 'GEPT2', 'gept-2', 'gept2'] }
     ];
 
-    /** 兩邊約定的卷面模板（優先以教材 _layout.json 為準） */
+    /**
+     * 兩邊約定的卷面模板（優先以教材 _layout.json 為準）。
+     * 2026-08-04：老師提過的 5 個中央模板類型（整句翻譯／句子填空／單字帶圖／單字無圖／新版擴充），
+     * 加上既有舊 id（gept-translate-5col）共 6 個，先在這裡補齊，避免下拉/搭配清單漏選項。
+     * 🚧 vocab-with-image／v2-extended 目前只是占位 id（尚無圖片渲染／擴充公式實作），
+     *    真正的「中央模板管理（Drive 儲存＋template_ref 引用）」是更大的一輪工作，尚未落地。
+     */
     const LAYOUT_CATALOG = [
-        { id: 'sentence-translate-4col', label: '翻譯四欄（sentence-translate-4col）' },
-        { id: 'sentence-cloze-4col', label: '填空四欄（sentence-cloze-4col）' },
-        { id: 'gept-translate-5col', label: 'GEPT 翻譯五欄（舊 id）' }
+        { id: 'sentence-translate-4col', label: '整句翻譯（sentence-translate-4col）' },
+        { id: 'sentence-cloze-4col', label: '句子填空（sentence-cloze-4col）' },
+        { id: 'gept-translate-5col', label: 'GEPT 翻譯五欄（舊 id）' },
+        { id: 'vocab-no-image', label: '單字無圖（vocab-no-image）' },
+        { id: 'vocab-with-image', label: '單字帶圖（vocab-with-image，🚧 占位，尚無圖片渲染）' },
+        { id: 'v2-extended', label: '新版擴充（v2-extended，🚧 占位）' }
     ];
 
     /** 卷面「欄位」公式提示（無 _layout 時的後備；正式以 _layout.json fields 為準） */
@@ -246,7 +255,7 @@ window.FeatureExamJob = (function () {
                 range_spec: rangeEl ? String(rangeEl.value || '').trim() : '',
                 label: stem,
                 stem: stem,
-                materials_root_kind: rootKind || 'teacher',
+                materials_root_kind: rootKind || (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class' ? 'class' : 'teacher'),
                 schema_id: 'gept-2_sentence'
             });
         });
@@ -479,7 +488,19 @@ window.FeatureExamJob = (function () {
         return false;
     }
 
-    function countAvailableFromMeta(section, audioTask) {
+    /**
+     * @param {object} section
+     * @param {object} audioTask 同層錄音任務（combo 用）
+     * @param {object} [selfTask] 考試任務自己（獨立考試：無錄音時退回自己快取的 meta_rows_by_stem）
+     */
+    function countAvailableFromMeta(section, audioTask, selfTask) {
+        const v = countAvailableFromMetaSource(section, audioTask);
+        if (v != null) return v;
+        if (selfTask && selfTask !== audioTask) return countAvailableFromMetaSource(section, selfTask);
+        return v;
+    }
+
+    function countAvailableFromMetaSource(section, audioTask) {
         if (!section || !audioTask) return null;
         const sheet = String(section.sheet_id || '').trim().toUpperCase();
         if (!sheet) return null;
@@ -955,6 +976,8 @@ window.FeatureExamJob = (function () {
             if (s.difficulty) sec.difficulty = s.difficulty;
             if (s.include_nums) sec.include_nums = s.include_nums;
             if (s.exclude_nums) sec.exclude_nums = s.exclude_nums;
+            // 同一活頁可在不同區段各自覆蓋 layout_profile_id（見 material-layout-pairing-invariant.mdc）
+            if (s.layout_profile_id) sec.layout_profile_id = s.layout_profile_id;
             sections.push(sec);
         }
 
@@ -1549,9 +1572,6 @@ window.FeatureExamJob = (function () {
         const bankOpts = BANK_CATALOG.map(function (b) {
             return '<option value="' + esc(b.id) + '"' + (bankId === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>';
         }).join('');
-        const layoutOpts = LAYOUT_CATALOG.map(function (l) {
-            return '<option value="' + esc(l.id) + '"' + (layoutId === l.id ? ' selected' : '') + '>' + esc(l.label) + '</option>';
-        }).join('');
         const fieldHint = layoutFieldHint(layoutId);
         const paperItemCount = (raw.quiz_paper && Array.isArray(raw.quiz_paper.items))
             ? raw.quiz_paper.items.length
@@ -1561,21 +1581,77 @@ window.FeatureExamJob = (function () {
             : '';
 
         let siblingAudio = null;
+        let currentClassId = '';
         if (window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
             const bState = window.BuilderStore.getState();
             siblingAudio = findPreferredAudioTask((bState && bState.tasks) || [], pathStr);
+            currentClassId = (bState && bState.classId) || '';
         }
+        // 獨立考試（無同層錄音）：有沒有設定過自己的教材資料夾，決定「需讀取」提示要不要出現
+        const examMaterialSelf = getExamMaterialSelf(task);
+        const isStandaloneExam = !siblingAudio;
+
+        // layout_profile_id 下拉：若「🧩 教材/Layout 搭配」中央頁登記過這個教材資料夾／活頁的建議 layout，
+        // 排到最前面並標「⭐建議」，仍是純建議、老師可自由改選（見 feature-material-layout-pairing.js）
+        const layoutMaterialFolder = isStandaloneExam
+            ? examMaterialSelf.material_folder
+            : ((siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs)
+                && siblingAudio.raw_data.material_refs[0] && siblingAudio.raw_data.material_refs[0].material_folder) || '');
+        const layoutSectionSheetIds = sections.map(function (s) { return s.sheet_id; }).filter(Boolean);
+        const suggestedLayoutIds = (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds === 'function')
+            ? window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds(layoutMaterialFolder, layoutSectionSheetIds)
+            : [];
+        const orderedLayoutCatalog = suggestedLayoutIds.length
+            ? LAYOUT_CATALOG.slice().sort(function (a, b) {
+                const ai = suggestedLayoutIds.indexOf(a.id);
+                const bi = suggestedLayoutIds.indexOf(b.id);
+                if (ai === -1 && bi === -1) return 0;
+                if (ai === -1) return 1;
+                if (bi === -1) return -1;
+                return ai - bi;
+            })
+            : LAYOUT_CATALOG;
+        const layoutOpts = orderedLayoutCatalog.map(function (l) {
+            const isSuggested = suggestedLayoutIds.indexOf(l.id) !== -1;
+            const label = (isSuggested ? '⭐ ' : '') + l.label;
+            return '<option value="' + esc(l.id) + '"' + (layoutId === l.id ? ' selected' : '') + '>' + esc(label) + '</option>';
+        }).join('');
+
+        // 教材資料夾下拉：優先吃 FeatureTimeline 已快取的清單（跟錄音 Material Snapshot 共用同一份快取，
+        // 見 exam-standalone-material-invariant.mdc），沒快取才在渲染後非同步補抓，避免老師手打資料夾名稱
+        let materialFolderTeacherEntry = null;
+        let materialFolderClassEntry = null;
+        if (isStandaloneExam && window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function') {
+            materialFolderTeacherEntry = window.FeatureTimeline.getMetaCatalogEntry(currentClassId, 'teacher');
+            materialFolderClassEntry = window.FeatureTimeline.getMetaCatalogEntry(currentClassId, 'class');
+        }
+        const materialFolderCatalogLoaded = !!(materialFolderTeacherEntry || materialFolderClassEntry);
+        const materialFolderOptsHtml = isStandaloneExam
+            ? buildExamMaterialFolderOptionsHtml(examMaterialSelf, materialFolderTeacherEntry, materialFolderClassEntry)
+            : '';
+        if (isStandaloneExam && !materialFolderCatalogLoaded) {
+            // 渲染函式只回字串，DOM 還沒插入；下一輪事件圈再補抓＋補畫，避免抓到不存在的元素
+            setTimeout(function () { ensureExamMaterialFolderCatalog(pathStr, currentClassId, false); }, 0);
+        }
+        // 選了教材資料夾才能推出「活頁」候選清單；還沒選或清單未載入時 examSheetStems 是空陣列，
+        // 退回原本的文字輸入（見下方 rows 組裝），避免顯示一個永遠空的下拉
+        const examSheetStems = isStandaloneExam
+            ? examSheetStemsForFolder(currentClassId, examMaterialSelf.root_kind, examMaterialSelf.material_folder)
+            : [];
 
         let totalCountSum = 0;
         const rows = sections.map(function (s, idx) {
-            let avail = countAvailableFromMeta(s, siblingAudio);
+            let avail = countAvailableFromMeta(s, siblingAudio, task);
             const expected = expectedSlotsForSection(s);
             // 💣 雷區：已選 B.meta 但 Snapshot 只凍結到 A 時，不可用「~頁數×行數」粉飾成好像有題
-            // （老師會以為 B 也 OK，顯示%卻是 —）。有點名該活頁 → 明示「需Snapshot」。
+            // （老師會以為 B 也 OK，顯示%卻是 —）。有點名該活頁 → 明示「需Snapshot」（獨立考試則是「需讀取」）。
             let availIsEstimate = false;
             let availNeedsSnap = false;
             if (avail == null) {
                 if (sectionSheetMentionedInAudio(s, siblingAudio)) {
+                    availNeedsSnap = true;
+                } else if (isStandaloneExam && examMaterialSelf.material_folder) {
+                    // 獨立考試已設定教材資料夾，只是還沒按「讀取可用題數」→ 不可用估算粉飾
                     availNeedsSnap = true;
                 } else if (expected != null) {
                     // 手加空區段、尚未對到錄音 meta：才用預計格位
@@ -1585,11 +1661,12 @@ window.FeatureExamJob = (function () {
                     availNeedsSnap = true;
                 }
             }
+            const needActionLabel = isStandaloneExam ? '需讀取' : '需Snapshot';
             const countVal = Number(s.count);
             if (!isNaN(countVal)) totalCountSum += countVal;
             const availStr = availNeedsSnap
-                ? '需Snapshot'
-                : (avail == null ? '需Snapshot' : (availIsEstimate ? ('~' + avail) : String(avail)));
+                ? needActionLabel
+                : (avail == null ? needActionLabel : (availIsEstimate ? ('~' + avail) : String(avail)));
             const pctStr = formatDisplayPercent(
                 s.count,
                 (availIsEstimate || availNeedsSnap) ? null : avail
@@ -1601,9 +1678,10 @@ window.FeatureExamJob = (function () {
             let missingInc = [];
             if (!availIsEstimate && !availNeedsSnap && String(s.include_nums || '').trim()) {
                 const sheetKey = String(s.sheet_id || '').trim().toUpperCase();
-                const rowsForSheet = siblingAudio && siblingAudio.raw_data && siblingAudio.raw_data.meta_rows_by_stem
-                    ? (siblingAudio.raw_data.meta_rows_by_stem[sheetKey] || siblingAudio.raw_data.meta_rows_by_stem[s.sheet_id])
-                    : null;
+                const metaByStem = (siblingAudio && siblingAudio.raw_data && siblingAudio.raw_data.meta_rows_by_stem)
+                    || (task && task.raw_data && task.raw_data.meta_rows_by_stem)
+                    || null;
+                const rowsForSheet = metaByStem ? (metaByStem[sheetKey] || metaByStem[s.sheet_id]) : null;
                 if (Array.isArray(rowsForSheet) && rowsForSheet.length) {
                     missingInc = missingIncludeNums(s, rowsForSheet);
                 }
@@ -1632,7 +1710,9 @@ window.FeatureExamJob = (function () {
             const loHint = Math.min(Number(s.start) || 0, Number(s.end) || 0);
             const hiHint = Math.max(Number(s.start) || 0, Number(s.end) || 0);
             const availTitle = availNeedsSnap
-                ? ('活頁 ' + (s.sheet_id || '') + ' 已在錄音 meta／範圍中，但尚未進入 Snapshot 快取；請等自動套用完成或按「套用 Snapshot」')
+                ? (isStandaloneExam
+                    ? ('活頁 ' + (s.sheet_id || '') + ' 尚未讀取 meta；請按下方「🔄 讀取可用題數」')
+                    : ('活頁 ' + (s.sheet_id || '') + ' 已在錄音 meta／範圍中，但尚未進入 Snapshot 快取；請等自動套用完成或按「套用 Snapshot」'))
                 : (availIsEstimate
                     ? ('尚未對到錄音 meta；暫以頁數×每頁行數＝' + expected)
                     : ((rtypeHint === 'qnum')
@@ -1644,7 +1724,29 @@ window.FeatureExamJob = (function () {
             const refreshAttr = ' onchange="window.FeatureExamJob._inlineRefreshAvail(\'' + pathStr + '\')"';
             return `
                 <tr data-exam-inline-row="${idx}">
-                    <td style="padding:4px;"><input id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" value="${esc(s.sheet_id || '')}" style="width:52px; padding:4px;" placeholder="C"${refreshAttr}></td>
+                    <td style="padding:4px;">${examSheetStems.length ? `
+                        <select id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" style="width:100px; padding:4px;"
+                            onchange="window.FeatureExamJob._inlineOnSheetSelectChange('${pathStr}', ${idx})">${buildExamSheetOptionsHtml(examSheetStems, s.sheet_id)}</select>
+                        <input id="exam-inline-sheet-manual-${pathStr}-${idx}" class="form-control" value="${esc(s.sheet_id || '')}" placeholder="活頁檔名" style="width:100px; padding:4px; margin-top:2px; display:none;"${refreshAttr}>
+                        ` : `
+                        <input id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" value="${esc(s.sheet_id || '')}" style="width:70px; padding:4px;" placeholder="C"${refreshAttr}>
+                        `}</td>
+                    <td style="padding:4px;">
+                        <select id="exam-inline-sectionlayout-${pathStr}-${idx}" class="form-control" style="width:130px; padding:4px;"
+                            title="同一活頁需要套用不只一個 layout 時，開兩個區段、各自選不同 layout 即可，不用複製 meta 檔">
+                            <option value="">（沿用上方預設）</option>
+                            ${(function () {
+                                const rowSuggested = (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds === 'function')
+                                    ? window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds(layoutMaterialFolder, [s.sheet_id])
+                                    : [];
+                                return LAYOUT_CATALOG.map(function (l) {
+                                    const isSuggested = rowSuggested.indexOf(l.id) !== -1;
+                                    const label = (isSuggested ? '⭐ ' : '') + l.label;
+                                    return '<option value="' + esc(l.id) + '"' + (String(s.layout_profile_id || '') === l.id ? ' selected' : '') + '>' + esc(label) + '</option>';
+                                }).join('');
+                            })()}
+                        </select>
+                    </td>
                     <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.lines_per_page || DEFAULT_LINES_PER_PAGE)}" style="width:56px; padding:4px;"${refreshAttr}></td>
                     <td style="padding:4px; max-width:160px;" title="由 layout_profile 決定；可之後改為可編輯帶入">
                         <div style="font-size:0.7rem; color:#475569; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(fieldHint)}</div>
@@ -1675,8 +1777,29 @@ window.FeatureExamJob = (function () {
                     <strong>📝 考試出題區段</strong>
                     <span style="font-size:0.75rem; color:#64748B;">job_id：<code id="exam-inline-jobid-${pathStr}">${esc(jobId || '（儲存作業時產生）')}</code></span>
                 </div>
+                ${isStandaloneExam ? `
+                <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:8px 10px; margin-bottom:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                        <strong style="color:#9A3412;">🗂 教材來源（獨立考試，此作業沒有配對的錄音任務）</strong>
+                        <button type="button" class="btn" style="padding:2px 8px; font-size:0.72rem; background:#FFEDD5; border:1px solid #FDBA74; border-radius:4px; color:#9A3412;"
+                            onclick="window.FeatureExamJob._inlineReloadMaterialFolders('${pathStr}')"
+                            title="剛發布的教材沒看到就按這個重新整理清單">🔄 重新整理清單</button>
+                    </div>
+                    <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">教材資料夾（來自已發布教材的 _Config.material_folder）
+                        <select id="exam-inline-materialfolder-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
+                            onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange('${pathStr}')">${materialFolderOptsHtml}</select>
+                    </label>
+                    <div id="exam-inline-materialfolder-manual-wrap-${pathStr}" style="display:none; margin-top:6px;">
+                        <input id="exam-inline-materialfolder-manual-${pathStr}" class="form-control" value=""
+                            placeholder="手動輸入教材資料夾名稱（例如 MasonLiu_SeanCheng）" style="width:100%; padding:6px;"
+                            onchange="window.FeatureExamJob._inlineOnExamMaterialChange('${pathStr}')">
+                    </div>
+                    <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入資料夾清單…'}</div>
+                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">下面「活頁」直接填 meta 檔名（不含 .meta.json，例如 VOCAB_SET1），填好後按「🔄 讀取可用題數」。</div>
+                </div>
+                ` : ''}
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
-                    <label style="font-weight:700;">bank_id
+                    <label style="font-weight:700;" title="題庫代號標籤，只會原樣寫進匯出給 Python 排版系統的 JSON（spec_ref.bank_id），不影響線上卷實際抽哪些題（那是靠下面每個活頁的 sheet_id／範圍決定）。目前僅一個選項可選。">bank_id
                         <select id="exam-inline-bank-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;">${bankOpts}</select>
                     </label>
                     <label style="font-weight:700;">layout_profile_id
@@ -1692,6 +1815,7 @@ window.FeatureExamJob = (function () {
                         <thead>
                             <tr style="background:#CCFBF1; color:#134E4A; text-align:left;">
                                 <th style="padding:4px;">活頁</th>
+                                <th style="padding:4px;" title="同一活頁可以在不同區段套用不同 layout（例如同一份單字表同時要「整句翻譯」＋「單字無圖」）；留空＝沿用上方 layout_profile_id">layout（可覆蓋）</th>
                                 <th style="padding:4px;">每頁行數</th>
                                 <th style="padding:4px;">欄位</th>
                                 <th style="padding:4px;">基準</th>
@@ -1713,8 +1837,13 @@ window.FeatureExamJob = (function () {
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#CCFBF1; color:#0F766E; border:1px solid #99F6E4;"
                         onclick="window.FeatureExamJob._inlineAddSection('${pathStr}')"
                         title="在已帶入的基礎上再加一列（常用於同活頁另一段範圍）。日常請先按「從錄音範圍帶入」。">＋ 加區段</button>
+                    ${isStandaloneExam ? `
+                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
+                        onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
+                    ` : `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineImportFromSiblingAudio('${pathStr}')">↻ 從同作業錄音範圍帶入</button>
+                    `}
                     <button type="button" id="exam-inline-gen-btn-${pathStr}" class="btn btn-action" style="padding:4px 10px; background:#0F766E; color:white; border:none;"
                         onclick="window.FeatureExamJob._inlineGeneratePaper('${pathStr}')">📝 產生線上卷</button>
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
@@ -1722,7 +1851,10 @@ window.FeatureExamJob = (function () {
                     <span style="margin-left:auto; font-weight:800; color:#134E4A; font-size:0.85rem;">總計考題 ${totalCountSum}${paperCountHint}</span>
                 </div>
                 <div id="exam-inline-gen-status-${pathStr}" style="margin-top:8px; min-height:1.2em; font-size:0.8rem; font-weight:800; color:#0F766E;"></div>
-                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">請先「從錄音範圍帶入」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。</div>
+                <div id="exam-inline-standalone-status-${pathStr}" style="margin-top:4px; min-height:1.2em; font-size:0.78rem; font-weight:700;"></div>
+                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">${isStandaloneExam
+                    ? '請先填「教材資料夾」、活頁（sheet_id）與範圍，再按「🔄 讀取可用題數」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。'
+                    : '請先「從錄音範圍帶入」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。'}</div>
             </div>
         `;
     }
@@ -1737,7 +1869,12 @@ window.FeatureExamJob = (function () {
         const sections = [];
         rows.forEach(function (row) {
             const idx = row.getAttribute('data-exam-inline-row');
-            const sheet = (document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx) || {}).value || '';
+            const sheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx);
+            let sheet = sheetEl ? sheetEl.value : '';
+            if (sheet === '__manual__') {
+                const sheetManualEl = document.getElementById('exam-inline-sheet-manual-' + pathStr + '-' + idx);
+                sheet = sheetManualEl ? sheetManualEl.value : '';
+            }
             const lpp = Number((document.getElementById('exam-inline-lpp-' + pathStr + '-' + idx) || {}).value);
             const rtype = (document.getElementById('exam-inline-rtype-' + pathStr + '-' + idx) || {}).value || 'page';
             const start = Number((document.getElementById('exam-inline-start-' + pathStr + '-' + idx) || {}).value);
@@ -1746,6 +1883,7 @@ window.FeatureExamJob = (function () {
             const difficulty = String((document.getElementById('exam-inline-diff-' + pathStr + '-' + idx) || {}).value || '').trim();
             const include_nums = String((document.getElementById('exam-inline-inc-' + pathStr + '-' + idx) || {}).value || '').trim();
             const exclude_nums = String((document.getElementById('exam-inline-exc-' + pathStr + '-' + idx) || {}).value || '').trim();
+            const sectionLayoutId = String((document.getElementById('exam-inline-sectionlayout-' + pathStr + '-' + idx) || {}).value || '').trim();
             const sec = {
                 sheet_id: String(sheet).trim(),
                 range_type: rtype,
@@ -1757,6 +1895,9 @@ window.FeatureExamJob = (function () {
             if (difficulty) sec.difficulty = difficulty;
             if (include_nums) sec.include_nums = include_nums;
             if (exclude_nums) sec.exclude_nums = exclude_nums;
+            // 同一活頁可以在不同區段套用不同 layout（例如同一份 meta 同時要「整句翻譯」＋「單字無圖」）；
+            // 空字串＝沿用 exam_job.layout_profile_id 這個上層預設，不寫進 sec（保持既有匯出格式最小變動）
+            if (sectionLayoutId) sec.layout_profile_id = sectionLayoutId;
             // 起迄未改時保留不連續 pages/items（來自 range_spec）
             const prev = prevSecs[Number(idx)];
             if (prev
@@ -1805,6 +1946,26 @@ window.FeatureExamJob = (function () {
         task.raw_data.exam_job = payload;
         const jobIdEl = document.getElementById('exam-inline-jobid-' + pathStr);
         if (jobIdEl) jobIdEl.textContent = jobId;
+
+        // 獨立考試（無同層錄音）自選的教材資料夾；有渲染才讀，不覆蓋 combo 情境
+        const materialFolderSelectEl = document.getElementById('exam-inline-materialfolder-' + pathStr);
+        if (materialFolderSelectEl) {
+            const selVal = String(materialFolderSelectEl.value || '');
+            let folder = '';
+            const teacherRootDefaultForExam = (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class') ? 'class' : 'teacher';
+            let kind = (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || teacherRootDefaultForExam;
+            if (selVal === '__manual__') {
+                const manualEl = document.getElementById('exam-inline-materialfolder-manual-' + pathStr);
+                folder = manualEl ? String(manualEl.value || '').trim() : '';
+            } else if (selVal) {
+                const sep = selVal.indexOf('::');
+                if (sep >= 0) {
+                    kind = selVal.slice(0, sep) === 'class' ? 'class' : 'teacher';
+                    folder = selVal.slice(sep + 2).trim();
+                }
+            }
+            task.raw_data.exam_material = { material_folder: folder, root_kind: kind };
+        }
         return payload;
     }
 
@@ -1866,7 +2027,7 @@ window.FeatureExamJob = (function () {
         refreshExamBuilder();
         window.showFlash(
             last && last.sheet_id
-                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數）')
+                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數；若這列要套用不同 layout，請在「layout（可覆蓋）」下拉另選）')
                 : '已加空白區段：請先「從錄音範圍帶入」，或自行填活頁字母',
             last && last.sheet_id ? 'success' : 'warning'
         );
@@ -1928,7 +2089,7 @@ window.FeatureExamJob = (function () {
             return Object.assign({}, old, d, {
                 fileId: d.fileId || old.fileId || '',
                 schema_id: d.schema_id || old.schema_id || '',
-                materials_root_kind: d.materials_root_kind || old.materials_root_kind || 'teacher'
+                materials_root_kind: d.materials_root_kind || old.materials_root_kind || (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class' ? 'class' : 'teacher')
             });
         });
     }
@@ -1944,7 +2105,8 @@ window.FeatureExamJob = (function () {
         const audio = audioHit ? audioHit.task : null;
         const audioPath = audioHit ? audioHit.pathStr : '';
         const rootEl = audioPath ? document.getElementById('node-material-root-' + audioPath) : null;
-        const rootKind = rootEl && String(rootEl.value || '').toLowerCase() === 'class' ? 'class' : 'teacher';
+        const teacherRootDefaultForImport = (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class') ? 'class' : 'teacher';
+        const rootKind = rootEl ? (String(rootEl.value || '').toLowerCase() === 'class' ? 'class' : 'teacher') : teacherRootDefaultForImport;
 
         const existingRefs = (audio && audio.raw_data && Array.isArray(audio.raw_data.material_refs))
             ? audio.raw_data.material_refs
@@ -2020,6 +2182,15 @@ window.FeatureExamJob = (function () {
         if (!task) return;
         syncInlineEditor(pathStr, task);
         refreshExamBuilder();
+    }
+
+    /** 獨立考試「活頁」下拉選了「✏️ 其他（手動輸入）」才顯示手動輸入框 */
+    function inlineOnSheetSelectChange(pathStr, idx) {
+        const selectEl = document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx);
+        const manualEl = document.getElementById('exam-inline-sheet-manual-' + pathStr + '-' + idx);
+        if (manualEl) manualEl.style.display = (selectEl && selectEl.value === '__manual__') ? 'block' : 'none';
+        if (selectEl && selectEl.value === '__manual__') return; // 手動輸入還沒填完，先不重算可用題
+        inlineRefreshAvail(pathStr);
     }
 
     /** 錄音 Snapshot 後：重算同層考試可用題；標題若為自動繼承則同步 */
@@ -2102,11 +2273,176 @@ window.FeatureExamJob = (function () {
         window.showFlash('已下載 exam_job（請記得按「儲存作業」把設定寫進資料庫）', 'success');
     }
 
+    /** 考試任務自己設定的教材來源（獨立考試：沒有配對錄音時用這個，見 exam-standalone-material-invariant.mdc） */
+    function getExamMaterialSelf(task) {
+        const em = (task && task.raw_data && task.raw_data.exam_material) || {};
+        let rootKind;
+        if (em.root_kind) {
+            rootKind = String(em.root_kind).toLowerCase() === 'class' ? 'class' : 'teacher';
+        } else {
+            // 還沒設過（新的獨立考試任務）才帶老師個人跨班預設
+            rootKind = (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class') ? 'class' : 'teacher';
+        }
+        return {
+            material_folder: String(em.material_folder || '').trim(),
+            root_kind: rootKind
+        };
+    }
+
+    /** 從 FeatureTimeline 的 meta 快取項目中取不重複的資料夾名稱（一個資料夾常對應多個 .meta.json 檔） */
+    function uniqueFolderNamesFromEntry(entry) {
+        const seen = {};
+        const out = [];
+        ((entry && entry.options) || []).forEach(function (o) {
+            const name = String((o && o.folderName) || '').trim();
+            if (!name || seen[name]) return;
+            seen[name] = true;
+            out.push(name);
+        });
+        return out;
+    }
+
+    /**
+     * 獨立考試「教材資料夾」下拉選項：老師個人／班級資源分組，
+     * 目前值若不在清單中仍保留（避免因清單還沒載入或漏收而讓已存的值憑空消失）。
+     * value 格式固定 "teacher::資料夾名" 或 "class::資料夾名"；"__manual__" 為手動輸入的特殊值。
+     */
+    function buildExamMaterialFolderOptionsHtml(examMaterialSelf, teacherEntry, classEntry) {
+        const teacherFolders = uniqueFolderNamesFromEntry(teacherEntry);
+        const classFolders = uniqueFolderNamesFromEntry(classEntry);
+        const currentValue = examMaterialSelf.material_folder
+            ? (examMaterialSelf.root_kind + '::' + examMaterialSelf.material_folder)
+            : '';
+        let matchedCurrent = !currentValue;
+        let html = '<option value="">— 請選擇教材資料夾 —</option>';
+        if (teacherFolders.length) {
+            html += '<optgroup label="👤 老師個人">' + teacherFolders.map(function (f) {
+                const v = 'teacher::' + f;
+                if (v === currentValue) matchedCurrent = true;
+                return '<option value="' + esc(v) + '"' + (v === currentValue ? ' selected' : '') + '>' + esc(f) + '</option>';
+            }).join('') + '</optgroup>';
+        }
+        if (classFolders.length) {
+            html += '<optgroup label="🏫 班級資源">' + classFolders.map(function (f) {
+                const v = 'class::' + f;
+                if (v === currentValue) matchedCurrent = true;
+                return '<option value="' + esc(v) + '"' + (v === currentValue ? ' selected' : '') + '>' + esc(f) + '</option>';
+            }).join('') + '</optgroup>';
+        }
+        if (currentValue && !matchedCurrent) {
+            html += '<option value="' + esc(currentValue) + '" selected>⚠️ ' + esc(examMaterialSelf.material_folder)
+                + '（清單中找不到，可按「重新整理清單」）</option>';
+        }
+        html += '<option value="__manual__">✏️ 其他（手動輸入資料夾名稱）</option>';
+        return html;
+    }
+
+    /** 從已快取的 meta 清單中，取出某資料夾底下不重複的「活頁」stem（去掉 .meta.json） */
+    function examSheetStemsForFolder(classId, rootKind, materialFolder) {
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return [];
+        const folder = String(materialFolder || '').trim();
+        if (!folder) return [];
+        const entry = window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind);
+        const seen = {};
+        const out = [];
+        ((entry && entry.options) || []).forEach(function (o) {
+            if (String((o && o.folderName) || '').trim() !== folder) return;
+            const stem = metaStemFromFileName((o && o.fileName) || '');
+            if (!stem || seen[stem]) return;
+            seen[stem] = true;
+            out.push(stem);
+        });
+        return out;
+    }
+
+    /** 獨立考試「活頁」下拉選項：目前值找不到也保留（避免清單還沒載入就把已存值洗掉） */
+    function buildExamSheetOptionsHtml(stems, currentSheetId) {
+        const cur = String(currentSheetId || '').trim();
+        let matched = !cur;
+        let html = '<option value="">— 選活頁 —</option>';
+        html += (stems || []).map(function (stem) {
+            const isCur = stem.toUpperCase() === cur.toUpperCase();
+            if (isCur) matched = true;
+            return '<option value="' + esc(stem) + '"' + (isCur ? ' selected' : '') + '>' + esc(stem) + '</option>';
+        }).join('');
+        if (cur && !matched) {
+            html += '<option value="' + esc(cur) + '" selected>⚠️ ' + esc(cur) + '（清單中找不到）</option>';
+        }
+        html += '<option value="__manual__">✏️ 其他（手動輸入）</option>';
+        return html;
+    }
+
+    /**
+     * 確保獨立考試的教材資料夾下拉有清單可選：優先用 FeatureTimeline 已快取的（跟錄音 Snapshot 共用），
+     * 沒有才打 GAS。渲染函式本身只回字串，這裡在下一輪事件圈補畫，DOM 才會存在。
+     */
+    function ensureExamMaterialFolderCatalog(pathStr, classId, force) {
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.ensureMetaCatalog !== 'function') return;
+        const statusEl = document.getElementById('exam-inline-materialfolder-status-' + pathStr);
+        if (statusEl) { statusEl.textContent = '⏳ 載入資料夾清單…'; statusEl.style.color = '#9A3412'; }
+        const opts = force ? { force: true } : undefined;
+        Promise.all([
+            window.FeatureTimeline.ensureMetaCatalog(classId, 'teacher', opts).catch(function () { return null; }),
+            window.FeatureTimeline.ensureMetaCatalog(classId, 'class', opts).catch(function () { return null; })
+        ]).then(function () {
+            const selectEl = document.getElementById('exam-inline-materialfolder-' + pathStr);
+            const task = getBuilderTaskByPath(pathStr);
+            if (!selectEl || !task) return;
+            const self = getExamMaterialSelf(task);
+            const teacherEntry = window.FeatureTimeline.getMetaCatalogEntry(classId, 'teacher');
+            const classEntry = window.FeatureTimeline.getMetaCatalogEntry(classId, 'class');
+            const prevValue = selectEl.value;
+            selectEl.innerHTML = buildExamMaterialFolderOptionsHtml(self, teacherEntry, classEntry);
+            // 使用者若正在手動輸入模式，重新整理清單不應打斷他
+            if (prevValue === '__manual__') selectEl.value = '__manual__';
+            const teacherCount = (teacherEntry && teacherEntry.options) ? uniqueFolderNamesFromEntry(teacherEntry).length : 0;
+            const classCount = (classEntry && classEntry.options) ? uniqueFolderNamesFromEntry(classEntry).length : 0;
+            const st = document.getElementById('exam-inline-materialfolder-status-' + pathStr);
+            if (st) {
+                // 2026-08-06：這裡跟 feature-material-layout-pairing.js 的教材資料夾下拉共用
+                // window.MaterialFolderPicker 的重試按鈕外觀＋綁定，不要自己刻一份（以前這裡完全
+                // 沒有重試按鈕，失敗或清單真的是空的都只能改手動輸入，逼老師記資料夾全名）
+                const failedTeacher = teacherEntry && teacherEntry.ok === false;
+                const failedClass = classEntry && classEntry.ok === false;
+                const bothEmpty = !failedTeacher && !failedClass && teacherCount === 0 && classCount === 0;
+                const retryBtnId = 'exam-materialfolder-retry-' + pathStr;
+                const retryHtml = (window.MaterialFolderPicker && typeof window.MaterialFolderPicker.retryButtonHtml === 'function')
+                    ? window.MaterialFolderPicker.retryButtonHtml(retryBtnId)
+                    : '';
+                if (failedTeacher && failedClass) {
+                    st.innerHTML = '⚠️ 資料夾清單載入失敗，可按「其他」手動輸入' + retryHtml;
+                    st.style.color = '#D97706';
+                } else if (bothEmpty) {
+                    st.innerHTML = '⚠️ 這個帳號目前抓不到任何教材資料夾（不是連線錯誤）' + retryHtml;
+                    st.style.color = '#D97706';
+                } else {
+                    st.textContent = '已載入 老師個人 ' + teacherCount + ' 個／班級資源 ' + classCount + ' 個資料夾';
+                    st.style.color = '#9A3412';
+                }
+                if ((failedTeacher && failedClass) || bothEmpty) {
+                    if (window.MaterialFolderPicker && typeof window.MaterialFolderPicker.bindRetryButton === 'function') {
+                        window.MaterialFolderPicker.bindRetryButton(retryBtnId, function () { ensureExamMaterialFolderCatalog(pathStr, classId, true); });
+                    }
+                }
+            }
+            // 清單剛載入才第一次有資料：若目前「活頁」欄還是文字輸入（渲染時清單未就緒），
+            // 且現在已經能推出候選 stem，整體重繪一次讓它升級成下拉，不用等老師手動換一次資料夾
+            if (self.material_folder) {
+                const stems = examSheetStemsForFolder(classId, self.root_kind, self.material_folder);
+                const firstSheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-0');
+                if (stems.length && firstSheetEl && firstSheetEl.tagName !== 'SELECT') {
+                    refreshExamBuilder();
+                }
+            }
+        });
+    }
+
     function resolveExamMaterialContext(pathStr, bState, audioHit) {
         const audioTask = audioHit && audioHit.task;
         const audioPath = audioHit && audioHit.pathStr;
         const rootEl = audioPath ? document.getElementById('node-material-root-' + audioPath) : null;
-        const uiRootKind = rootEl && String(rootEl.value || '').toLowerCase() === 'class' ? 'class' : 'teacher';
+        const teacherRootDefault = (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class') ? 'class' : 'teacher';
+        const uiRootKind = rootEl ? (String(rootEl.value || '').toLowerCase() === 'class' ? 'class' : 'teacher') : teacherRootDefault;
 
         let refs = audioPath ? readDomMaterialRefs(audioPath, uiRootKind) : [];
         if (!refs.length && audioTask && audioTask.raw_data) {
@@ -2116,23 +2452,36 @@ window.FeatureExamJob = (function () {
                 refs = [audioTask.raw_data.material_ref];
             }
         }
-        if (!refs.length) {
-            throw new Error('同層錄音尚未設定 material meta（請先選 meta；建議再按一次套用 Snapshot）');
+        if (refs.length) {
+            const primary = refs[0] || {};
+            const materialFolder = String(primary.material_folder || '').trim();
+            if (!materialFolder) throw new Error('找不到 material_folder（meta 下拉值應為 資料夾::檔名）');
+            const rootKind = String(primary.materials_root_kind || uiRootKind || 'teacher').trim().toLowerCase() === 'class'
+                ? 'class'
+                : 'teacher';
+            const schemaId = String(primary.schema_id || 'gept-2_sentence').trim();
+            return {
+                refs: refs,
+                materialFolder: materialFolder,
+                rootKind: rootKind,
+                schemaId: schemaId,
+                audioPath: audioPath || ''
+            };
         }
-        const primary = refs[0] || {};
-        const materialFolder = String(primary.material_folder || '').trim();
-        if (!materialFolder) throw new Error('找不到 material_folder（meta 下拉值應為 資料夾::檔名）');
-        const rootKind = String(primary.materials_root_kind || uiRootKind || 'teacher').trim().toLowerCase() === 'class'
-            ? 'class'
-            : 'teacher';
-        const schemaId = String(primary.schema_id || 'gept-2_sentence').trim();
-        return {
-            refs: refs,
-            materialFolder: materialFolder,
-            rootKind: rootKind,
-            schemaId: schemaId,
-            audioPath: audioPath || ''
-        };
+
+        // 獨立考試（同層沒有已選 meta 的錄音任務）：退回考試任務自己填的「教材資料夾」
+        const examTask = getBuilderTaskByPath(pathStr);
+        const self = getExamMaterialSelf(examTask);
+        if (self.material_folder) {
+            return {
+                refs: [],
+                materialFolder: self.material_folder,
+                rootKind: self.root_kind,
+                schemaId: '',
+                audioPath: ''
+            };
+        }
+        throw new Error('尚未設定教材來源：同層沒有已選 meta 的錄音，也還沒在上方「教材資料夾」填入');
     }
 
     async function readMaterialFileWithFallback(folderIdTeacher, folderIdClass, materialFolder, fileName, preferredKind) {
@@ -2182,6 +2531,136 @@ window.FeatureExamJob = (function () {
         const classFolderId = raw.drive_folder_id || raw.class_folder_id || '';
         if (!classFolderId) throw new Error('此班級尚未設定 Drive 資料夾');
         return classFolderId;
+    }
+
+    /**
+     * 從 Drive 讀取一批活頁 meta.json + _layout.json（本地已快取的活頁跳過遠端抓取）。
+     * combo（配對錄音）與獨立考試共用同一套抓法，避免兩條路徑各改各的、行為分岔。
+     * @param {string} classId
+     * @param {object} ctx resolveExamMaterialContext() 的回傳值
+     * @param {string[]} sheetIds 大寫 sheet_id 陣列
+     * @param {object} [localRowsByStem] 已有的本地快取（有值就不重抓該活頁）
+     * @returns {Promise<{rowsByStem:object, layout:object|null, rootKindUsed:string, missingMeta:string[], error:Error|null}>}
+     */
+    async function fetchLayoutAndMetaForSheets(classId, ctx, sheetIds, localRowsByStem) {
+        const localByStem = localRowsByStem || {};
+        const fileIdByStem = {};
+        (ctx.refs || []).forEach(function (r) {
+            const stem = String(r.label || '').trim().toUpperCase()
+                || String(r.published_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+            if (stem && r.fileId) fileIdByStem[stem] = r.fileId;
+        });
+
+        let folderIdTeacher = '';
+        let folderIdClass = '';
+        try { folderIdTeacher = await resolveRootFolderId(classId, 'teacher'); } catch (_e) {}
+        try { folderIdClass = await resolveRootFolderId(classId, 'class'); } catch (_e) {}
+
+        const needRemote = [];
+        sheetIds.forEach(function (sid) {
+            const local = localByStem[sid];
+            if (!(Array.isArray(local) && local.length)) {
+                needRemote.push({
+                    materialFolder: ctx.materialFolder,
+                    fileName: sid + '.meta.json',
+                    fileId: fileIdByStem[sid] || '',
+                    sheetId: sid
+                });
+            }
+        });
+        needRemote.push({
+            materialFolder: ctx.materialFolder,
+            fileName: '_layout.json',
+            fileId: '',
+            sheetId: '__LAYOUT__'
+        });
+
+        const remoteByName = {};
+        let rootKindUsed = ctx.rootKind;
+        let lastBatchErr = null;
+        const order = ctx.rootKind === 'class'
+            ? [{ id: folderIdClass, kind: 'class' }, { id: folderIdTeacher, kind: 'teacher' }]
+            : [{ id: folderIdTeacher, kind: 'teacher' }, { id: folderIdClass, kind: 'class' }];
+        for (let oi = 0; oi < order.length; oi++) {
+            const root = order[oi];
+            if (!root.id) continue;
+            try {
+                let usedBatch = false;
+                if (typeof window.GasService.readMaterialFiles === 'function') {
+                    try {
+                        const files = await window.GasService.readMaterialFiles(root.id, needRemote, root.kind);
+                        (files || []).forEach(function (f, idx) {
+                            const key = needRemote[idx] ? needRemote[idx].fileName : (f && f.fileName);
+                            if (f && f.ok && key) remoteByName[key] = f;
+                        });
+                        usedBatch = true;
+                    } catch (batchUnsupported) {
+                        console.warn('[FeatureExamJob] batch 讀檔不可用，改逐檔', batchUnsupported);
+                    }
+                }
+                if (!usedBatch) {
+                    for (let ri = 0; ri < needRemote.length; ri++) {
+                        const it = needRemote[ri];
+                        if (remoteByName[it.fileName]) continue;
+                        try {
+                            const one = await window.GasService.readMaterialFile(
+                                root.id, it.materialFolder, it.fileName, root.kind,
+                                it.fileId ? { fileId: it.fileId } : undefined
+                            );
+                            remoteByName[it.fileName] = Object.assign({ ok: true }, one);
+                        } catch (_oneErr) {}
+                    }
+                }
+                const stillMissing = sheetIds.filter(function (sid) {
+                    return !(Array.isArray(localByStem[sid]) && localByStem[sid].length)
+                        && !remoteByName[sid + '.meta.json'];
+                });
+                if (!stillMissing.length) {
+                    rootKindUsed = root.kind;
+                    break;
+                }
+                lastBatchErr = new Error('缺 meta：' + stillMissing.join(', '));
+            } catch (batchErr) {
+                lastBatchErr = batchErr;
+            }
+        }
+
+        const missingMeta = sheetIds.filter(function (sid) {
+            return !(Array.isArray(localByStem[sid]) && localByStem[sid].length)
+                && !remoteByName[sid + '.meta.json'];
+        });
+
+        const rowsByStem = Object.assign({}, localByStem);
+        sheetIds.forEach(function (sid) {
+            if (Array.isArray(rowsByStem[sid]) && rowsByStem[sid].length) return;
+            const f = remoteByName[sid + '.meta.json'];
+            if (f && f.content) {
+                try {
+                    rowsByStem[sid] = window.MaterialSnapshot
+                        ? window.MaterialSnapshot.parseMetaContent(f.content)
+                        : JSON.parse(f.content);
+                } catch (_e) {}
+            }
+        });
+
+        let layout = null;
+        const layoutFile = remoteByName['_layout.json'];
+        if (layoutFile && layoutFile.content) {
+            try { layout = JSON.parse(layoutFile.content); } catch (_pe) { layout = null; }
+        }
+
+        return {
+            rowsByStem: rowsByStem,
+            layout: layout,
+            rootKindUsed: rootKindUsed,
+            remoteByName: remoteByName,
+            missingMeta: missingMeta,
+            error: missingMeta.length
+                ? (lastBatchErr || new Error('無法讀取 meta：' + missingMeta.join(', ')
+                    + '（請確認 Drive 有 ' + ctx.materialFolder
+                    + '，或先對錄音套用含該活頁的 Snapshot）'))
+                : null
+        };
     }
 
     function setGenerateStatus(pathStr, text, tone) {
@@ -2235,110 +2714,29 @@ window.FeatureExamJob = (function () {
         window.showFlash('正在產生線上卷…', 'info');
         try {
             const audioRaw = (audioHit && audioHit.task && audioHit.task.raw_data) || {};
-            const localRowsByStem = audioRaw.meta_rows_by_stem || {};
-            const fileIdByStem = {};
-            (ctx.refs || []).forEach(function (r) {
-                const stem = String(r.label || '').trim().toUpperCase()
-                    || String(r.published_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
-                if (stem && r.fileId) fileIdByStem[stem] = r.fileId;
-            });
+            // 獨立考試已用「讀取可用題數」自快取到考試任務自己的 raw_data，一併當本地快取用，避免重抓
+            const localRowsByStem = Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {}, audioRaw.meta_rows_by_stem || {});
 
-            let folderIdTeacher = '';
-            let folderIdClass = '';
-            try { folderIdTeacher = await resolveRootFolderId(bState.classId, 'teacher'); } catch (_e) {}
-            try { folderIdClass = await resolveRootFolderId(bState.classId, 'class'); } catch (_e) {}
-
-            const needRemote = [];
             const sheetIds = [];
             (examJob.sections || []).forEach(function (sec) {
                 const sid = String(sec.sheet_id || '').trim().toUpperCase();
-                if (!sid || sheetIds.indexOf(sid) >= 0) return;
-                sheetIds.push(sid);
-                const local = localRowsByStem[sid];
-                if (!(Array.isArray(local) && local.length)) {
-                    needRemote.push({
-                        materialFolder: ctx.materialFolder,
-                        fileName: sid + '.meta.json',
-                        fileId: fileIdByStem[sid] || '',
-                        sheetId: sid
-                    });
-                }
-            });
-            needRemote.push({
-                materialFolder: ctx.materialFolder,
-                fileName: '_layout.json',
-                fileId: '',
-                sheetId: '__LAYOUT__'
+                if (sid && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
             });
 
-            const remoteByName = {};
-            if (needRemote.length) {
-                setGenerateStatus(pathStr, '⏳ 讀取 Drive（一批 ' + needRemote.length + ' 檔）…', 'busy');
-                const order = ctx.rootKind === 'class'
-                    ? [{ id: folderIdClass, kind: 'class' }, { id: folderIdTeacher, kind: 'teacher' }]
-                    : [{ id: folderIdTeacher, kind: 'teacher' }, { id: folderIdClass, kind: 'class' }];
-                let lastBatchErr = null;
-                for (let oi = 0; oi < order.length; oi++) {
-                    const root = order[oi];
-                    if (!root.id) continue;
-                    try {
-                        let usedBatch = false;
-                        if (typeof window.GasService.readMaterialFiles === 'function') {
-                            try {
-                                const files = await window.GasService.readMaterialFiles(root.id, needRemote, root.kind);
-                                (files || []).forEach(function (f, idx) {
-                                    const key = needRemote[idx] ? needRemote[idx].fileName : (f && f.fileName);
-                                    if (f && f.ok && key) remoteByName[key] = f;
-                                });
-                                usedBatch = true;
-                            } catch (batchUnsupported) {
-                                console.warn('[FeatureExamJob] batch 讀檔不可用，改逐檔', batchUnsupported);
-                            }
-                        }
-                        if (!usedBatch) {
-                            for (let ri = 0; ri < needRemote.length; ri++) {
-                                const it = needRemote[ri];
-                                if (remoteByName[it.fileName]) continue;
-                                try {
-                                    const one = await window.GasService.readMaterialFile(
-                                        root.id, it.materialFolder, it.fileName, root.kind,
-                                        it.fileId ? { fileId: it.fileId } : undefined
-                                    );
-                                    remoteByName[it.fileName] = Object.assign({ ok: true }, one);
-                                } catch (_oneErr) {}
-                            }
-                        }
-                        const stillMissing = sheetIds.filter(function (sid) {
-                            return !(Array.isArray(localRowsByStem[sid]) && localRowsByStem[sid].length)
-                                && !remoteByName[sid + '.meta.json'];
-                        });
-                        if (!stillMissing.length) {
-                            ctx.rootKind = root.kind;
-                            break;
-                        }
-                        lastBatchErr = new Error('缺 meta：' + stillMissing.join(', '));
-                    } catch (batchErr) {
-                        lastBatchErr = batchErr;
-                    }
-                }
-                const missingMeta = sheetIds.filter(function (sid) {
-                    return !(Array.isArray(localRowsByStem[sid]) && localRowsByStem[sid].length)
-                        && !remoteByName[sid + '.meta.json'];
-                });
-                if (missingMeta.length) {
-                    throw lastBatchErr || new Error(
-                        '無法讀取 meta：' + missingMeta.join(', ')
-                        + '（請確認 Drive 有 ' + ctx.materialFolder
-                        + '，或先對錄音套用含該活頁的 Snapshot）'
-                    );
-                }
+            setGenerateStatus(pathStr, '⏳ 讀取 Drive meta…', 'busy');
+            const fetched = await fetchLayoutAndMetaForSheets(bState.classId, ctx, sheetIds, localRowsByStem);
+            if (fetched.error) throw fetched.error;
+            ctx.rootKind = fetched.rootKindUsed;
+            Object.assign(localRowsByStem, fetched.rowsByStem);
+            const remoteByName = fetched.remoteByName || {};
+            // 寫回快取（combo 寫錄音任務、獨立考試寫自己），之後可用題／必考# 才不用每次都重抓
+            const cacheOwner = (audioHit && audioHit.task) || task;
+            if (cacheOwner) {
+                if (!cacheOwner.raw_data) cacheOwner.raw_data = {};
+                cacheOwner.raw_data.meta_rows_by_stem = Object.assign({}, cacheOwner.raw_data.meta_rows_by_stem, fetched.rowsByStem);
             }
 
-            let layout = null;
-            const layoutFile = remoteByName['_layout.json'];
-            if (layoutFile && layoutFile.content) {
-                try { layout = JSON.parse(layoutFile.content); } catch (_pe) { layout = null; }
-            }
+            let layout = fetched.layout;
             if (!layout) {
                 layout = {
                     material_folder: ctx.materialFolder,
@@ -2418,6 +2816,88 @@ window.FeatureExamJob = (function () {
         }
     }
 
+    /** 獨立考試：教材資料夾輸入變更時，先存進 task.raw_data（不重抓，等老師按「讀取可用題數」） */
+    function inlineOnExamMaterialChange(pathStr) {
+        const task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        syncInlineEditor(pathStr, task);
+    }
+
+    /**
+     * 選了「✏️ 其他（手動輸入）」才顯示手動輸入框，其餘情況維持隱藏。
+     * 換教材資料夾＝可選的「活頁」清單整個換了，所以要整體重繪（refreshExamBuilder），
+     * 不能只 sync 狀態，否則各區段的活頁下拉還停在舊資料夾的清單。
+     */
+    function inlineOnExamMaterialFolderSelectChange(pathStr) {
+        const selectEl = document.getElementById('exam-inline-materialfolder-' + pathStr);
+        const manualWrap = document.getElementById('exam-inline-materialfolder-manual-wrap-' + pathStr);
+        if (manualWrap) manualWrap.style.display = (selectEl && selectEl.value === '__manual__') ? 'block' : 'none';
+        if (selectEl && selectEl.value === '__manual__') {
+            // 手動輸入模式：資料夾名稱還沒填，先不重繪（重繪只是浪費且會清空焦點）
+            inlineOnExamMaterialChange(pathStr);
+            return;
+        }
+        inlineRefreshAvail(pathStr);
+    }
+
+    /** 「🔄 重新整理清單」：強制重打 GAS 抓最新的老師個人／班級資源資料夾清單 */
+    function inlineReloadMaterialFolders(pathStr) {
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!bState) return;
+        ensureExamMaterialFolderCatalog(pathStr, bState.classId, true);
+    }
+
+    /**
+     * 獨立考試（無配對錄音）：依目前填的教材資料夾＋各區段 sheet_id，向 Drive 讀取 meta 並快取到
+     * 考試任務自己的 raw_data.meta_rows_by_stem，讓「可用題／顯示%」變成真數字（不必等 Snapshot）。
+     */
+    async function inlineRefreshStandaloneMeta(pathStr) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!task || !bState) return;
+        const examJob = syncInlineEditor(pathStr, task);
+        if (!examJob || !examJob.sections || !examJob.sections.length) {
+            return window.showFlash('請至少填一個區段（活頁）', 'error');
+        }
+        const sheetIds = [];
+        examJob.sections.forEach(function (sec) {
+            const sid = String(sec.sheet_id || '').trim().toUpperCase();
+            if (sid && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
+        });
+        if (!sheetIds.length) return window.showFlash('區段缺少活頁（sheet_id）', 'error');
+
+        const audioHit = findPreferredAudioHit(bState.tasks || [], pathStr);
+        let ctx;
+        try {
+            ctx = resolveExamMaterialContext(pathStr, bState, audioHit);
+        } catch (err) {
+            return window.showFlash(err.message || String(err), 'error');
+        }
+
+        const statusEl = document.getElementById('exam-inline-standalone-status-' + pathStr);
+        if (statusEl) { statusEl.textContent = '⏳ 讀取中…'; statusEl.style.color = '#3B82F6'; }
+        try {
+            const localRowsByStem = (task.raw_data && task.raw_data.meta_rows_by_stem) || {};
+            const fetched = await fetchLayoutAndMetaForSheets(bState.classId, ctx, sheetIds, localRowsByStem);
+            if (!task.raw_data) task.raw_data = {};
+            task.raw_data.meta_rows_by_stem = Object.assign({}, task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
+            refreshExamBuilder();
+            if (fetched.missingMeta && fetched.missingMeta.length) {
+                const msg = '部分活頁讀不到 meta：' + fetched.missingMeta.join('/') + '（請確認活頁名稱／教材資料夾是否正確）';
+                if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#D97706'; }
+                window.showFlash(msg, 'warning');
+            } else {
+                const msg = '✅ 已讀取 ' + sheetIds.length + ' 個活頁的可用題數';
+                if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#059669'; }
+                window.showFlash(msg, 'success');
+            }
+        } catch (err) {
+            if (statusEl) { statusEl.textContent = '❌ ' + (err.message || err); statusEl.style.color = '#B91C1C'; }
+            window.showFlash('讀取失敗：' + (err.message || err), 'error');
+        }
+    }
+
     return {
         renderEntryButton: renderEntryButton,
         openModal: openModal,
@@ -2442,16 +2922,67 @@ window.FeatureExamJob = (function () {
         _inlineDistribute: inlineDistribute,
         _inlineImportFromSiblingAudio: inlineImportFromSiblingAudio,
         _inlineRefreshAvail: inlineRefreshAvail,
+        _inlineOnSheetSelectChange: inlineOnSheetSelectChange,
         _refreshAfterAudioSnapshot: refreshAfterAudioSnapshot,
         getSiblingAudioRangeLabel: getSiblingAudioRangeLabel,
         _inlineExport: inlineExport,
         _inlineGeneratePaper: inlineGeneratePaper,
+        _inlineOnExamMaterialChange: inlineOnExamMaterialChange,
+        _inlineOnExamMaterialFolderSelectChange: inlineOnExamMaterialFolderSelectChange,
+        _inlineReloadMaterialFolders: inlineReloadMaterialFolders,
+        _inlineRefreshStandaloneMeta: inlineRefreshStandaloneMeta,
         _inlineOnLayoutChange: function (pathStr) {
             if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
             const task = getBuilderTaskByPath(pathStr);
             if (!task) return;
             syncInlineEditor(pathStr, task);
             refreshExamBuilder();
+        },
+        /** 給「🧩 教材/Layout 搭配」central 頁用：目前可選的 layout_profile_id 清單 */
+        getLayoutCatalog: function () { return LAYOUT_CATALOG.slice(); },
+        /** 給「🧩 教材/Layout 搭配」central 頁用：某根目錄下不重複的教材資料夾名稱清單（跟獨立考試教材資料夾下拉共用同一份快取） */
+        getUniqueFolderNames: function (classId, rootKind) {
+            const entry = window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function'
+                ? window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind) : null;
+            return uniqueFolderNamesFromEntry(entry);
+        },
+        /** 給「🧩 教材/Layout 搭配」central 頁用：某資料夾底下不重複的「活頁」stem 清單 */
+        getSheetStemsForFolder: function (classId, rootKind, materialFolder) {
+            return examSheetStemsForFolder(classId, rootKind, materialFolder);
+        },
+        /**
+         * 給「🧩 教材/Layout 搭配」central 頁用：某資料夾底下偵測到的原始檔名（未去除 .meta.json），
+         * 供老師自行核對「活頁清單是不是真的抓對檔案」，不用猜系統怎麼推導出 stem。
+         */
+        getRawFileNamesForFolder: function (classId, rootKind, materialFolder) {
+            if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return [];
+            const folder = String(materialFolder || '').trim();
+            if (!folder) return [];
+            const entry = window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind);
+            return ((entry && entry.options) || [])
+                .filter(function (o) { return String((o && o.folderName) || '').trim() === folder; })
+                .map(function (o) { return o.fileName; })
+                .filter(Boolean);
+        },
+        /**
+         * 給「教材/Layout 搭配」的「產生並上傳」功能用：某資料夾名稱對應的實際 Drive folderId
+         * （來自 GAS list_material_masters 回的 pack.folderId，見 feature-timeline.js
+         * collectMaterialMetaOptions 2026-08-06 補的欄位）。資料夾即使 0 個 .meta.json
+         * 也查得到（該情境正是這個新功能的主要使用場景：對著空資料夾寫入第一份 meta.json）。
+         * 查不到回空字串，呼叫端要自行判斷「這個資料夾在 Drive 上還不存在」並走建立資料夾流程。
+         */
+        getFolderIdForFolder: function (classId, rootKind, materialFolder) {
+            if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return '';
+            const folder = String(materialFolder || '').trim();
+            if (!folder) return '';
+            const entry = window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind);
+            const opts = (entry && entry.options) || [];
+            for (let i = 0; i < opts.length; i++) {
+                if (String((opts[i] && opts[i].folderName) || '').trim() === folder && opts[i].folderId) {
+                    return opts[i].folderId;
+                }
+            }
+            return '';
         }
     };
 })();

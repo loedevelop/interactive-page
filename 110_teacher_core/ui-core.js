@@ -12,6 +12,7 @@ window.TeacherUI = (() => {
     const GLOBAL_VIEW_NAV = {
         'view-manage-classes': 'nav-manage-classes',
         'view-global-resources': 'nav-global-resources',
+        'view-material-layout': 'nav-material-layout',
         'view-profile': 'nav-profile'
     };
 
@@ -155,6 +156,8 @@ window.TeacherUI = (() => {
             window.FeatureReminderImage.refreshEntryBadge();
         } else if (viewId === 'view-global-resources' && window.FeatureResource && typeof window.FeatureResource.renderGlobalResourceView === 'function') {
             window.FeatureResource.renderGlobalResourceView();
+        } else if (viewId === 'view-material-layout' && window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.render === 'function') {
+            window.FeatureMaterialLayoutPairing.render();
         }
     }
 
@@ -372,6 +375,10 @@ window.TeacherUI = (() => {
             if (window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
             return;
         }
+        if (targetId === 'view-gadgets') {
+            if (window.FeatureGadgetCenter) window.FeatureGadgetCenter.render(currentClassId);
+            return;
+        }
         if (targetId === 'view-settings') {
             if (window.FeatureClass && typeof window.FeatureClass.renderSettings === 'function') {
                 window.FeatureClass.renderSettings(currentClassId);
@@ -445,6 +452,7 @@ window.TeacherUI = (() => {
             if (targetId === 'view-resources' && window.FeatureResource && typeof window.FeatureResource.renderClassResources === 'function') window.FeatureResource.renderClassResources(currentClassId);
             if (targetId === 'view-progress' && window.FeatureTimeline) window.FeatureTimeline.renderTimeline(currentClassId);
             if (targetId === 'view-progress-report' && window.FeatureProgress) window.FeatureProgress.renderProgressReport(currentClassId);
+            if (targetId === 'view-gadgets' && window.FeatureGadgetCenter) window.FeatureGadgetCenter.render(currentClassId);
         });
     });
 
@@ -464,6 +472,16 @@ window.TeacherUI = (() => {
             activateGlobalView('view-manage-classes', 'nav-manage-classes');
             if (window.FeatureClass && typeof window.FeatureClass.renderClassManager === 'function') {
                 window.FeatureClass.renderClassManager();
+            }
+        });
+    }
+
+    const navMaterialLayout = document.getElementById('nav-material-layout');
+    if (navMaterialLayout) {
+        navMaterialLayout.addEventListener('click', () => {
+            activateGlobalView('view-material-layout', 'nav-material-layout');
+            if (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.render === 'function') {
+                window.FeatureMaterialLayoutPairing.render();
             }
         });
     }

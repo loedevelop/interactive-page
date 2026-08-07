@@ -534,9 +534,17 @@ window.FeatureClass = (() => {
 
                     btn.innerHTML = '⏳ 寫入資料庫...';
 
+                    // 🧩 帶入老師個人跨班預設值（只影響新建，已存在班級不受影響；沒設定過就維持原字面預設）
+                    let teacherDefaults = {};
+                    try {
+                        if (window.TeacherPrefs && typeof window.TeacherPrefs.getDefaults === 'function') {
+                            teacherDefaults = await window.TeacherPrefs.getDefaults();
+                        }
+                    } catch (_prefsErr) { /* 讀不到就沿用字面預設，不擋開班 */ }
+
                     const initialRawData = { 
                         name_display_mode: modeSelector ? modeSelector.value : "default", 
-                        week_start_day: 'sunday',
+                        week_start_day: teacherDefaults.default_week_start_day || 'sunday',
                         late_submission_defaults: { allow_late: false, grace_period_hours: 0, penalty_percentage: 0 },
                         drive_folder_id: folderId,
                         drive_layout: 'v2'
@@ -545,7 +553,7 @@ window.FeatureClass = (() => {
                     const payload = {
                         name: name,
                         icon: iconInput ? iconInput.value : "📘",
-                        calc_mode: 'single',
+                        calc_mode: teacherDefaults.default_calc_mode || 'single',
                         meet_days: [],
                         start_date: startDate,
                         raw_data: initialRawData

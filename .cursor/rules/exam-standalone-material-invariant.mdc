@@ -1,0 +1,136 @@
+---
+description: 獨立考試（無配對錄音任務）教材來源鐵律
+globs: 110_teacher_core/feature-exam-job.js
+alwaysApply: false
+---
+
+# 獨立考試教材來源鐵律（雷區）
+
+> 2026-08-04：老師發現「單獨出考試」（作業裡只有考試任務，沒有配對的錄音任務）
+> 完全長不出「可用題／顯示%」真數字，也選不到剛發布的教材。
+> 動 `resolveExamMaterialContext`／`countAvailableFromMeta`／inline 考試編輯器時必讀。
+
+## 根因
+
+1. `resolveExamMaterialContext` 原本**只**看同層 `audio_record` 任務的 `material_refs`，
+   沒有錄音任務就直接 `throw`，考試任務完全無法自己指定教材資料夾。
+2. `countAvailableFromMeta` 只吃 `audioTask.raw_data.meta_rows_by_stem`；沒有錄音任務時
+   永遠 `null`，UI 只能落到「~預計格位」估算或「需Snapshot」，但獨立考試根本沒有
+   Snapshot 這個步驟可以按，老師看到提示也做不了任何動作。
+3. combo（配對錄音）與獨立考試若各寫一套「讀 Drive meta.json + _layout.json」的邏輯，
+   兩邊很容易行為分岔（見 `material_templates` 系列雷區的教訓）。
+
+## 不變量
+
+```
+考試任務本身可以有 raw_data.exam_material = { material_folder, root_kind }
+  （只有「同層沒有 audio_record 任務」時才顯示這個輸入框、才會被採用）
+resolveExamMaterialContext 優先序：
+  1. 同層錄音 material_refs（combo，既有邏輯，不可變動）
+  2. 考試任務自己的 exam_material.material_folder（獨立考試）
+  3. 都沒有 → 明確報錯，不可靜默假設
+countAvailableFromMeta(section, audioTask, selfTask)：
+  audioTask 沒有真數字時，才退回 selfTask（考試任務自己快取的 meta_rows_by_stem）
+combo／獨立考試共用同一個 fetchLayoutAndMetaForSheets()，不可各寫一份
+獨立考試「可用題」在按過「🔄 讀取可用題數」前必須顯示「需讀取」，
+  不可用「~頁數×行數」估算粉飾（跟 exam-available-count-invariant.mdc 同精神）
+```
+
+## 禁止
+
+```javascript
+// ❌ 沒有同層錄音就直接 throw，考試任務完全無法獨立存在
+if (!refs.length) throw new Error('同層錄音尚未設定 material meta');
+
+// ❌ countAvailableFromMeta 只認 audioTask，沒有就永遠 null（獨立考試永遠估算/需Snapshot）
+function countAvailableFromMeta(section, audioTask) { ... return null; }
+
+// ❌ 獨立考試另外複製一份 Drive 讀檔邏輯（跟 inlineGeneratePaper 內的批次/單檔 fallback、
+//    root 順序、missing 判斷各寫一次，日後改一邊忘了改另一邊）
+async function fetchMetaForStandaloneExamOnly(...) { /* 重新刻一份 readMaterialFiles 邏輯 */ }
+```
+
+## 正確做法
+
+```javascript
+// ✅ resolveExamMaterialContext：refs 拿不到才退回考試任務自己的 exam_material
+if (refs.length) { /* combo，原邏輯不動 */ }
+const self = getExamMaterialSelf(getBuilderTaskByPath(pathStr));
+if (self.material_folder) return { refs: [], materialFolder: self.material_folder, rootKind: self.root_kind, schemaId: '' };
+throw new Error('尚未設定教材來源：...');
+
+// ✅ countAvailableFromMeta 多一個 selfTask fallback（combo 不受影響，因為 audioTask 有值時直接回傳）
+function countAvailableFromMeta(section, audioTask, selfTask) {
+    const v = countAvailableFromMetaSource(section, audioTask);
+    if (v != null) return v;
+    if (selfTask && selfTask !== audioTask) return countAvailableFromMetaSource(section, selfTask);
+    return v;
+}
+
+// ✅ 兩條路徑共用 fetchLayoutAndMetaForSheets(classId, ctx, sheetIds, localRowsByStem)
+//    inlineGeneratePaper 與 inlineRefreshStandaloneMeta 都呼叫同一個函式
+```
+
+## UI 行為
+
+```
+同層有 audio_record 任務 → 維持原樣（combo，不顯示教材資料夾下拉）
+同層沒有 → 顯示「🗂 教材來源（獨立考試…）」區塊：
+  - 教材資料夾：下拉選單（不是文字輸入！30 個班不可能要老師手打資料夾名），
+    選項來自 FeatureTimeline.ensureMetaCatalog（跟錄音 Material Snapshot 共用同一份快取），
+    依 老師個人／班級資源 分組；目前值若不在清單中仍保留顯示（⚠️ 標記），不會憑空消失
+  - 找不到想要的資料夾 → 下拉最後一項「✏️ 其他（手動輸入）」才出現文字輸入框（逃生口，不是常態）
+  - 「🔄 重新整理清單」：force 重打 GAS，剛發布的教材沒馬上出現時用
+  - 「🔄 讀取可用題數」取代「↻ 從同作業錄音範圍帶入」按鈕
+  - 讀取成功後寫入 task.raw_data.meta_rows_by_stem（考試任務自己的，不是錄音的）
+```
+
+## 禁止（UI 層，2026-08-04 補）
+
+```javascript
+// ❌ 教材資料夾用純文字輸入框要老師手打，班級一多（例如 30 班）完全不可用
+<input placeholder="例如 MasonLiu_SeanCheng">
+
+// ❌ 獨立考試另開一套 GasService.listMaterialMasters 呼叫，
+//    跟 FeatureTimeline 的 Material Snapshot 各自快取、各自打 GAS
+
+// ❌「活頁」也是要老師手打檔名（選了資料夾卻不知道裡面有哪些活頁，等於白選）
+<input placeholder="C">
+```
+
+## 正確做法（UI 層）
+
+```javascript
+// ✅ FeatureTimeline 匯出既有的 meta 目錄快取供其他模組重用
+ensureMetaCatalog: ensureMetaCatalog,
+getMetaCatalogEntry: getMetaCatalogEntry,
+
+// ✅ 下拉選單值固定 "teacher::資料夾名" / "class::資料夾名"，"__manual__" 是逃生口
+buildExamMaterialFolderOptionsHtml(examMaterialSelf, teacherEntry, classEntry)
+
+// ✅ 渲染函式只回字串，DOM 還沒插入；用 setTimeout(fn, 0) 在下一輪事件圈才去補抓/補畫
+if (!materialFolderCatalogLoaded) setTimeout(function () { ensureExamMaterialFolderCatalog(...); }, 0);
+
+// ✅ 選好教材資料夾後，「活頁」欄跟著換成該資料夾底下真實存在的 stem 下拉
+//    （examSheetStemsForFolder 從同一份 meta 快取推導，找不到清單才退回文字輸入）
+examSheetStemsForFolder(classId, rootKind, materialFolder)
+buildExamSheetOptionsHtml(stems, currentSheetId) // 含 "__manual__" 逃生口
+
+// ✅ 換教材資料夾＝活頁清單整個換了，必須整體重繪（refreshExamBuilder），
+//    不能只 sync 狀態，否則各區段的活頁下拉還停在舊資料夾的清單
+inlineOnExamMaterialFolderSelectChange → inlineRefreshAvail(pathStr) → refreshExamBuilder()
+```
+
+## 實測
+
+1. 新增一個作業，只放一個考試任務（不放錄音任務）→ 應能看到「教材來源」下拉，
+   不會被引導去「同層錄音」，也不需要手打資料夾名稱
+2. 剛發布一個新教材（新資料夾）→ 開考試編輯器一開始可能還沒出現，按「🔄 重新整理清單」後應能選到
+3. 選好教材資料夾＋活頁（sheet_id）＋範圍 → 按「🔄 讀取可用題數」→ 可用題應變綠字真數字，
+   顯示% 應有值（不是 `~估算` 或 `—`）
+4. 按「📝 產生線上卷」→ 應成功產出題目，不因為沒有配對錄音任務而報錯
+5. 已有配對錄音任務的既有 combo 作業 → 行為必須完全不變（不出現教材資料夾下拉，
+   avail／產生線上卷都走原本的 Snapshot／material_refs 路徑）
+6. 下拉選「✏️ 其他（手動輸入）」→ 出現文字輸入框；切回真實資料夾選項 → 文字輸入框應收起
+7. 選好教材資料夾後，各區段「活頁」欄應變成該資料夾底下真實 stem 的下拉（不是空白文字框）；
+   換一個資料夾 → 活頁下拉的選項應跟著換成新資料夾底下的 stem，不是殘留舊資料夾的清單

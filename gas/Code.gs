@@ -178,9 +178,9 @@ function normalizeMaterialsRootKind(rootKind) {
 
 function resolveClassMaterialsFolder(classFolder, createIfMissing) {
   if (!classFolder) return null;
-  var preferred = findSubFolder(classFolder, CLASS_MATERIALS_FOLDER);
+  var preferred = findSubFolderInsensitive(classFolder, CLASS_MATERIALS_FOLDER);
   if (preferred) return preferred;
-  var legacy = findSubFolder(classFolder, CLASS_MATERIALS_FOLDER_LEGACY);
+  var legacy = findSubFolderInsensitive(classFolder, CLASS_MATERIALS_FOLDER_LEGACY);
   if (legacy) {
     try {
       legacy.setName(CLASS_MATERIALS_FOLDER);
@@ -193,7 +193,21 @@ function resolveClassMaterialsFolder(classFolder, createIfMissing) {
   return null;
 }
 
-/** rootKind=class → 00_Class_Materials；rootKind=teacher → 01_My_Materials */
+/**
+ * rootKind=class → 00_Class_Materials；rootKind=teacher → 01_My_Materials
+ *
+ * 💣 2026-08-06 雷區：老師實測回報「教材資料夾下拉一直是空的」，即使已經在 Drive 裡真的建好
+ * 子資料夾。追查後這裡至少有兩個會讓「明明有資料夾卻查不到」的脆弱點（跟 listMaterialMasters
+ * 本身「不要求要有 .meta.json 才列出」是兩件不同的事，那部分已經沒問題）：
+ * 1. findSubFolder 用 getFoldersByName 是「精確比對」——老師手動在 Drive 網頁上建資料夾時，
+ *    只要打錯一個空格、大小寫跟系統期待的 "01_My_Materials" 不完全一樣，就永遠找不到，
+ *    後面 subFolders.getFolders() 根本沒機會執行到，等於整層資料夾都消失。
+ * 2. createIfMissing 舊行為是「找不到就回 null」——只要 01_My_Materials 這一層本身還沒被
+ *    任何流程建立過（例如老師是全新帳號，第一次用這個功能），listMaterialMasters 會直接回
+ *    空陣列，即使老師已經在 Drive 別的地方手動建了子資料夾，也完全看不到、無從除錯。
+ * 修法：一律用不分大小寫比對（findSubFolderInsensitive）+ 一律 createIfMissing（找不到就現場
+ * 建立，getOrCreateSubFolder 天生 idempotent，不會重複建立、不會動到既有資料）。
+ */
 function resolveMaterialsRoot(rootFolder, rootKind, createIfMissing) {
   if (!rootFolder) return null;
   var kind = normalizeMaterialsRootKind(rootKind);
@@ -207,7 +221,7 @@ function resolveMaterialsRoot(rootFolder, rootKind, createIfMissing) {
   }
 
   if (kind === 'teacher') {
-    var teacherMats = findSubFolder(rootFolder, TEACHER_MATERIALS_FOLDER);
+    var teacherMats = findSubFolderInsensitive(rootFolder, TEACHER_MATERIALS_FOLDER);
     if (teacherMats) return teacherMats;
     if (createIfMissing) return getOrCreateSubFolder(rootFolder, TEACHER_MATERIALS_FOLDER);
     return null;
@@ -314,12 +328,46 @@ function resolveFolderPath(parentFolder, pathArray) {
   return current;
 }
 
+/**
+ * 列出教材根（01_My_Materials／00_Class_Materials）底下「所有」子資料夾——不論裡面有沒有
+ * .meta.json、有沒有任何檔案，一律列出（老師 2026-08-06 明確要求：進去資料夾建資料，系統
+ * 不能因為「還沒有資料」就不列出資料夾，這是先有雞先有蛋的問題——教材資料夾下拉本來就是要
+ * 給老師選「還沒有 meta 檔的空資料夾」來產生第一份 meta.json）。
+ * createIfMissing 傳 true：教材根本身若還不存在（例如全新帳號第一次用），現場建立再列一次
+ * （這時當然還是空的，但至少之後老師在裡面手動建的子資料夾就找得到，不會一路回傳空陣列到
+ * 老師以為系統故障；getOrCreateSubFolder／resolveMaterialsRoot 內部都是 idempotent，
+ * 不會重複建立也不會動到既有資料）。
+ */
+/**
+ * 🔍 2026-08-06：老師連續多輪回報「教材資料夾下拉是空的」，但實際去 Drive 看資料夾都存在。
+ * 在完全看不到 GAS 執行環境（Apps Script 執行紀錄、實際部署版本）的情況下，前端只能猜——
+ * 於是在回應裡固定夾帶這串除錯資訊，讓「清單是空的」這件事本身變成可驗證、可回報的具體線索
+ * （而不是老師只能截圖「就是空的」，我方只能繼續猜資料夾結構或部署版本）：
+ * - debugVersion：寫死的字串戳記。若老師之後回報的畫面上完全沒有出現這個戳記（甚至沒有這個
+ *   欄位），代表 GAS 網頁應用程式還在跑「更舊的部署版本」，不是這次程式碼的問題——一定要先
+ *   照 .cursor/rules/drive-folder-upload-invariants.mdc 的「改完 Code.gs 後必須重新部署」
+ *   走完整套流程（存檔→管理部署作業→編輯→版本選「新版本」→部署），git push 不會自動更新。
+ * - resolvedRootId/resolvedRootName：這次呼叫實際解析到、拿去 getFolders() 列子資料夾的
+ *   那個資料夾本身是誰。老師可以直接拿這個 ID 貼到瀏覽器網址列 drive.google.com/drive/folders/<ID>
+ *   打開，跟自己在 Drive 裡看到的 01_My_Materials 網址比對，一秒判斷「系統到底是不是在看
+ *   我以為的那個資料夹」（例如帳號綁錯、Drive 捷徑 vs 真實資料夾等，肉眼比 ID 最準）。
+ * - subFolderCount：GAS 這次真的數到幾個子資料夾（在套用任何 .meta.json 或其他前端過濾之前）。
+ */
+var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-06-b';
+
 function listMaterialMasters(rootFolderId, rootKind) {
   var rootFolder = DriveApp.getFolderById(rootFolderId);
   var kind = normalizeMaterialsRootKind(rootKind);
-  var mastersRoot = resolveMaterialsRoot(rootFolder, kind, false);
+  var mastersRoot = resolveMaterialsRoot(rootFolder, kind, true);
   if (!mastersRoot) {
-    return { materials: [], rootKind: kind };
+    return {
+      materials: [],
+      rootKind: kind,
+      debugVersion: LIST_MATERIAL_MASTERS_DEBUG_VERSION,
+      resolvedRootId: '',
+      resolvedRootName: '（解析失敗，連教材根都建不出來，請檢查 rootFolderId／權限）',
+      subFolderCount: 0
+    };
   }
 
   var materials = [];
@@ -354,7 +402,14 @@ function listMaterialMasters(rootFolderId, rootKind) {
     });
   }
 
-  return { materials: materials, rootKind: kind };
+  return {
+    materials: materials,
+    rootKind: kind,
+    debugVersion: LIST_MATERIAL_MASTERS_DEBUG_VERSION,
+    resolvedRootId: mastersRoot.getId(),
+    resolvedRootName: mastersRoot.getName(),
+    subFolderCount: materials.length
+  };
 }
 
 function readMaterialFile(rootFolderId, materialFolderName, fileName, rootKind) {
@@ -782,7 +837,11 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify({
         status: 'success',
         materials: listResult.materials,
-        rootKind: listResult.rootKind
+        rootKind: listResult.rootKind,
+        debugVersion: listResult.debugVersion,
+        resolvedRootId: listResult.resolvedRootId,
+        resolvedRootName: listResult.resolvedRootName,
+        subFolderCount: listResult.subFolderCount
       })).setMimeType(ContentService.MimeType.JSON);
     }
 

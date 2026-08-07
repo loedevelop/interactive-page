@@ -1,6 +1,6 @@
 ---
-description: 教材發布 Excel 有兩種設定格式（合併 _Setup／舊 4 分頁）；同活頁多區塊時 LAST 亂用會吃到別段資料
-globs: material_templates/**
+description: 教材發布 Excel 有兩種設定格式（合併 _Setup／舊 4 分頁）；同活頁多區塊時 LAST 亂用會吃到別段資料；_Layout.fields 多 schema 要用 semantic_key 不要用 Excel 欄字母；線上卷提示／答案要用 quiz_prompt／quiz_answer，不能從 fields 的欄位位置去猜
+globs: material_templates/**,020_js_core/layout-fields-eval.js,020_js_core/quiz-paper-builder.js
 alwaysApply: false
 ---
 
@@ -12,12 +12,17 @@ alwaysApply: false
 - `_Config.last_row_column` 隨手填 `A`，但該教材實際欄位（如題號）在 `AB`，`LAST` 算出來永遠是第 1 列，導致 `row_end=LAST` 那一段整段失敗（`列範圍無效：V (6-LAST)`）。
 - 同一活頁多段都填 `row_end=LAST`：前面段落也用 `LAST` 會抓到全表最底列，把後面段落的資料也吃進來。
 - 老師誤以為要改 `.meta.json`／`_layout.json` 才能切換設定格式，其實已發布、已派給學生的作業完全不受影響。
+- **`_Layout.fields` 用 Excel 欄字母寫、教材卻有 2 個以上 `schema_id`**：同一個字母（例如 `AN`）在 `vocab-set1` 是 `article`、在 `vocab-set2` 卻是 `pos`，用同一個 `_Layout` 列想「所有段落共用」時，字母只對其中一個 schema 是對的，另一個 schema 印出來／線上卷會顯示錯的語意欄位（曾在測試模板 `_Setup.csv` 裡真的寫錯：`fields_answer` 填了 `AK`，但 `AK` 在兩個 schema 裡都不是「英文」）（2026-08-03，見根因 11）
+- 誤以為「有幾個 `schema_id` 就要開幾個 `profile_id`」——其實不用，只要 `fields` 改用 `semantic_key` 就能共用一個 `profile_id`（見下方「正確」）
+- **線上卷內容完全錯（提示變頁碼、答案變題號）**：教材 `fields` 不是 3 欄（GEPT 句子翻譯的慣例欄數），而是 5 欄印刷排版（`vBK_name, page, item_no, display_zh, pos`）。`quiz-paper-builder.js` 的 `buildItemFromRow` 曾寫死拿 `cells[1]`／`cells[2]`（位置慣例）當「線上卷提示／答案」，vocab 教材套上去就變成 `cells[1]`＝`page`（提示顯示頁碼「80」）、`cells[2]`＝`item_no`（答案變成題號「1590」），跟老師設定的 `fields_answer=pre, script` 完全無關（2026-08-04，見根因 12）
 
 ## 根因
 
 - `publish_local.py` 的「教材單位」在下游（考試出題 `stem`、`meta_rows_by_stem`）看的是 **`output_meta` 檔名**，不是 Excel 分頁名稱（見 `feature-exam-job.js` 的 `metaStemFromFileName`）。所以同一個 `source_sheet` 本來就能被 `_Publish` 開多列、各自 `row_start`／`row_end`／`schema_id`／`output_meta` 切成獨立單元，不需要改 `_Publish`／`_Layout` 結構。
 - `get_last_data_row_from_matrix()`（`material_templates/publish_local.py`）算 `LAST` 時，只看 `cfg["last_row_column"]` 那一欄「整張表」最底下有值的列，不會意識到「這是第幾段」。
 - 設定資料格式（`_Config`／`_Schema`／`_Publish`／`_Layout` 4 分頁 vs 合併 1 個 `_Setup` 分頁）只影響 `publish_local.py` 怎麼**讀 Excel**；產出的 `.meta.json`／`.script.txt`／`_layout.json`／`_manifest.json` 內容不變，老師端 Snapshot 只讀這些產出檔。
+- `_Schema.semantic_key` 這一欄的存在意義，就是要當「跨 `schema_id` 共用的語意詞彙」——同一個語意（如「中文」）在不同 schema 可以對到不同的實體 Excel 欄，但 `semantic_key` 名字一樣。`_Layout.fields`／`fields_answer` 若寫 Excel 欄字母（`AL`、`AN`…），等於繞過了這層抽象、直接綁死在「某一個 schema 的欄位位置」上，跟「一份 `_Layout` 所有段落共用」的設計目標互相矛盾。`020_js_core/layout-fields-eval.js` 的 `lookupColumn()` 已改為**優先把識別字直接當 `semantic_key` 比對 row 的 key**（大小寫不拘），Excel 欄字母＋`colMap` 只當成單一 schema 教材的相容後備路徑。
+- **根因 12**：`fields`／`fields_answer` 的設計目的是「印刷排版」——欄數與順序完全依教材而定（GEPT 句子翻譯剛好是3欄，vocab 剛好是5欄／2欄），沒有任何「第幾欄是提示、第幾欄是答案」的通用規則。`buildItemFromRow`（`020_js_core/quiz-paper-builder.js`）曾經把「GEPT 剛好3欄、第2欄提示、第3欄答案」這個**特例**寫成通用邏輯（`cells[1]`／`cells[2]`），换到別的欄數／欄位順序就整份考卷跟著錯，而且錯得很安靜（不會報錯，只是內容全部不對，需要老師肉眼發現才知道）。修法：新增 `_Layout.quiz_prompt`／`quiz_answer`（各自單一輸出公式，供線上卷專用），`buildItemFromRow` 優先用這兩個；沒填才退回舊的 `cells[1]`／`cells[2]` 慣例（只為相容舊 GEPT 教材，新教材不要依賴這個退回）。同時新增 `TEXTJOIN(分隔符, ...)` 函式（`020_js_core/layout-fields-eval.js`），讓 `pre`（可能空）跟 `script` 安全接成一個答案字串，不會被 `&` 的「防呆全空」規則吃掉整個答案。
 
 ## 不變量
 
@@ -29,6 +34,13 @@ last_row_column 必須指到「整份教材真的有資料一路到最底列」�
 _Setup 合併格式 與 舊 4 分頁格式：讀出的 rows 一致 → 下游 read_config/read_schemas/read_publish_rules/read_layout_profiles
   都吃 list[dict]，格式差異只在 publish() 怎麼組出這些 rows，不重複實作欄位解析邏輯
 兩種格式產出的 meta/layout/manifest 必須逐位元組相同（除 published_at 時間戳）；已發布教材切換格式不需要重新派作業
+_Layout.fields／fields_answer：多 schema_id 教材一律用 semantic_key（跨 schema 共用）；
+  只有整份教材只有 1 個 schema_id 時，Excel 欄字母才安全
+一個 profile_id 可以、也應該同時服務多個 schema_id（透過 semantic_key），不需要每個 schema 開一個 profile
+fields／fields_answer＝印刷排版（欄數任意，並排多欄）；quiz_prompt／quiz_answer＝線上卷（各自恰好一個輸出）
+  兩者互相獨立，不可從 fields 的 cells[N] 位置去猜線上卷的提示／答案
+沒填 quiz_prompt／quiz_answer 時才退回 cells[1]/cells[2] 慣例；新教材（欄數≠3 或欄位順序不是「提示,答案,…」）
+  必須自己填 quiz_prompt／quiz_answer，不能依賴退回機制
 ```
 
 ## 禁止
@@ -42,6 +54,23 @@ cfg = {"material_folder": "...", "last_row_column": "A"}  # 若該教材資料�
 # ❌ 同活頁多段每段都填 row_end=LAST
 # Y,V,2,LAST,Vocab_Set1.meta.json,...   ← 錯，會吃到 Set2 的列
 # Y,V,6,LAST,Vocab_Set2.meta.json,...
+```
+
+```
+# ❌ 教材有 2 個以上 schema_id，_Layout.fields 卻寫 Excel 欄字母（只對其中一個 schema 是對的）
+fields,AL, AN                    ← 對 vocab-set2 是「中文,詞性」；對 vocab-set1 卻是「(無),前置詞」
+
+# ❌ 因為有兩個 schema_id，就開兩個 profile_id 硬分開（不需要，浪費維護成本，兩份還可能改到不同步）
+```
+
+```javascript
+// ❌ quiz-paper-builder.js：用 fields 算出的 cells 位置去猜線上卷提示／答案
+// （只對「剛好3欄、順序剛好是 提示,答案,…」的教材恰好成立，換教材就整份錯且不會報錯）
+const promptZh = cells[1] && cells[1].text;   // vocab 5欄時這是 page，不是中文提示
+const answerEn = cells[2] && cells[2].text;   // vocab 5欄時這是 item_no，不是英文答案
+
+// ❌ _Layout 新教材沒填 quiz_prompt／quiz_answer，指望退回機制「應該也對」
+// （退回機制只保證跟舊 GEPT 教材相容，不保證對新教材語意正確）
 ```
 
 ## 正確
@@ -59,6 +88,22 @@ cfg = {"material_folder": "...", "last_row_column": "A"}  # 若該教材資料�
 # last_row_column,AB
 ```
 
+```
+# ✅ _Layout.fields／fields_answer 一律用 semantic_key（跨 schema_id 都通用，一份共用）
+# fields,"display_zh, pos, article"
+# fields_answer,"script"
+
+# ✅ 一個 profile_id（如 vocab-basic）同時服務 vocab-set1／vocab-set2，不用開兩個 profile
+```
+
+```
+# ✅ _Layout 新增 quiz_prompt／quiz_answer：專供線上卷用，各自算出「一個」字串（可用 & 或 TEXTJOIN 組合多個 semantic_key）
+# quiz_prompt,"display_zh & "" ("" & pos & "")"""     ← 顯示「蘋果 (n.)」
+# quiz_answer,"TEXTJOIN("" "", pre, script)"          ← 正確答案「an apple」；pre 空時只留 script
+
+# ✅ buildItemFromRow：quiz_prompt／quiz_answer 有值就優先用；沒填才退回 cells[1]/cells[2]（相容舊 GEPT 教材）
+```
+
 ```python
 # ✅ publish_local.py：兩種輸入格式收斂成同一份 list[dict] 再往下處理
 setup_sections = find_setup_sections(wb)  # 有 _Setup 分頁 → dict[str, list[dict]]；沒有則回 None
@@ -74,6 +119,10 @@ else:
 2. 同一份資料改成舊 4 分頁格式跑一次，兩次輸出的 `.meta.json`／`_layout.json`（忽略 `published_at`）逐位元組相同。
 3. 用 `convert_to_setup.py` 把舊格式檔轉成新格式，跑 `publish_local.py` 確認輸出仍與轉換前一致，且其他內容活頁／公式沒有跑掉。
 4. 故意把非最後一段填 `row_end=LAST`，確認會吃到下一段的列（用來提醒自己這是陷阱，不是要修掉這個「行為」——後段本就該留給教師自己填對）。
+5. `_Setup.csv` 的 `_Layout` 用 `semantic_key`（`display_zh, pos, article` / `script`）出單字卡，確認 vocab-set1 與 vocab-set2 兩段的資料都印對（中文/詞性/前置詞/英文都對得上該段自己的欄位），不會其中一段跑錯欄。
+6. 故意把 `fields` 改回 Excel 欄字母（例如 `AL, AN`）重新出卡，確認其中一個 schema 的段落會印錯（用來驗證這正是要避免的雷，不是要保留這個用法給多 schema 教材）。
+7. vocab 教材（`fields` 5 欄）設定 `quiz_prompt`／`quiz_answer` 後產生線上卷，確認學生看到的提示是中文（如「蘋果 (n.)」）、答案是英文（如「an apple」），不是頁碼／題號；`pre` 為空的列答案仍正確只顯示 `script`。
+8. 舊 GEPT 句子翻譯教材（沒填 `quiz_prompt`／`quiz_answer`）重新產生線上卷，確認行為與修改前完全一致（退回 `cells[1]`／`cells[2]` 慣例，不受影響）。
 
 ## 改動前自問
 
@@ -81,4 +130,12 @@ else:
 1. 兩種輸入格式跑完，輸出的 `.meta.json`／`.script.txt`／`_layout.json`／`_manifest.json` 是否仍逐位元組相同（除時間戳）？
 2. 是否還是靠 `output_meta` 檔名（不是活頁名稱）當下游教材單元的唯一識別？
 3. 舊格式（4 分頁）是否仍能正常讀取，不強制任何人立刻轉換？
+
+若要動到 `020_js_core/layout-fields-eval.js`、`quiz-paper-builder.js` 的 `resolveColMap`／`lookupColumn`：
+4. 多 schema_id 教材（如 vocab-set1／vocab-set2）用同一個 `profile_id`，`fields` 寫 `semantic_key` 時，兩邊資料是否都能正確對應（不會其中一邊拿到另一邊的欄位）？
+5. 舊教材（單一 schema、`fields` 還是寫 Excel 欄字母）是否仍能正常運作，不強制立刻改寫？
+
+若要動到 `buildItemFromRow`／`buildQuizPaper`（線上卷 prompt／answer 怎麼從 row 取值）：
+6. 是否還是靠 `fields` 算出的 cells **位置**去推斷提示／答案？（不行——欄數／順序依教材而定，只有 `quiz_prompt`／`quiz_answer` 或明確的 `cells[1]/cells[2]` 舊退回慣例才算數）
+7. 新增／修改退回機制時，舊 GEPT 句子翻譯教材（沒有 `quiz_prompt`／`quiz_answer`）是否仍維持原本行為？
 若任一否，停下。

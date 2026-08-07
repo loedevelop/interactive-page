@@ -1,4 +1,6 @@
-# 內部 Agent prompt / 本地規格（不上 GitHub）
+# ==========================================
+# 1. 專案專屬設定：內部 Agent prompt / 本地規格（不上 GitHub）
+# ==========================================
 _hand-off_prompt.md
 _Material_Publish_Spec.md
 docs/AGENT_*.md
@@ -6,10 +8,71 @@ docs/hand-off_prompt.md
 docs/feature-prompt*.md
 docs/quiz-json-contract*.md
 
-# 本機教材發布
+# ==========================================
+# 2. 專案專屬設定：本機教材發布與暫存
+# ==========================================
 material_templates/.venv/
 material_templates/published/
 
-# macOS
+# ==========================================
+# 3. 環境變數、金鑰與憑證 (絕對不可上傳)
+# ==========================================
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.p12
+secrets.json
+config/database.yml
+google-credentials.json
+aws-credentials.csv
+firebase-adminsdk.json
+
+# ==========================================
+# 4. 虛擬環境與套件快取 (節省空間)
+# ==========================================
+node_modules/
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ==========================================
+# 5. 資料庫檔案 (避免外洩本地測試資料)
+# ==========================================
+*.sqlite
+*.sqlite3
+*.db
+dump.sql
+
+# ==========================================
+# 6. 特定私密資料夾
+# ==========================================
+private/
+confidential/
+
+# ==========================================
+# 7. 專案暫存與特定框架生成檔
+# ==========================================
+supabase/.temp/
+.supabase/
+.temp/
+.tmp/
+.cache/
+.next/
+dist/
+build/
+
+# ==========================================
+# 8. 系統與日誌檔
+# ==========================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 .DS_Store
 **/.DS_Store
+Thumbs.db

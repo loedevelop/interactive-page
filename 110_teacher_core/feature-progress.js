@@ -89,7 +89,8 @@ window.FeatureProgress = (() => {
     // 貳、 畫面渲染與 AST 展平比對邏輯 (AST Flatten & Rendering)
     // ==========================================
     
-    async function fetchAndRenderReport(classId) {
+    async function fetchAndRenderReport(classId, options) {
+        options = options || {};
         const container = document.getElementById('progress-report-container');
         if (!container) return;
 
@@ -102,76 +103,29 @@ window.FeatureProgress = (() => {
 
         const seq = ++progressFetchSeq;
         try {
-            // Phase 1：輕量並行（格子打勾不需要 raw_data；肥大 AI／quiz JSON 是主因）
-            // 雷區：class_id=UUID；assignment_id 可能 BIGINT——查詢參數沿用 DB 原值，勿強轉 uuid
-            // student_task_progress：無提交機制小項的手動打勾旗標，與 task_completions 是 OR 關係一起判定完成
-            const [enrollRes, assignRes, compLightRes, manualRes] = await Promise.all([
-                window.supabaseClient
-                    .from('student_enrollments')
-                    .select(`
-                        user_id,
-                        raw_data,
-                        profiles:user_id (id, name)
-                    `)
-                    .eq('class_id', classId)
-                    .is('deleted_at', null)
-                    .order('created_at', { ascending: true }),
-                window.supabaseClient
-                    .from('assignments')
-                    .select('id, title, target_date, due_date, tasks, is_published, class_id')
-                    .eq('class_id', classId)
-                    .is('deleted_at', null)
-                    .order('target_date', { ascending: false }),
-                window.supabaseClient
-                    .from('task_completions')
-                    .select('student_id, task_id, assignment_id, status, deleted_at, updated_at')
-                    .eq('class_id', classId)
-                    .is('deleted_at', null)
-                    .neq('status', 'incomplete'),
-                window.supabaseClient
-                    .from('student_task_progress')
-                    .select('assignment_id, task_id, student_id, is_completed')
-                    .eq('class_id', classId)
-            ]);
-
-            if (enrollRes.error) throw new Error('讀取選課名單失敗: ' + enrollRes.error.message);
-            if (assignRes.error) throw new Error('讀取作業清單失敗: ' + assignRes.error.message);
-            if (compLightRes.error) throw new Error('讀取完成紀錄失敗: ' + compLightRes.error.message);
-            if (manualRes.error) console.warn('[FeatureProgress] 讀取手動打勾旗標失敗，僅顯示真實提交狀態', manualRes.error);
-
-            const enrollments = enrollRes.data;
-            // 附掛 drive_folder_id（指向該生 01_Submissions），供音檔分割上傳等工具使用
-            const students = enrollments
-                ? enrollments.filter(e => e.profiles !== null).map(e => Object.assign({}, e.profiles, {
-                    drive_folder_id: (e.raw_data && e.raw_data.drive_folder_id) || ''
-                }))
-                : [];
-
-            const assignments = assignRes.data || [];
-            const manualProgress = manualRes.data || [];
-            if (seq !== progressFetchSeq) return;
-            renderGrid(container, students, assignments, compLightRes.data || [], classId, { heavyReady: false }, manualProgress);
-
-            // Phase 2：背景補 raw_data（AI 補批／音檔分割需要）
-            const heavyRes = await window.supabaseClient
-                .from('task_completions')
-                .select('student_id, task_id, assignment_id, status, raw_data, deleted_at, updated_at')
-                .eq('class_id', classId)
-                .is('deleted_at', null)
-                .neq('status', 'incomplete');
-            if (seq !== progressFetchSeq) return;
-            if (heavyRes.error) {
-                console.warn('[FeatureProgress] 補載 raw_data 失敗', heavyRes.error);
-                const slot = document.getElementById('progress-heavy-slot');
-                if (slot) {
-                    slot.innerHTML = '<div style="padding:12px; color:#B45309; font-weight:800;">⚠️ AI／音檔工具載入失敗，進度表仍可使用。可按重新整理重試。</div>';
+            // 資料撈取（輕量 Phase1 + 含 raw_data 的 Phase2）已抽到 TeacherClassDataset 共用，
+            // 與「🧰 Gadget 中心」共用同一份快取，避免兩個分頁各自重打一次班級全量查詢。
+            await window.TeacherClassDataset.load(classId, {
+                force: !!options.force,
+                onLight: function (light) {
+                    if (seq !== progressFetchSeq) return;
+                    renderGrid(container, light.students, light.assignments, light.completions, classId, { heavyReady: false }, light.manualProgress);
+                },
+                onHeavy: function (heavy) {
+                    if (seq !== progressFetchSeq) return;
+                    renderGrid(container, heavy.students, heavy.assignments, heavy.completions, classId, { heavyReady: true }, heavy.manualProgress);
+                },
+                onHeavyError: function () {
+                    if (seq !== progressFetchSeq) return;
+                    const slot = document.getElementById('progress-heavy-slot');
+                    if (slot) {
+                        slot.innerHTML = '<div style="margin-bottom:12px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; color:#92400E; font-weight:800;">⚠️ 部分資料載入失敗（考試分數欄暫無法顯示，格子打勾不受影響）。可按重新整理重試。</div>';
+                    }
                 }
-                return;
-            }
-            renderGrid(container, students, assignments, heavyRes.data || [], classId, { heavyReady: true }, manualProgress);
-
+            });
         } catch (err) {
             console.error("報表產生失敗：", err);
+            if (seq !== progressFetchSeq) return;
             container.innerHTML = `<div style="padding: 20px; color:#EF4444; font-weight:800;">❌ 報表產生失敗：${err.message}</div>`;
         }
     }
@@ -373,32 +327,11 @@ window.FeatureProgress = (() => {
             </style>
         `;
 
-        let backfillHtml = '';
-        let audioSplitEntryHtml = '';
-        if (heavyReady) {
-            backfillHtml = (window.FeatureAIBackfill && typeof window.FeatureAIBackfill.renderPanel === 'function')
-                ? window.FeatureAIBackfill.renderPanel(classId, validAssignments, completions, students)
-                : '';
-            audioSplitEntryHtml = (window.FeatureAudioSplitUpload && typeof window.FeatureAudioSplitUpload.renderEntryButton === 'function')
-                ? window.FeatureAudioSplitUpload.renderEntryButton(classId, validAssignments, completions, students)
-                : '';
-        } else {
-            backfillHtml = '<div id="progress-heavy-slot" style="margin-top:12px; padding:14px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; color:#92400E; font-weight:800;">⏳ 進度表已就緒，正在載入 AI 補批／音檔工具…</div>';
-        }
-
-        const classMeta = (window.TeacherDB && Array.isArray(window.TeacherDB.classes))
-            ? window.TeacherDB.classes.find(function (c) { return String(c.id) === String(classId); })
-            : null;
-        const className = classMeta ? (classMeta.name || classMeta.class_name || '') : '';
-        const examJobEntryHtml = (window.FeatureExamJob && typeof window.FeatureExamJob.renderEntryButton === 'function')
-            ? window.FeatureExamJob.renderEntryButton(classId, validAssignments, className)
-            : '';
-        const hasExamTask = validAssignments.some(function (a) {
-            return a.actionableTasks.some(function (t) { return t.type === 'exam'; });
-        });
-        const examReviewEntryHtml = (hasExamTask && window.FeatureExamReview && typeof window.FeatureExamReview.renderEntryButton === 'function')
-            ? window.FeatureExamReview.renderEntryButton(classId)
-            : '';
+        // 🌟 考試出題單／考試批改／音檔切割工具／AI 補批已搬到「🧰 Gadget 中心」（feature-gadget-center.js），
+        // 進度總表只留報表本體＋家長提醒圖（跟到期提醒資料綁在一起，見 teacher-tab-ia-invariant.mdc）。
+        // heavy 階段失敗時（AI／音檔工具需要的 raw_data 補載失敗）僅影響考試分數欄著色，這裡保留一個
+        // 空白提示槽（progress-heavy-slot），失敗才顯示文字，不影響格子打勾主功能。
+        const heavyWarningHtml = heavyReady ? '' : '<div id="progress-heavy-slot"></div>';
 
         container.innerHTML = `
             ${styleHtml}
@@ -410,12 +343,10 @@ window.FeatureProgress = (() => {
                     </h3>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="button" id="btn-open-class-reminders" class="btn btn-action" onclick="window.FeatureReminderImage.openPopup('${classId}')" style="background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; font-weight:800;">📬 家長提醒圖</button>
-                        ${examJobEntryHtml}
-                        ${examReviewEntryHtml}
-                        ${audioSplitEntryHtml}
                         <button class="btn btn-action" onclick="window.FeatureProgress.refresh('${classId}')" style="background:#F1F5F9; color:#475569; border:1px solid #CBD5E1;">🔄 重新整理資料</button>
                     </div>
                 </div>
+                ${heavyWarningHtml}
                 <div class="progress-table-wrapper">
                     <table class="progress-table">
                         <thead>
@@ -430,7 +361,6 @@ window.FeatureProgress = (() => {
                     </table>
                 </div>
             </div>
-            ${backfillHtml}
         `;
 
         if (window.FeatureReminderImage && typeof window.FeatureReminderImage.refreshEntryBadge === 'function') {
@@ -482,7 +412,11 @@ window.FeatureProgress = (() => {
 
     return {
         renderProgressReport: (classId) => fetchAndRenderReport(classId),
-        refresh: (classId) => fetchAndRenderReport(classId),
+        // 「重新整理資料」：與 Gadget 中心共用的資料集快取要一併清掉，否則切過去仍會看到舊資料
+        refresh: (classId) => {
+            if (window.TeacherClassDataset) window.TeacherClassDataset.invalidate(classId);
+            return fetchAndRenderReport(classId, { force: true });
+        },
         toggleTask: toggleTask
     };
 })();

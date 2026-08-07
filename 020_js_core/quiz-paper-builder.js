@@ -291,9 +291,28 @@ window.QuizPaperBuilder = (function () {
             cellsAnswer = cellsToPlain(Eval.evaluateFields(opts.fieldsAnswer, row, opts.colMap));
         }
 
-        // 題卷慣例：第2欄提示（Y）、第3欄英文答案（X）；不足時退回 semantic
-        const promptZh = (cells[1] && cells[1].text) || String(row.display_zh || '').trim();
-        const answerEn = (cells[2] && cells[2].text) || String(row.script || '').trim();
+        /**
+         * 💣 雷區（見 .cursor/rules/material-publish-setup-format.mdc）：
+         * fields／fields_answer 是「印刷排版」多欄並排公式（欄位數與順序依教材而定，
+         * 例如 vocab 五欄：書名/頁/題號/中文/詞性），不能拿 cells[1]/cells[2] 位置去
+         * 猜「線上卷的提示／答案」——那只對 GEPT 句子翻譯（固定3欄）恰好成立，換成
+         * 其他教材（如 vocab）位置一換就整份考卷內容全錯（曾發生：提示變頁碼、答案變題號）。
+         * 正確做法：_Layout 另開 quiz_prompt／quiz_answer（單一輸出公式，用 semantic_key），
+         * 專門給線上卷用；沒填才退回舊的 cells[1]/cells[2] 慣例（相容舊 GEPT 教材）。
+         */
+        let promptZh;
+        let answerEn;
+        if (opts.quizPrompt) {
+            const promptCells = cellsToPlain(Eval.evaluateFields(opts.quizPrompt, row, opts.colMap));
+            promptZh = promptCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
+        }
+        if (opts.quizAnswer) {
+            const answerCells = cellsToPlain(Eval.evaluateFields(opts.quizAnswer, row, opts.colMap));
+            answerEn = answerCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
+        }
+        // 舊慣例（相容無 quiz_prompt／quiz_answer 的教材）：第2欄提示（Y）、第3欄英文答案（X）
+        if (!promptZh) promptZh = (cells[1] && cells[1].text) || String(row.display_zh || '').trim();
+        if (!answerEn) answerEn = (cells[2] && cells[2].text) || String(row.script || '').trim();
         let clozeStem = '';
         if (opts.quizMode === 'cloze' && cellsAnswer && cellsAnswer[1]) {
             clozeStem = cellsAnswer[1].text || '';
@@ -314,7 +333,8 @@ window.QuizPaperBuilder = (function () {
                 sheet_id: sheet,
                 page: isNaN(page) ? null : page,
                 item_no: isNaN(itemNo) ? null : itemNo,
-                schema_id: opts.schemaId || ''
+                schema_id: opts.schemaId || '',
+                layout_profile_id: opts.layoutProfileId || ''
             }
         };
     }
@@ -332,11 +352,18 @@ window.QuizPaperBuilder = (function () {
         const loadSheetMeta = args.loadSheetMeta;
         if (typeof loadSheetMeta !== 'function') throw new Error('缺少 loadSheetMeta');
 
-        const profile = pickProfile(layout, examJob.layout_profile_id);
-        const fields = (profile && profile.fields) || args.fields || '';
-        if (!fields) throw new Error('layout 缺少 fields 公式（請確認 _layout.json）');
-        const fieldsAnswer = (profile && (profile.fields_answer || profile.answer_fields)) || args.fieldsAnswer || '';
-        const quizMode = inferQuizMode(profile && profile.profile_id, fieldsAnswer);
+        // 整份考卷的預設 layout（多數情況所有區段都用這個，維持既有行為／既有匯出格式不變）
+        const defaultProfile = pickProfile(layout, examJob.layout_profile_id);
+        // 2026-08-07 修正：下面 return 組「整份考卷摘要」用的 layout 欄位必須用這幾個
+        // defaultXxx（作用域在函式頂層，迴圈結束後仍存在）——不能用迴圈內每個區段自己算的
+        // profile/fields/fieldsAnswer/quizPrompt/quizAnswer（那幾個是 for 迴圈內的 const，
+        // 迴圈跑完就脫離作用域，return 裡引用會直接丟 ReferenceError: profile is not defined，
+        // 每個區段成功跑完都會炸，跟是否「沿用上方預設」無關）。每題實際用的 profile 早就
+        // 正確存在 item.source.layout_profile_id（迴圈內算的，見下面 buildItemFromRow 呼叫）。
+        const defaultFields = (defaultProfile && defaultProfile.fields) || args.fields || '';
+        const defaultFieldsAnswer = (defaultProfile && (defaultProfile.fields_answer || defaultProfile.answer_fields)) || args.fieldsAnswer || '';
+        const defaultQuizPrompt = (defaultProfile && defaultProfile.quiz_prompt) || args.quizPrompt || '';
+        const defaultQuizAnswer = (defaultProfile && defaultProfile.quiz_answer) || args.quizAnswer || '';
         const shuffle = !(examJob.options && examJob.options.shuffle === false);
 
         const sections = Array.isArray(examJob.sections) ? examJob.sections : [];
@@ -359,6 +386,22 @@ window.QuizPaperBuilder = (function () {
             const schemaId = pack.schemaId || '';
             const materialFolder = pack.materialFolder || layout.material_folder || '';
             const colMap = resolveColMap(layout, schemaId);
+
+            /**
+             * 💣 雷區（見 material-layout-pairing-invariant.mdc）：同一活頁（同一份 meta 檔）
+             * 可能需要套用不只一個 layout（例如同一份單字表同時要「整句翻譯」＋「單字無圖」）。
+             * 正確做法：1 個 meta 檔＋2 個區段，各自的 sec.layout_profile_id 各設一個；
+             * 不是複製 meta 檔、也不是在同一個區段塞兩個 layout_profile_id。
+             * 這裡改成逐區段解析 profile（沒設就沿用 examJob.layout_profile_id），
+             * 讓同一活頁的兩個區段各自吃到自己的 fields／quiz_prompt／quiz_answer。
+             */
+            const profile = sec.layout_profile_id ? pickProfile(layout, sec.layout_profile_id) : defaultProfile;
+            const fields = (profile && profile.fields) || args.fields || '';
+            if (!fields) throw new Error('區段 ' + (sIdx + 1) + '（活頁 ' + sheetId + '）的 layout 缺少 fields 公式（請確認 _layout.json 或該區段的 layout_profile_id）');
+            const fieldsAnswer = (profile && (profile.fields_answer || profile.answer_fields)) || args.fieldsAnswer || '';
+            const quizPrompt = (profile && profile.quiz_prompt) || args.quizPrompt || '';
+            const quizAnswer = (profile && profile.quiz_answer) || args.quizAnswer || '';
+            const quizMode = inferQuizMode(profile && profile.profile_id, fieldsAnswer);
 
             let pool = filterRowsForSection(rows, sec);
             if (!pool.length) {
@@ -408,8 +451,11 @@ window.QuizPaperBuilder = (function () {
                     schemaId: schemaId,
                     fields: fields,
                     fieldsAnswer: fieldsAnswer,
+                    quizPrompt: quizPrompt,
+                    quizAnswer: quizAnswer,
                     colMap: colMap,
-                    quizMode: quizMode
+                    quizMode: quizMode,
+                    layoutProfileId: (profile && profile.profile_id) || examJob.layout_profile_id || ''
                 }));
             });
         }
@@ -425,14 +471,16 @@ window.QuizPaperBuilder = (function () {
             spec_ref: {
                 job_id: examJob.job_id || '',
                 bank_id: examJob.bank_id || '',
-                layout_profile_id: (profile && profile.profile_id) || examJob.layout_profile_id || ''
+                layout_profile_id: (defaultProfile && defaultProfile.profile_id) || examJob.layout_profile_id || ''
             },
             layout: {
-                profile_id: (profile && profile.profile_id) || '',
-                label: (profile && profile.label) || '',
-                fields: fields,
-                fields_answer: fieldsAnswer || '',
-                lines_per_page: (profile && profile.lines_per_page) || 10
+                profile_id: (defaultProfile && defaultProfile.profile_id) || '',
+                label: (defaultProfile && defaultProfile.label) || '',
+                fields: defaultFields,
+                fields_answer: defaultFieldsAnswer || '',
+                quiz_prompt: defaultQuizPrompt || '',
+                quiz_answer: defaultQuizAnswer || '',
+                lines_per_page: (defaultProfile && defaultProfile.lines_per_page) || 10
             },
             items: picked,
             notices: notices

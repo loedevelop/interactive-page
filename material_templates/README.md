@@ -135,15 +135,17 @@ chmod +x publish_local.sh   # 首次
 
 ## `_Layout` 欄位（→ `_layout.json`）
 
-同一份教材**所有活頁共用一份** `_layout.json`；表上可列多種排版，出考試時再依狀況選。
+同一份教材**所有活頁／所有 schema_id 共用一份** `_layout.json`；表上可列多種排版，出考試時再依狀況選。
 
 | 欄 | 說明 |
 |----|------|
 | enabled | `Y` 才寫進 `_layout.json` |
 | profile_id | 對齊 Python `layout_profile_id`（如 `gept-translate-5col`） |
 | label | 給老師看的名稱 |
-| fields | 題卷欄位公式（頂層逗號＝輸出欄；支援 STACK／FONTSIZE／SUBSTITUTE／&／欄字母） |
-| fields_answer | 答卷／提示版公式（可空） |
+| fields | **印刷排版**欄位公式（頂層逗號＝輸出欄，並排多欄；支援 STACK／FONTSIZE／SUBSTITUTE／TEXTJOIN／&） |
+| fields_answer | **印刷排版**答卷／提示版公式（可空） |
+| quiz_prompt | **線上卷**題目提示公式（單一輸出，不是多欄並排；可空） |
+| quiz_answer | **線上卷**正確答案公式（單一輸出；可空） |
 | lines_per_page | 每頁行數（考試區段預設題數估算用） |
 | is_default | `Y`＝預設選這組；多列都 Y 時取第一個 |
 | note | 備註 |
@@ -151,3 +153,69 @@ chmod +x publish_local.sh   # 首次
 產出 `_layout.json` 另含 `col_map`／`col_maps`（由 `_Schema` 的 excel_col→semantic_key 產生），供線上卷求值。
 
 沒有 `_Layout` 活頁、或沒有 `enabled=Y` 時：略過 `_layout.json`，不影響 meta 發布。
+
+### `fields` vs. `quiz_prompt`／`quiz_answer`：印刷排版跟線上卷是兩件不同的事，不能共用一套欄位猜
+
+> 💣 雷區（曾發生：vocab 教材 `fields` 是 5 欄印刷排版，線上卷程式硬猜「第2欄＝提示、第3欄＝答案」，
+> 結果提示變成頁碼、答案變成題號，整份考卷內容全錯）。見 `.cursor/rules/material-publish-setup-format.mdc`。
+
+`fields`／`fields_answer` 是給**印刷／PDF 排版**用的：可以有任意欄數，各欄並排印在紙上（例如
+vocab 需要書名、頁碼、題號、中文、詞性五欄都印出來）。
+
+`quiz_prompt`／`quiz_answer` 是給**線上互動考卷**用的：每個各自只需要算出**一個**字串——
+「這一題要顯示的提示」跟「這一題的正確答案」。兩者語意完全不同，欄數也常常不一樣，所以
+拆成獨立欄位，不要共用 `fields`／`fields_answer`。
+
+沒有填 `quiz_prompt`／`quiz_answer` 時，線上卷會退回舊慣例（`fields` 第2欄當提示、第3欄當答案），
+只為相容舊的 GEPT 句子翻譯教材（那種剛好是3欄、順序也剛好對得上）；**新教材（尤其欄數不是3、
+或欄位語意不是「提示在第2欄」）務必自己填 `quiz_prompt`／`quiz_answer`，不要依賴這個退回機制。**
+
+範例（vocab，見 `_Setup.csv`）：
+
+```
+fields          = vBK_name, page, item_no, display_zh, pos      ← 印在紙上的 5 欄
+fields_answer   = pre, script
+
+quiz_prompt     = display_zh & " (" & pos & ")"                  ← 線上卷顯示「蘋果 (n.)」
+quiz_answer     = TEXTJOIN(" ", pre, script)                     ← 正確答案「an apple」
+                                                                     （pre 空時自動只留 script，
+                                                                      不會被 & 的防呆規則吃成空字串）
+```
+
+`TEXTJOIN(分隔符, 欄位1, 欄位2, ...)` 用法跟 Excel 一樣：自動跳過空值再用分隔符接起來，
+適合「有些列這欄是空的」的情境（例如不需要 a/an 的名詞），比 `&` 更安全。
+
+### `fields`／`fields_answer` 裡的欄位要怎麼寫：semantic_key（建議）vs. Excel 欄字母（僅單一 schema 安全）
+
+`_Schema` 的 `semantic_key` 就是設計來當「跨 schema 共用的詞彙」的——同一個語意（例如「中文」）在
+`vocab-set1` 可能是 `AK` 欄，在 `vocab-set2` 卻是 `AL` 欄，但兩邊的 `semantic_key` 都叫
+`display_zh`。**`_Layout.fields` 應該直接寫 `semantic_key`**（大小寫不拘），才能讓同一組排版真正
+「所有段落共用」，不管實際 Excel 欄位在哪裡都能對到正確的資料：
+
+```
+✅ 建議（跨 schema 都通用）：
+fields = display_zh, pos, article
+fields_answer = script
+
+❌ 別再用 Excel 欄字母（只對「寫的時候心裡想的那個 schema」是對的，換一個 schema 就會對錯欄）：
+fields = AL, AN        ← 對 vocab-set2 是「中文,詞性」，但對 vocab-set1 卻是「（無)，前置詞」
+```
+
+**唯一例外**：教材整份只有 **一個** `schema_id`（沒有同活頁多區塊）時，直接寫 Excel 欄字母
+（像 `material_templates/_Layout.csv` 的 `D,E,C,Y,X,BA,BB,BC,BD` 那組舊例）仍然安全——因為
+沒有第二個 schema 會對同一個字母有不同解讀。一旦這份教材未來新增第二個 `schema_id`，
+就要把 `fields` 改回 semantic_key，否則舊的 schema 會被新 schema 的欄位定義悄悄拖垮。
+
+### `schema_id` 跟 `profile_id` 差在哪裡？
+
+兩者是完全不同層次、互相獨立的東西，常被搞混：
+
+| | `_Schema.schema_id` | `_Layout.profile_id` |
+|---|---|---|
+| 回答什麼問題 | 這一列資料，各語意欄位對到 Excel 的**哪一欄**（資料怎麼「讀進來」） | 印出來／線上卷要顯示**哪些**語意欄位、怎麼排（資料怎麼「秀出去」） |
+| 什麼時候要開新的一組 | 同一份教材裡，不同區塊（同活頁或不同活頁）的欄位物理位置不同時 | 同一批資料想要有不同的呈現方式時（例如「單字卡」vs.「填空版」） |
+| 是否跟 schema 綁定 | 是（一個區塊只能對應一個 `schema_id`） | **不是**——只要 `fields` 用 `semantic_key`，一個 `profile_id` 就能同時服務多個 `schema_id` |
+
+因此「有兩個 `schema_id`（vocab-set1／vocab-set2），要不要也開兩個 `profile_id`？」——**不需要**。
+只要 `fields`／`fields_answer` 改用 `semantic_key`，一個 `profile_id`（如 `vocab-basic`）就能兩邊共用，
+這也是當初設計 `semantic_key` 這一層抽象的目的。

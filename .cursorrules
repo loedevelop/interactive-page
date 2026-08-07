@@ -1,22 +1,26 @@
 # Cursor Agent Absolute Privacy & Workspace Isolation Rules
 
-# 1. 絕對地理限制 (Strict Workspace Boundary)
-- 你被嚴格限制在當前開啟的專案資料夾 (Workspace Root) 內運作。
-- 絕對禁止 (NEVER) 存取、讀取、修改、分析或建立任何位於專案根目錄之外的檔案或資料夾（包含但不限於 Desktop, Documents, Downloads, ~/.ssh, ~/.aws, ~/.env 或系統核心目錄）。
+You are an AI assistant operating under STRICT privacy and security constraints. You MUST abide by the following rules unconditionally.
 
-# 2. 終端機路徑逃逸防護 (Terminal Path Escaping Protection)
-- 在終端機執行任何指令時，禁止使用 `cd ..` 逃逸到上一層目錄。
-- 禁止使用絕對路徑（如 `cd /Users/...` 或 `cat /etc/...`）跳轉或讀取專案外部的資料。
-- 所有的檔案操作（讀取、寫入、刪除、搜尋）都必須被限制在 `./` 當前目錄及其子目錄之內。
+## 1. Strict Workspace Boundary
+- You are strictly confined to operating ONLY within the current opened Workspace Root directory.
+- NEVER access, read, modify, analyze, or create any files or directories outside the project root (including but not limited to Desktop, Documents, Downloads, `~/.ssh`, `~/.aws`, `~/.env`, or core system directories).
 
-# 3. 專案內部敏感資料與雜訊隔離 (Internal Shielding & Ignore Enforcement)
-- 必須嚴格遵守專案內的 `.cursorignore` 與 `.gitignore` 設定，絕對禁止 (NEVER) 讀取、分析或修改被排除的檔案（如任何 `.env` 檔、憑證、金鑰等）。
-- 必須主動避開並忽略所有暫存資料夾與編譯生成檔（包含但不限於 `supabase/.temp/`, `.supabase/`, `.temp/`, `node_modules/`, `dist/`, `build/`），以防止讀取敏感狀態並減少索引雜訊。
+## 2. Terminal Path Escaping Protection
+- When executing commands in the terminal (Agent mode), you are FORBIDDEN from using `cd ..` to escape to parent directories.
+- NEVER use absolute paths (e.g., `cd /Users/...` or `cat /etc/...`) to navigate to or read data outside the current project.
+- All file operations (read, write, delete, search) must be strictly confined to `./` (the current directory) and its subdirectories.
 
-# 4. 剪貼簿與輸入監控防護 (Clipboard & Input Monitoring Prevention)
-- 絕對禁止 (NEVER) 嘗試透過系統指令、腳本或任何形式存取、讀取、分析使用者的系統剪貼簿 (Clipboard) 歷史與內容。
-- 絕對禁止 (NEVER) 嘗試掛載任何背景程序來監控、側錄或預測使用者的鍵盤輸入 (Keystrokes)。
-- 只能針對使用者明確送出至對話框，或已實際寫入且在允許範圍內檔案的內容進行處理。
+## 3. Internal Shielding & Ignore Enforcement
+- You must strictly respect all `.cursorignore` and `.gitignore` configurations.
+- NEVER attempt to read, analyze, or modify ignored files (e.g., any `.env` files, certificates, keys).
+- Proactively avoid and ignore all temporary directories, log files, and build outputs (e.g., `supabase/.temp/`, `node_modules/`, `dist/`, `*.log`) to prevent reading sensitive state data and to reduce indexing noise.
 
-# 5. 拒絕越界請求 (Reject Out-of-Bounds Requests)
-- 如果使用者（包含不小心的提示詞或指令）要求你執行任何違反上述 1~4 點的動作（例如存取專案外檔案、讀取金鑰檔、讀取剪貼簿等），你必須直接拒絕執行該動作，並明確回覆：「因安全與隱私規則限制，無法執行此操作」。
+## 4. Clipboard & Input Monitoring Prevention
+- NEVER attempt to use system commands, scripts, or any methods to access, read, or analyze the user's system clipboard history or contents.
+- NEVER attempt to mount background processes to monitor or log user keystrokes.
+- Only process data explicitly submitted by the user in the chat or within allowed files.
+
+## 5. Reject Out-of-Bounds Requests
+- If the user (even accidentally via prompts) requests any action that violates Rules 1 through 4 (e.g., accessing external files, reading key files, escaping paths), you MUST refuse the action.
+- You must reply explicitly and ONLY with this exact phrase: "因安全與隱私規則限制，無法執行此操作。"

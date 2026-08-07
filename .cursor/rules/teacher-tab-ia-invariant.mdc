@@ -1,0 +1,57 @@
+# 老師端分頁權責分工鐵律（雷區｜活頁失真）
+
+> 2026-08-04：老師端回饋「目前的活頁，已經失真，無法真實呈現其功能」——考試出題單、考試批改、
+> 音檔切割工具、AI 補批全部塞在「班級進度總表」裡，分頁名字跟實際功能對不上。
+> 新增／搬動老師端分頁功能前必讀。
+
+## 現況分工（改動前自問是否還符合）
+
+| 分頁 | 定位 | 內容 |
+|---|---|---|
+| 📅 課程進度 | 時間軸 | `view-progress` |
+| 📈 班級進度總表 | **唯讀報表** ＋ 到期提醒 | 進度格子表、📬 家長提醒圖、🔄 重新整理資料。**不放**任何「出題／批改／工具」按鈕 |
+| 🧰 Gadget 中心 | **操作／工具入口** | 📝 考試出題單、🖊️ 考試批改、🔪 音檔切割工具、🤖 AI 補批面板 |
+| 🎙️ 批改與成績 | 語音錄音批改矩陣 | `feature-gradebook.js` |
+| 📁 班級資源／👥 班級成員管理／⚙️ 課程基本資料 | 依 `staff_role` 顯示（`ui-core.js` `applyStaffRoleUI`，admin/primary_teacher 才看到課程基本資料＋班群管理） | — |
+
+## 禁止
+
+```javascript
+// ❌ 新工具直接塞進「班級進度總表」的按鈕列（feature-progress.js fetchAndRenderReport）
+// 進度總表只該重繪表格本身＋家長提醒圖，不該再長出第 3、4、5 個工具按鈕
+container.innerHTML = `... <button>📝 新工具</button> ...`; // 在 fetchAndRenderReport 裡
+
+// ❌ Gadget 中心與進度總表各自重打一次班級全量查詢（enrollments/assignments/completions）
+// 必須共用 TeacherClassDataset.load(classId, {...})，不要各刻一份 supabaseClient.from(...) 查詢
+
+// ❌ 新分頁按鈕自己掛 onclick 呼叫 render()：ui-core.js 已有集中的 tab-btn click 監聽
+// （420-449 行）＋ loadActiveClassTabData（換班／重整用，363-403 行），兩處都要各加一支
+// if (targetId === 'view-xxx') 分支；只加 onclick 會導致「換班／重整回到該分頁」時沒重新渲染
+<button class="tab-btn" data-target="view-gadgets" onclick="...">🧰 Gadget 中心</button>
+```
+
+## 正確做法
+
+```javascript
+// ✅ 新工具入口：掛進 feature-gadget-center.js 的 renderToolsSection / renderBackfillSection
+// ✅ 資料撈取：TeacherClassDataset.load(classId, { onLight, onHeavy, onHeavyError, force })
+//    只在「重新整理資料」時 invalidate(classId) 再 force:true 重抓
+```
+
+## 已知「文案跟實際不符」案例（本次發現，暫不修，供之後參考）
+
+1. **活頁字母 vs sheet_id**：多處程式碼註解／UI 文案用「活頁字母」（例：A/B/C）稱呼考試/錄音 meta 的
+   `sheet_id`，但實際上 `sheet_id` 現在可以是任意字串（例如 `VOCAB_SET1`），不一定是單一字母。
+   `feature-exam-job.js`／`feature-timeline.js` 多處註解仍寫「活頁字母」，理解時勿誤以為系統
+   強制要求單字母命名。
+2. **姓名顯示模式優先權**：`feature-profile.js` 個人設定頁文案寫「設定後...強制優先套用」，但
+   `feature-reminder-image.js` `resolveNameModeForClass` 實際邏輯是「班級明確設定 > 老師個人偏好 >
+   保底 en_first」，班級設定其實贏過老師個人偏好。2026-08-04 已與老師確認**維持現狀**（程式碼與
+   文案都不改），純記錄避免未來被誤當 bug 修掉方向搞反。
+
+## 改動前自問
+
+會動到 `feature-progress.js`／`feature-gadget-center.js`／老師端分頁結構時：
+1. 新工具是不是又要塞進「班級進度總表」？→ 應該進 Gadget 中心。
+2. 是不是又要各自撈一次班級全量資料？→ 應該共用 `TeacherClassDataset`。
+若任一是，停下。
