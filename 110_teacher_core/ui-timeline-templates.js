@@ -628,6 +628,10 @@ window.TimelineTemplates = (() => {
                     const showPaste = scriptSource === 'paste';
                     const showResource = scriptSource === 'resource';
                     const showSkeleton = scriptSource === 'skeleton';
+                    // 💣 雷區：base 範圍在骨架模式下預設「依路徑自動整理」，但老師可手動微調覆寫；
+                    // 一旦手動改過（且沒清空）就不可再被路徑異動自動蓋回去，否則等同「跑掉不見」
+                    // （見 feature-timeline.js refreshSkeletonRangeLabel 旁的雷區說明）。
+                    const skeletonRangeAuto = raw.skeleton_range_auto !== false;
 
                     // E. 單元骨架：反向流程──先手動定義單元路徑（不需要 meta 檔），文稿可留空、之後再補。
                     // 沿用 grading_units 同一個欄位存放（跟 A 的 Snapshot 單元共用 shape，只是來源不同）。
@@ -687,9 +691,9 @@ window.TimelineTemplates = (() => {
 
                             <div id="node-base-range-wrap-${pathStr}" style="display:${showMeta ? 'none' : 'flex'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">
                                 <span style="font-weight:900; color:#92400E; font-size:0.9rem; flex:0 0 100%;">📍 base 範圍（必填）</span>
-                                <input type="text" id="node-material-range-manual-${pathStr}" class="form-control" style="flex:1; min-width:160px; padding:8px;" value="${safeMaterialRange}" placeholder="${showSkeleton ? '依下方單元路徑自動整理（可手動微調）' : '例：A pp. 1~2 B pp. 1~2'}">
-                                ${showSkeleton ? `<button type="button" class="btn-action" style="flex:0 0 auto; font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer; white-space:nowrap;" onclick="window.FeatureTimeline.refreshSkeletonRangeLabel('${pathStr}')">🔄 依路徑重算</button>` : ''}
-                                ${showSkeleton ? `<div style="flex:0 0 100%; font-size:0.75rem; color:#92400E; margin-top:2px;">💡 書名（如 Azar-2）請寫在最上面的「✏️ 標題」欄，不要寫在這裡——這裡是依下方單元路徑自動整理出來的範圍摘要，路徑異動會被覆寫。</div>` : ''}
+                                <input type="text" id="node-material-range-manual-${pathStr}" class="form-control" style="flex:1; min-width:160px; padding:8px;" value="${safeMaterialRange}" placeholder="${showSkeleton ? '依下方單元路徑自動整理（可手動微調）' : '例：A pp. 1~2 B pp. 1~2'}" ${showSkeleton ? `data-range-auto="${skeletonRangeAuto ? '1' : '0'}" oninput="window.FeatureTimeline.onSkeletonRangeManualInput('${pathStr}', this)"` : ''}>
+                                ${showSkeleton ? `<button type="button" class="btn-action" style="flex:0 0 auto; font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer; white-space:nowrap;" onclick="window.FeatureTimeline.refreshSkeletonRangeLabel('${pathStr}', {force:true})">🔄 依路徑重算</button>` : ''}
+                                ${showSkeleton ? `<div style="flex:0 0 100%; font-size:0.75rem; color:#92400E; margin-top:2px;">💡 書名（如 Azar-2）請寫在最上面的「✏️ 標題」欄，不要寫在這裡。這裡預設依下方單元路徑自動整理；老師直接手動編輯過（且未清空）就不會再被路徑異動覆寫，除非按「🔄 依路徑重算」或把欄位清空恢復自動。</div>` : ''}
                             </div>
 
                             <div id="script-source-panel-meta-${pathStr}" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">

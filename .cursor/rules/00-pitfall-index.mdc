@@ -17,7 +17,7 @@ alwaysApply: true
 | `exam-available-count-invariant.mdc` | 可用題顯示 ~20／— 老問題／必考題號（include_nums）被誤當限縮用、範圍算成 0 | `feature-exam-job.js`, `feature-timeline.js`, `quiz-paper-builder.js` |
 | `material-snapshot-refs-invariant.mdc` | Snapshot 存檔後只剩 A／第二冊不進 snap | `store-assignment-builder.js`, `feature-timeline.js`, `ui-timeline-templates.js` |
 | `page-refresh-perf-invariant.mdc` | 重整卡頓／隱藏分頁搶跑重活 | `ui-core.js`, `store.js`, `feature-student-timeline.js`, `ui-student-timeline-templates.js` |
-| `skeleton-unit-invariant.mdc` | 錄音「單元骨架」（E 選項）先建結構後補文稿／AI 依 index 抓稿風險 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `process-audio-ai/**` |
+| `skeleton-unit-invariant.mdc` | 錄音「單元骨架」（E 選項）先建結構後補文稿／AI 依 index 抓稿風險；base 範圍手動覆寫會被路徑異動自動蓋掉的坑 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `process-audio-ai/**` |
 | `assignment-title-auto-inherit-invariant.mdc` | 任務／範圍群組標題卡死在舊值（例：怎麼改 base 範圍標題都還是 Unit 10） | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js` |
 | `material-publish-setup-format.mdc` | 教材發布 `_Setup` 合併格式／同活頁多區塊誤填 LAST／last_row_column 沒對齊實際欄位 | `material_templates/**` |
 | `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |

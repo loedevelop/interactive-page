@@ -374,8 +374,8 @@
     <script src="../110_teacher_core/api-gas-service.js?v=62"></script> <!-- batch read_material_files；fileId 直讀；v62 listMaterialMasters 附 debugVersion/resolvedRootId 除錯欄位 -->
     <script src="../110_teacher_core/ui-core.js?v=53"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=47"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=83"></script> <!-- v83 標題自動繼承改用 raw_data.title_auto_from_range 旗標判斷，不再只看標題是否為空（修「Unit 10 卡死」） -->
-    <script src="../110_teacher_core/store-assignment-builder.js?v=68"></script> <!-- v68 同上：syncTasksState／fillBlankRangeGroupTitles 寫入並檢查 title_auto_from_range -->
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=84"></script> <!-- v84 骨架(E) base 範圍欄位加 data-range-auto 旗標＋oninput，避免手動覆寫被路徑異動自動蓋回去 -->
+    <script src="../110_teacher_core/store-assignment-builder.js?v=69"></script> <!-- v69 同上：sync 時持久化 raw_data.skeleton_range_auto -->
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
@@ -395,7 +395,7 @@
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
     <script src="../110_teacher_core/feature-exam-review.js?v=1"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=113"></script> <!-- v113 修正 onNodeTitleInput：只有 exam 類型才 fallback 抓同層錄音 base 範圍，避免「一般」(check) 任務標題被刪光後立刻被同層錄音範圍蓋回去 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=114"></script> <!-- v114 修「base 範圍會跑掉不見」：骨架(E) refreshSkeletonRangeLabel 加手動覆寫旗標＋非強制時不把欄位清空；refreshMaterialRangeLabel(A) 也補上 rows=0 時不清空的保護 -->
     <script src="../110_teacher_core/feature-resource.js?v=44"></script>
     <script src="../110_teacher_core/feature-profile.js?v=41"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=40"></script>

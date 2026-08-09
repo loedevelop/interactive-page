@@ -58,15 +58,46 @@ alwaysApply: false
 ## base 範圍 ≠ 書名（曾經搞混過一次）
 
 E 模式的「base 範圍」欄位（`node-material-range-manual-${pathStr}`）跟 A 模式的「base 範圍」同角色：
-**依下方單元路徑列自動整理出來的摘要文字**（`buildSkeletonRangeLabelFromRows` + `refreshSkeletonRangeLabel`，
-在路徑列 `input` 事件、加/刪列、開啟編輯器時都會重新計算並覆寫），不是老師手打書名的地方。
-
-書名（如 `Azar-2`）要打在任務最上面的「✏️ 標題」欄——那裡是獨立欄位，`data-title-auto` 一旦被手動輸入蓋成 `'0'`
-就不會被 base 範圍同步覆寫。**不要**又把書名塞回 base 範圍輸入框，否則下一次路徑列變動就會把書名蓋掉。
+**預設**是依下方單元路徑列自動整理出來的摘要文字（`buildSkeletonRangeLabelFromRows` + `refreshSkeletonRangeLabel`），
+但不是老師手打書名的地方——書名（如 `Azar-2`）要打在任務最上面的「✏️ 標題」欄。
 
 > 2026-08-07 修正：這個標題自動繼承機制曾有個跨 session 的坑，見
 > `assignment-title-auto-inherit-invariant.mdc`（老師改了 base 範圍，標題卻永遠卡在很久以前算出來的
 > 舊值，例如死抱著「Unit 10」不放）。動這裡的 `data-title-auto` 邏輯前，先讀那份規則。
+
+### 💣 2026-08-09 修正：「base 範圍設好後會自己消失」
+
+舊版 `refreshSkeletonRangeLabel` 在路徑列 `input` 事件、加/刪列、開啟編輯器時都會**無條件**用最新算出的
+字串覆寫欄位，即使算出來是空字串也照樣覆寫。踩雷情境：
+
+- 老師手動微調過 base 範圍欄位（placeholder 明明寫「可手動微調」）→ 隨便改一列路徑的任何字元 →
+  手動微調的內容立刻被蓋回自動算出的值。
+- 只有一列單元、老師選字重打路徑（例如修正 typo）→ 中途出現路徑暫時是空字串的過渡狀態 →
+  `label` 算成 `''` → base 範圍欄位被清空，看起來像「跑掉不見」。
+
+修法（見 `feature-timeline.js` 的 `refreshSkeletonRangeLabel` / `onSkeletonRangeManualInput`）：
+
+```
+欄位加 data-range-auto 旗標（存檔時持久化成 raw_data.skeleton_range_auto）：
+  '1'（預設）＝自動追蹤，路徑異動會重新整理
+  '0'         ＝老師已手動覆寫，路徑異動不再自動蓋掉
+
+非 force 呼叫（路徑 input／加刪列／開啟編輯器）：
+  - 旗標為手動('0') → 完全不覆寫欄位
+  - 算出的 label 是空字串 → 完全不覆寫欄位（避免過渡狀態清空）
+  - 其餘情況才覆寫
+
+force 呼叫（老師主動按「🔄 依路徑重算」）：
+  - 一律覆寫成當下算出的值（即使是空字串），並把旗標重設回自動('1')
+
+老師直接在 base 範圍欄位打字：
+  - 有字 → 旗標設為手動('0')
+  - 刪光 → 旗標設回自動('1') 並立刻 force 重新整理一次
+```
+
+`refreshMaterialRangeLabel`（A 模式「依列重算」）也補上同一類保護：`rows.length === 0`（老師正在
+重選 meta、勾選框中途全部取消）時，只要先前已有 `unitStemCount` 筆逐頁批改稿，就視為
+`incomplete`、不覆寫既有欄位值（原本只在 `unitStemCount > 1` 才擋，現在 `unitStemCount > 0` 就擋）。
 
 ## 不變量
 

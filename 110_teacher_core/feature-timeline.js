@@ -690,20 +690,55 @@ window.FeatureTimeline = (() => {
     }
 
     /**
-     * 💣 雷區提醒：base 範圍在骨架模式下是「依路徑自動整理」的計算結果，
-     * 跟 A（meta）模式的 refreshMaterialRangeLabel 同角色──每次路徑列變動都會重新整理並覆寫，
-     * 不是留給老師手打書名的欄位（書名該打在任務最上面的「✏️ 標題」，那裡不會被這裡覆寫）。
+     * 💣 雷區（曾發生「base 範圍設好後會自己消失」）：base 範圍在骨架模式下預設是
+     * 「依路徑自動整理」的計算結果，但老師可以手動微調覆寫（欄位 placeholder 也這樣寫）。
+     * 舊版每次路徑列異動（包含老師正在修改某一列路徑、中途出現空字串的過渡狀態）都會
+     * 無條件用最新算出來的字串覆寫欄位，導致：
+     *   1) 老師手動打的覆寫值，只要任何一列路徑再變動就被蓋掉。
+     *   2) 只有一列單元、老師刪字重打時，中途出現「路徑暫時是空的」，算出來的 label 是
+     *      空字串，欄位就被清空，看起來像是「跑掉不見」。
+     * 修法：
+     *   - 用 data-range-auto 旗標（見 onSkeletonRangeManualInput）記錄「這欄還是不是自動追蹤」，
+     *     老師手動打過字（且沒清空）之後就不再自動覆寫，除非按「🔄 依路徑重算」（force）。
+     *   - 非 force 情況下，算出來的 label 是空字串時絕不覆寫既有內容（避免中途過渡狀態清空欄位）。
+     *   - force（老師主動按重算鈕）才允許把欄位覆寫成當下算出的值，即使是空字串，
+     *     並把旗標重設回自動追蹤，因為這是老師自己要求重新對齊路徑。
      */
-    function refreshSkeletonRangeLabel(pathStr) {
+    function refreshSkeletonRangeLabel(pathStr, opts) {
+        const force = !!(opts && opts.force);
         const units = collectSkeletonUnitsFromDom(pathStr);
         const label = buildSkeletonRangeLabelFromRows(units);
         const rangeEl = document.getElementById('node-material-range-manual-' + pathStr);
-        if (rangeEl) rangeEl.value = label;
-        if (label) {
-            applyInheritedTitleFromRange(pathStr, label);
-            syncSiblingExamTitleFromRange(pathStr, label);
+        if (rangeEl) {
+            const isManual = !force && rangeEl.getAttribute('data-range-auto') === '0';
+            if (force || (!isManual && label)) {
+                rangeEl.value = label;
+                if (force) rangeEl.setAttribute('data-range-auto', '1');
+            }
+            // else：非 force 且（老師已手動覆寫，或這次算出來是空字串）→ 保留欄位目前內容，不覆寫
+        }
+        const rangeTextNow = rangeEl ? String(rangeEl.value || '').trim() : label;
+        if (rangeTextNow) {
+            applyInheritedTitleFromRange(pathStr, rangeTextNow);
+            syncSiblingExamTitleFromRange(pathStr, rangeTextNow);
         }
         return label;
+    }
+
+    /**
+     * 老師直接在骨架模式的 base 範圍欄位打字：有字＝標記手動覆寫（之後路徑異動不再自動蓋掉）；
+     * 刪光＝立刻恢復自動追蹤並重新依路徑整理一次（跟標題 onNodeTitleInput 同一套邏輯）。
+     */
+    function onSkeletonRangeManualInput(pathStr, el) {
+        const rangeEl = el || document.getElementById('node-material-range-manual-' + pathStr);
+        if (!rangeEl) return;
+        const current = String(rangeEl.value || '').trim();
+        if (current) {
+            rangeEl.setAttribute('data-range-auto', '0');
+        } else {
+            rangeEl.setAttribute('data-range-auto', '1');
+            refreshSkeletonRangeLabel(pathStr, { force: true });
+        }
     }
 
     /** grading_units 裡有幾種 stem（A/B/C…） */
@@ -834,7 +869,9 @@ window.FeatureTimeline = (() => {
             });
             unitStemCount = Object.keys(stems).length;
         }
-        const incomplete = unitStemCount > 1 && rows.length > 0 && rows.length < unitStemCount;
+        // 💣 同 refreshSkeletonRangeLabel 的雷區：rows 暫時是 0（老師正在重選 meta，或勾選框
+        // 中途全部取消）時，label 會算成空字串；若既有欄位已有值，不可因此清空覆寫。
+        const incomplete = unitStemCount > 0 && rows.length < unitStemCount;
         if (!incomplete && rangeEl) {
             rangeEl.value = label;
         }
@@ -2583,8 +2620,13 @@ window.FeatureTimeline = (() => {
         },
 
         /** 依目前路徑列重新整理 base 範圍（跟 A 的「依列重算」同角色，供 SSR 模板 oninput／重算鈕呼叫） */
-        refreshSkeletonRangeLabel: function (pathStr) {
-            return refreshSkeletonRangeLabel(pathStr);
+        refreshSkeletonRangeLabel: function (pathStr, opts) {
+            return refreshSkeletonRangeLabel(pathStr, opts);
+        },
+
+        /** base 範圍欄位手動輸入：有字＝標記手動覆寫，刪光＝恢復自動依路徑整理 */
+        onSkeletonRangeManualInput: function (pathStr, el) {
+            return onSkeletonRangeManualInput(pathStr, el);
         }
     };
 })();

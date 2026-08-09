@@ -151,6 +151,11 @@ window.BuilderStore = (() => {
                     } else if (materialRangeEl) {
                         t.raw_data.material_range = String(materialRangeEl.value || '').trim();
                     }
+                    // 💣 骨架模式（E）base 範圍手動覆寫旗標：見 feature-timeline.js refreshSkeletonRangeLabel
+                    // 旁的雷區說明，需持久化才能在重新整理／重開編輯器後仍記得「這欄已被老師手動改過」。
+                    if (scriptSource === 'skeleton' && materialRangeManualEl) {
+                        t.raw_data.skeleton_range_auto = (materialRangeManualEl.getAttribute('data-range-auto') !== '0');
+                    }
                     // 標題空白或仍為「自動繼承」時，跟 base 範圍同步
                     if (t.raw_data.material_range) {
                         const titlePlain = titleEl

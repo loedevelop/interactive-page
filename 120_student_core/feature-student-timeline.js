@@ -1056,6 +1056,25 @@ window.FeatureStudentTimeline = (() => {
                         if (error) throw error;
                     }
                 }
+
+                // 💣 雷區：寫表成功後，這裡之前完全沒有把 rawData（新上傳／取代的檔案）合併回
+                // window._studentTaskCompletions，導致上傳／取代成功後 renderCourses() 用的還是
+                // 舊快取——音檔播放器／縮圖要等下次整頁重新整理（fetchData）才會出現新檔案。
+                // 依 server 端 student_set_task_completion 的 shallow 合併語意在本地做同樣的事，
+                // 讓「上傳成功」與「畫面看到新檔案」是同一次操作，不用重整頁面。
+                if (isChecked) {
+                    if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+                    let rec = window._studentTaskCompletions.find(c =>
+                        String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId)
+                    );
+                    if (!rec) {
+                        rec = { assignment_id: assignmentId, task_id: taskId, status: 'completed', raw_data: {} };
+                        window._studentTaskCompletions.push(rec);
+                    }
+                    rec.status = 'completed';
+                    if (rawData) rec.raw_data = Object.assign({}, rec.raw_data, rawData);
+                    renderCourses();
+                }
             } catch (err) {
                 console.error("同步進度失敗：", err);
                 if (isChecked) {

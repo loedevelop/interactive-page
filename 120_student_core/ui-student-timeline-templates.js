@@ -117,8 +117,24 @@ window.UIStudentTimelineTemplates = (() => {
                 style="flex:0 0 auto; border:1px solid #FDE68A; background:#FFFBEB; color:#B45309; font-size:0.72rem; padding:3px 8px; border-radius:6px; font-weight:800; cursor:pointer;">🔁 取代</button>`;
     };
 
+    /**
+     * 骨架模式（E）沒有 unit_key 的一般上傳檔，靠 grading_units 陣列位置回填顯示用標籤，
+     * 例如老師每列骨架路徑直接填頁碼「243」「244」…時，顯示成「p. 243」而不是「第 1 檔」。
+     * 只是顯示用的最佳猜測（假設學生依 base 範圍列表順序上傳），不影響批改或實際檔案內容。
+     */
+    const skeletonUnitLabelText = (unit) => {
+        if (!unit) return '';
+        if (unit.label) return String(unit.label).trim();
+        if (unit.path_label) return String(unit.path_label).trim();
+        const stem = String(unit.stem || '').trim();
+        const sub = Array.isArray(unit.sub_path) && unit.sub_path.length ? unit.sub_path.join('/') : '';
+        if (/^\d+$/.test(stem) && !sub) return 'p. ' + stem;
+        if (stem && sub) return stem + '/' + sub;
+        return stem || sub || '';
+    };
+
     /** 已繳交檔：音檔播放／圖片顯示／文件開預覽（開的是檔案，不是資料夾）；每筆都可「🔁 取代」 */
-    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas, courseId, taskId, statusId) => {
+    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas, courseId, taskId, statusId, skeletonUnitsForLabel) => {
         const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean).map(String) : [];
         if (ids.length === 0 && audioUrl) {
             const m = String(audioUrl).match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -127,6 +143,7 @@ window.UIStudentTimelineTemplates = (() => {
         if (ids.length === 0) return '';
 
         const metas = Array.isArray(fileMetas) ? fileMetas : [];
+        const fallbackUnits = Array.isArray(skeletonUnitsForLabel) ? skeletonUnitsForLabel : null;
         const showLabel = ids.length > 1;
         let html = '<div style="display:flex; flex-direction:column; gap:6px; width:100%;">';
         ids.forEach((fileId, idx) => {
@@ -134,7 +151,8 @@ window.UIStudentTimelineTemplates = (() => {
             const kind = guessSubmittedKind(fileId, idx === 0 ? audioUrl : '', meta);
             const viewUrl = resolveDriveViewUrl(fileId);
             const playerId = ids.length === 1 ? inlinePlayerId : `${inlinePlayerId}-${idx}`;
-            const unitLabel = meta && meta.label ? String(meta.label).trim() : '';
+            const metaLabel = meta && meta.label ? String(meta.label).trim() : '';
+            const unitLabel = metaLabel || (fallbackUnits ? skeletonUnitLabelText(fallbackUnits[idx]) : '');
             const labelChip = (showLabel && unitLabel)
                 ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(unitLabel)}</span>`
                 : (showLabel ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
@@ -1260,6 +1278,9 @@ window.UIStudentTimelineTemplates = (() => {
                             let audioPlayerHtml = '';
 
                             if (hasValidAudioFile) {
+                                const skeletonUnitsForLabel = (task.raw_data && task.raw_data.script_source === 'skeleton' && Array.isArray(task.raw_data.grading_units))
+                                    ? task.raw_data.grading_units
+                                    : null;
                                 audioPlayerHtml = buildSubmittedFilesHtml(
                                     submittedFileIds,
                                     retryAudioUrl,
@@ -1267,7 +1288,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     submittedFileMetas,
                                     course.id,
                                     task.id,
-                                    statusId
+                                    statusId,
+                                    skeletonUnitsForLabel
                                 );
                             }
 
