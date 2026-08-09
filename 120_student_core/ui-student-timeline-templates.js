@@ -87,8 +87,38 @@ window.UIStudentTimelineTemplates = (() => {
         return `https://drive.google.com/thumbnail?id=${fileId}&sz=w640`;
     };
 
-    /** 已繳交檔：音檔播放／圖片顯示／文件開預覽（開的是檔案，不是資料夾） */
-    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas) => {
+    /**
+     * 「🔁 取代」按鈕＋隱藏 file input：學生點選後選新檔直接覆蓋這一筆
+     * （Drive 舊檔 trash、DB 紀錄換成新檔）。data-* 帶著 handleReplaceFile 需要的內容，
+     * unit_key／stem／page／label／original_script 只有 AI 分頁（meta.unit_key 有值）才會有值；
+     * 一般檔案（無 unit_key）由 handleReplaceFile 依任務是否走 AI 批改自行判斷路徑。
+     * 見 .cursor/rules/drive-folder-upload-invariants.mdc「取代特定已上傳檔」一節。
+     */
+    const buildReplaceButtonHtml = (fileId, meta, kind, courseId, taskId, statusId, idx) => {
+        if (!courseId || !taskId || !statusId) return '';
+        const inputId = `replace-file-input-${courseId}-${taskId}-${idx}`;
+        const accept = kind === 'audio'
+            ? 'audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4'
+            : (kind === 'image' ? 'image/*' : '');
+        const unitKey = meta && meta.unit_key ? String(meta.unit_key).trim() : '';
+        const stem = meta && meta.stem ? String(meta.stem) : '';
+        const page = (meta && meta.page != null) ? String(meta.page) : '';
+        const label = meta && meta.label ? String(meta.label) : '';
+        const scriptB64 = unitKey ? b64Utf8(meta && meta.original_script ? meta.original_script : '') : '';
+        return `<input type="file" id="${escapeAttr(inputId)}" accept="${escapeAttr(accept)}" style="display:none;"
+                data-old-file-id="${escapeAttr(fileId)}"
+                data-unit-key="${escapeAttr(unitKey)}"
+                data-stem="${escapeAttr(stem)}"
+                data-page="${escapeAttr(page)}"
+                data-label="${escapeAttr(label)}"
+                data-script-b64="${escapeAttr(scriptB64)}"
+                onchange="window.FeatureStudentTimeline.handleReplaceFile(this, '${escapeJsSingleQuoted(courseId)}', '${escapeJsSingleQuoted(taskId)}', '${escapeJsSingleQuoted(statusId)}')">
+            <button type="button" onclick="document.getElementById('${escapeAttr(inputId)}').click()" class="btn-action" title="取代這一個檔案"
+                style="flex:0 0 auto; border:1px solid #FDE68A; background:#FFFBEB; color:#B45309; font-size:0.72rem; padding:3px 8px; border-radius:6px; font-weight:800; cursor:pointer;">🔁 取代</button>`;
+    };
+
+    /** 已繳交檔：音檔播放／圖片顯示／文件開預覽（開的是檔案，不是資料夾）；每筆都可「🔁 取代」 */
+    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas, courseId, taskId, statusId) => {
         const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean).map(String) : [];
         if (ids.length === 0 && audioUrl) {
             const m = String(audioUrl).match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -108,6 +138,7 @@ window.UIStudentTimelineTemplates = (() => {
             const labelChip = (showLabel && unitLabel)
                 ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(unitLabel)}</span>`
                 : (showLabel ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
+            const replaceBtnHtml = buildReplaceButtonHtml(fileId, meta, kind, courseId, taskId, statusId, idx);
 
             if (kind === 'audio') {
                 // 🌟 依老師要求拿掉「開啟音檔」灰色按鈕：inline <audio controls> 本身就能播放，
@@ -116,6 +147,7 @@ window.UIStudentTimelineTemplates = (() => {
                 html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     ${labelChip}
                     <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="none" style="height:34px; flex:1 1 220px; min-width:180px; max-width:340px; outline:none; border-radius:8px; vertical-align:middle;"></audio>
+                    ${replaceBtnHtml}
                 </div>`;
             } else if (kind === 'image') {
                 const previewUrl = resolveDrivePreviewUrl(fileId);
@@ -123,12 +155,21 @@ window.UIStudentTimelineTemplates = (() => {
                     <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" title="開啟原圖">
                         <img src="${escapeAttr(previewUrl)}" alt="繳交圖片" style="max-width:min(360px,100%); max-height:220px; border-radius:8px; border:1px solid #E2E8F0; object-fit:contain; background:#F8FAFC;" onerror="this.style.display='none'">
                     </a>
-                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟圖片</a>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        ${labelChip}
+                        <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟圖片</a>
+                        ${replaceBtnHtml}
+                    </div>
                 </div>`;
             } else {
-                // 🌟 依老師要求拿掉紫色「📄 開啟繳交檔」按鈕：勾勾已顯示已繳交，
-                // 不需要每個檔案都放一顆長得一樣的按鈕造成畫面擁擠。
-                html += '';
+                // 🌟 pdf／一般檔案：之前這裡完全不畫任何東西（勾勾已顯示已繳交），
+                // 但這樣學生連「看到哪個檔案、選哪個取代」都做不到，補上檔名＋開檔＋取代。
+                const fileName = meta && meta.name ? String(meta.name) : (kind === 'pdf' ? '已繳交 PDF' : '已繳交檔案');
+                html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    ${labelChip}
+                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(fileName)}">📄 ${escapeAttr(fileName)}</a>
+                    ${replaceBtnHtml}
+                </div>`;
             }
         });
         html += '</div>';
@@ -783,6 +824,18 @@ window.UIStudentTimelineTemplates = (() => {
             .replace(/\r/g, '');
     }
 
+    /**
+     * 「取代特定已上傳檔」用：把 unit 的 original_script（可能含引號／換行／中文）
+     * 存成 data-script-b64 屬性，比塞進 HTML attribute 轉義安全，讀取端再 base64 解回來。
+     */
+    function b64Utf8(str) {
+        try {
+            return btoa(unescape(encodeURIComponent(String(str == null ? '' : str))));
+        } catch (_e) {
+            return '';
+        }
+    }
+
     /** 多段音檔批改進度（逐段 Speechace，非一次送六檔） */
     function getAudioSegmentProgress(raw) {
         const data = raw && typeof raw === 'object' ? raw : {};
@@ -919,6 +972,25 @@ window.UIStudentTimelineTemplates = (() => {
                                     }
                                     if (Array.isArray(compRecord.raw_data.submitted_files)) {
                                         submittedFileMetas = compRecord.raw_data.submitted_files;
+                                    }
+                                    // 🔁「取代」用：submitted_files 只有 id/mime/name/unit_key/label，
+                                    // 沒有 stem／page／original_script——這幾個欄位只在 audio_segments 裡，
+                                    // 取代 AI 分頁時若少了 original_script，覆蓋進去的段會把批改文稿洗成空字串。
+                                    // 依 file_id 從 audio_segments 補齊，缺角時保留原本的 submitted_files 內容。
+                                    if (Array.isArray(compRecord.raw_data.audio_segments) && compRecord.raw_data.audio_segments.length) {
+                                        const segByFileId = {};
+                                        compRecord.raw_data.audio_segments.forEach(function (s) {
+                                            if (s && s.file_id) segByFileId[String(s.file_id)] = s;
+                                        });
+                                        submittedFileMetas = submittedFileMetas.map(function (m) {
+                                            const seg = m && m.id ? segByFileId[String(m.id)] : null;
+                                            if (!seg) return m;
+                                            return Object.assign({}, m, {
+                                                stem: seg.stem || '',
+                                                page: seg.page != null ? seg.page : null,
+                                                original_script: seg.original_script || ''
+                                            });
+                                        });
                                     }
 
                                     if (!retryAudioUrl) {
@@ -1192,7 +1264,10 @@ window.UIStudentTimelineTemplates = (() => {
                                     submittedFileIds,
                                     retryAudioUrl,
                                     inlinePlayerId,
-                                    submittedFileMetas
+                                    submittedFileMetas,
+                                    course.id,
+                                    task.id,
+                                    statusId
                                 );
                             }
 
@@ -1294,7 +1369,7 @@ window.UIStudentTimelineTemplates = (() => {
                             const statusId = `upload-status-${course.id}-${task.id}`;
 
                             const drivePreviewHtml = hasValidAudioFile
-                                ? buildSubmittedFilesHtml(submittedFileIds, retryAudioUrl, inlinePlayerId, submittedFileMetas)
+                                ? buildSubmittedFilesHtml(submittedFileIds, retryAudioUrl, inlinePlayerId, submittedFileMetas, course.id, task.id, statusId)
                                 : '';
                             // 🌟 依老師要求拿掉「📂 繳交檔」按鈕，理由同錄音任務：已有檔案時不需要重複入口。
                             const driveOpenBtnHtml = (hasValidAudioFile && (retryAudioId || submittedFileIds[0]))

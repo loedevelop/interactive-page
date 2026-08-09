@@ -865,7 +865,30 @@ window.FeatureTimeline = (() => {
         titleEl.setAttribute('data-title-from-range', rangeText);
     }
 
-    /** 標題輸入：有字＝手動；刪光＝立刻恢復從 base 範圍繼承 */
+    /** 依 pathStr 取得該任務節點（只讀，不建立），找不到回傳 null */
+    function getTaskNodeByPathStr(pathStr) {
+        const bStateObj = window.BuilderStore && window.BuilderStore.getState();
+        if (!bStateObj || !Array.isArray(bStateObj.tasks)) return null;
+        const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+        let list = bStateObj.tasks;
+        let node = null;
+        for (let i = 0; i < arr.length; i++) {
+            node = list[arr[i]];
+            if (!node) return null;
+            list = node.subTasks || [];
+        }
+        return node;
+    }
+
+    /**
+     * 標題輸入：有字＝手動；刪光＝立刻恢復從 base 範圍繼承。
+     * 💣 雷區：這支是所有葉節點標題（錄音／考試／一般…）共用的 oninput，不能無條件對任何
+     * 類型都去抓「同層錄音的 base 範圍」──getSiblingAudioRangeLabel 是為「考試」跟同層錄音
+     * 配對設計的，若不先檢查節點類型，會導致「一般」(check) 或其他無關類型的任務，標題被刪光後
+     * 立刻被同層錄音的 base 範圍文字蓋回去（老師刪不掉標題）。只有 exam 類型才走這條 fallback；
+     * audio_record 有自己的 node-material-range 欄位，會在上面 rangeEl 那段就直接命中，不需要
+     * 也不應該再往下 fallback 到別的任務。
+     */
     function onNodeTitleInput(pathStr, el) {
         const titleEl = el || document.getElementById('node-title-' + pathStr);
         if (!titleEl) return;
@@ -879,11 +902,44 @@ window.FeatureTimeline = (() => {
         const rangeEl = document.getElementById('node-material-range-' + pathStr)
             || document.getElementById('node-material-range-manual-' + pathStr);
         if (rangeEl) rangeText = String(rangeEl.value || '').trim();
-        if (!rangeText && window.FeatureExamJob
-            && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
-            rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+        if (!rangeText) {
+            const node = getTaskNodeByPathStr(pathStr);
+            if (node && node.type === 'exam' && window.FeatureExamJob
+                && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+                rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+            }
         }
         if (rangeText) applyInheritedTitleFromRange(pathStr, rangeText);
+    }
+
+    /**
+     * 範圍層（group_role==='range'）標題輸入：有字＝手動、關掉自動旗標；刪光＝立刻恢復從底下
+     * 錄音 base 範圍繼承。跟 onNodeTitleInput 分開一支，因為範圍層的來源是 deriveRangeTitleFromGroup
+     * （讀整個 group 節點），不是單一任務的 material_range／同層考試 range hint。
+     */
+    function onGroupTitleInput(pathStr, el) {
+        const titleEl = el || document.getElementById('node-title-' + pathStr);
+        if (!titleEl) return;
+        const current = String(titleEl.textContent || '').trim();
+        if (current) {
+            titleEl.setAttribute('data-title-auto', '0');
+            return;
+        }
+        titleEl.setAttribute('data-title-auto', '1');
+        const bStateObj = window.BuilderStore && window.BuilderStore.getState();
+        if (!bStateObj || !Array.isArray(bStateObj.tasks)) return;
+        const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+        let list = bStateObj.tasks;
+        let node = null;
+        for (let i = 0; i < arr.length; i++) {
+            node = list[arr[i]];
+            if (!node) return;
+            list = node.subTasks || [];
+        }
+        if (node && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
+            const derived = window.BuilderStore.deriveRangeTitleFromGroup(node);
+            if (derived) titleEl.textContent = derived;
+        }
     }
 
     function syncSiblingExamTitleFromRange(audioPathStr, rangeText) {
@@ -2412,6 +2468,7 @@ window.FeatureTimeline = (() => {
         },
 
         onNodeTitleInput: onNodeTitleInput,
+        onGroupTitleInput: onGroupTitleInput,
 
         onScriptSourceChange: function (pathStr) {
             const sourceEl = document.getElementById('node-script-source-' + pathStr);
@@ -2480,6 +2537,49 @@ window.FeatureTimeline = (() => {
         /** 從 DOM 讀骨架單元列，回傳 grading_units[]（供存檔時寫入 t.raw_data.grading_units） */
         collectSkeletonUnitsFromDom: function (pathStr) {
             return collectSkeletonUnitsFromDom(pathStr);
+        },
+
+        /**
+         * C. 自行貼上：➕ 增加視窗。每個視窗＝一段（可標頁碼／exercise），存檔時會合併成
+         * raw_data.paste_windows[]（供「📥 由下往上收集文稿」直接讀取結構化分段）＋
+         * 合併後的 original_script／student_display（供既有 AI 批改管線讀取，格式不變）。
+         */
+        addPasteWindowRow: function (pathStr) {
+            const container = document.getElementById('node-paste-windows-' + pathStr);
+            if (!container || !window.TimelineTemplates || typeof window.TimelineTemplates.renderPasteWindowRowHtml !== 'function') return;
+            const idx = container.querySelectorAll('.paste-window-row').length;
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = window.TimelineTemplates.renderPasteWindowRowHtml(pathStr, idx, { label: '', script: '', student: '' }, idx + 1);
+            const row = wrapper.firstElementChild;
+            container.appendChild(row);
+            // 剛加的新視窗一定會讓總數變成 >=2，補回第一列本來沒顯示的刪除鈕
+            if (container.querySelectorAll('.paste-window-row').length === 2) {
+                const firstRow = container.querySelector('.paste-window-row');
+                if (firstRow && !firstRow.querySelector('.btn')) {
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'btn';
+                    delBtn.style.cssText = 'padding:6px 8px; color:#B91C1C; flex-shrink:0;';
+                    delBtn.title = '刪除此視窗';
+                    delBtn.textContent = '🗑';
+                    delBtn.onclick = function () { window.FeatureTimeline.removePasteWindowRow(delBtn, pathStr); };
+                    firstRow.appendChild(delBtn);
+                }
+            }
+        },
+
+        removePasteWindowRow: function (btnEl, pathStr) {
+            const row = btnEl && btnEl.closest ? btnEl.closest('.paste-window-row') : null;
+            const container = document.getElementById('node-paste-windows-' + pathStr);
+            if (!row || !container) return;
+            if (container.querySelectorAll('.paste-window-row').length <= 1) return; // 至少留一個視窗
+            row.remove();
+            // 只剩 1 個視窗時，拿掉它的刪除鈕（回到最單純的單視窗外觀）
+            const rows = container.querySelectorAll('.paste-window-row');
+            if (rows.length === 1) {
+                const onlyBtn = rows[0].querySelector('.btn');
+                if (onlyBtn) onlyBtn.remove();
+            }
         },
 
         /** 依目前路徑列重新整理 base 範圍（跟 A 的「依列重算」同角色，供 SSR 模板 oninput／重算鈕呼叫） */

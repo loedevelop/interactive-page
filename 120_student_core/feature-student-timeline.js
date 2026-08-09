@@ -298,7 +298,7 @@ window.FeatureStudentTimeline = (() => {
         }]);
     }
 
-    async function uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, fileBlob, originalFileName, canSendAI) {
+    async function uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, fileBlob, originalFileName, canSendAI, oldFileId) {
         let uploadBlob = fileBlob;
         let uploadMime = (fileBlob && fileBlob.type) ? fileBlob.type : 'audio/mpeg';
         let uploadExt = '.mp3';
@@ -334,7 +334,7 @@ window.FeatureStudentTimeline = (() => {
         const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
         const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
         const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}${uploadExt}`;
-        const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId);
+        const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId, oldFileId || null);
         return {
             fileId: result.fileId,
             audioUrl: `https://drive.google.com/file/d/${result.fileId}/view`,
@@ -356,13 +356,13 @@ window.FeatureStudentTimeline = (() => {
      * 複選多檔會短時間內連續打同一個 Drive 資料夾，偶爾會撞到暫時性的
      * 「存取遭拒」錯誤；遇到這類錯誤時稍等後自動重試一次，避免整批上傳失敗。
      */
-    async function uploadOneAudioBlobWithRetry(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI) {
+    async function uploadOneAudioBlobWithRetry(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI, oldFileId) {
         try {
-            return await uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI);
+            return await uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI, oldFileId);
         } catch (err) {
             if (!isTransientDriveUploadError(err)) throw err;
             await delay(1200);
-            return await uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI);
+            return await uploadOneAudioBlob(assignmentId, taskId, safeTitleForJS, blob, name, canSendAI, oldFileId);
         }
     }
 
@@ -928,7 +928,7 @@ window.FeatureStudentTimeline = (() => {
         getAuthContext: getAuthContext,
         getCurrentClassConfig: () => currentClassConfig,
 
-        updateProgress: async (assignmentId, taskId, isChecked, fileIds = null) => {
+        updateProgress: async (assignmentId, taskId, isChecked, fileIds = null, replaceFileId = null) => {
             const compositeKey = `${assignmentId}_${taskId}`;
             let prevCompletion = null;
             if (window._studentTaskCompletions) {
@@ -985,6 +985,9 @@ window.FeatureStudentTimeline = (() => {
                     : [];
                 const mergedFilesMap = new Map();
                 existingFiles.forEach(function (f) { if (f && f.id) mergedFilesMap.set(String(f.id), f); });
+                // 「取代特定已上傳檔」：replaceFileId 有值時，先把該筆從合併結果中移除，
+                // 讓本次新檔「換掉」它而不是額外累加一筆。見 drive-folder-upload-invariants.mdc。
+                if (replaceFileId) mergedFilesMap.delete(String(replaceFileId));
                 normalizedFiles.forEach(function (f) { if (f && f.id) mergedFilesMap.set(String(f.id), f); });
                 const mergedFiles = Array.from(mergedFilesMap.values());
 
@@ -1257,6 +1260,138 @@ window.FeatureStudentTimeline = (() => {
 
             const items = filesArray.map((f) => ({ blob: f, name: f.name }));
             await uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, items);
+        },
+
+        /**
+         * 🔁 取代特定已上傳檔：學生在「已繳交檔案清單」點某一筆的「取代」，
+         * 選新檔後直接覆蓋該筆（Drive 舊檔 trash、DB 紀錄換成新檔）。
+         * 見 .cursor/rules/drive-folder-upload-invariants.mdc「取代特定已上傳檔」一節。
+         *
+         * 走哪條路徑由「這個任務是否走 AI 批改」決定（與 uploadAudioFilesForGrading／
+         * handleFileSelect 判斷 canSendAI 的邏輯一致），而不是單看 unit_key 有沒有值——
+         * 單檔（無分頁）AI 錄音任務的 unit_key 本來就是空字串，仍必須走 AI 覆蓋路徑，
+         * 否則替換後不會重新批改，AI 報告會停留在舊音檔的結果。
+         */
+        handleReplaceFile: async (inputElement, assignmentId, taskId, statusId) => {
+            const file = inputElement.files && inputElement.files[0];
+            const resetInput = () => { try { inputElement.value = ''; } catch (_e) {} };
+            if (!file) { resetInput(); return; }
+
+            const ds = inputElement.dataset || {};
+            const oldFileId = ds.oldFileId ? String(ds.oldFileId).trim() : '';
+            if (!oldFileId) {
+                resetInput();
+                window.showFlash('找不到要取代的舊檔案，請重新整理頁面後再試一次。', 'error');
+                return;
+            }
+
+            const statusEl = document.getElementById(statusId);
+            const updateStatus = (msg, color) => {
+                if (!statusEl) return;
+                statusEl.textContent = msg;
+                statusEl.style.color = color;
+            };
+
+            if (window._isUploadingAudio) {
+                window.showFlash('正在處理上傳中，請稍後再試一次。', 'error');
+                resetInput();
+                return;
+            }
+            window._isUploadingAudio = true;
+            const originalPointerEvents = document.body.style.pointerEvents;
+            document.body.style.pointerEvents = 'none';
+
+            try {
+                assertAssignmentUuid(assignmentId, '作業 ID');
+                const taskConfig = findTaskConfig(assignmentId, taskId);
+                const rawTitle = String((taskConfig && taskConfig.title) || '任務').replace(/<[^>]*>/g, '');
+                const safeTitleForJS = rawTitle.replace(/[\\/:*?"<>|]/g, '_') || '任務';
+                const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
+                const gradingUnits = getTaskGradingUnits(taskConfig);
+                const unitKey = ds.unitKey ? String(ds.unitKey).trim() : '';
+                const hasScript = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim()) || !!unitKey;
+                const canSendAI = hasScript && taskSupportsAIGrading(taskConfig, assignmentId);
+
+                if (canSendAI && isAudioUploadFile(file)) {
+                    if (file.size > 25 * 1024 * 1024) throw new Error('檔案超過 25MB。');
+
+                    updateStatus('⚙️ 轉碼／上傳取代檔...', '#3B82F6');
+                    const up = await uploadOneAudioBlobWithRetry(
+                        assignmentId, taskId, safeTitleForJS, file, file.name || 'recording.wav', true, oldFileId
+                    );
+
+                    let originalScript = '';
+                    if (ds.scriptB64) {
+                        try { originalScript = decodeURIComponent(escape(atob(ds.scriptB64))); } catch (_e) { originalScript = ''; }
+                    }
+                    const segment = {
+                        file_id: up.fileId,
+                        audio_url: up.audioUrl,
+                        name: up.finalFileName,
+                        uploadMime: up.uploadMime,
+                        unit_key: unitKey,
+                        stem: ds.stem ? String(ds.stem) : '',
+                        page: (ds.page !== undefined && ds.page !== '') ? Number(ds.page) : null,
+                        label: ds.label ? String(ds.label) : '',
+                        original_script: originalScript
+                    };
+
+                    updateStatus('🧠 喚醒 AI 重新批改...', '#8B5CF6');
+                    await submitAudioSegmentsToAIGrading(assignmentId, taskId, [segment]);
+                    applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, segment.file_id, segment.audio_url, {
+                        drive_file_ids: [segment.file_id],
+                        audio_segments: [Object.assign({}, segment, { status: 'pending' })]
+                    });
+
+                    updateStatus(`✅ 已取代${segment.label ? '（' + segment.label + '）' : ''}，AI 重新批改中`, '#10B981');
+                    window.showFlash('已取代該檔案，AI 將重新批改這一段。');
+                } else {
+                    const { classId } = await getAuthContext();
+                    if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error('系統 API 模組尚未載入');
+                    if (file.size > 25 * 1024 * 1024) throw new Error('檔案超過 25MB。');
+
+                    const targetFolderId = resolveStudentUploadFolderId();
+                    const classPrefix = (classId || '0000').substring(0, 4);
+                    const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
+                    const ext = file.name && file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
+                    const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_replace${ext}`;
+
+                    let mime = file.type;
+                    if (!mime || mime === '' || mime === 'text/plain') {
+                        const lowExt = ext.toLowerCase();
+                        if (lowExt === '.pdf') mime = 'application/pdf';
+                        else if (lowExt === '.mp3') mime = 'audio/mpeg';
+                        else if (lowExt === '.wav') mime = 'audio/wav';
+                        else if (lowExt === '.m4a') mime = 'audio/mp4';
+                        else if (lowExt === '.jpg' || lowExt === '.jpeg') mime = 'image/jpeg';
+                        else if (lowExt === '.png') mime = 'image/png';
+                        else mime = 'application/octet-stream';
+                    }
+
+                    updateStatus('🚀 上傳取代檔...', '#3B82F6');
+                    const base64Data = (await readFileAsDataURL(file)).split(',')[1];
+                    const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, mime, targetFolderId, assignmentId, taskId, oldFileId);
+
+                    await window.FeatureStudentTimeline.updateProgress(
+                        assignmentId, taskId, true,
+                        [{ id: result.fileId, mime, name: finalFileName }],
+                        oldFileId
+                    );
+
+                    updateStatus('✅ 已取代該檔案', '#10B981');
+                    window.showFlash('已取代該檔案。');
+                }
+                renderCourses();
+            } catch (err) {
+                console.error('[handleReplaceFile]', err);
+                const msg = (err && err.message) ? err.message : String(err);
+                updateStatus(`❌ 取代失敗: ${msg}`, '#EF4444');
+                window.showFlash('取代失敗：' + msg, 'error');
+            } finally {
+                window._isUploadingAudio = false;
+                document.body.style.pointerEvents = originalPointerEvents;
+                resetInput();
+            }
         },
 
         openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {

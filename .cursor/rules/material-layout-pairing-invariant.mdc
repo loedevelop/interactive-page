@@ -1056,3 +1056,381 @@ AI對照稿（is_ai_ref）是完全獨立、選填的一欄，跟「答案」（
 83. 之前存過、且已經指定了 is_ai_ref 欄、大部分列都全空的舊 Template（例如舊資料只有
     AI對照稿欄有值時才被記錄成有效列的年代存下來的檔案）→ 用新邏輯重新產生預覽，列數應該
     不會比之前少（只要答案／題目／訊息任一欄有值，這列就該被算進去）
+
+## 2026-08-07：正名＋批改標準——書寫答案／口說答案欄數 >1 時要指明怎麼比對
+
+> 老師明確澄清：「答案」正名「書寫答案」，「AI對照稿」正名「口說答案」，兩者不一定相同
+> （例：書寫答案 to/a park，口說答案 to park a park）。書寫答案欄數 >1 時要能指明：
+> (1) 書寫答案批改標準——分開比對（每欄各自一個空格）或結合成一個答案；
+> (2) 口說答案批改標準——帶入公式／之後會寫的複雜規則（先當貼上）／直接貼上多筆
+> （標注起始題號），且三種模式都要能逐列個別修正，修正後的值才是最終寫入 meta.json／
+> script.txt 的內容（老師明確要求「保留原始計算值＋修正值兩份」，不是修完就蓋掉算出來的值）。
+
+### 資料模型（Template 新增四個頂層欄位，只有書寫答案欄數>1才有意義）
+
+```
+template.answer_mode: 'combine' | 'separate'（預設 combine，向下相容舊教材）
+template.answer_combine_note: string（結合公式備註，例如 AN&" "&AO，僅供參考，
+  實際卷面組合仍以 Layout Profile 的 quiz_answer 公式為準，不是這裡的字串直接生效）
+template.speak_mode: 'formula' | 'complex' | 'paste'（預設 formula）
+template.speak_formula: string（speak_mode==='formula' 時用 LayoutFieldsEval 計算候選值；
+  可用資料項名稱或 Excel 欄位代號，例如 pre&" "&script 或 AN&" "&AO）
+```
+
+書寫答案欄數 ≤1 時完全不顯示這組設定（見 `renderAnswerGradingSettingsHtml` 的 `aCount<=1`
+提早 return），也不影響既有單答案教材的既有行為。
+
+### 逐列個別修正怎麼落地（不是另開一份「覆寫記錄」資料表）
+
+```
+buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr, overrides)
+  overrides：{ [Excel真實列號 r]: 老師修正後的字串 }，來源＝
+    _appRowState[appId].gen[sheetName].speakOverrides（跨「重新產生預覽」保留，不會被蓋掉）
+  每列先算 candidate（aCount<=1＝口說答案欄原始值；aCount>1＆&speak_mode==='formula'
+  ＆&有公式＝LayoutFieldsEval 算出來的值；complex／paste 先留白）
+  finalSpeak = overrides[r] ?? candidate
+  若 Template 有指定口說答案欄（is_ai_ref），rowObj[該欄semantic_key] = finalSpeak——
+  meta.json 跟 script.txt 對同一列的口說答案永遠一致（同一個 finalSpeak）
+  回傳同時帶 speakComputed（候選值，唯讀顯示用）跟最終 rows/scriptLines，
+  UI 表格因此能同時顯示「計算值」跟「可修正的最終值」兩欄，不用另建資料結構存兩份
+```
+
+書寫答案欄數 >1 時，每列的 meta.json 也會多寫：
+```
+row._answer_mode: 'separate' | 'combine'（跟 template.answer_mode 一致）
+row._answer_keys: [書寫答案各欄的 semantic_key，依欄位順序]
+```
+這兩個底線開頭的欄位是給下游（`quiz-paper-builder.js`）判斷要不要走「一題多空格」路徑用的
+內部標記，不是給老師看的「資料項」，欄數 ≤1 的教材完全不會有這兩個欄位（向下相容）。
+
+### 分開比對＝一題多空格，下游怎麼吃（quiz-paper-builder.js／feature-student-quiz.js）
+
+```
+buildItemFromRow：row._answer_mode==='separate' 且 row._answer_keys.length>1 時，
+  組出 item.sub_answers = [{key, label, answer_en, accepted_answers:[]}, ...]
+  （直接讀 row[key] 原始值，不套用任何合併公式——每個空格各自獨立）
+  item.answer_en 仍補一個 join(' ') 的合併字串當退路（給只認 answer_en 的舊畫面顯示用）
+
+gradeAnswers：item.sub_answers.length>1 時，學生答案 got 是 {sub_key: string} 物件
+  （不是單一字串），每個 sub_answer 各自比對，全部對才算這一題對；
+  回傳的 answer/expected 是合併後字串（供既有 diff／畫面顯示），另外多帶 sub_results
+  （每個空格各自的 answer/expected/ok）供之後要做逐空格顯示的畫面用
+
+feature-student-quiz.js：item.sub_answers.length>1 時渲染 N 個 <input>
+  （class="quiz-answer-input quiz-sub-answer-input" + data-sub-key），
+  collectAnswers() 依 data-sub-key 組回 {sub_key: value} 物件；
+  沒有 sub_answers 的題目完全走舊的單一字串路徑，不受影響
+```
+
+### 已知限制（尚未涵蓋，之後要動這塊時先讀這段）
+
+```
+feature-exam-review.js（老師端「訂正主答案／新增可接受答案」）目前只操作 item 層級的
+answer_en／accepted_answers，對 sub_answers 題目不會生效（畫面上還是能看到合併字串，
+但訂正不會真的改到 sub_answers 裡的個別空格）——這塊之後要支援「逐空格訂正」時要一併改
+gradeSubAnswerItem 旁邊的 addAcceptedAnswer/removeAcceptedAnswer/setPrimaryAnswer。
+```
+
+### 禁止
+
+```javascript
+// ❌ speak_mode==='complex'／'paste' 時仍 fallback 到口說答案欄原始值當 candidate——
+//    老師已明確要求這兩種模式先整批留白，逼老師確實逐列輸入／貼上，不能悄悄冒出舊資料
+// ❌ 老師在逐列表格改了一列之後，重新按「產生預覽」把 speakOverrides 清掉——
+//    overrides 必須跨預覽保留（見 handleGeneratePreview 的 prevOverrides）
+// ❌ answer_combine_note 直接被當成真的拿去組合書寫答案寫入 meta.json——它只是備註／
+//    參考，真正的卷面組合仍是 Layout Profile 的 quiz_answer 公式（避免兩處各存一份
+//    組合規則、之後兩邊改到不同步）
+// ❌ 書寫答案欄數 ≤1 的教材也被迫多寫 _answer_mode/_answer_keys——向下相容的教材完全
+//    不該多出這兩個欄位
+```
+
+### 實測
+
+84. Template 書寫答案只勾 1 欄 → 不會出現「答案批改標準／口說答案批改標準」設定區塊，
+    產生出來的 meta.json 每列都沒有 `_answer_mode`／`_answer_keys`（跟改動前完全一樣）
+85. Template 書寫答案勾 2 欄（例如 article／noun）→ 出現設定區塊；選「分開比對」＋
+    口說答案選「帶入公式」填 `article&" "&noun` → 產生預覽後，逐列表格「計算值」欄應該
+    顯示公式算出來的字串，「最終口說答案」欄預填同一個值，改掉某一列後重新按「產生預覽」
+    ，該列的修正值應該還在（不會被公式值蓋掉）
+86. 口說答案選「直接貼上多筆」，貼上 5 行文字＋起始題號 101，5 列的 `item_no` 恰好是
+    101~105 → 套用後這 5 列的「最終口說答案」欄應該各自對到對應行（不是全部套第 1 行）
+87. 學生端打開一份「分開比對」的線上考卷 → 每一題應該看到 2 個獨立輸入框（各自標「空格
+    1」「空格 2」），只填對其中一格、另一格空白或錯 → 批改應該判定這一題錯（不是有填一格
+    就算對）；兩格都對才算對，分數計算跟舊版單答案題目共用同一份 gradeAnswers
+
+## 2026-08-07（第二輪）：口說答案 radio→checkbox；Drive 教材資料夾搬位＋正名；設計 Template 卡片加即時 meta 預覽
+
+> 老師三個明確要求：(1) 「🎤 口說答案」絕對不能用 radio button（多次全大寫強調）；
+> (2) 「教材資料夾」搬到「Choose File」右邊同一列，正名「☁️ Drive 教材資料夾」（跟左邊
+> 本機來源檔案區分：這裡選的是 meta/script 上傳目的地）；(3) 設計 Template 的「🧾 從本機
+> Excel 讀取活頁／欄位」卡片本身要能輸入行數起／末，直接測試產生 meta（不用先存 Template
+> 再跳到「📎 套用到教材」才看得到結果）。
+
+### 口說答案：checkbox + JS 手動維持互斥（不是天生 radio 單選）
+
+- 資料層語意不變：`airefCol` 在 `buildGenerationFromMatrix` 仍用 `.find()`，整份 Template
+  最多只認第一個 `is_ai_ref===true` 的欄位當輸出槽——UI 從 radio 換成 checkbox，不代表
+  資料層變成可以真的多欄同時是口說答案來源。
+- 互斥邏輯改成手動：勾選某一欄時，把其他所有欄的 `is_ai_ref` 撥成 `false`，並同步取消其他
+  checkbox 的勾選狀態；取消勾選（`this.checked===false`）只清這一欄，不動別的。
+- 好處：老師可以直接點自己那個 checkbox 取消勾選退回「沒有指定」，不用像 radio 那樣
+  必須依賴額外的「✕ 清除已選」按鈕（按鈕仍保留，方便情境下快速清除，但不是唯一退路）。
+- 兩處都要改：Excel 小工具（`.mlp-excel-role-airef`）＋獨立 Template 編輯器
+  （`.mlp-tpl-col-airef`），行為要一致。
+
+```javascript
+// ✅ checkbox + 手動互斥
+chk.addEventListener('change', function () {
+    const col = this.getAttribute('data-col');
+    if (this.checked) {
+        // 把其他欄的 data 層 + 畫面 checkbox 都撥成 false，維持「最多一欄」
+        Object.keys(mapping.colRole).forEach(function (k) {
+            if (mapping.colRole[k] && mapping.colRole[k].ai_ref) {
+                mapping.colRole[k] = Object.assign({}, mapping.colRole[k], { ai_ref: false });
+            }
+        });
+        cardEl.querySelectorAll('.mlp-excel-role-airef').forEach(function (other) {
+            if (other !== chk) other.checked = false;
+        });
+        mapping.colRole[col] = Object.assign({}, mapping.colRole[col], { ai_ref: true });
+    } else {
+        mapping.colRole[col] = Object.assign({}, mapping.colRole[col], { ai_ref: false });
+    }
+});
+
+// ❌ 再用 <input type="radio">——老師已經多次全大寫強調過，不要再犯
+```
+
+### Drive 教材資料夾：搬到 Choose File 右邊＋正名
+
+- `paint()` 裡「選擇本機 Excel 檔案」那一塊，把 `<input type="file">`＋狀態文字包進左邊
+  flex 欄，`#mlp-excel-folderfile`（`renderExcelFolderFileHtml` 輸出）放右邊 flex 欄，
+  同一列並排（`display:flex; gap:16px; align-items:flex-start;`）。
+- 標籤文字「教材資料夾」→「☁️ Drive 教材資料夾」，明確跟左邊「本機讀取用來設計 Template
+  的來源檔案」區分——這裡選的是之後 meta/script 要上傳去的 Google Drive 目的地資料夾。
+
+### 設計 Template 卡片內建行數起／末＋即時 meta 預覽（不影響 Template 本身脫鉤檔案的規則）
+
+- `newExcelSegment()` 新增 `rowStart`（預設 `'2'`）／`rowEnd`（預設空字串）兩個純
+  **UI 暫存**欄位——**不會**寫進 `handleSaveSegment` 存檔的 `record`（Template 本身仍然
+  跟任何實際檔案脫鉤，可重複套用到「欄位結構相同」的其他檔案；這條規則沒有被推翻）。
+- `renderMappingAreaHtml` 在「答案批改標準」區塊下面加 `renderSegmentGenPreviewAreaHtml`：
+  行數起／行數末輸入框＋「🔍 產生 meta 預覽」按鈕＋結果區（產出列數、警告、meta.json／
+  script.txt 前 5 筆預覽，用 `<details>` 收合）。
+- 生成邏輯重構：原本 `buildGenerationForSheet(appId, sheetName, ...)` 拆成「取矩陣」跟
+  「核心生成」兩層——`buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr,
+  overrides)` 是純函式（不管矩陣從哪來），`buildGenerationForSheet` 只是先用
+  `parseAppSheetMatrix(appId, sheetName)` 拿矩陣再呼叫它。新增
+  `parseExcelSegmentMatrix(sheetName)`（用 `_excelRawData`，跟套用到教材各自 appId 的
+  快取分開）＋`segToPreviewTemplate(seg)`（把 `seg.mapping`／`seg.answerMode`／
+  `seg.speakMode` 轉成 `buildGenerationFromMatrix` 認得的 `template` 物件），讓「設計
+  Template」卡片跟「套用到教材」共用同一份核心生成邏輯，不會兩邊各寫一次、之後改邏輯
+  漏改一處。
+- 這個預覽**只是**驗證用（不會存檔、不會上傳），跟「📎 套用到教材」的差別：
+  - 套用到教材：正式產生＋可逐列修正口說答案（overrides）＋上傳到 Drive 歸屬資料夾
+  - 設計 Template 卡片內預覽：唯讀、只給前 5 列，快速確認欄位對應／批改標準設對了沒
+
+```javascript
+// ✅ 核心生成邏輯抽成純函式，兩邊共用
+function buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides) { /* ... */ }
+function buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr, overrides) {
+    const matrix = parseAppSheetMatrix(appId, sheetName);
+    return buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides);
+}
+
+// ❌ rowStart/rowEnd 寫進 handleSaveSegment 的 record（會讓 Template 本身又跟檔案綁在一起，
+//    違反「Layout Template 跟任何一個實際檔案脫鉤」的規則——見上面第十三輪雷區說明）
+```
+
+### 實測
+
+88. 設計 Template 卡片勾好活頁＋欄位對應後，不用按「儲存這個 Template」，直接在下面填
+    行數起／末（或留空）按「🔍 產生 meta 預覽」→ 應該直接看到「產出 N 列」＋meta.json／
+    script.txt 前 5 筆預覽，不會跳頁、不會誤存 Template、Drive 上不會多出任何檔案
+89. 「🎤 口說答案」在 Excel 小工具跟 Template 編輯器都是方形 checkbox（不是圓形 radio），
+    勾好一欄後直接點自己那格可以取消勾選（不用按「✕ 清除已選」）；同時勾另一欄，原本那
+    欄應該自動取消（仍然最多一欄）
+90. 「選擇本機 Excel 檔案」跟「☁️ Drive 教材資料夾」下拉在同一列（左右並排），不再是上下
+    疊放；標籤文字已經是「☁️ Drive 教材資料夾」不是「教材資料夾」
+
+## 2026-08-08（第三輪）：兩張卡片統一高度；欄位對應改單欄一列一項；「layout」正名「Template」
+
+> 老師三個明確要求：(1) 「選擇本機 Excel 檔案」卡片跟「☁️ Drive 教材資料夾」卡片高度不一致，
+> 要統一高度；(2) 欄位對應設定的格線（AA／AG…各自一張卡片）目前是多欄並排的 grid，老師要求
+> 改成一個資料項（一個欄位代號）佔一整行；(3) 存檔按鈕寫「💾 儲存這個 layout」，但實際存的
+> 不只是欄位排版，還有題目/答案/訊息角色＋書寫答案／口說答案批改標準，這個字誤導老師。
+
+### 統一高度：兩個卡片都要是同一個 flex row 的 flex item，而且都要 flex:1 撐滿
+
+- 父層 `display:flex; align-items:stretch;`（原本是 `align-items:flex-start`，只會讓兩邊
+  各自維持自然高度、不會互相對齊）。
+- **雷區**：右邊「☁️ Drive 教材資料夾」是動態塞進 `#mlp-excel-folderfile`（`renderExcelFolderFileHtml`
+  用 `wrap.innerHTML = ...` 塞卡片）——`align-items:stretch` 只會撐高 `#mlp-excel-folderfile`
+  這個 flex item 本身，塞進去的卡片 `<div>` 是它的子節點，不會自動繼承那個高度，卡片仍然只有
+  內容自然高度、視覺上還是矮一截。必須讓卡片本身也 `flex:1; display:flex; flex-direction:column;`
+  才會撐滿父層被 stretch 出來的高度。左邊「本機來源檔案」卡片也是同一個 flex row 底下的
+  另一個 flex item，同樣要 `display:flex; flex-direction:column; justify-content:center;`。
+
+```javascript
+// ✅ 兩邊都要 flex:1 + box-sizing:border-box，才會等高
+// 左（paint 裡的靜態卡片）
+`<div style="flex:1; display:flex; flex-direction:column; justify-content:center; ...">...</div>`
+// 右（renderExcelFolderFileHtml 動態塞入的卡片）
+wrap.innerHTML = `<div style="flex:1; display:flex; flex-direction:column; justify-content:center; ...">...</div>`;
+
+// ❌ 只改父層 align-items:stretch，以為兩邊就會自動等高——動態塞入的卡片子節點不會繼承
+```
+
+### 欄位對應：grid 改成單欄（一個資料項一行）
+
+- `renderMappingAreaHtml` 的欄位卡片格線原本是
+  `grid-template-columns:repeat(auto-fill, minmax(340px,1fr))`（寬螢幕會併排兩欄以上，
+  像 AA／AG 這種兩個欄位代號並排在同一列，字很擠）。改成 `grid-template-columns:1fr`
+  ——不管螢幕多寬，每個欄位代號（AA、AG…）都佔滿整行，一個資料項一行。
+- 獨立 Template 編輯器（`#mlp-tpl-cols`）本來就是純 `<div>` 堆疊（沒有用 grid），已經是
+  一個資料項一行，不用改。
+
+```javascript
+// ✅
+`<div style="display:grid; grid-template-columns:1fr; gap:8px;">`
+// ❌ minmax(340px,1fr) 併排多欄，字擠成好幾行還互相干擾
+```
+
+### 「layout」正名「Template」（跟畫面上「🧩 Layout Template」一致）
+
+- 這個 Excel 小工具的存檔功能存的record 其實是：`columns`（欄位代號＋資料項名稱＋
+  題目/答案/訊息/口說答案角色）＋ `answer_mode`／`answer_combine_note`（書寫答案批改標準）
+  ＋ `speak_mode`／`speak_formula`（口說答案批改標準與公式）＋ `designed_from`（設計參考）
+  ——遠遠不只是「排版」（layout 原意），繼續叫它「layout」會讓老師誤以為只是視覺排版設定。
+- 改成統一叫「Template」（跟上方「🧩 Layout Template」管理區塊、`material_field_templates`
+  的既有命名一致，同一份資料只是進入點不同）：
+  - 標籤「Layout 名稱」→「Template 名稱」
+  - 下拉預設文字「— 選擇已有 layout 名稱 —」→「— 選擇已有 Template 名稱 —」
+  - 手動輸入 placeholder「幫這份 layout 取個名字」→「幫這份 Template 取個名字」
+  - 按鈕「💾 儲存這個 layout」→「💾 儲存這個 Template」
+  - 錯誤訊息「❌ 請幫這份 layout 取個名字」→「❌ 請幫這份 Template 取個名字」
+  - 成功 flash「已儲存 layout「...」」→「已儲存 Template「...」」
+  - 「第 N 組欄位設定（一份獨立的 layout）」→「...Template」
+  - 「＋新增一組欄位設定（再建一份獨立的 layout...）」→「...Template...」
+  - 「這組（layout）要套用到哪些活頁？」→「這組（Template）要套用到哪些活頁？」
+- **不要動**的另一個「layout」：`layout_profile_id`／`LAYOUT_CATALOG`／「🧩 教材／考試
+  Layout 搭配」區塊——那是完全不同的概念（Python 排版契約的 profile id，例如
+  `sentence-translate-4col`），跟這裡「欄位對應 Template」無關，繼續叫 layout 是對的，
+  不要被這輪正名波及。
+
+```javascript
+// ✅ 只改「Excel 工具存檔／設計 Template」這條線的用字
+// ❌ 把 layout_profile_id、LAYOUT_CATALOG、「教材／考試 Layout 搭配」也一起改名——
+//    那是完全不同的既有對外契約概念，改了會讓兩件事更混
+```
+
+### 實測
+
+91. 「選擇本機 Excel 檔案」跟「☁️ Drive 教材資料夾」兩張卡片視覺高度一致（不管哪邊內容
+    比較多，兩張卡片都跟著撐到一樣高，不是各自維持原生高度）
+92. 欄位對應設定往下看，每一個欄位代號（例如 AA、AG、AN、AO）都各自佔滿一整行，畫面上
+    不會出現兩個欄位代號並排擠在同一列的情況
+93. Excel 小工具的存檔按鈕文字是「💾 儲存這個 Template」（不是「layout」），存檔成功訊息
+    跟錯誤訊息也都是「Template」；「教材／考試 Layout 搭配」區塊的文字完全沒被改動
+
+### 資料項名稱建議清單裡的 'script' 撞名，改成 'answer_en'
+
+> 2026-08-08：老師已提出數次「把 script 改掉，容易造成誤解」，中間一輪在 Ask 模式給完分析、
+> 請老師切回 Agent 模式後，卻被緊接著冒出的其他急件（radio→checkbox、資料夾改名…）蓋過去、
+> 忘了回頭做。**不是拒絕，是漏做**——之後遇到「老師說過數次還沒改」的情況，先查 todo 有沒有
+> 真的被完成，不要只憑印象回答。
+
+- 根因：`SEMANTIC_KEY_SEED`（[110_teacher_core/feature-material-layout-pairing.js](110_teacher_core/feature-material-layout-pairing.js)
+  的「資料項名稱」下拉建議清單）裡的 `'script'`，其實疊了兩個不同時期、不同意義的用法：
+  1. 舊版 GEPT 教材慣例：单纯指「書寫答案（英文）」欄位本身的名字。
+  2. 這次新增的「口說答案」概念（`is_ai_ref`）：固定輸出檔名叫 `script.txt`（是**檔名**，
+     不是 semantic_key，見上方「AI 對照稿是否就是 script」段落）。
+  老師選欄位、看到下拉裡有個叫「script」的選項，很容易誤以為「選這個＝這欄就是口說答案」，
+  但實際上這只是一個歷史命名巧合，跟 `is_ai_ref` 角色勾選完全是兩條独立邏輯。
+- 這個清單**只是 UI 建議名稱**（`getKnownSemanticKeys()` 拿去餵下拉選單），semantic_key
+  本身是自由字串、不是列舉值，改掉種子清單不影響任何已經存在的資料或已發布的舊教材。
+- 真正「寫死」比對 `semantic_key==='script'` 的地方只有 legacy／deprecated 路徑，這次
+  **刻意不動**：
+  - `020_js_core/quiz-paper-builder.js` 的 `FALLBACK_COL_MAP`（`X: 'script'`）跟
+    `String(row.script || '').trim()` fallback——這是給「沒有 col_map／沒有
+    quiz_prompt/quiz_answer 公式」的舊教材相容用的，舊 meta.json 真的用 `'script'`
+    當 key，改掉這裡會讀不到那些舊資料的答案欄，必須保留。
+  - `gas/Code.gs`、`material_templates/publish_local.py`——這兩個是老師已經決定廢棄、
+    改用瀏覽器工具當唯一產出路徑的舊管線（見上方「屏棄之前的做法」段落），不需要跟著改名。
+
+```javascript
+// ✅ 只改建議清單（種子），不影響既有資料、不影響 legacy fallback
+const SEMANTIC_KEY_SEED = [..., 'pre', 'answer_en', 'article', ...];
+
+// ❌ 把 quiz-paper-builder.js 的 FALLBACK_COL_MAP.X 也改成 'answer_en'——
+//    會讓沒有 col_map 的舊教材讀不到答案欄（那份 fallback 是刻意寫死給舊資料用的）
+// ❌ 去改 gas/Code.gs／publish_local.py 裡的 'script' 比對——那是已廢棄管線，不用跟著動
+```
+
+### 實測
+
+94. 「從本機 Excel 讀取活頁／欄位」欄位對應的「資料項名稱」下拉，選單裡不再出現名為
+    「script」的選項，改成「answer_en」
+95. 舊教材（沒有 col_map，真的用 `script` 當 semantic_key 存的 meta.json）產生線上卷時，
+    答案欄位依然正確讀得到值（確認 legacy fallback 沒被動到）
+
+### 口說答案 checkbox 曾經「看起來像 checkbox、邏輯卻是 radio button」
+
+> 2026-08-08：老師強烈反覆強調（第五次以上）「勾選的意思是可以複選！不能夠是互斥！」——
+> 上一輪把 `<input type="radio">` 換成 `<input type="checkbox">` 只改了**外觀**，卻在
+> `change` 事件裡手動保留了「勾這一欄就把其他欄全部撥成 false」的邏輯，等於用 JS 重新做出
+> 一個 radio button，勾哪一個都只能留下最後一個——這不是「checkbox 樣式的 bug」，是核心
+> 互動邏輯完全沒有真正改成多選，只是換了個好看的外皮。
+
+- 根因：[110_teacher_core/feature-material-layout-pairing.js](110_teacher_core/feature-material-layout-pairing.js)
+  的 `.mlp-excel-role-airef` / `.mlp-tpl-col-airef` 的 `change` 事件監聽器裡，`checked` 時會
+  先把其他所有欄的 `is_ai_ref` 撥成 `false`、並手動把其他 checkbox 的 `.checked` 設回 `false`
+  ——這段互斥邏輯是上一輪從 radio 換成 checkbox 時，**沿用了舊的單選假設**忘記拿掉，才會讓
+  畫面看起來是方框（checkbox），點第二個卻自動取消第一個（radio 的行為）。
+- 修正：checkbox 的 `change` 事件現在**只切換自己這一欄**，跟「題目」「書寫答案」「🏷️ 訊息」
+  三個既有勾選完全同一種寫法，不做任何跨欄的連動或撥假。
+- 連動修正（多欄口說答案，資料層／下游要能吃）：
+  - `buildGenerationFromMatrix` 的 `airefCol`（單一）改成 `airefCols`（陣列）：0 欄留白、
+    1 欄維持舊行為（該欄原始值）、≥2 欄時預設用空白依欄位順序串接（沒有另外設定公式時的
+    合理預設，跟書寫答案多欄「結合」概念一致）；`aCount>1` 時仍優先用 `speak_formula` 算。
+  - **最終值只有「剛好 1 欄」才會覆寫回該欄自己的 semantic_key**——≥2 欄時不覆寫任何一欄的
+    meta.json 原始值，因為同一欄可能同時兼任「書寫答案」等其他角色，覆寫會把原始內容洗掉；
+    合併後的口說答案只會出現在 `script.txt`／`scriptLines`，不會混進 `rowObj` 的其他欄位。
+  - 「套用到教材」逐列修正輸入框、貼上多筆兩處的「寫回原始欄位」邏輯，同樣加上「只有剛好
+    1 欄才寫回」的防呆，理由跟上面一致。
+  - Template 清單顯示（`renderTemplateList`）改用 `.filter()` 列出全部被勾選的口說答案欄
+    （用「、」串接），不再只顯示 `.find()` 抓到的第一個。
+
+```javascript
+// ❌ 外觀換成 checkbox，邏輯卻還是手動維持單選（等於重做一個 radio button）
+chk.addEventListener('change', function () {
+    if (this.checked) {
+        // 把其他所有欄撥成 false、取消其他 checkbox 的勾選 ← 這就是「checkbox 皮的 radio」
+    }
+});
+
+// ✅ 每個 checkbox 只管自己這一欄，跟題目／書寫答案／訊息三個既有勾選同一種寫法
+chk.addEventListener('change', function () {
+    const col = this.getAttribute('data-col');
+    mapping.colRole[col] = Object.assign({}, mapping.colRole[col], { ai_ref: this.checked });
+});
+
+// ❌ 多欄時仍然把 finalSpeak 覆寫進「每一欄」的 semantic_key——會把該欄本來的內容洗掉
+//    （尤其該欄若同時也是書寫答案欄，寫進去的是合併後的口說答案，不是原始書寫內容）
+if (airefCols.length) rowObj[airefCols[i].semantic_key] = finalSpeak; // 對每欄都做，是錯的
+
+// ✅ 只有剛好 1 欄才覆寫；≥2 欄時完全不動個別欄位的原始值
+if (airefCols.length === 1) rowObj[airefCols[0].semantic_key] = finalSpeak;
+```
+
+### 實測
+
+96. 「口說答案」勾選欄 A，再勾選欄 B——A 應該**仍然維持勾選**（不會被 B 取消），畫面上
+    A、B 兩欄同時打勾
+97. 承上，再取消勾選 A——B 應該不受影響仍維持勾選（每個 checkbox 只管自己）
+98. 勾選 2 欄以上口說答案、書寫答案剛好 1 欄（走「1 欄維持舊行為」以外的分支）→「產生 meta
+    預覽」的 script.txt 那幾行是這 2 欄原始值用空白串接的結果（例如 pre=`to`、script=`park`
+    → `to park`），meta.json 裡這兩欄各自的原始值（`to`／`park`）**沒有**被覆寫成合併後字串
+99. Template 清單上的「🎤 口說答案：」後面同時列出兩個欄位名稱（用「、」分隔），不是只顯示
+    第一個

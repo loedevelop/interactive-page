@@ -13,6 +13,7 @@ window.TeacherUI = (() => {
         'view-manage-classes': 'nav-manage-classes',
         'view-global-resources': 'nav-global-resources',
         'view-material-layout': 'nav-material-layout',
+        'view-script-collector': 'nav-script-collector',
         'view-profile': 'nav-profile'
     };
 
@@ -158,6 +159,8 @@ window.TeacherUI = (() => {
             window.FeatureResource.renderGlobalResourceView();
         } else if (viewId === 'view-material-layout' && window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.render === 'function') {
             window.FeatureMaterialLayoutPairing.render();
+        } else if (viewId === 'view-script-collector' && window.FeatureScriptCollector && typeof window.FeatureScriptCollector.render === 'function') {
+            window.FeatureScriptCollector.render();
         }
     }
 
@@ -482,6 +485,16 @@ window.TeacherUI = (() => {
             activateGlobalView('view-material-layout', 'nav-material-layout');
             if (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.render === 'function') {
                 window.FeatureMaterialLayoutPairing.render();
+            }
+        });
+    }
+
+    const navScriptCollector = document.getElementById('nav-script-collector');
+    if (navScriptCollector) {
+        navScriptCollector.addEventListener('click', () => {
+            activateGlobalView('view-script-collector', 'nav-script-collector');
+            if (window.FeatureScriptCollector && typeof window.FeatureScriptCollector.render === 'function') {
+                window.FeatureScriptCollector.render();
             }
         });
     }

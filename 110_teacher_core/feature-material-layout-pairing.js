@@ -29,11 +29,13 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 「從本機 Excel 讀取活頁／欄位」小工具的暫存狀態（只存在記憶體，不上傳；「確定選取」的
      * 內容要按「儲存」才會落地到 profiles.raw_data.material_field_templates）。
      *
-     * 2026-08-05 第七輪修正（老師明確更正）：每一「組」（segment）本身就是一份獨立的 layout——
+     * 2026-08-05 第七輪修正（老師明確更正）：每一「組」（segment）本身就是一份獨立的 Template——
      * 各自有自己要套用的活頁（checkedSheets）、自己的名字（name）、自己的儲存按鈕，
-     * 不是全部組共用同一份活頁清單、共用同一顆區塊層級的儲存鈕。「＋新增一組」＝再建一份獨立 layout。
+     * 不是全部組共用同一份活頁清單、共用同一顆區塊層級的儲存鈕。「＋新增一組」＝再建一份獨立 Template。
+     * 2026-08-08：這裡原本寫「layout」，老師明確指出誤導——存的不只是欄位排版，還有題目/答案/
+     * 訊息角色與答案／口說答案批改標準，統一正名「Template」（跟畫面上的用字一致）。
      *
-     * _excelSegments = [ segment, segment, ... ]（每一組都是獨立的一份 layout）
+     * _excelSegments = [ segment, segment, ... ]（每一組都是獨立的一份 Template）
      * segment = { id, name, checkedSheets:{活頁名稱:布林}, checks:{欄位字母:布林}, gridCollapsed, confirmed,
      *             mapping:{rowStart, rowEnd, colSemantic:{欄位字母:資料項名稱}} }
      * _excelMaterialFolder／_excelFileName：這個 Excel 檔案歸屬的教材資料夾／來源檔名（所有組共用同一個檔案）
@@ -54,6 +56,8 @@ window.FeatureMaterialLayoutPairing = (function () {
     let _excelSegments = [];
     /** @type {Object<string, Array<object>>} 活頁名稱 → 已解析出的欄位清單（避免重複解析） */
     let _excelSheetColumnsCache = {};
+    /** @type {Object<string, Array<Array<*>>>} 活頁名稱 → 逐列矩陣（供「設計 Template」卡片內的即時 meta 預覽用，跟套用到教材各自 appId 的快取分開） */
+    let _excelSegPreviewMatrixCache = {};
 
     function ensureExcelSegments() {
         if (!_excelSegments.length) _excelSegments = [newExcelSegment()];
@@ -65,20 +69,32 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 已經在用的名稱。老師在下拉選「✏️ 其他（手動輸入）」新打的名稱，也會併入這份清單，
      * 讓同一次操作裡（切換活頁／欄位）不用重打第二次。
      * image_url：連結圖片用的路徑（Google Drive 或外部網址皆可）；日後實際套用時再處理怎麼顯示圖片。
+     *
+     * 2026-08-08：舊種子清單裡原本有 'script'，老師明確要求改掉——這個名字撞了兩個不同時期、
+     * 不同意義的用法：(1) 舊版 GEPT 教材慣例，指「書寫答案（英文）」欄位；(2) 這次新增的
+     * 「口說答案」概念（is_ai_ref，見上方角色勾選），輸出檔案固定叫 script.txt。兩者疊在
+     * 同一個字上，老師選欄位時很容易誤以為選了「口說答案」實際卻是「書寫答案」。改成
+     * 'answer_en'（書寫答案／英文內容），跟 SEMANTIC_KEY_SEED 其它命名風格（blank_1_zh、
+     * display_zh 都是「角色_語言」）一致，也不再跟 is_ai_ref／script.txt 的概念撞名。
+     * 這只是「下拉建議清單」，不影響已經發布、已經真的用 'script' 當 semantic_key 的舊教材
+     * ——那些檔案的資料照樣讀得到（semantic_key 本身是自由字串，不是列舉），也不影響
+     * quiz-paper-builder.js 那份給「沒有 quiz_prompt/quiz_answer 公式」舊教材用的
+     * FALLBACK_COL_MAP／row.script 相容 fallback（那是刻意保留給舊資料的相容路徑，不是
+     * 這次要修的東西，見該檔案的說明）。
      */
-    const SEMANTIC_KEY_SEED = ['vBK_name', 'page', 'item_no', 'display_zh', 'pos', 'pre', 'script', 'article', 'sheet_id', 'blank_1', 'blank_2', 'blank_1_zh', 'blank_2_zh', 'image_url'];
+    const SEMANTIC_KEY_SEED = ['vBK_name', 'page', 'item_no', 'display_zh', 'pos', 'pre', 'answer_en', 'article', 'sheet_id', 'blank_1', 'blank_2', 'blank_1_zh', 'blank_2_zh', 'image_url'];
     let _sessionSemanticKeys = [];
 
     function newExcelSegment() {
         return {
             id: 'seg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-            /** 這組（＝一份 layout）自己的活頁選擇，不同組可以套用到不同活頁（見 2026-08-05 第七輪修正） */
+            /** 這組（＝一份 Template）自己的活頁選擇，不同組可以套用到不同活頁（見 2026-08-05 第七輪修正） */
             checkedSheets: {},
             name: '',
             checks: {},
             gridCollapsed: false,
             confirmed: false,
-            /** savedOnce：這組有沒有成功存過至少一次 layout。用來擋「＋新增一組」——
+            /** savedOnce：這組有沒有成功存過至少一次 Template。用來擋「＋新增一組」——
              * 上一組還沒存就先開新的一組，畫面會同時有兩組半成品，老師容易搞混（2026-08-05 第九輪） */
             savedOnce: false,
             /**
@@ -94,12 +110,120 @@ window.FeatureMaterialLayoutPairing = (function () {
              * 實際檔案脫鉤、可重複套用；行數起迄是「把 Template 套用到某個實際檔案」才有意義的
              * 產物（不同檔案資料筆數不同），屬於下面新增的「套用（Application）」區塊，
              * 不該寫死存在 Template 本身裡面。
+             *
+             * 2026-08-07（老師澄清「答案」跟「AI對照稿」正名＋批改標準）：
+             * - 答案 → 正名「書寫答案」；AI對照稿 → 正名「口說答案」。兩者不一定相同
+             *   （例如書寫答案 to/a park，口說答案 to park a park）。
+             * - 書寫答案欄數 > 1 時，須指明「答案批改標準」：分開比對 或 結合（可留公式備註）。
+             * - 口說答案欄數與批改標準無直接關係，是獨立的第三種內容：帶入公式／之後會寫的
+             *   複雜規則（先當貼上處理）／直接貼上多筆（標注起始題號），且一律允許逐列個別修正
+             *   （見「📎 套用到教材」區塊的 speakOverrides）。
              */
+            answerMode: 'combine',
+            answerCombineNote: '',
+            speakMode: 'formula',
+            speakFormula: '',
+            /**
+             * 2026-08-07：rowStart／rowEnd 純粹是「設計 Template 時，用目前這個本機檔案立刻
+             * 測試產生 meta 預覽」用的暫存值——不會存進 Template 本身（handleSaveSegment 的
+             * record 沒有這兩個欄位），也不影響上面「行數起迄跟任何一個實際檔案脫鉤」的規則。
+             * 正式產生／上傳仍然是「📎 套用到教材」區塊各自的 row_start／row_end 才算數。
+             */
+            rowStart: '2',
+            rowEnd: '',
             mapping: { colSemantic: {}, colRole: {} }
         };
     }
 
-    /** 欄位選取／欄位對應設定要「看」哪個活頁的欄位當預覽——現在活頁選擇是每組（layout）各自的 */
+    /** 書寫答案欄數（is_answer=true 的欄位數），決定要不要顯示「答案／口說答案批改標準」設定區塊 */
+    function countAnswerColsFromRole(colRole) {
+        return Object.keys(colRole || {}).filter(function (k) { return colRole[k] && colRole[k].answer; }).length;
+    }
+
+    function countAnswerColsFromColumns(columns) {
+        return (Array.isArray(columns) ? columns : []).filter(function (c) { return c && c.is_answer; }).length;
+    }
+
+    /**
+     * 「答案批改標準」＋「口說答案批改標準」共用設定區塊。cfg 需要有 answerMode／answerCombineNote／
+     * speakMode／speakFormula 四個欄位（Excel 小工具的 seg 或 Template 編輯器的 _templateEditorState
+     * 都符合）。只有書寫答案欄數 > 1 才顯示——欄數 ≤1 沒有「多欄怎麼合併／分開比對」的問題。
+     */
+    function renderAnswerGradingSettingsHtml(prefix, cfg, aCount) {
+        if (aCount <= 1) return '';
+        const answerMode = cfg.answerMode === 'separate' ? 'separate' : 'combine';
+        const speakMode = ['formula', 'complex', 'paste'].indexOf(cfg.speakMode) !== -1 ? cfg.speakMode : 'formula';
+        return `
+            <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:10px 12px; margin-top:10px;">
+                <div style="font-size:0.76rem; font-weight:800; color:#B45309; margin-bottom:8px;">⚖️ 書寫答案共 ${aCount} 欄，請指明批改標準</div>
+                <div style="margin-bottom:10px;">
+                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">📝 書寫答案批改標準</div>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="separate" ${answerMode === 'separate' ? 'checked' : ''}>
+                        分開比對（每欄各自獨立比對，例如 AN、AO 各一個空格分開判定）
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer;">
+                        <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}>
+                        結合成一個答案（用公式組合多欄，例如 AN&amp;" "&amp;AO）
+                    </label>
+                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='公式備註，例如 AN&amp;" "&amp;AO 或 pre&amp;" "&amp;script（僅供參考記錄，實際組合仍以 Layout Profile 的 quiz_answer 公式為準）' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
+                </div>
+                <div>
+                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">🎤 口說答案批改標準</div>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="formula" ${speakMode === 'formula' ? 'checked' : ''}>
+                        帶入公式（可再逐列個別修正）
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="complex" ${speakMode === 'complex' ? 'checked' : ''}>
+                        之後會寫複雜規則（規則還沒定，先整批留白讓老師逐列輸入／修正）
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="paste" ${speakMode === 'paste' ? 'checked' : ''}>
+                        直接貼上多筆資料（標注起始題號，可再逐列個別修正）
+                    </label>
+                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};">
+                </div>
+                <div style="font-size:0.68rem; color:#92400E; margin-top:8px;">💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到下方「📎 套用到教材」→「產生預覽」後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。</div>
+            </div>
+        `;
+    }
+
+    /** 對應 renderAnswerGradingSettingsHtml：把畫面上的選擇同步回 cfg，並處理公式輸入框顯示/隱藏 */
+    function bindAnswerGradingSettingsEvents(wrapEl, prefix, cfg) {
+        if (!wrapEl) return;
+        wrapEl.querySelectorAll('.' + prefix + '-answer-mode-opt').forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                if (!this.checked) return;
+                cfg.answerMode = this.value;
+                const noteEl = wrapEl.querySelector('.' + prefix + '-answer-combine-note');
+                if (noteEl) noteEl.style.display = this.value === 'combine' ? 'block' : 'none';
+            });
+        });
+        const noteEl = wrapEl.querySelector('.' + prefix + '-answer-combine-note');
+        if (noteEl) noteEl.addEventListener('change', function () { cfg.answerCombineNote = this.value; });
+        wrapEl.querySelectorAll('.' + prefix + '-speak-mode-opt').forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                if (!this.checked) return;
+                cfg.speakMode = this.value;
+                const fEl = wrapEl.querySelector('.' + prefix + '-speak-formula');
+                if (fEl) fEl.style.display = this.value === 'formula' ? 'block' : 'none';
+            });
+        });
+        const fEl = wrapEl.querySelector('.' + prefix + '-speak-formula');
+        if (fEl) fEl.addEventListener('change', function () { cfg.speakFormula = this.value; });
+    }
+
+    /** 書寫答案勾選狀態改變（欄數可能跨過 1↔2 這條門檻）時，重畫這個獨立小區塊，不用整塊欄位對應重繪 */
+    function refreshAnswerGradingBlock(containerEl, prefix, cfg, aCount) {
+        if (!containerEl) return;
+        const wrap = containerEl.querySelector('.' + prefix + '-answer-grading-wrap');
+        if (!wrap) return;
+        wrap.innerHTML = renderAnswerGradingSettingsHtml(prefix, cfg, aCount);
+        bindAnswerGradingSettingsEvents(wrap, prefix, cfg);
+    }
+
+    /** 欄位選取／欄位對應設定要「看」哪個活頁的欄位當預覽——現在活頁選擇是每組（Template）各自的 */
     function getReferenceSheetNameForSegment(seg) {
         const names = (_excelWb && Array.isArray(_excelWb.SheetNames)) ? _excelWb.SheetNames : [];
         for (let i = 0; i < names.length; i++) {
@@ -108,7 +232,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         return '';
     }
 
-    /** @type {Array<object>|null} 老師已存的欄位設定 layout（見「大區塊」儲存功能） */
+    /** @type {Array<object>|null} 老師已存的欄位設定 Template（見「大區塊」儲存功能） */
     let _fieldTemplatesCache = null;
     let _fieldTemplatesLoadPromise = null;
 
@@ -147,7 +271,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 .eq('id', user.id)
                 .maybeSingle();
             if (error) {
-                console.warn('[FeatureMaterialLayoutPairing] 讀取欄位設定 layout 清單失敗', error);
+                console.warn('[FeatureMaterialLayoutPairing] 讀取欄位設定 Template 清單失敗', error);
                 _fieldTemplatesCache = _fieldTemplatesCache || [];
                 return _fieldTemplatesCache;
             }
@@ -369,20 +493,32 @@ window.FeatureMaterialLayoutPairing = (function () {
         return (window.TeacherDB && Array.isArray(window.TeacherDB.classes)) ? window.TeacherDB.classes : [];
     }
 
-    /** 下拉選項 HTML：目前值找不到也保留（避免清單還沒載入就把已存值洗掉）；固定含「✏️ 其他（手動輸入）」逃生口 */
+    /**
+     * 下拉選項 HTML：目前值找不到也保留（避免清單還沒載入就把已存值洗掉）；固定含「✏️ 其他（手動輸入）」逃生口。
+     *
+     * 2026-08-07 修正：呼叫端常常故意傳 `'__manual__'` 這個保留字當 currentValue，語意是
+     * 「還沒有值、預設落到手動輸入」（例如第一次建立 Template，還沒有任何已存名稱可比對）。
+     * 舊版把 `'__manual__'` 當成一般值去跟 items 比對，比對不到就誤判成「這個值曾經存在、
+     * 現在清單裡找不到了」，多生出一個 `value="__manual__"` 的「⚠️ 找不到」選項、還把
+     * selected 標在那顆假警告上，跟後面真正的「✏️ 其他（手動輸入）」選項同一個 value 互相打架
+     * ——瀏覽器最後選中的是那顆假警告，老師會誤以為系統出錯，其實只是第一次建立、什麼都還沒選。
+     * 修法：`__manual__` 一律當保留字看待，不進「找不到」判斷，直接把 selected 標在真正的
+     * 手動輸入選項上。
+     */
     function buildSelectOptionsHtml(items, currentValue, placeholderLabel) {
         const cur = String(currentValue || '');
-        let matched = !cur;
+        const isManualSentinel = cur === '__manual__';
+        let matched = !cur || isManualSentinel;
         let html = '<option value="">' + esc(placeholderLabel) + '</option>';
         html += (items || []).map(function (item) {
             const isCur = item === cur;
             if (isCur) matched = true;
             return '<option value="' + esc(item) + '"' + (isCur ? ' selected' : '') + '>' + esc(item) + '</option>';
         }).join('');
-        if (cur && !matched) {
+        if (cur && !isManualSentinel && !matched) {
             html += '<option value="' + esc(cur) + '" selected>⚠️ ' + esc(cur) + '（清單中找不到）</option>';
         }
-        html += '<option value="__manual__">✏️ 其他（手動輸入）</option>';
+        html += '<option value="__manual__"' + (isManualSentinel ? ' selected' : '') + '>✏️ 其他（手動輸入）</option>';
         return html;
     }
 
@@ -557,6 +693,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         _excelWb = null;
         _excelRawData = null;
         _excelSheetColumnsCache = {};
+        _excelSegPreviewMatrixCache = {};
         _excelFileName = file ? file.name : '';
         _excelMaterialFolder = '';
         _excelSegments = [];
@@ -592,13 +729,13 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 每一「組」（layout）自己的活頁勾選清單（可多選）——不同組可以套用到不同活頁，
+     * 每一「組」（Template）自己的活頁勾選清單（可多選）——不同組可以套用到不同活頁，
      * 不是整份 Excel 共用同一個活頁清單（2026-08-05 第七輪修正，見上方資料模型說明）。
      */
     function renderSegmentSheetChecklistHtml(seg) {
         const names = (_excelWb && Array.isArray(_excelWb.SheetNames)) ? _excelWb.SheetNames : [];
         if (!names.length) return '';
-        return '<div style="font-size:0.76rem; font-weight:800; color:#475569; margin-bottom:6px;">這組（layout）要套用到哪些活頁？偵測到 ' + names.length + ' 個活頁，可多選：'
+        return '<div style="font-size:0.76rem; font-weight:800; color:#475569; margin-bottom:6px;">這組（Template）要套用到哪些活頁？偵測到 ' + names.length + ' 個活頁，可多選：'
             + ' <span class="mlp-excel-sheets-status" style="font-weight:700; color:#0F766E;"></span></div>'
             + '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">'
             + names.map(function (name) {
@@ -699,24 +836,78 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 教材資料夾／檔案：整份 Excel 只有一組（所有 layout 共用同一個來源檔案），
-     * 位置緊接在「選擇檔案」下方（2026-08-05 第七輪修正），跟下面每一組獨立的 layout 設定分開。
+     * 跟 parseSheetColumns 同一份 _excelRawData，但回傳「逐列矩陣」（array of arrays，含表頭列，
+     * row 1 = matrix[0]），給「設計 Template」卡片內的即時 meta 預覽用（見 buildGenerationFromMatrix）。
+     * 跟「📎 套用到教材」各自 appId 的 parseAppSheetMatrix 是同一套解析邏輯、分開的快取，
+     * 因為來源不同（這裡固定用目前選檔的 _excelRawData，套用到教材可能各列各自選了不同本機檔案）。
+     */
+    function parseExcelSegmentMatrix(sheetName) {
+        if (!sheetName) return null;
+        if (_excelSegPreviewMatrixCache[sheetName]) return _excelSegPreviewMatrixCache[sheetName];
+        if (!_excelRawData || !window.XLSX || typeof window.XLSX.read !== 'function') return null;
+        let matrix = null;
+        try {
+            const wb = window.XLSX.read(_excelRawData, { type: 'array', sheets: [sheetName] });
+            const sheet = wb && wb.Sheets && wb.Sheets[sheetName];
+            if (sheet) {
+                matrix = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+            }
+        } catch (_e) {
+            matrix = null;
+        }
+        if (matrix) _excelSegPreviewMatrixCache[sheetName] = matrix;
+        return matrix;
+    }
+
+    /** seg.mapping（colRole/colSemantic 依欄位字母）→ buildGenerationFromMatrix 需要的 template.columns[]；跟 handleSaveSegment 存檔時的 record.columns 同一套轉換規則 */
+    function segColumnsToTemplateColumns(seg) {
+        const cols = Object.keys(seg.checks || {}).filter(function (k) { return seg.checks[k]; }).sort();
+        return cols.map(function (letter) {
+            const role = seg.mapping.colRole[letter] || {};
+            return {
+                letter: letter,
+                semantic_key: seg.mapping.colSemantic[letter] || '',
+                is_question: !!role.question,
+                is_answer: !!role.answer,
+                is_info: !!role.info,
+                is_ai_ref: !!role.ai_ref
+            };
+        });
+    }
+
+    /** seg 目前的欄位對應＋批改標準，包成 buildGenerationFromMatrix 認得的 template 物件（僅供即時預覽，不落地存檔） */
+    function segToPreviewTemplate(seg) {
+        return {
+            columns: segColumnsToTemplateColumns(seg),
+            answer_mode: seg.answerMode === 'separate' ? 'separate' : 'combine',
+            speak_mode: ['formula', 'complex', 'paste'].indexOf(seg.speakMode) !== -1 ? seg.speakMode : 'formula',
+            speak_formula: seg.speakFormula || ''
+        };
+    }
+
+    /**
+     * Drive 教材資料夾／檔案：整份 Excel 只有一組（所有 Template 共用同一個來源檔案）。
+     * 2026-08-07：改放在「選擇檔案」的右邊（同一列並排），不再放在下方——老師要求跟左邊
+     * Choose File 的檔名視覺對齊；正名「教材資料夾」為「Drive 教材資料夾」，避免跟左邊本機
+     * 選的檔案搞混（這裡選的是之後 meta/script 要上傳去的 Google Drive 目的地資料夾，
+     * 跟左邊「本機讀取用來設計 Template」的來源檔案是兩件不同的事）。
      */
     function renderExcelFolderFileHtml() {
         const wrap = document.getElementById('mlp-excel-folderfile');
         if (!wrap) return;
         if (!_excelWb) { wrap.innerHTML = ''; return; }
         const folderOptions = uniqueFolderNames('', 'teacher');
+        // flex:1 + box-sizing:border-box：跟左邊「本機來源檔案」卡片是同一個 flex row 的兩個
+        // 子項，父層 #mlp-excel-folderfile 是 display:flex（見 paint()），這裡的卡片本身也要
+        // flex:1 才會被撐到跟左邊一樣高（align-items:stretch 只決定「flex item」的高度，
+        // 這個 wrap.innerHTML 塞進去的卡片是 flex item 的子節點，不會自動繼承那個高度）。
         wrap.innerHTML = `
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; background:#FAFAFA; border:2px solid #E2E8F0; border-radius:10px; padding:14px;">
-                <label style="font-size:0.78rem; font-weight:800; color:#475569;">教材資料夾
+            <div style="flex:1; display:flex; flex-direction:column; justify-content:center; background:#FAFAFA; border:2px solid #E2E8F0; border-radius:10px; padding:14px; box-sizing:border-box;">
+                <label style="font-size:0.78rem; font-weight:800; color:#475569; display:block;">☁️ Drive 教材資料夾
                     <select id="mlp-excel-folder-select" class="form-control" style="width:100%; padding:6px; margin-top:2px;">${buildSelectOptionsHtml(folderOptions, _excelMaterialFolder, '— 選教材資料夾 —')}</select>
                     <input type="text" id="mlp-excel-folder-manual" class="form-control" value="${esc(_excelMaterialFolder)}" placeholder="手動輸入資料夾名稱" style="width:100%; padding:6px; margin-top:2px; display:none;">
                     <div id="mlp-excel-folder-status" style="font-size:0.72rem; color:#94A3B8; min-height:1.1em; margin-top:2px;"></div>
                 </label>
-                <div style="font-size:0.78rem; font-weight:800; color:#475569;">檔案
-                    <div style="margin-top:2px; padding:6px 8px; background:white; border:1px solid #E2E8F0; border-radius:6px; color:#334155; font-size:0.82rem;">${esc(_excelFileName) || '—'}</div>
-                </div>
             </div>
         `;
         // force=true：這是老師選好本機檔案後第一次看到這個下拉的時刻，寧可多打一次 GAS
@@ -733,8 +924,8 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 每一組（layout）各自獨立：自己的活頁勾選＋欄位勾選＋欄位對應＋儲存按鈕，
-     * 「＋新增一組」＝再建一份獨立的 layout（不是同一份設定套用到更多活頁）。
+     * 每一組（Template）各自獨立：自己的活頁勾選＋欄位勾選＋欄位對應＋儲存按鈕，
+     * 「＋新增一組」＝再建一份獨立的 Template（不是同一份設定套用到更多活頁）。
      */
     /** 目前這組（陣列最後一組）有沒有存過至少一次——沒存過就不給開新的一組（第九輪，見 newExcelSegment 註解） */
     function canAddMoreSegments() {
@@ -743,7 +934,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         return !!segments[segments.length - 1].savedOnce;
     }
 
-    /** 存 layout 成功後呼叫：只切換這顆按鈕的顯示/隱藏，不整塊重繪（避免捲動位置跳走） */
+    /** 存 Template 成功後呼叫：只切換這顆按鈕的顯示/隱藏，不整塊重繪（避免捲動位置跳走） */
     function refreshAddSegmentButtonVisibility() {
         const wrap = document.getElementById('mlp-excel-add-segment-wrap');
         if (wrap) wrap.style.display = canAddMoreSegments() ? 'block' : 'none';
@@ -758,7 +949,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             <div id="mlp-excel-segments"></div>
             <div id="mlp-excel-add-segment-wrap" style="margin-top:6px; display:${canAddMoreSegments() ? 'block' : 'none'};">
                 <button type="button" id="mlp-excel-add-segment" class="btn" style="padding:6px 14px; font-size:0.8rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:6px;">
-                    ＋ 新增一組欄位設定（再建一份獨立的 layout，可套用到不同活頁）
+                    ＋ 新增一組欄位設定（再建一份獨立的 Template，可套用到不同活頁）
                 </button>
             </div>
         `;
@@ -805,7 +996,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         return `
             <div class="mlp-excel-segment" data-seg-id="${esc(seg.id)}" style="background:white; border:1px solid #E2E8F0; border-radius:8px; padding:10px; margin-bottom:10px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <strong style="font-size:0.82rem; color:#0F766E;">第 ${idx + 1} 組欄位設定（一份獨立的 layout）</strong>
+                    <strong style="font-size:0.82rem; color:#0F766E;">第 ${idx + 1} 組欄位設定（一份獨立的 Template）</strong>
                     ${total > 1 ? '<button type="button" class="mlp-excel-remove-segment btn" style="padding:2px 8px; font-size:0.72rem; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; background:white;">刪除這組</button>' : ''}
                 </div>
                 <div class="mlp-excel-sheets-area">${renderSegmentSheetChecklistHtml(seg)}</div>
@@ -908,10 +1099,11 @@ window.FeatureMaterialLayoutPairing = (function () {
             <div style="background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; padding:12px; margin-top:6px;">
                 <div style="font-size:0.72rem; color:#64748B; margin-bottom:10px;">
                     每個欄位的資料項名稱／題目／答案／訊息設定好之後，按下面「儲存這個 Template」。
-                    行數起迄是「套用到某個實際檔案」才需要填的資訊，請到上方「Layout Template」區塊儲存後，
-                    到「📎 套用到教材」區塊登記行數起迄（同一份 Template 可以套用到多個檔案、各自不同的行數）。
+                    下方「行數起／行數末」只是用目前這個本機檔案立刻測試產生 meta 預覽（不會存進 Template、也不會上傳）；
+                    Template 本身仍然跟任何一個實際檔案脫鉤，可重複套用到「欄位結構相同」的其他檔案——正式產生／上傳到
+                    Google Drive，請到「📎 套用到教材」區塊（同一份 Template 可以套用到多個檔案、各自登記不同的行數）。
                 </div>
-                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px,1fr)); gap:8px;">
+                <div style="display:grid; grid-template-columns:1fr; gap:8px;">
                     ${selectedCols.map(function (col) {
                         const val = mapping.colSemantic[col] || '';
                         const isKnown = val && knownKeys.indexOf(val) !== -1;
@@ -926,24 +1118,106 @@ window.FeatureMaterialLayoutPairing = (function () {
                                     <input type="checkbox" class="mlp-excel-role-question" data-col="${esc(col)}" ${role.question ? 'checked' : ''}>題目
                                 </label>
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#334155; white-space:nowrap; cursor:pointer;">
-                                    <input type="checkbox" class="mlp-excel-role-answer" data-col="${esc(col)}" ${role.answer ? 'checked' : ''}>答案
+                                    <input type="checkbox" class="mlp-excel-role-answer" data-col="${esc(col)}" ${role.answer ? 'checked' : ''}>書寫答案
                                 </label>
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#B45309; white-space:nowrap; cursor:pointer; padding-left:6px; border-left:1px dashed #CBD5E1;" title="獨立的第三種標記：這欄是參考資訊（例如活頁名／頁碼／題號），不是被考的題目或答案內容；跟題目／答案互不連動，可任意搭配勾選">
                                     <input type="checkbox" class="mlp-excel-role-info" data-col="${esc(col)}" ${role.info ? 'checked' : ''}>🏷️ 訊息
                                 </label>
-                                <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#6D28D9; white-space:nowrap; cursor:pointer; padding-left:6px; border-left:1px dashed #CBD5E1;" title="單選、可留空（整份 Template 最多一欄）：這欄放的是專門給 AI 口語批改用的對照稿文字，跟「答案」欄（書寫解答，印在考卷上的答案）不一定相同——例如書寫解答是 to/a park（答案欄組合），AI對照稿卻是 to park a park。這欄目前就是一個可以貼上文字的普通欄位，允許整批留白，不影響其他列進 meta.json；已選的欄可以再點一次上面的「✕」清除">
-                                    <input type="radio" name="mlp-excel-airef-${esc(seg.id)}" class="mlp-excel-role-airef" data-col="${esc(col)}" ${role.ai_ref ? 'checked' : ''}>🎤 AI對照稿
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#6D28D9; white-space:nowrap; cursor:pointer; padding-left:6px; border-left:1px dashed #CBD5E1;" title="可複選、可留空：這欄放的是專門給 AI 口語批改用的口說答案文字，跟「書寫答案」（印在考卷上的答案）不一定相同——例如書寫答案是 to/a park（答案欄組合），口說答案卻是 to park a park。可以勾多欄（例如同時勾 pre、script 兩欄），系統會把勾選的欄依序組合成一句口說答案；允許整批留白，不影響其他列進 meta.json；勾了可以再點自己一次直接取消，或用上面的「✕」清除">
+                                    <input type="checkbox" class="mlp-excel-role-airef" data-col="${esc(col)}" ${role.ai_ref ? 'checked' : ''}>🎤 口說答案
                                 </label>
                             </div>
                         `;
                     }).join('')}
                 </div>
                 <div style="margin-top:6px;">
-                    <button type="button" class="mlp-excel-clear-airef" style="font-size:0.72rem; font-weight:700; color:#6D28D9; background:none; border:1px solid #DDD6FE; border-radius:6px; padding:3px 10px; cursor:pointer;">✕ 清除已選的 AI對照稿欄（允許不指定）</button>
+                    <button type="button" class="mlp-excel-clear-airef" style="font-size:0.72rem; font-weight:700; color:#6D28D9; background:none; border:1px solid #DDD6FE; border-radius:6px; padding:3px 10px; cursor:pointer;">✕ 清除所有已選的口說答案欄（允許不指定）</button>
                 </div>
-                <div style="font-size:0.7rem; color:#94A3B8; margin-top:8px;">💡 image_url＝連結圖片的路徑（Google Drive 或外部網址皆可），日後實際套用時再處理怎麼顯示。「題目」「答案」「🏷️ 訊息」是三個完全獨立、互不連動的勾選（不是勾一個自動連動另外兩個）：題目＝被考的內容、答案＝核對用的內容（書寫解答，印在考卷上）、訊息＝活頁名／頁碼／題號這類參考資訊（不是被考的內容），三者可以任意組合，也可以都不勾。「🎤 AI對照稿」是另一件事——它是口語批改基準文字，跟「答案」不一定相同，單選、可留空，留空不會擋「產生 meta/script」，只是 script.txt 那幾行會是空行。</div>
+                <div style="font-size:0.7rem; color:#94A3B8; margin-top:8px;">💡 image_url＝連結圖片的路徑（Google Drive 或外部網址皆可），日後實際套用時再處理怎麼顯示。「題目」「書寫答案」「🏷️ 訊息」是三個完全獨立、互不連動的勾選（不是勾一個自動連動另外兩個）：題目＝被考的內容、書寫答案＝核對用的內容（印在考卷上）、訊息＝活頁名／頁碼／題號這類參考資訊（不是被考的內容），三者可以任意組合，也可以都不勾。「🎤 口說答案」是另一件事——它是口語批改基準文字，跟「書寫答案」不一定相同，**可複選（不是單選）**、可留空，可以同時勾多欄讓系統組合成一句，留空不會擋「產生 meta/script」，只是 script.txt 那幾行會是空行。</div>
+                <div class="mlp-excel-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-excel', seg, countAnswerColsFromRole(mapping.colRole))}</div>
+                ${renderSegmentGenPreviewAreaHtml(seg)}
             </div>
         `;
+    }
+
+    /**
+     * 「設計 Template」卡片內的即時 meta 預覽：行數起／行數末＋「產生 meta 預覽」按鈕，直接用目前
+     * 這個本機檔案＋這組已勾選的活頁測試算出 meta.json／script.txt 會長什麼樣子，不用先存 Template
+     * 再跳到「📎 套用到教材」才能看結果。純預覽，不會存檔／不會上傳（正式產生／上傳仍在套用到教材做）。
+     */
+    function renderSegmentGenPreviewAreaHtml(seg) {
+        const sheetName = getReferenceSheetNameForSegment(seg);
+        return `
+            <div class="mlp-excel-gen-preview-wrap" style="background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; padding:10px 12px; margin-top:10px;">
+                <div style="font-size:0.76rem; font-weight:800; color:#334155; margin-bottom:6px;">
+                    🔍 用「${sheetName ? esc(sheetName) : '（請先在上面勾選一個活頁）'}」立刻測試產生 meta（僅預覽，不會存檔／不會上傳）
+                </div>
+                <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+                    <label style="font-size:0.76rem; font-weight:700; color:#334155;">行數起
+                        <input type="text" class="form-control mlp-excel-seg-rowstart" value="${esc(seg.rowStart || '2')}" style="width:90px; padding:6px; margin-top:2px;">
+                    </label>
+                    <label style="font-size:0.76rem; font-weight:700; color:#334155;">行數末
+                        <input type="text" class="form-control mlp-excel-seg-rowend" value="${esc(seg.rowEnd || '')}" placeholder="留空＝到最後一列，或 LAST／LAST(欄位)" style="width:170px; padding:6px; margin-top:2px;">
+                    </label>
+                    <button type="button" class="mlp-excel-seg-gen-preview btn" style="padding:7px 14px; font-weight:800; background:#0F766E; color:white; border:none; border-radius:6px; cursor:pointer;">🔍 產生 meta 預覽</button>
+                </div>
+                <div class="mlp-excel-seg-gen-result" style="font-size:0.78rem; color:#475569;"></div>
+            </div>
+        `;
+    }
+
+    /** 產生 meta 預覽按鈕：讀目前欄位對應＋行數起迄，跑 buildGenerationFromMatrix，畫出結果／警告／前幾列預覽 */
+    function handleSegmentGenPreview(seg, cardEl) {
+        const resultEl = cardEl.querySelector('.mlp-excel-seg-gen-result');
+        if (!resultEl) return;
+        const sheetName = getReferenceSheetNameForSegment(seg);
+        if (!sheetName) {
+            resultEl.innerHTML = '<span style="color:#EF4444; font-weight:800;">❌ 請先在上面勾選一個活頁</span>';
+            return;
+        }
+        const rowStartEl = cardEl.querySelector('.mlp-excel-seg-rowstart');
+        const rowEndEl = cardEl.querySelector('.mlp-excel-seg-rowend');
+        seg.rowStart = rowStartEl ? rowStartEl.value.trim() : '';
+        seg.rowEnd = rowEndEl ? rowEndEl.value.trim() : '';
+        const template = segToPreviewTemplate(seg);
+        if (!template.columns.length) {
+            resultEl.innerHTML = '<span style="color:#EF4444; font-weight:800;">❌ 尚未設定任何欄位的資料項名稱，請先完成上面的欄位對應</span>';
+            return;
+        }
+        resultEl.innerHTML = '<span style="color:#0F766E;">⏳ 計算中…</span>';
+        deferHeavyWork(function () {
+            const matrix = parseExcelSegmentMatrix(sheetName);
+            const result = buildGenerationFromMatrix(matrix, template, seg.rowStart, seg.rowEnd, {});
+            if (!result.ok) {
+                resultEl.innerHTML = '<span style="color:#EF4444; font-weight:800;">❌ ' + esc(result.error) + '</span>';
+                return;
+            }
+            const warningsHtml = result.warnings.length
+                ? '<div style="margin-top:6px;">' + result.warnings.map(function (w) {
+                    return '<div style="color:#B45309;">' + esc(w) + '</div>';
+                }).join('') + '</div>'
+                : '';
+            resultEl.innerHTML = `
+                <div style="color:#0F766E; font-weight:800;">✅ 產出 ${result.rows.length} 列（實際讀取第 ${result.rowStart}～${result.rowEnd} 列）</div>
+                ${warningsHtml}
+                <details style="margin-top:6px;"><summary style="cursor:pointer; font-weight:700; color:#334155;">meta.json 預覽（前 5 列，共 ${result.rows.length} 列）</summary>
+                    <pre style="max-height:220px; overflow:auto; background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px; font-size:0.72rem; white-space:pre-wrap; word-break:break-all;">${esc(JSON.stringify(result.rows.slice(0, 5), null, 2))}</pre>
+                </details>
+                <details style="margin-top:6px;"><summary style="cursor:pointer; font-weight:700; color:#334155;">script.txt 預覽（前 5 行，共 ${result.scriptLines.length} 行）</summary>
+                    <pre style="max-height:160px; overflow:auto; background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px; font-size:0.72rem; white-space:pre-wrap; word-break:break-all;">${esc(result.scriptLines.slice(0, 5).join('\n')) || '（空白）'}</pre>
+                </details>
+            `;
+        });
+    }
+
+    /** 對應 renderSegmentGenPreviewAreaHtml：行數輸入框存回 seg，按鈕觸發預覽 */
+    function bindSegmentGenPreviewEvents(seg, cardEl) {
+        const rowStartEl = cardEl.querySelector('.mlp-excel-seg-rowstart');
+        if (rowStartEl) rowStartEl.addEventListener('change', function () { seg.rowStart = this.value.trim(); });
+        const rowEndEl = cardEl.querySelector('.mlp-excel-seg-rowend');
+        if (rowEndEl) rowEndEl.addEventListener('change', function () { seg.rowEnd = this.value.trim(); });
+        const btn = cardEl.querySelector('.mlp-excel-seg-gen-preview');
+        if (btn) btn.addEventListener('click', function () { handleSegmentGenPreview(seg, cardEl); });
     }
 
     /**
@@ -1070,6 +1344,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             chk.addEventListener('change', function () {
                 const col = this.getAttribute('data-col');
                 mapping.colRole[col] = Object.assign({}, mapping.colRole[col], { answer: this.checked });
+                refreshAnswerGradingBlock(cardEl, 'mlp-excel', seg, countAnswerColsFromRole(mapping.colRole));
             });
         });
         cardEl.querySelectorAll('.mlp-excel-role-info').forEach(function (chk) {
@@ -1079,24 +1354,16 @@ window.FeatureMaterialLayoutPairing = (function () {
             });
         });
         /**
-         * 🎤 AI對照稿：唯一一個「整份 Template 最多只能有一欄」的角色，靠 <input type="radio">
-         * 天生的單選行為（同一個 name="mlp-excel-airef-<segId>"）讓瀏覽器自己處理視覺上的互斥，
-         * 這裡只需要同步把「資料層」也改成單選——選中這一欄時，把 mapping.colRole 裡其他所有
-         * 欄位的 ai_ref 都撥成 false，不能只改被點的那一欄（否則資料層會出現兩欄同時
-         * ai_ref:true，跟「單選」的語意矛盾）。2026-08-06：AI對照稿現在完全選填（見
-         * buildGenerationForSheet 的說明），radio 天生不能點自己取消勾選，所以另外配一顆
-         * 「✕ 清除」按鈕讓老師可以退回「沒有指定」狀態。
+         * 🎤 口說答案：checkbox＝可複選（老師 2026-08-08 再次明確強調：「勾選的意思是可以
+         * 複選！不能夠是互斥！」）。每個欄位的勾選狀態完全獨立，勾這一欄**不會**影響其他欄，
+         * 不做任何互斥/單選邏輯——跟「題目」「書寫答案」「🏷️ 訊息」三個勾選一樣單純只切換
+         * 自己這一格。多欄被勾選時，buildGenerationFromMatrix 會把這些欄的內容依序組合
+         * （沒有設定公式時預設用空白串接）算出最終的口說答案／script.txt。
          */
-        cardEl.querySelectorAll('.mlp-excel-role-airef').forEach(function (radio) {
-            radio.addEventListener('change', function () {
-                if (!this.checked) return;
+        cardEl.querySelectorAll('.mlp-excel-role-airef').forEach(function (chk) {
+            chk.addEventListener('change', function () {
                 const col = this.getAttribute('data-col');
-                Object.keys(mapping.colRole).forEach(function (k) {
-                    if (mapping.colRole[k] && mapping.colRole[k].ai_ref) {
-                        mapping.colRole[k] = Object.assign({}, mapping.colRole[k], { ai_ref: false });
-                    }
-                });
-                mapping.colRole[col] = Object.assign({}, mapping.colRole[col], { ai_ref: true });
+                mapping.colRole[col] = Object.assign({}, mapping.colRole[col], { ai_ref: this.checked });
             });
         });
         const clearAirefBtn = cardEl.querySelector('.mlp-excel-clear-airef');
@@ -1106,14 +1373,21 @@ window.FeatureMaterialLayoutPairing = (function () {
                     mapping.colRole[k] = Object.assign({}, mapping.colRole[k], { ai_ref: false });
                 }
             });
-            cardEl.querySelectorAll('.mlp-excel-role-airef').forEach(function (radio) { radio.checked = false; });
+            cardEl.querySelectorAll('.mlp-excel-role-airef').forEach(function (chk) { chk.checked = false; });
         });
+        const answerGradingWrapEl = cardEl.querySelector('.mlp-excel-answer-grading-wrap');
+        if (answerGradingWrapEl) bindAnswerGradingSettingsEvents(answerGradingWrapEl, 'mlp-excel', seg);
+        const genPreviewWrapEl = cardEl.querySelector('.mlp-excel-gen-preview-wrap');
+        if (genPreviewWrapEl) bindSegmentGenPreviewEvents(seg, cardEl);
     }
 
     /**
-     * 每一組（layout）自己的儲存區塊：放在綠色欄位對應框「外面」，但還在第 N 組欄位設定的白色卡片「裡面」
+     * 每一組（Template）自己的儲存區塊：放在綠色欄位對應框「外面」，但還在第 N 組欄位設定的白色卡片「裡面」
      * （2026-08-05 第七輪修正，老師明確要求的位置）。名字下拉沿用既有 buildSelectOptionsHtml 的
      * __manual__ 逃生口模式（跟教材資料夾下拉同一套），不用另外發明一種「新增名稱」UI。
+     * 2026-08-08：這裡原本標「Layout」，老師明確指出誤導——存的不只是欄位排版（layout），
+     * 還包含題目/答案/訊息角色、書寫答案批改標準、口說答案批改標準與公式，統一正名為「Template」，
+     * 跟上方「🧩 Layout Template」管理區塊的名稱一致（同一份資料，只是進入點不同）。
      */
     function renderSegmentSaveAreaHtml(seg) {
         const templates = getFieldTemplatesCachedSync();
@@ -1125,13 +1399,13 @@ window.FeatureMaterialLayoutPairing = (function () {
         // 不要做成「curName 空字串時兩個都顯示」的混合狀態
         return `
             <div style="margin-top:12px; padding-top:10px; border-top:1px dashed #CBD5E1; display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
-                <label style="font-size:0.78rem; font-weight:800; color:#475569;">Layout 名稱（同名＝覆蓋更新，新名＝新增一筆）
+                <label style="font-size:0.78rem; font-weight:800; color:#475569;">Template 名稱（同名＝覆蓋更新，新名＝新增一筆）
                     <div style="display:flex; gap:6px; margin-top:2px;">
-                        <select class="form-control mlp-excel-seg-name-select" style="width:180px; padding:6px;">${buildSelectOptionsHtml(uniqueNames, isKnownName ? curName : '__manual__', '— 選擇已有 layout 名稱 —')}</select>
-                        <input type="text" class="form-control mlp-excel-seg-name-manual" value="${esc(isKnownName ? '' : curName)}" placeholder="幫這份 layout 取個名字" style="width:180px; padding:6px; display:${isKnownName ? 'none' : 'block'};">
+                        <select class="form-control mlp-excel-seg-name-select" style="width:180px; padding:6px;">${buildSelectOptionsHtml(uniqueNames, isKnownName ? curName : '__manual__', '— 選擇已有 Template 名稱 —')}</select>
+                        <input type="text" class="form-control mlp-excel-seg-name-manual" value="${esc(isKnownName ? '' : curName)}" placeholder="幫這份 Template 取個名字" style="width:180px; padding:6px; display:${isKnownName ? 'none' : 'block'};">
                     </div>
                 </label>
-                <button type="button" class="mlp-excel-save-segment btn btn-primary" style="padding:7px 16px; font-weight:800;">💾 儲存這個 layout</button>
+                <button type="button" class="mlp-excel-save-segment btn btn-primary" style="padding:7px 16px; font-weight:800;">💾 儲存這個 Template</button>
                 <span class="mlp-excel-save-segment-msg" style="font-size:0.78rem; font-weight:800;"></span>
             </div>
         `;
@@ -1150,7 +1424,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 存成一筆獨立命名的 layout：名字是這筆記錄的識別鍵——同名＝覆蓋更新同一筆，不同名＝新增一筆
+     * 存成一筆獨立命名的 Template：名字是這筆記錄的識別鍵——同名＝覆蓋更新同一筆，不同名＝新增一筆
      * （2026-08-05 第七輪修正：老師明確要求「儲存＝存那個 layout，要單獨存，才能給那個 layout 單獨的名字」，
      * 不再是整個大區塊存一筆、不給名字）。教材資料夾／檔名所有組共用，活頁清單／欄位設定是這一組自己的。
      */
@@ -1168,7 +1442,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const nameManualEl = cardEl.querySelector('.mlp-excel-seg-name-manual');
         const name = (nameSelectEl && nameSelectEl.value === '__manual__' ? nameManualEl.value : (nameSelectEl ? nameSelectEl.value : '') || '').trim();
         if (!name) {
-            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請幫這份 layout 取個名字'; }
+            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請幫這份 Template 取個名字'; }
             return;
         }
         if (!seg.confirmed) {
@@ -1199,6 +1473,12 @@ window.FeatureMaterialLayoutPairing = (function () {
                     is_ai_ref: !!role.ai_ref
                 };
             }),
+            // 2026-08-07：書寫答案／口說答案批改標準（只有書寫答案欄數>1才有意義，見
+            // renderAnswerGradingSettingsHtml），欄數≤1 時維持預設值即可，不影響既有單答案教材
+            answer_mode: seg.answerMode === 'separate' ? 'separate' : 'combine',
+            answer_combine_note: seg.answerCombineNote || '',
+            speak_mode: ['formula', 'complex', 'paste'].indexOf(seg.speakMode) !== -1 ? seg.speakMode : 'formula',
+            speak_formula: seg.speakFormula || '',
             // designed_from：純資訊性的「設計參考」，跟能不能存無關，方便老師日後回頭核對這份
             // Template 是照哪個檔案設計的；沒有檔案／沒選資料夾／沒勾活頁也完全可以存
             designed_from: (materialFolder || _excelFileName || sheetIds.length)
@@ -1217,7 +1497,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             if (existingIdx !== -1) nextList[existingIdx] = record; else nextList.push(record);
             await saveFieldTemplates(nextList);
             if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = (existingIdx !== -1 ? '✅ 已覆蓋更新「' : '✅ 已新增「') + name + '」，可到上方「Layout Template」區塊查看'; }
-            window.showFlash && window.showFlash('已儲存 layout「' + name + '」');
+            window.showFlash && window.showFlash('已儲存 Template「' + name + '」');
             seg.savedOnce = true;
             refreshAddSegmentButtonVisibility();
             renderTemplateList();
@@ -1239,7 +1519,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     // ------------------------------------------------------------------
 
     function openTemplateEditorForNew() {
-        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null };
+        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'formula', speakFormula: '' };
         renderTemplateEditor();
         renderTemplateList();
         const editorEl = document.getElementById('mlp-template-editor');
@@ -1261,7 +1541,11 @@ window.FeatureMaterialLayoutPairing = (function () {
                     is_ai_ref: !!(c && c.is_ai_ref)
                 };
             }),
-            designed_from: (t && t.designed_from) || null
+            designed_from: (t && t.designed_from) || null,
+            answerMode: (t && t.answer_mode === 'separate') ? 'separate' : 'combine',
+            answerCombineNote: (t && t.answer_combine_note) || '',
+            speakMode: (t && ['formula', 'complex', 'paste'].indexOf(t.speak_mode) !== -1) ? t.speak_mode : 'formula',
+            speakFormula: (t && t.speak_formula) || ''
         };
         renderTemplateEditor();
         renderTemplateList();
@@ -1290,9 +1574,10 @@ window.FeatureMaterialLayoutPairing = (function () {
                     <div id="mlp-tpl-cols"></div>
                     <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
                         <button type="button" id="mlp-tpl-add-col" class="btn" style="padding:5px 12px; font-size:0.78rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:6px;">＋ 新增欄位列</button>
-                        <button type="button" id="mlp-tpl-clear-airef" class="btn" style="padding:5px 12px; font-size:0.78rem; font-weight:800; background:white; color:#6D28D9; border:1px solid #DDD6FE; border-radius:6px;">✕ 清除已選的 AI對照稿欄（允許不指定）</button>
+                        <button type="button" id="mlp-tpl-clear-airef" class="btn" style="padding:5px 12px; font-size:0.78rem; font-weight:800; background:white; color:#6D28D9; border:1px solid #DDD6FE; border-radius:6px;">✕ 清除所有已選的口說答案欄（允許不指定）</button>
                     </div>
                 </div>
+                <div class="mlp-tpl-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-tpl', st, countAnswerColsFromColumns(st.columns))}</div>
                 <div style="margin-top:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button type="button" id="mlp-tpl-save" class="btn btn-primary" style="padding:7px 16px; font-weight:800;">💾 儲存這個 Template</button>
                     <button type="button" id="mlp-tpl-cancel" class="btn" style="padding:7px 16px; font-weight:800; background:white; border:1px solid #CBD5E1; color:#475569;">取消</button>
@@ -1322,13 +1607,13 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <input type="checkbox" class="mlp-tpl-col-question" ${c.is_question ? 'checked' : ''}>題目
                     </label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#334155; white-space:nowrap; cursor:pointer;">
-                        <input type="checkbox" class="mlp-tpl-col-answer" ${c.is_answer ? 'checked' : ''}>答案
+                        <input type="checkbox" class="mlp-tpl-col-answer" ${c.is_answer ? 'checked' : ''}>書寫答案
                     </label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#B45309; white-space:nowrap; cursor:pointer; padding-left:6px; border-left:1px dashed #CBD5E1;" title="獨立的第三種標記：這欄是參考資訊，不是被考的題目或答案內容">
                         <input type="checkbox" class="mlp-tpl-col-info" ${c.is_info ? 'checked' : ''}>🏷️訊息
                     </label>
-                    <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#6D28D9; white-space:nowrap; cursor:pointer; padding-left:6px; border-left:1px dashed #CBD5E1;" title="單選、可留空（整份 Template 最多一欄）：AI 口語批改用的對照稿文字，跟「答案」欄（書寫解答）不一定相同，允許整批留白">
-                        <input type="radio" name="mlp-tpl-airef" class="mlp-tpl-col-airef" ${c.is_ai_ref ? 'checked' : ''}>🎤AI對照稿
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.74rem; font-weight:700; color:#6D28D9; white-space:nowrap; cursor:pointer; padding-left:6px; border-left:1px dashed #CBD5E1;" title="可複選、可留空：AI 口語批改用的口說答案文字，跟「書寫答案」不一定相同，可以勾多欄讓系統依序組合成一句，允許整批留白；勾了可以再點自己一次直接取消">
+                        <input type="checkbox" class="mlp-tpl-col-airef" ${c.is_ai_ref ? 'checked' : ''}>🎤口說答案
                     </label>
                     <button type="button" class="mlp-tpl-col-remove" style="padding:3px 8px; font-size:0.72rem; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; background:white; cursor:pointer;">🗑️</button>
                 </div>
@@ -1360,17 +1645,16 @@ window.FeatureMaterialLayoutPairing = (function () {
             const qEl = rowEl.querySelector('.mlp-tpl-col-question');
             if (qEl) qEl.addEventListener('change', function () { col.is_question = this.checked; });
             const aEl = rowEl.querySelector('.mlp-tpl-col-answer');
-            if (aEl) aEl.addEventListener('change', function () { col.is_answer = this.checked; });
+            if (aEl) aEl.addEventListener('change', function () {
+                col.is_answer = this.checked;
+                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns));
+            });
             const iEl = rowEl.querySelector('.mlp-tpl-col-info');
             if (iEl) iEl.addEventListener('change', function () { col.is_info = this.checked; });
-            // 🎤 AI對照稿：radio 天生單選（同一個 name），這裡只需同步資料層——把其他所有列的
-            // is_ai_ref 都撥成 false，不能只設被點的那一列（見 Excel 小工具那份 mlp-excel-role-airef 同精神）
+            // 🎤 口說答案：checkbox＝可複選（老師 2026-08-08 再次明確強調不能互斥）。
+            // 只切換自己這一欄，不動其他列的 is_ai_ref（跟 Excel 小工具同一份邏輯）。
             const airefEl = rowEl.querySelector('.mlp-tpl-col-airef');
-            if (airefEl) airefEl.addEventListener('change', function () {
-                if (!this.checked) return;
-                _templateEditorState.columns.forEach(function (c) { c.is_ai_ref = false; });
-                col.is_ai_ref = true;
-            });
+            if (airefEl) airefEl.addEventListener('change', function () { col.is_ai_ref = this.checked; });
             const removeBtn = rowEl.querySelector('.mlp-tpl-col-remove');
             if (removeBtn) removeBtn.addEventListener('click', function () {
                 _templateEditorState.columns.splice(idx, 1);
@@ -1406,6 +1690,8 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (deleteInlineBtn) deleteInlineBtn.addEventListener('click', function () {
             handleDeleteTemplate(_templateEditorState.id);
         });
+        const answerGradingWrapEl = document.querySelector('.mlp-tpl-answer-grading-wrap');
+        if (answerGradingWrapEl) bindAnswerGradingSettingsEvents(answerGradingWrapEl, 'mlp-tpl', _templateEditorState);
     }
 
     /**
@@ -1434,7 +1720,11 @@ window.FeatureMaterialLayoutPairing = (function () {
                     is_ai_ref: !!c.is_ai_ref
                 };
             }),
-            designed_from: st.designed_from || null
+            designed_from: st.designed_from || null,
+            answer_mode: st.answerMode === 'separate' ? 'separate' : 'combine',
+            answer_combine_note: st.answerCombineNote || '',
+            speak_mode: ['formula', 'complex', 'paste'].indexOf(st.speakMode) !== -1 ? st.speakMode : 'formula',
+            speak_formula: st.speakFormula || ''
         };
         const saveBtn = document.getElementById('mlp-tpl-save');
         if (saveBtn) saveBtn.disabled = true;
@@ -1493,13 +1783,17 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const qCount = cols.filter(function (c) { return c && c.is_question; }).length;
                 const aCount = cols.filter(function (c) { return c && c.is_answer; }).length;
                 const iCount = cols.filter(function (c) { return c && c.is_info; }).length;
-                const airefCol = cols.find(function (c) { return c && c.is_ai_ref; });
-                // 2026-08-06：AI對照稿（口語批改基準）跟答案欄（書寫解答）不一定相同，且現階段
+                const airefCols = cols.filter(function (c) { return c && c.is_ai_ref; });
+                // 2026-08-06：口說答案（口語批改基準）跟書寫答案欄不一定相同，且現階段
                 // 允許整批留空——沒有指定這欄不再擋「產生 meta/script」，只是 script.txt 會整份留白，
-                // 這裡用顏色提醒但不是報錯
-                const airefText = airefCol
-                    ? ('｜🎤 AI對照稿：' + esc(airefCol.semantic_key || airefCol.letter))
-                    : '｜<span style="color:#D97706;">💡 尚未指定 AI對照稿（script.txt 會整份留白，不影響 meta.json）</span>';
+                // 這裡用顏色提醒但不是報錯。2026-08-08：改成可複選，這裡要列出全部被勾選的欄，不是只取第一個。
+                const airefText = airefCols.length
+                    ? ('｜🎤 口說答案：' + airefCols.map(function (c) { return esc(c.semantic_key || c.letter); }).join('、'))
+                    : '｜<span style="color:#D97706;">💡 尚未指定口說答案（script.txt 會整份留白，不影響 meta.json）</span>';
+                // 2026-08-07：書寫答案欄數>1才有批改標準這個概念，欄數≤1不顯示，避免無意義的雜訊
+                const gradingModeText = aCount > 1
+                    ? ('｜答案批改：' + (t.answer_mode === 'separate' ? '分開比對' : '結合') + '｜口說批改：' + ({ formula: '公式', complex: '複雜規則', paste: '貼上多筆' }[t.speak_mode] || '公式'))
+                    : '';
                 const designed = t.designed_from;
                 const designedText = designed ? ('｜設計參考：' + esc(designed.material_folder || '') + (designed.file_name ? '／' + esc(designed.file_name) : '')) : '';
                 // 2026-08-06 修正：正在被上方編輯器編輯的那一筆，下面清單不該「照常顯示」（看起來像
@@ -1515,7 +1809,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         + '<button type="button" class="mlp-tpl-duplicate-btn" data-id="' + esc(t.id) + '" style="padding:3px 10px; font-size:0.74rem; font-weight:800; border:1px solid #C4B5FD; border-radius:4px; background:#F5F3FF; color:#6D28D9; cursor:pointer;">📋 複製</button>'
                         + '<button type="button" class="mlp-tpl-delete-btn" data-id="' + esc(t.id) + '" style="padding:3px 10px; font-size:0.74rem; font-weight:800; border:1px solid #FCA5A5; border-radius:4px; background:white; color:#B91C1C; cursor:pointer;">🗑️ 刪除</button>';
                 return '<li data-id="' + esc(t.id) + '" style="' + liStyle + '">'
-                    + '<span style="font-size:0.82rem; color:#334155;"><strong>' + esc(t.name || '（未命名）') + '</strong>｜共 ' + cols.length + ' 欄（題目 ' + qCount + '／答案 ' + aCount + '／訊息 ' + iCount + '）' + airefText + designedText + '</span>'
+                    + '<span style="font-size:0.82rem; color:#334155;"><strong>' + esc(t.name || '（未命名）') + '</strong>｜共 ' + cols.length + ' 欄（題目 ' + qCount + '／書寫答案 ' + aCount + '／訊息 ' + iCount + '）' + airefText + gradingModeText + designedText + '</span>'
                     + '<span style="flex:1;"></span>'
                     + actionsHtml
                     + '</li>';
@@ -1569,7 +1863,11 @@ window.FeatureMaterialLayoutPairing = (function () {
                     is_ai_ref: !!(c && c.is_ai_ref)
                 };
             }),
-            designed_from: (t && t.designed_from) ? Object.assign({}, t.designed_from) : null
+            designed_from: (t && t.designed_from) ? Object.assign({}, t.designed_from) : null,
+            answerMode: (t && t.answer_mode === 'separate') ? 'separate' : 'combine',
+            answerCombineNote: (t && t.answer_combine_note) || '',
+            speakMode: (t && ['formula', 'complex', 'paste'].indexOf(t.speak_mode) !== -1) ? t.speak_mode : 'formula',
+            speakFormula: (t && t.speak_formula) || ''
         };
         renderTemplateEditor();
         renderTemplateList();
@@ -1865,18 +2163,55 @@ window.FeatureMaterialLayoutPairing = (function () {
      *   - 即使指定了，某一列該欄留白也不影響這列進 meta.json，只是 script.txt 那一行會是空行
      * 空行（而不是整行跳過）是為了保持 script.txt 跟 meta.json rows「逐列對應」的位置關係，
      * 之後老師陸續補上 AI對照稿內容時，行號不會全部錯位。
+     *
+     * 2026-08-07（正名＋批改標準）：AI對照稿→口說答案；答案→書寫答案。書寫答案欄數>1時，
+     * 每列會多寫 _answer_mode／_answer_keys（供線上考卷之後判斷分開比對／結合），口說答案欄數>1
+     * 且批改標準為「帶入公式」時，用 LayoutFieldsEval 依公式算出候選值；「複雜規則」／「貼上多筆」
+     * 兩種模式先留白，交給老師在畫面上逐列個別修正（overrides，key＝Excel 真實列號 r）。
+     * overrides／老師修正值優先於公式算出來的候選值，兩者都會回傳供畫面顯示「計算值」對照。
+     *
+     * 2026-08-08（口說答案改可複選）：老師強調「口說答案不能互斥」，UI 已經是可勾多欄的
+     * checkbox。這裡對應改成 `airefCols`（陣列，不再只取第一個）：
+     *   - 0 欄：候選值＝''（維持舊行為，允許整批留空）
+     *   - 1 欄：候選值＝該欄原始值（跟改成可複選之前完全一樣，單欄老師不會感覺到任何變化）
+     *   - ≥2 欄：候選值＝依欄位順序把這些欄的原始值用空白串接起來（沒有另外設定公式時的
+     *     預設組合方式；aCount>1 且 speakMode==='formula' 時仍優先用 speakFormula 算）
+     * 最終值只有「剛好 1 欄」時才會覆寫回該欄自己的 semantic_key（維持舊行為：那欄本來就是
+     * 「口說答案」欄本身）；≥2 欄時**不**覆寫任何一欄的原始值——因為同一欄可能同時也被勾了
+     * 「書寫答案」等其他角色，覆寫會把該欄原本的內容洗掉，最終合併後的口說答案只會出現在
+     * script.txt／scriptLines，不會混進 meta.json 個別欄位裡。
      */
-    function buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr) {
+    /** 「套用到教材」用：從某個 appId 已選好的本機檔案取矩陣，其餘生成邏輯共用 buildGenerationFromMatrix */
+    function buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr, overrides) {
         const matrix = parseAppSheetMatrix(appId, sheetName);
+        return buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides);
+    }
+
+    /**
+     * 核心生成邏輯：給矩陣（不管來自哪個 appId／哪個本機檔案）＋ template ＋ 行數起迄，算出
+     * meta.json rows／script.txt 行。「套用到教材」（buildGenerationForSheet）跟「設計 Template」
+     * 卡片內的即時預覽（segment 用 parseExcelSegmentMatrix 取矩陣）共用這一份，避免兩邊各寫一次、
+     * 之後改邏輯又要改兩處、漏改一處。
+     */
+    function buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides) {
         if (!matrix || !matrix.length) {
             return { ok: false, error: '找不到活頁資料或活頁是空的，請確認本機 Excel 檔案已選擇、活頁名稱正確' };
         }
         const cols = Array.isArray(template && template.columns) ? template.columns : [];
-        const airefCol = cols.find(function (c) { return c && c.is_ai_ref && c.letter && c.semantic_key; });
+        const airefCols = cols.filter(function (c) { return c && c.is_ai_ref && c.letter && c.semantic_key; });
+        const answerCols = cols.filter(function (c) { return c && c.is_answer && c.letter && c.semantic_key; });
+        const aCount = answerCols.length;
+        const answerMode = template && template.answer_mode === 'separate' ? 'separate' : 'combine';
+        const speakMode = (template && ['formula', 'complex', 'paste'].indexOf(template.speak_mode) !== -1) ? template.speak_mode : 'formula';
+        const speakFormula = (template && template.speak_formula) || '';
         const fieldMap = cols.filter(function (c) { return c && c.letter && c.semantic_key; }).map(function (c) {
-            return { key: c.semantic_key, idx: colLetterToIndex0(c.letter) };
+            return { key: c.semantic_key, idx: colLetterToIndex0(c.letter), letter: String(c.letter).toUpperCase() };
         }).filter(function (f) { return f.idx >= 0; });
         if (!fieldMap.length) return { ok: false, error: 'Template 沒有任何有效的欄位對應（欄位代號或資料項名稱缺漏）' };
+        // 給公式引擎相容用：欄位代號（大寫）→ 資料項名稱，讓「AN&" "&AO」這種寫法也能算
+        const letterToSemantic = {};
+        fieldMap.forEach(function (f) { letterToSemantic[f.letter] = f.key; });
+        const overrideMap = overrides || {};
 
         let rowStart = parseInt(rowStartStr, 10);
         if (isNaN(rowStart) || rowStart < 1) rowStart = 2;
@@ -1887,9 +2222,12 @@ window.FeatureMaterialLayoutPairing = (function () {
 
         const rows = [];
         const scriptLines = [];
+        const rowNos = [];
+        const speakComputed = [];
         const warnings = [];
         let formulaWarned = false;
         let missingAiRefCount = 0;
+        let formulaErrorWarned = false;
         for (let r = rowStart; r <= rowEnd; r++) {
             const rowArr = matrix[r - 1] || [];
             const rowObj = {};
@@ -1908,19 +2246,74 @@ window.FeatureMaterialLayoutPairing = (function () {
                 hasAnyValue = true;
             });
             if (!hasAnyValue) continue;
+
+            if (aCount > 1) {
+                rowObj._answer_mode = answerMode;
+                rowObj._answer_keys = answerCols.map(function (c) { return c.semantic_key; });
+            }
+
+            // 候選口說答案值：書寫答案≤1欄＝維持舊行為（口說答案欄原始值，可複選後多欄用空白串接）；
+            // >1欄則依批改標準決定（帶公式優先，否則跟口說答案多欄一樣退回空白串接）
+            let candidate = '';
+            if (aCount > 1 && speakMode === 'formula' && speakFormula && window.LayoutFieldsEval) {
+                try {
+                    const cells = window.LayoutFieldsEval.evaluateFields(speakFormula, rowObj, letterToSemantic);
+                    candidate = (cells && cells[0] && cells[0].text != null) ? String(cells[0].text) : '';
+                } catch (_e) {
+                    candidate = '';
+                    if (!formulaErrorWarned) {
+                        warnings.push('⚠️ 口說答案公式「' + speakFormula + '」計算失敗（例如第 ' + r + ' 列），這幾列口說答案先留白，請逐列個別修正或修正公式。');
+                        formulaErrorWarned = true;
+                    }
+                }
+            } else if (aCount > 1 && (speakMode === 'complex' || speakMode === 'paste')) {
+                // 先留白（candidate=''），交給老師逐列修正／貼上
+            } else if (airefCols.length > 1) {
+                // 沒有指定公式（或書寫答案≤1欄）時，多欄口說答案的預設組合方式：依欄位順序空白串接
+                candidate = airefCols.map(function (c) { return rowObj[c.semantic_key]; })
+                    .filter(function (v) { return v !== null && v !== undefined && String(v).trim() !== ''; })
+                    .map(function (v) { return String(v).trim(); })
+                    .join(' ');
+            } else {
+                const airefVal = airefCols[0] ? rowObj[airefCols[0].semantic_key] : null;
+                candidate = (airefVal !== null && airefVal !== undefined) ? String(airefVal).trim() : '';
+            }
+
+            const override = overrideMap[r];
+            const finalSpeak = (override !== null && override !== undefined) ? String(override) : candidate;
+            // 只有「剛好 1 欄」才覆寫回該欄自己的 semantic_key（維持舊行為：那欄本身就代表口說答案）；
+            // ≥2 欄時不覆寫任何一欄的原始值——同一欄可能同時兼任「書寫答案」等其他角色，
+            // 覆寫會把該欄原始內容洗掉，合併後的結果只會出現在 script.txt／scriptLines
+            if (airefCols.length === 1) rowObj[airefCols[0].semantic_key] = finalSpeak;
+
             rows.push(rowObj);
-            const airefVal = airefCol ? rowObj[airefCol.semantic_key] : null;
-            if (airefVal === null || airefVal === undefined || String(airefVal).trim() === '') missingAiRefCount++;
-            scriptLines.push(airefVal !== null && airefVal !== undefined ? String(airefVal).trim() : '');
+            rowNos.push(r);
+            speakComputed.push(candidate);
+            if (!finalSpeak.trim()) missingAiRefCount++;
+            scriptLines.push(finalSpeak.trim());
         }
         if (!rows.length) {
             warnings.push('⚠️ 第 ' + rowStart + '～' + rowEnd + ' 列裡每一格都是空的，產出會是 0 列——請確認行數起迄是否正確。');
-        } else if (!airefCol) {
-            warnings.push('💡 這個 Template 尚未指定「🎤 AI對照稿」欄位，script.txt 會整份留白（' + rows.length + ' 個空行）——之後在 Layout Template 補上該欄再重新產生即可，不影響 meta.json 這 ' + rows.length + ' 列。');
+        } else if (aCount > 1 && (speakMode === 'complex' || speakMode === 'paste')) {
+            warnings.push('💡 這個 Template 書寫答案共 ' + aCount + ' 欄，口說答案批改標準為「' + (speakMode === 'paste' ? '直接貼上多筆' : '之後會寫複雜規則') + '」，請在下方逐列表格貼上／輸入口說答案內容（目前 ' + missingAiRefCount + '／' + rows.length + ' 列尚未填）。');
+        } else if (!airefCols.length && aCount <= 1) {
+            warnings.push('💡 這個 Template 尚未指定「🎤 口說答案」欄位，script.txt 會整份留白（' + rows.length + ' 個空行）——之後在 Layout Template 補上該欄再重新產生即可，不影響 meta.json 這 ' + rows.length + ' 列。');
         } else if (missingAiRefCount > 0) {
-            warnings.push('💡 這 ' + rows.length + ' 列裡有 ' + missingAiRefCount + ' 列「' + airefCol.semantic_key + '」（AI對照稿）留白，script.txt 對應那幾行會是空行——不影響 meta.json，之後補上內容重新產生即可。');
+            warnings.push('💡 這 ' + rows.length + ' 列裡有 ' + missingAiRefCount + ' 列口說答案留白，script.txt 對應那幾行會是空行——不影響 meta.json，之後補上內容重新產生即可。');
         }
-        return { ok: true, rows: rows, scriptLines: scriptLines, warnings: warnings, rowStart: rowStart, rowEnd: rowEnd };
+        return {
+            ok: true,
+            rows: rows,
+            scriptLines: scriptLines,
+            rowNos: rowNos,
+            speakComputed: speakComputed,
+            aCount: aCount,
+            speakMode: speakMode,
+            answerMode: answerMode,
+            warnings: warnings,
+            rowStart: rowStart,
+            rowEnd: rowEnd
+        };
     }
 
     function defaultOutputNames(sheetName) {
@@ -1957,6 +2350,50 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
     }
 
+    /**
+     * 書寫答案欄數>1 時，口說答案批改標準的逐列確認／修正表格：計算值（唯讀，來自公式或空白）
+     * 對照修正後值（可編輯，預填為目前最終值），修正後即為最終寫入 meta.json／script.txt 的內容。
+     * speak_mode==='paste' 時額外顯示「貼上多筆」小工具（標注起始題號，依 item_no 比對；沒有
+     * item_no 或比對不上的列就依順序 fallback），套用後同樣落到同一份 override 表，仍可再個別修正。
+     */
+    function renderSpeakOverrideAreaHtml(name, g) {
+        if (!g || !g.previewed || g.error || !Array.isArray(g.rows) || !g.rows.length || !(g.aCount > 1)) return '';
+        const pasteBlockHtml = g.speakMode === 'paste' ? (
+            '<div style="margin-top:6px; padding:8px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:6px;">'
+            + '<div style="font-size:0.72rem; font-weight:800; color:#475569; margin-bottom:4px;">📋 貼上多筆口說答案（一行一筆；若列上有題號會依起始題號比對，否則依順序比對）</div>'
+            + '<div style="display:flex; gap:6px; align-items:center; margin-bottom:4px; flex-wrap:wrap;">'
+            + '<label style="font-size:0.72rem; color:#64748B;">起始題號<input type="number" class="form-control mlp-app-speak-paste-start" style="width:90px; padding:4px; margin-left:4px;"></label>'
+            + '<button type="button" class="mlp-app-speak-paste-apply btn" style="padding:4px 10px; font-size:0.72rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:6px; cursor:pointer;">套用貼上內容</button>'
+            + '</div>'
+            + '<textarea class="form-control mlp-app-speak-paste-text" rows="4" style="width:100%; font-size:0.76rem; padding:6px;" placeholder="一行一筆，依序或依題號對應各列"></textarea>'
+            + '</div>'
+        ) : '';
+        const rowsHtml = g.rows.map(function (row, i) {
+            const rowNo = g.rowNos ? g.rowNos[i] : (g.rowStart + i);
+            const computed = (g.speakComputed && g.speakComputed[i]) || '';
+            const finalVal = (g.scriptLines && g.scriptLines[i]) || '';
+            const answerPreview = (Array.isArray(row._answer_keys) ? row._answer_keys : []).map(function (k) { return row[k]; }).filter(function (v) { return v != null && v !== ''; }).join(' / ');
+            return '<tr>'
+                + '<td style="padding:3px 6px; font-size:0.7rem; color:#94A3B8; white-space:nowrap;">第' + rowNo + '列</td>'
+                + '<td style="padding:3px 6px; font-size:0.72rem; color:#334155;">' + esc(answerPreview) + '</td>'
+                + '<td style="padding:3px 6px; font-size:0.72rem; color:#94A3B8;">' + (computed ? esc(computed) : '（無）') + '</td>'
+                + '<td style="padding:3px 6px;"><input type="text" class="form-control mlp-app-speak-override" data-row-no="' + rowNo + '" data-idx="' + i + '" value="' + esc(finalVal) + '" style="width:100%; padding:4px; font-size:0.76rem;"></td>'
+                + '</tr>';
+        }).join('');
+        return `
+            <div style="margin-top:8px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px; padding:8px;">
+                <div style="font-size:0.74rem; font-weight:800; color:#92400E; margin-bottom:4px;">🎤 口說答案逐列確認／修正（共 ${g.rows.length} 列，修正後即為最終寫入內容）</div>
+                ${pasteBlockHtml}
+                <div style="max-height:260px; overflow-y:auto; margin-top:6px;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead><tr style="text-align:left; font-size:0.68rem; color:#78716C;"><th style="padding:3px 6px;">列號</th><th style="padding:3px 6px;">書寫答案</th><th style="padding:3px 6px;">計算值</th><th style="padding:3px 6px;">最終口說答案（可修正）</th></tr></thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
     function renderAppGenAreaHtml(appId) {
         const state = ensureAppRowState(appId);
         if (state.sourceKind !== 'local') {
@@ -1985,7 +2422,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         : '';
                     const warnHtml = (g.warnings || []).map(function (w) { return '<div style="color:#B45309; font-size:0.72rem; margin-top:2px;">' + esc(w) + '</div>'; }).join('');
                     bodyHtml = '<div style="font-size:0.76rem; color:#0F766E; font-weight:800; margin-top:4px;">✅ 共 ' + g.rows.length + ' 列（下方預覽前 ' + sample.length + ' 列），script.txt ' + g.scriptLines.length + ' 行</div>'
-                        + warnHtml + sampleHtml;
+                        + warnHtml + sampleHtml + renderSpeakOverrideAreaHtml(name, g);
                 }
             }
             const uploadHtml = g.uploadStatus
@@ -2038,6 +2475,83 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (previewBtn) previewBtn.addEventListener('click', function () { handleGeneratePreview(rowEl, appId); });
         const uploadBtn = rowEl.querySelector('.mlp-app-gen-upload');
         if (uploadBtn) uploadBtn.addEventListener('click', function () { handleConfirmUpload(rowEl, appId); });
+
+        /**
+         * 逐列修正輸入框：改一列＝立刻更新這一列的 g.scriptLines／g.speakOverrides（供上傳直接採用）。
+         * 只有「Template 剛好只勾了 1 欄口說答案」時，才同步寫回 g.rows 裡那一欄語意鍵的值
+         * （跟 buildGenerationFromMatrix 對齊：那欄本身就代表口說答案，維持舊行為）；勾了 2 欄以上
+         * 時**不**寫回任何一欄的原始值——同一欄可能同時兼任「書寫答案」等其他角色，寫回會把
+         * 該欄原始內容洗掉，修正後的值只會留在 script.txt／scriptLines。
+         */
+        rowEl.querySelectorAll('.mlp-app-speak-override').forEach(function (input) {
+            input.addEventListener('change', function () {
+                const sheetEl = this.closest('.mlp-app-gen-sheet');
+                const name = sheetEl ? sheetEl.getAttribute('data-sheet') : '';
+                const g = state.gen[name];
+                if (!g) return;
+                const rowNo = parseInt(this.getAttribute('data-row-no'), 10);
+                const idx = parseInt(this.getAttribute('data-idx'), 10);
+                if (!g.speakOverrides) g.speakOverrides = {};
+                g.speakOverrides[rowNo] = this.value;
+                if (Array.isArray(g.scriptLines) && idx >= 0) g.scriptLines[idx] = this.value;
+                const template = getCurrentAppTemplate(rowEl);
+                const airefCols = (template && Array.isArray(template.columns))
+                    ? template.columns.filter(function (c) { return c && c.is_ai_ref && c.semantic_key; })
+                    : [];
+                if (airefCols.length === 1 && g.rows && g.rows[idx]) g.rows[idx][airefCols[0].semantic_key] = this.value;
+            });
+        });
+        rowEl.querySelectorAll('.mlp-app-speak-paste-apply').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const sheetEl = this.closest('.mlp-app-gen-sheet');
+                const name = sheetEl ? sheetEl.getAttribute('data-sheet') : '';
+                const startEl = sheetEl ? sheetEl.querySelector('.mlp-app-speak-paste-start') : null;
+                const textEl = sheetEl ? sheetEl.querySelector('.mlp-app-speak-paste-text') : null;
+                handleApplyPasteBlock(rowEl, appId, name, startEl ? startEl.value : '', textEl ? textEl.value : '');
+            });
+        });
+    }
+
+    /**
+     * 貼上多筆口說答案：有題號（item_no）就依「起始題號」比對到正確列（跳過中間缺的題號也不會位移），
+     * 沒有題號就依貼上內容的行序對應各列。套用結果直接寫進 speakOverrides（跟老師手動逐列修正
+     * 是同一份資料），套用完仍可再對單一列個別修正——不是不可逆的批次操作。
+     */
+    function handleApplyPasteBlock(rowEl, appId, name, startStr, pastedText) {
+        const state = ensureAppRowState(appId);
+        const g = state.gen[name];
+        const msgEl = rowEl.querySelector('.mlp-app-gen-msg');
+        if (!g || !Array.isArray(g.rows) || !g.rows.length) return;
+        const lines = String(pastedText || '').split(/\r?\n/);
+        if (!g.speakOverrides) g.speakOverrides = {};
+        const startNo = parseInt(startStr, 10);
+        const template = getCurrentAppTemplate(rowEl);
+        // 只有剛好 1 欄口說答案時才寫回該欄原始值（理由跟逐列修正輸入框一致，見上方註解）
+        const airefCols = (template && Array.isArray(template.columns))
+            ? template.columns.filter(function (c) { return c && c.is_ai_ref && c.semantic_key; })
+            : [];
+        const airefCol = airefCols.length === 1 ? airefCols[0] : null;
+        let applied = 0;
+        g.rows.forEach(function (row, i) {
+            let lineIdx = i;
+            if (!isNaN(startNo)) {
+                const itemNo = Number(row.item_no);
+                if (!isNaN(itemNo)) lineIdx = itemNo - startNo;
+            }
+            if (lineIdx < 0 || lineIdx >= lines.length) return;
+            const val = lines[lineIdx];
+            const rowNo = (g.rowNos && g.rowNos[i]) || (g.rowStart + i);
+            g.speakOverrides[rowNo] = val;
+            if (Array.isArray(g.scriptLines)) g.scriptLines[i] = val;
+            if (airefCol) row[airefCol.semantic_key] = val;
+            applied += 1;
+        });
+        if (msgEl) {
+            msgEl.style.color = applied === g.rows.length ? '#059669' : '#B45309';
+            msgEl.textContent = '✅ 已套用貼上內容（' + applied + '/' + g.rows.length + ' 列對應成功）'
+                + (applied < g.rows.length ? '，部分列題號對不上或貼上行數不足，其餘列請個別修正' : '');
+        }
+        refreshAppGenArea(rowEl, appId);
     }
 
     function handleGeneratePreview(rowEl, appId) {
@@ -2054,12 +2568,16 @@ window.FeatureMaterialLayoutPairing = (function () {
         sheetNames.forEach(function (name) {
             const prevOutputMeta = state.gen[name] && state.gen[name].outputMeta;
             const prevOutputScript = state.gen[name] && state.gen[name].outputScript;
-            const result = buildGenerationForSheet(appId, name, template, rowStartStr, rowEndStr);
+            // speakOverrides（老師逐列修正／貼上的口說答案）要跨「重新產生預覽」保留下來，
+            // 不能因為改了行數起迄或重按一次預覽就整批被公式算出來的候選值蓋掉
+            const prevOverrides = (state.gen[name] && state.gen[name].speakOverrides) || {};
+            const result = buildGenerationForSheet(appId, name, template, rowStartStr, rowEndStr, prevOverrides);
             state.gen[name] = Object.assign({}, result, {
                 previewed: true,
                 outputMeta: prevOutputMeta,
                 outputScript: prevOutputScript,
-                uploadStatus: null
+                uploadStatus: null,
+                speakOverrides: prevOverrides
             });
         });
         if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 預覽已更新，請確認內容無誤後再上傳'; }
@@ -2394,9 +2912,15 @@ window.FeatureMaterialLayoutPairing = (function () {
                     設定每欄的資料項名稱／題目／答案／訊息 → 取個名字分別儲存。存好後會出現在上面「Layout Template」清單，
                     之後不需要這個檔案也能繼續編輯／刪除。同一活頁若需要不同排版，按「＋新增一組」再建一份獨立 Template。
                 </p>
-                <input type="file" id="mlp-excel-file" accept=".xlsx,.xls" class="form-control" style="max-width:420px;">
-                <div id="mlp-excel-status" style="font-size:0.78rem; color:#EF4444; min-height:1.2em; margin-top:6px;"></div>
-                <div id="mlp-excel-folderfile"></div>
+                <div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:240px; display:flex; flex-direction:column; background:#FAFAFA; border:2px solid #E2E8F0; border-radius:10px; padding:14px; box-sizing:border-box; justify-content:center;">
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569; display:block;">📄 本機來源檔案
+                            <input type="file" id="mlp-excel-file" accept=".xlsx,.xls" class="form-control" style="width:100%; padding:6px; margin-top:2px;">
+                        </label>
+                        <div id="mlp-excel-status" style="font-size:0.78rem; color:#EF4444; min-height:1.2em; margin-top:2px;"></div>
+                    </div>
+                    <div id="mlp-excel-folderfile" style="flex:1; min-width:240px; display:flex; flex-direction:column;"></div>
+                </div>
                 <div id="mlp-excel-block" style="margin-top:10px;"></div>
             </div>
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">

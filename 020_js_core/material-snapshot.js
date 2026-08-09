@@ -33,13 +33,30 @@ window.MaterialSnapshot = (function () {
      * 分隔距離："-"／"~" 皆可（含全形變體）。
      * 雷區：不接受裸數字（如單獨的 "1"）——沒有 p./pp./# 前綴無法判斷是頁碼還是題號，
      * 曾經被默默當頁碼解析，老師完全不知道自己選錯了，故意在此明確拒絕並要求補前綴。
+     *
+     * 2026-08-08：容忍「活頁代號＋空白＋範圍」這種格式（例：「G p. 1」）——這種格式在
+     * 別處（多冊合併摘要，例：「A pp. 1~2；B pp. 3~4」、輸入框 placeholder「A pp. 1~2 B pp. 1~2」）
+     * 本來就是合法、隨處可見的寫法，老師看多了自然會把同一種寫法套用到單列範圍輸入框，
+     * 這不是老師打錯格式，是介面本身讓兩種輸入框（單列 vs 合併摘要）看起來該用同一種語法。
+     * 開頭那一段代號其實跟這一列真正的活頁是透過下拉選單決定的，文字本身是多餘、可以
+     * 直接忽略的資訊——只要代號後面接的是合法的 p./pp./# 前綴，就把代號那一段拿掉再繼續解析，
+     * 不要直接拒絕。
      */
+    function stripLeadingStemLabel(text) {
+        var m = text.match(/^([^\s#]+)\s+(?=#|pp?\.?\s*\d)/i);
+        if (m && !/^pp?\.?$/i.test(m[1])) {
+            return text.slice(m[0].length);
+        }
+        return text;
+    }
+
     function parseRangeSpec(raw) {
         var text = String(raw || '').trim();
         if (!text) throw new Error('請填寫範圍（例：p. 1、pp. 1~2, 5, 10 或 #11~16, 26）');
         if (/^all$/i.test(text) || text === '全部' || text === '全部列') {
             return { kind: 'all', pages: null, items: null, label: 'all' };
         }
+        text = stripLeadingStemLabel(text);
 
         // 前綴只認開頭那一個：# → 題號；p./pp.（含無點、大小寫）→ 頁碼。裸數字一律拒絕。
         var itemPrefixMatch = text.match(/^\s*#\s*/);

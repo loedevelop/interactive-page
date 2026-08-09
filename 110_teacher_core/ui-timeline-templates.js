@@ -266,6 +266,35 @@ window.TimelineTemplates = (() => {
         return html;
     }
 
+    /**
+     * C. 自行貼上：單一視窗卡片。win = { label, script, student }。
+     * total<=1 時不顯示刪除鈕（至少留一個視窗），標籤欄位在只有 1 個視窗時仍可填，
+     * 但存檔時只有「視窗數 >1 或標籤非空」才會真的寫入 【label】 前綴，避免污染最單純的舊格式。
+     */
+    function renderPasteWindowRowHtml(pathStr, winIdx, win, total) {
+        const safeLabel = String((win && win.label) || '').replace(/"/g, '&quot;');
+        const safeWinScript = String((win && win.script) || '').replace(/</g, '&lt;');
+        const safeWinStudent = String((win && win.student) || '').replace(/</g, '&lt;');
+        const removeBtn = total > 1
+            ? `<button type="button" class="btn" style="padding:6px 8px; color:#B91C1C; flex-shrink:0;" onclick="window.FeatureTimeline.removePasteWindowRow(this, '${pathStr}')" title="刪除此視窗">🗑</button>`
+            : '';
+        return `
+            <div class="paste-window-row" data-idx="${winIdx}" style="display:flex; gap:8px; align-items:flex-start; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
+                <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
+                    <input type="text" class="form-control paste-window-label" style="padding:6px; font-size:0.85rem; font-weight:800; color:#7C3AED; max-width:260px;" placeholder="這段標籤（選填，如 Page 2／Ex.3）" value="${safeLabel}">
+                    <div>
+                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">🎯 批改文稿（AI 基準）</div>
+                        <textarea class="form-control paste-window-script" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上 AI 評分用英文稿…">${safeWinScript}</textarea>
+                    </div>
+                    <div>
+                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">👀 學生顯示文稿</div>
+                        <textarea class="form-control paste-window-student" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上學生錄音艙看到的內容…">${safeWinStudent}</textarea>
+                    </div>
+                </div>
+                ${removeBtn}
+            </div>`;
+    }
+
     function getArrowButtonsHtml(pathStr, idx, arrLength, depth, hasPrevSiblingGroup) {
         const canUp = idx > 0;
         const canDown = idx < arrLength - 1;
@@ -295,12 +324,19 @@ window.TimelineTemplates = (() => {
             if (t.type === 'group') {
                 const isRangeGroup = !!(t.raw_data && t.raw_data.group_role === 'range');
                 let displayGroupTitle = t.title || '';
-                if (isRangeGroup && !String(displayGroupTitle).replace(/<[^>]*>?/gm, '').trim()
+                // 💣 雷區：不能只看「標題目前是否為空」──自動填過一次存檔後 t.title 就非空了，
+                // 之後老師怎麼改 base 範圍都不會再更新（見 title_auto_from_range 說明）。
+                // 用獨立存檔的旗標判斷「這串文字是不是還在自動繼承中」，旗標為 true 就繼續追蹤最新範圍。
+                const groupTitleWasAuto = !!(t.raw_data && t.raw_data.title_auto_from_range);
+                let groupTitleAutoAttr = groupTitleWasAuto ? '1' : '0';
+                if (isRangeGroup && (groupTitleWasAuto || !String(displayGroupTitle).replace(/<[^>]*>?/gm, '').trim())
                     && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
                     const derived = window.BuilderStore.deriveRangeTitleFromGroup(t);
                     if (derived) {
                         displayGroupTitle = derived;
                         t.title = derived; // 畫面與資料同步；老師仍可再改
+                        groupTitleAutoAttr = '1';
+                        if (t.raw_data) t.raw_data.title_auto_from_range = true;
                     }
                 }
                 let subTasksHtml = '';
@@ -342,7 +378,10 @@ window.TimelineTemplates = (() => {
                         
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom: 10px; padding-bottom: 10px;">
                             <span style="font-size:1.4rem;">${groupIcon}</span>
-                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="${titlePlaceholder}" style="flex:1; font-size:1.1rem; font-weight:900; color:${titleColor}; padding:8px 12px; background:white; border:1px solid ${titleBorder}; border-radius:6px; outline:none;">${displayGroupTitle || ''}</div>
+                            <div id="node-title-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="${titlePlaceholder}"
+                                 data-title-auto="${groupTitleAutoAttr}"
+                                 oninput="window.FeatureTimeline && window.FeatureTimeline.onGroupTitleInput && window.FeatureTimeline.onGroupTitleInput('${pathStr}', this)"
+                                 style="flex:1; font-size:1.1rem; font-weight:900; color:${titleColor}; padding:8px 12px; background:white; border:1px solid ${titleBorder}; border-radius:6px; outline:none;">${displayGroupTitle || ''}</div>
                             ${rangeBadge}
                             
                             <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
@@ -463,6 +502,15 @@ window.TimelineTemplates = (() => {
 
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_display_text || raw.student_display || raw.student_text || '').replace(/"/g, '&quot;');
+                    // C. 自行貼上：可拆成多個視窗（每頁／每個 exercise 各一個），存成 raw_data.paste_windows；
+                    // 只有 1 個視窗、且沒標籤時，跟舊資料格式完全相同（單一 original_script／student_display）。
+                    // 見 .cursor/rules/assignment-title-auto-inherit-invariant.mdc 旁的 paste-windows 說明。
+                    const pasteWindows = (Array.isArray(raw.paste_windows) && raw.paste_windows.length)
+                        ? raw.paste_windows
+                        : [{ label: '', script: raw.original_script || '', student: raw.student_display_text || raw.student_display || raw.student_text || '' }];
+                    const pasteWindowsHtml = pasteWindows.map(function (win, winIdx) {
+                        return renderPasteWindowRowHtml(pathStr, winIdx, win, pasteWindows.length);
+                    }).join('');
                     // 標題空白時以 base 範圍顯示（data-title-auto 供範圍變更時同步更新）
                     const plainTaskTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                     let materialRefs = Array.isArray(raw.material_refs) && raw.material_refs.length
@@ -481,8 +529,14 @@ window.TimelineTemplates = (() => {
                         resolvedMaterialRange = window.FeatureTimeline.buildMaterialRangeLabelFromRows(materialRefs) || '';
                     }
                     const titleFromRange = String(resolvedMaterialRange || '').trim();
-                    audioTitleIsAuto = !plainTaskTitle && !!titleFromRange;
-                    audioDisplayTitle = plainTaskTitle || titleFromRange || '';
+                    // 💣 雷區：不能只靠「標題目前是否為空」判斷是否自動繼承──自動填過一次存檔後
+                    // t.title 就非空了，之後老師怎麼改 base 範圍，標題都會卡死在第一次算出來的值
+                    // （例："Unit 10"，不管之後範圍換成哪一冊都不會再更新）。改用獨立存檔的旗標
+                    // raw_data.title_auto_from_range 判斷，只要旗標仍是 true 就繼續追蹤最新範圍，
+                    // 直到老師真的手動打過字（onNodeTitleInput 會把旗標關掉）才凍結。
+                    const wasAudioTitleAuto = raw.title_auto_from_range === true;
+                    audioTitleIsAuto = (wasAudioTitleAuto || !plainTaskTitle) && !!titleFromRange;
+                    audioDisplayTitle = audioTitleIsAuto ? titleFromRange : (plainTaskTitle || titleFromRange || '');
                     audioTitleFromRangeAttr = titleFromRange.replace(/"/g, '&quot;');
                     const safeMaterialRange = String(resolvedMaterialRange || '').replace(/"/g, '&quot;');
                     const safeMaterialUrl = (raw.material_url || raw.student_drive_url || '').replace(/"/g, '&quot;');
@@ -689,17 +743,17 @@ window.TimelineTemplates = (() => {
                             </div>
 
                             <div id="script-source-panel-paste-${pathStr}" style="display:${showPaste ? 'block' : 'none'}; margin-bottom:14px;">
-                                <div style="display:flex; flex-direction:column; gap:12px;">
-                                    <div style="background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
-                                        <div style="font-weight:900; color:#334155; margin-bottom:8px;">🎯 批改文稿（AI 基準）</div>
-                                        <textarea id="node-script-paste-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上 AI 評分用英文稿…">${safeScript}</textarea>
-                                    </div>
-                                    <div style="background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
-                                        <div style="font-weight:900; color:#334155; margin-bottom:8px;">👀 學生顯示文稿</div>
-                                        <textarea id="node-student-text-paste-${pathStr}" class="form-control" style="width:100%; min-height:80px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上學生錄音艙看到的內容…">${safeStudentText}</textarea>
-                                    </div>
-                                    <div style="font-size:0.78rem; color:#64748B;">內容寫入作業 Snapshot 欄位；建議歸檔本班 01_Class_Resources。</div>
+                                <div style="font-size:0.78rem; color:#64748B; margin-bottom:8px; line-height:1.5;">
+                                    一次貼一整段常常混了好幾頁／好幾個 exercise，之後很難拆。若這次內容涵蓋不只一頁／一個 exercise，
+                                    建議按「➕ 增加視窗」，每頁／每個 exercise 各開一個視窗、標好頁碼或題號──日後用「📥 由下往上收集文稿」
+                                    整理教材時，才能自動依視窗分段，不用再手動猜哪裡該切。
                                 </div>
+                                <div id="node-paste-windows-${pathStr}" style="display:flex; flex-direction:column; gap:10px;">${pasteWindowsHtml}</div>
+                                <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.addPasteWindowRow('${pathStr}')">➕ 增加視窗</button>
+                                    <span style="font-size:0.75rem; color:#94A3B8;">${pasteWindows.length > 1 ? ('目前 ' + pasteWindows.length + ' 個視窗') : '只有 1 個視窗時不會加標籤，維持原本單段格式'}</span>
+                                </div>
+                                <div style="font-size:0.78rem; color:#64748B; margin-top:8px;">內容寫入作業 Snapshot 欄位；建議歸檔本班 01_Class_Resources。</div>
                             </div>
 
                             <div id="script-source-panel-resource-${pathStr}" style="display:${(showResource || showSkeleton) ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
@@ -753,13 +807,16 @@ window.TimelineTemplates = (() => {
                     leafTitleAuto = audioTitleIsAuto ? '1' : '0';
                     leafTitleFromRange = audioTitleFromRangeAttr;
                 } else if (t.type === 'exam') {
+                    const examRaw = t.raw_data || {};
                     const plainExamTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                     let examRangeHint = '';
                     if (window.BuilderStore && typeof window.BuilderStore.getState === 'function'
                         && window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
                     }
-                    if (!plainExamTitle && examRangeHint) {
+                    // 同樣不能只看標題是否為空，見上方「audio_record」的雷區說明
+                    const wasExamTitleAuto = examRaw.title_auto_from_range === true;
+                    if ((wasExamTitleAuto || !plainExamTitle) && examRangeHint) {
                         leafTitleHtml = examRangeHint.replace(/</g, '&lt;');
                         leafTitleAuto = '1';
                         leafTitleFromRange = examRangeHint.replace(/"/g, '&quot;');
@@ -1112,6 +1169,7 @@ window.TimelineTemplates = (() => {
         getTimelineRailAddHtml,
         getAddSessionModalHtml,
         getMoveAssignModalHtml,
-        getLinePushModalHtml
+        getLinePushModalHtml,
+        renderPasteWindowRowHtml
     };
 })();

@@ -133,6 +133,7 @@
             <div class="class-item" id="nav-global-resources">📚 資源管理</div>
             <div class="class-item" id="nav-manage-classes">⚙️ 班群管理</div>
             <div class="class-item" id="nav-material-layout">🧩 教材/Layout 搭配</div>
+            <div class="class-item" id="nav-script-collector">📥 由下往上收集文稿</div>
             <div class="class-item" id="nav-profile">👤 系統帳號設定</div>
         </div>
     </div>
@@ -314,6 +315,11 @@
             <div id="material-layout-pairing-container"></div>
         </div>
 
+        <div id="view-script-collector" class="view-section">
+            <div class="top-bar"><div class="breadcrumb">📥 由下往上收集文稿</div></div>
+            <div id="script-collector-container"></div>
+        </div>
+
         <div id="view-profile" class="view-section">
             <div class="top-bar"><div class="breadcrumb">👤 系統帳號設定</div></div>
             
@@ -349,15 +355,15 @@
     <script src="../020_js_core/ui-flash.js?v=2"></script>
     <script src="../020_js_core/auth-guard.js?v=39"></script>
     <script src="../020_js_core/store.js?v=39"></script>  
-    <script src="../020_js_core/api.js?v=42"></script>
+    <script src="../020_js_core/api.js?v=43"></script>
     <script src="../020_js_core/store-side-tables.js?v=1"></script> 
     <script src="../020_js_core/utils-date.js?v=57"></script> 
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/profile-form.js?v=1"></script>
     <script src="../020_js_core/task-script-resolver.js?v=4"></script>
-    <script src="../020_js_core/material-snapshot.js?v=10"></script>
+    <script src="../020_js_core/material-snapshot.js?v=11"></script> <!-- v11：parseRangeSpec 容忍「活頁代號＋空白＋範圍」（例：G p. 1），不再誤判成裸數字沒前綴 -->
     <script src="../020_js_core/layout-fields-eval.js?v=3"></script>
-    <script src="../020_js_core/quiz-paper-builder.js?v=8"></script> <!-- v8 修正 buildQuizPaper return 引用迴圈外已脫離作用域的 profile/fields 等變數（ReferenceError） -->
+    <script src="../020_js_core/quiz-paper-builder.js?v=9"></script> <!-- v9 支援一題多空格分開比對（sub_answers），對齊書寫答案批改標準「分開比對」 -->
     <script src="../020_js_core/modal-overlay.js?v=2"></script>
     <script src="../020_js_core/assignment-clone.js?v=2"></script>
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
@@ -368,8 +374,8 @@
     <script src="../110_teacher_core/api-gas-service.js?v=62"></script> <!-- batch read_material_files；fileId 直讀；v62 listMaterialMasters 附 debugVersion/resolvedRootId 除錯欄位 -->
     <script src="../110_teacher_core/ui-core.js?v=53"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=47"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=82"></script>
-    <script src="../110_teacher_core/store-assignment-builder.js?v=67"></script> 
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=83"></script> <!-- v83 標題自動繼承改用 raw_data.title_auto_from_range 旗標判斷，不再只看標題是否為空（修「Unit 10 卡死」） -->
+    <script src="../110_teacher_core/store-assignment-builder.js?v=68"></script> <!-- v68 同上：syncTasksState／fillBlankRangeGroupTitles 寫入並檢查 title_auto_from_range -->
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
@@ -384,11 +390,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
-    <script src="../110_teacher_core/feature-exam-job.js?v=25"></script>
-    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=25"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v25 AI對照稿改成完全選填、不再當有效列判斷依據 -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=26"></script> <!-- v26 refreshAfterAudioSnapshot 同步寫入 raw_data.title_auto_from_range -->
+    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=32"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v32：口說答案 checkbox 真正改成可複選（拿掉 JS 手動維持的互斥邏輯），下游生成/覆寫邏輯改吃多欄 -->
+    <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
     <script src="../110_teacher_core/feature-exam-review.js?v=1"></script>
-    <script src="../110_teacher_core/feature-timeline.js?v=111"></script> <!-- v111 教材清單快取不再永久信任「成功但空」，5 秒後自動重查＋除錯文字 getMetaCatalogDebugText -->
+    <script src="../110_teacher_core/feature-timeline.js?v=113"></script> <!-- v113 修正 onNodeTitleInput：只有 exam 類型才 fallback 抓同層錄音 base 範圍，避免「一般」(check) 任務標題被刪光後立刻被同層錄音範圍蓋回去 -->
     <script src="../110_teacher_core/feature-resource.js?v=44"></script>
     <script src="../110_teacher_core/feature-profile.js?v=41"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=40"></script>

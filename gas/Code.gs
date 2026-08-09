@@ -966,6 +966,9 @@ function doPost(e) {
       var subFolderName = data.subFolderName ? data.subFolderName : '';
       var assignmentId = data.assignmentId ? data.assignmentId : "";
       var taskId = data.taskId ? data.taskId : "";
+      // 「取代特定已上傳檔」：學生指定要覆蓋的舊檔 fileId（非檔名比對），
+      // 見 .cursor/rules/drive-folder-upload-invariants.mdc「取代特定已上傳檔」一節。
+      var oldFileId = data.oldFileId ? String(data.oldFileId).trim() : '';
 
       var cleanFileName = rawFileName.replace(/<[^>]*>?/gm, '').replace(/[\\/:*?"<>|]/g, '_').trim();
       if (!cleanFileName) cleanFileName = "未命名上傳檔案";
@@ -1032,6 +1035,19 @@ function doPost(e) {
           assignment_id: assignmentId,
           task_id: taskId
         }));
+      }
+
+      // 「取代特定已上傳檔」：新檔已成功建立後才 trash 舊檔（by fileId），
+      // 絕不能先刪舊檔再上傳新檔——上傳中途失敗會讓學生連舊檔都不見。
+      // trash 失敗只記錄，不影響本次上傳「成功」的結果。
+      if (oldFileId && oldFileId !== file.getId()) {
+        try {
+          retryDriveWrite(function () {
+            DriveApp.getFileById(oldFileId).setTrashed(true);
+          });
+        } catch (trashErr) {
+          Logger.log('取代上傳：舊檔 trash 失敗（新檔已成功上傳，不影響本次結果，oldFileId=' + oldFileId + '）：' + trashErr);
+        }
       }
 
       return ContentService.createTextOutput(JSON.stringify({

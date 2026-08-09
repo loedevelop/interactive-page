@@ -5,7 +5,15 @@
 window.QuizPaperBuilder = (function () {
     'use strict';
 
-    /** 尚未寫入 _layout.col_map 時的保守預設（GEPT sentence 常見） */
+    /**
+     * 尚未寫入 _layout.col_map 時的保守預設（GEPT sentence 常見）。
+     * 2026-08-08：這裡的 `X: 'script'` 故意保留不改——這是舊教材（沒有 col_map／沒有
+     * quiz_prompt/quiz_answer 公式）的相容 fallback，已經發布的舊 meta.json 真的用
+     * 'script' 當 semantic_key，改掉這裡會讀不到那些舊教材的答案欄。新教材的欄位名稱
+     * 建議清單已經在 feature-material-layout-pairing.js 的 SEMANTIC_KEY_SEED 改成
+     * 'answer_en'（避免跟「口說答案」/script.txt 概念撞名），但那只影響「新教材選什麼
+     * 名字」，不影響這裡讀舊資料的相容邏輯。
+     */
     const FALLBACK_COL_MAP = {
         D: 'sheet_id',
         E: 'page',
@@ -318,6 +326,22 @@ window.QuizPaperBuilder = (function () {
             clozeStem = cellsAnswer[1].text || '';
         }
 
+        /**
+         * 「分開比對」多空格：meta 列由 feature-material-layout-pairing.js 的 buildGenerationForSheet
+         * 在書寫答案欄數>1時寫入 _answer_mode／_answer_keys（見 material-layout-pairing-invariant.mdc）。
+         * 這裡把每個 _answer_keys 各自的原始值拆成一個 sub_answers 元素——一題多個空格、各自獨立比對，
+         * 跟舊的「單一 answer_en 整句比對」是兩條並存的路徑，不影響既有教材（沒有 _answer_mode 的
+         * 列完全走舊路徑）。answer_en 仍會補上一個「合併預覽」字串，供舊版只認 answer_en 的畫面
+         * （例如老師端答案訂正列表）當退路顯示，但實際批改一律用 sub_answers。
+         */
+        let subAnswers = null;
+        if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
+            subAnswers = row._answer_keys.map(function (key) {
+                return { key: key, label: key, answer_en: String(row[key] || '').trim(), accepted_answers: [] };
+            });
+            if (!answerEn) answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
+        }
+
         return {
             item_id: itemId,
             seq: 0,
@@ -326,6 +350,7 @@ window.QuizPaperBuilder = (function () {
             answer_en: answerEn,
             cloze_stem: clozeStem,
             accepted_answers: [],
+            sub_answers: subAnswers,
             cells: cells,
             cells_answer: cellsAnswer,
             source: {
@@ -487,18 +512,46 @@ window.QuizPaperBuilder = (function () {
         };
     }
 
+    /**
+     * 一題多空格（分開比對）：got 是 { [sub_key]: string } 物件，每個空格各自跟自己的
+     * answer_en／accepted_answers 比對，全部空格都對才算這一題對。回傳形狀跟單答案題一致
+     * （answer/expected 是合併後字串，供既有畫面顯示／diff），另外多帶 sub_results 給之後
+     * 要做逐空格顯示的畫面用（目前先沿用合併 diff，不逐空格標色）。
+     */
+    function gradeSubAnswerItem(it, got) {
+        const gotObj = (got && typeof got === 'object') ? got : {};
+        let allOk = true;
+        const subResults = it.sub_answers.map(function (sa) {
+            const g = normalizeAnswer(gotObj[sa.key]);
+            const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
+            const ok = g !== '' && okList.indexOf(g) !== -1;
+            if (!ok) allOk = false;
+            return { key: sa.key, label: sa.label, answer: gotObj[sa.key] == null ? '' : String(gotObj[sa.key]), expected: sa.answer_en, ok: ok };
+        });
+        return {
+            ok: allOk,
+            answer: subResults.map(function (r) { return r.answer; }).filter(Boolean).join(' '),
+            expected: it.sub_answers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' '),
+            sub_results: subResults
+        };
+    }
+
     function gradeAnswers(paper, answersByItemId) {
         const items = (paper && paper.items) || [];
         const map = answersByItemId || {};
         let correct = 0;
         const details = items.map(function (it) {
             const got = map[it.item_id];
-            const gotN = normalizeAnswer(got);
-            const okList = [it.answer_en].concat(it.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
-            const ok = gotN !== '' && okList.indexOf(gotN) !== -1;
+            const isSubAnswer = Array.isArray(it.sub_answers) && it.sub_answers.length > 1;
+            const subGrade = isSubAnswer ? gradeSubAnswerItem(it, got) : null;
+            const ok = isSubAnswer ? subGrade.ok : (function () {
+                const gotN = normalizeAnswer(got);
+                const okList = [it.answer_en].concat(it.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
+                return gotN !== '' && okList.indexOf(gotN) !== -1;
+            })();
             if (ok) correct += 1;
-            const expected = it.answer_en || '';
-            const answer = got == null ? '' : String(got);
+            const expected = isSubAnswer ? subGrade.expected : (it.answer_en || '');
+            const answer = isSubAnswer ? subGrade.answer : (got == null ? '' : String(got));
             const row = {
                 item_id: it.item_id,
                 seq: it.seq,
@@ -508,6 +561,7 @@ window.QuizPaperBuilder = (function () {
                 prompt_zh: it.prompt_zh || '',
                 source: it.source || null
             };
+            if (isSubAnswer) row.sub_results = subGrade.sub_results;
             if (!ok) {
                 row.diff = analyzeAnswerDiff(expected, answer);
             }
@@ -652,7 +706,8 @@ window.QuizPaperBuilder = (function () {
                 expected: d.expected,
                 prompt_zh: d.prompt_zh,
                 ops: (d.diff && d.diff.ops) || [],
-                spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
+                spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
+                sub_results: d.sub_results || null
             };
         });
 

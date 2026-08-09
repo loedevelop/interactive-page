@@ -64,6 +64,10 @@ E 模式的「base 範圍」欄位（`node-material-range-manual-${pathStr}`）�
 書名（如 `Azar-2`）要打在任務最上面的「✏️ 標題」欄——那裡是獨立欄位，`data-title-auto` 一旦被手動輸入蓋成 `'0'`
 就不會被 base 範圍同步覆寫。**不要**又把書名塞回 base 範圍輸入框，否則下一次路徑列變動就會把書名蓋掉。
 
+> 2026-08-07 修正：這個標題自動繼承機制曾有個跨 session 的坑，見
+> `assignment-title-auto-inherit-invariant.mdc`（老師改了 base 範圍，標題卻永遠卡在很久以前算出來的
+> 舊值，例如死抱著「Unit 10」不放）。動這裡的 `data-title-auto` 邏輯前，先讀那份規則。
+
 ## 不變量
 
 ```

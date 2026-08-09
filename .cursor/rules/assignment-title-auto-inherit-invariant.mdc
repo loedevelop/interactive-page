@@ -1,0 +1,186 @@
+---
+description: 任務／範圍群組標題「自動繼承 base 範圍」鐵律——曾卡死在舊值（例：怎麼改範圍標題都是 Unit 10）
+globs: 110_teacher_core/ui-timeline-templates.js,110_teacher_core/feature-timeline.js,110_teacher_core/store-assignment-builder.js
+alwaysApply: false
+---
+
+# 任務／範圍群組標題「自動繼承 base 範圍」鐵律
+
+> 2026-08-07：老師回報「錄音／E 單元骨架，出作業時標題永遠自動變成 Unit 10，不管 base 範圍設什麼」，
+> 一般作業（非骨架）也一樣。根因不是骨架模式專屬，是整套「標題自動繼承」機制的通用設計缺陷。
+> 動 `node-title-*` 的 `data-title-auto`／`applyInheritedTitleFromRange`／`deriveRangeTitleFromGroup`
+> 相關程式碼前必讀。
+
+## 症狀
+
+- 錄音任務／考試任務／範圍群組（`group_role==='range'`）的標題，曾經被自動帶入過一次（例如當時
+  base 範圍剛好算出「Unit 10」）並存檔。
+- 老師之後改 base 範圍（換教材、換 meta 列、換骨架路徑），存檔、重新整理、甚至重新打開這份作業，
+  標題**永遠**還是顯示舊的「Unit 10」，完全不會跟著新範圍變動。
+- 唯一能改掉的方法是老師自己手動刪光重打——但這正好又會把它「凍死」在新值，下次範圍再變又會卡住。
+
+## 根因
+
+自動繼承的判斷曾經完全依賴「**標題目前是否為空**」這一個條件（`!plainTaskTitle`），而不是一個
+獨立記錄「這串文字是自動算出來的還是老師手打的」的持久狀態：
+
+```javascript
+// ❌ 舊邏輯（已修正）：只看標題現在有沒有字
+audioTitleIsAuto = !plainTaskTitle && !!titleFromRange;
+```
+
+問題是：自動繼承算出來的文字，會直接寫進 `t.title`——這正是**會被存進資料庫**的欄位。於是：
+
+1. 第一次自動算出「Unit 10」→ 寫入 `t.title = "Unit 10"` → 存檔。
+2. 下次重新整理／重新打開這份作業，`t.title` 已經非空（"Unit 10"），系統無法分辨這是「自動」還是
+   「老師手打」，只能當成「老師手打」處理。
+3. 之後不管 base 範圍改成什麼，`applyInheritedTitleFromRange` 的 `shouldAuto` 判斷永遠是 `false`
+   （`current` 有字、`data-title-auto` 屬性在這次全新渲染中預設是 `'0'`），標題被永久凍結在「Unit 10」。
+
+`data-title-auto`／`data-title-from-range` 這兩個屬性本身**只存在於 DOM，且是每次重繪時重新計算**，
+渲染時的計算依據若又只看「標題是否為空」，就會在每一次 reload 後都把舊的自動值誤判為手動輸入，
+形成無法逃脫的迴圈。範圍群組標題（`deriveRangeTitleFromGroup` 寫回 `t.title`）也是同一個坑。
+
+## 不變量（修正後）
+
+```
+是否為「自動繼承中」的狀態，必須獨立存成會被存檔的 raw_data.title_auto_from_range（boolean），
+  不能只靠「標題字串目前是否為空」判斷──因為自動算出來的文字本身就會寫進標題欄位，
+  導致下次讀取時「有字」跟「老師手打過」畫上等號，卡死在舊值。
+
+raw_data.title_auto_from_range === true 時：
+  即使 t.title 已經有字，渲染／存檔時仍應該用最新 base 範圍重新計算並覆寫顯示內容，
+  直到老師真的手動編輯過標題（title 有非空文字輸入事件）才把旗標翻成 false，永久凍結。
+
+老師刪光標題文字 → 立刻把旗標翻回 true，恢復自動繼承（跟舊行為一致，這段沒變）。
+
+適用範圍：audio_record／exam 任務標題（跟同層 base 範圍／同層錄音範圍同步），
+  以及範圍群組（group_role==='range'）標題（跟 deriveRangeTitleFromGroup 同步）。
+```
+
+## 資料流（修正後）
+
+```
+渲染 (ui-timeline-templates.js)：
+  wasAuto = raw_data.title_auto_from_range === true
+  若 (wasAuto || 標題目前是空的) 且算得出最新範圍文字 → 顯示最新範圍文字，data-title-auto="1"
+  否則 → 顯示 t.title 原文，data-title-auto="0"
+
+互動 (feature-timeline.js onNodeTitleInput / onGroupTitleInput)：
+  標題輸入框有字 → data-title-auto 設回 '0'（純 DOM，暫時狀態，存檔時才會寫回 raw_data）
+  標題被刪光 → data-title-auto 設回 '1'，並立刻用最新範圍重新填入
+
+存檔 (store-assignment-builder.js syncTasksState)：
+  讀 DOM 的 data-title-auto 屬性 → 寫回 raw_data.title_auto_from_range（真正持久化的來源）
+  audio_record／exam／group(range) 各自的「用最新範圍覆寫標題」判斷，
+    都要同時看 raw_data.title_auto_from_range，不能只看標題是否為空
+```
+
+## 禁止
+
+```javascript
+// ❌ 只看標題目前是否為空，就判斷是不是「自動繼承中」
+audioTitleIsAuto = !plainTaskTitle && !!titleFromRange;
+
+// ❌ 範圍群組標題只在 t.title 目前是空字串時才重新計算
+if (isRangeGroup && !String(displayGroupTitle).trim() && ...) { ... }
+
+// ❌ 把「是否為自動繼承」的狀態只存在 DOM 的 data-title-auto 屬性，
+// 不额外寫回一個會被存檔的欄位（reload 後這個資訊就消失了）
+```
+
+## 正確
+
+```javascript
+// ✅ 用獨立存檔的旗標，不是只看標題字串本身
+const wasAuto = raw.title_auto_from_range === true;
+audioTitleIsAuto = (wasAuto || !plainTaskTitle) && !!titleFromRange;
+
+// ✅ 存檔時把 DOM 的 data-title-auto 讀回 raw_data
+t.raw_data.title_auto_from_range = (titleEl.getAttribute('data-title-auto') === '1');
+
+// ✅ 每次「用最新範圍覆寫標題」成功後，同步把旗標寫回 true
+t.title = derived;
+t.raw_data.title_auto_from_range = true;
+```
+
+## 實測
+
+1. 新建範圍群組＋錄音任務，選教材 A 算出範圍「A pp.1~2」→ 標題自動顯示「A pp.1~2」→ 存檔。
+2. 重新整理頁面／重新打開這份作業 → 標題仍顯示「A pp.1~2」（沒被清空）。
+3. 把 base 範圍改成教材 B「B pp.3~4」→ 標題應該**立刻**跟著變成「B pp.3~4」（不再卡在 A 的舊值）。
+4. 存檔、重新整理 → 再改一次範圍成 C → 標題仍會繼續跟著換（驗證「重整後還能繼續自動繼承」，
+   不是只有第一次有效）。
+5. 老師手動把標題改成自訂文字（例如「期中考複習」）→ 之後改 base 範圍 → 標題**不會**被覆寫，
+   保留老師手打的文字（確認「手動編輯後永久凍結」這條沒被破壞）。
+6. 把標題刪光 → 立刻恢復顯示目前 base 範圍的自動文字（確認「刪光即恢復繼承」沒被破壞）。
+7. 範圍群組（骨架 E 模式）同樣跑過上述 1~6，行為一致。
+
+## 改動前自問
+
+若本次會動到 `node-title-*` 的渲染、`data-title-auto`／`applyInheritedTitleFromRange`／
+`deriveRangeTitleFromGroup`／`onNodeTitleInput`／`onGroupTitleInput`：
+
+1. 判斷「是否自動繼承」是否仍以 `raw_data.title_auto_from_range` 為準，而不是只看標題字串是否為空？
+2. 重新整理頁面後，標題是否仍能繼續追隨 base 範圍變化（不會卡死在很久以前算出來的舊值）？
+3. 老師手動編輯過的標題，是否仍然不會被自動覆寫？
+
+若任一否，停下。
+
+## 追加坑（2026-08-08）：`onNodeTitleInput` 對「一般」(check) 任務也去抓同層錄音 base 範圍
+
+### 症狀
+
+- 老師端出作業，「一般」(`type==='check'`) 任務的標題顯示跟同層錄音一樣的 base 範圍文字（例：「第三回」）。
+- 手動刪光該標題**完全無效**：文字被刪掉後立刻又跳回同層錄音的 base 範圍文字。
+
+### 根因
+
+`onNodeTitleInput`（`feature-timeline.js`）是**所有葉節點類型共用**的同一支 `oninput` handler
+（錄音／考試／一般…標題都綁同一支）。標題被刪光時，若目前節點自己沒有 `node-material-range-*`
+欄位（只有 `audio_record` 才有），舊版程式碼**無條件**往下 fallback 呼叫
+`FeatureExamJob.getSiblingAudioRangeLabel(pathStr)`——這支函式只看 `pathStr` 找同層的錄音任務、
+回傳它的 base 範圍，**完全沒檢查呼叫者自己是不是 `exam` 類型**。
+
+於是不管節點是 `exam` 還是 `check`（甚至任何其他沒有自己範圍欄位的類型），標題刪光後都會被
+「同層錄音的 base 範圍」立刻蓋回去——但這條 fallback 邏輯原本只該套用在「考試」身上（考試題目
+本來就該跟著同層錄音範圍走），「一般」任務跟錄音範圍根本無關，卻被一起錯殺。
+
+```javascript
+// ❌ 舊邏輯：不分類型，標題刪光找不到自己的範圍欄位就一律抓同層錄音範圍
+if (!rangeText && window.FeatureExamJob
+    && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+    rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+}
+```
+
+### 修法
+
+呼叫 `getSiblingAudioRangeLabel` 前，先用 `getTaskNodeByPathStr(pathStr)` 讀出目前節點的
+`type`，**只有 `exam` 才走這條 fallback**：
+
+```javascript
+// ✅ 新邏輯：先確認自己是 exam 才 fallback
+if (!rangeText) {
+    const node = getTaskNodeByPathStr(pathStr);
+    if (node && node.type === 'exam' && window.FeatureExamJob
+        && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+        rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+    }
+}
+```
+
+### 不變量（追加）
+
+```
+getSiblingAudioRangeLabel 只能在確認目前節點 type === 'exam' 之後才呼叫。
+onNodeTitleInput 是所有葉節點類型共用的 handler，新增任何「找不到自己範圍欄位就 fallback
+抓別的任務範圍」的邏輯，都必須先檢查目前節點類型，不能對 check／url／resource 等其他類型也套用。
+```
+
+### 實測
+
+1. 同一層有一個錄音任務（base 範圍「第三回」）跟一個「一般」任務。
+2. 一般任務標題原本空白或被自動帶入「第三回」→ 手動刪光 → 應該保持空白，**不會**立刻跳回「第三回」。
+3. 同層的「考試」任務標題刪光 → 仍應正確跟著同層錄音 base 範圍自動帶入（這條沒被破壞）。
+4. 錄音任務自己的標題刪光 → 仍正確跟著自己的 base 範圍欄位自動帶入（這條沒被破壞）。

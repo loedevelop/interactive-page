@@ -396,6 +396,19 @@ window.FeatureStudentQuiz = (function () {
             + 'style="width:100%; margin-top:8px; padding:8px 10px; border:1px solid #CBD5E1; border-radius:8px; font-size:0.95rem;"';
     }
 
+    /** 一題多空格（分開比對，見 QuizPaperBuilder 的 sub_answers）：每個空格各自一個輸入框，用 data-sub-key 區分 */
+    function subAnswerInputAttrs(itemId, subKey, prevValue) {
+        return 'class="form-control quiz-answer-input quiz-sub-answer-input" data-item-id="' + esc(itemId) + '" data-sub-key="' + esc(subKey) + '" '
+            + 'type="text" lang="en" inputmode="text" '
+            + 'name="quiz-ans-' + esc(itemId) + '-' + esc(subKey) + '" '
+            + 'autocomplete="off" autocorrect="off" autocapitalize="off" '
+            + 'spellcheck="false" '
+            + 'data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" '
+            + 'data-lt-active="false" '
+            + 'placeholder="請輸入英文答案" value="' + esc(prevValue || '') + '" '
+            + 'style="width:100%; margin-top:6px; padding:8px 10px; border:1px solid #CBD5E1; border-radius:8px; font-size:0.95rem;"';
+    }
+
     function hardenAnswerInputs(root) {
         if (!root) return;
         root.querySelectorAll('.quiz-answer-input').forEach(function (el) {
@@ -419,19 +432,39 @@ window.FeatureStudentQuiz = (function () {
         const cloze = it.quiz_mode === 'cloze' && it.cloze_stem
             ? '<div style="margin-top:4px; color:#0F766E; font-weight:700; white-space:pre-wrap;">' + esc(it.cloze_stem) + '</div>'
             : '';
+        // 一題多空格（分開比對）：每個空格各自一個輸入框＋小標籤；prevAnswer 這時是 {sub_key: value} 物件
+        let inputsHtml;
+        if (Array.isArray(it.sub_answers) && it.sub_answers.length > 1) {
+            const prevObj = (prevAnswer && typeof prevAnswer === 'object') ? prevAnswer : {};
+            inputsHtml = it.sub_answers.map(function (sa, idx) {
+                return '<div style="margin-top:2px;">'
+                    + '<label style="font-size:0.7rem; color:#64748B; font-weight:700;">空格 ' + (idx + 1) + '</label>'
+                    + '<input ' + subAnswerInputAttrs(it.item_id, sa.key, prevObj[sa.key]) + '>'
+                    + '</div>';
+            }).join('');
+        } else {
+            inputsHtml = '<input ' + answerInputAttrs(it.item_id, (typeof prevAnswer === 'string' ? prevAnswer : '')) + '>';
+        }
         return (
             '<div data-quiz-item="' + esc(it.item_id) + '" style="border:1px solid #E2E8F0; border-radius:10px; padding:12px; margin-bottom:10px; background:#F8FAFC;">' +
                 '<div style="font-size:0.85rem; color:#0F766E; font-weight:900; margin-bottom:6px;">' + esc(headline) + '</div>' +
                 '<div style="font-size:' + fontSize + 'rem; font-weight:800; color:#1E293B; white-space:pre-wrap;">' + esc(prompt) + '</div>' +
                 cloze +
-                '<input ' + answerInputAttrs(it.item_id, prevAnswer) + '>' +
+                inputsHtml +
             '</div>'
         );
     }
 
     function collectAnswers() {
         const map = {};
-        document.querySelectorAll('#' + MODAL_ID + '-body .quiz-answer-input').forEach(function (el) {
+        document.querySelectorAll('#' + MODAL_ID + '-body .quiz-sub-answer-input').forEach(function (el) {
+            const id = el.getAttribute('data-item-id');
+            const key = el.getAttribute('data-sub-key');
+            if (!id || !key) return;
+            if (!map[id] || typeof map[id] !== 'object') map[id] = {};
+            map[id][key] = el.value;
+        });
+        document.querySelectorAll('#' + MODAL_ID + '-body .quiz-answer-input:not(.quiz-sub-answer-input)').forEach(function (el) {
             const id = el.getAttribute('data-item-id');
             if (id) map[id] = el.value;
         });

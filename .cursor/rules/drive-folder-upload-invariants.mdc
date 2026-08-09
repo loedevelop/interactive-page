@@ -1,6 +1,6 @@
 ---
-description: Drive 資料夾層級與學生上傳鐵律（禁止再把繳交誤導進 01_Class_Resources；多檔上傳中途失敗不可整批丟）
-globs: gas/Code.gs,020_js_core/api.js,110_teacher_core/api-gas-service.js,120_student_core/feature-student-timeline.js
+description: Drive 資料夾層級與學生上傳鐵律（禁止再把繳交誤導進 01_Class_Resources；多檔上傳中途失敗不可整批丟；取代特定已上傳檔）
+globs: gas/Code.gs,020_js_core/api.js,110_teacher_core/api-gas-service.js,120_student_core/feature-student-timeline.js,120_student_core/ui-student-timeline-templates.js
 alwaysApply: false
 ---
 
@@ -95,6 +95,54 @@ const merged = dedupById(existingFiles, normalizedFiles);
 ```
 
 參考實作：`120_student_core/feature-student-timeline.js` 的 `handleFileSelect`（多音檔迴圈）與 `updateProgress`。
+
+## 取代特定已上傳檔（2026-08-09）
+
+> 需求：分批上傳會累加（正常），但學生若要「換掉某一個特定檔案」原本無法做到——多檔只會加不會刪。
+> 已繳交清單「🔁 取代」按鈕＋`handleReplaceFile` 解決；**兩種情境共用同一套 GAS/前端機制，沒有新開 RPC**。
+
+### 資料流
+
+```
+buildSubmittedFilesHtml（ui-student-timeline-templates.js）
+  → 每筆檔案旁「🔁 取代」+ 隱藏 <input type="file" data-old-file-id data-unit-key data-stem data-page data-label data-script-b64>
+  → onchange = handleReplaceFile(this, courseId, taskId, statusId)（feature-student-timeline.js）
+      → 依「這個任務是否走 AI 批改」（taskSupportsAIGrading + hasScript，跟 uploadAudioFilesForGrading 判斷一致）分兩路：
+        A. AI 批改：uploadOneAudioBlobWithRetry(..., oldFileId) → submitAudioSegmentsToAIGrading([單一 segment])
+           → RPC submit_audio_task_atomic 既有「依 unit_key 合併」邏輯覆蓋該段、其餘 unit_key 原樣保留
+        B. 一般檔案：ApiService.uploadToGAS(..., oldFileId) → updateProgress(..., replaceFileId=oldFileId)
+           → 既有 student_set_task_completion（raw_data shallow || 合併）整組換掉 submitted_files/drive_file_ids
+  → GAS upload_file 新檔成功建立後才 DriveApp.getFileById(oldFileId).setTrashed(true)（by fileId，非檔名比對）
+```
+
+### 不變量
+
+```
+判斷 AI vs 一般路徑：用 taskSupportsAIGrading()+hasScript（同 uploadAudioFilesForGrading），
+  不能只看 unit_key 是否為空——單檔（無分頁）AI 錄音任務 unit_key 本來就是空字串，
+  仍必須走 AI 覆蓋路徑，否則替換後不會重新批改
+取代 AI 分頁時，original_script／stem／page 必須從 raw_data.audio_segments 取得（依 file_id 對應），
+  不能只用 raw_data.submitted_files 的欄位（那裡只有 id/mime/name/unit_key/label，沒有 original_script）
+  ——少了 original_script 會把該段的批改文稿洗成空字串
+trash 舊檔必須發生在「新檔成功建立之後」，且失敗只記錄、不擋上傳成功的回應
+一般檔案取代：updateProgress 的 replaceFileId 只移除該筆再合併，不影響「分批上傳會累加」的既有行為（不傳 replaceFileId 時邏輯完全不變）
+AI 分頁取代：沿用既有 submit_audio_task_atomic 依 unit_key 合併語意，不新增 RPC、不新增 webhook 觸發點
+  （呼應 ai-grading-pipeline-invariants.mdc：一次 UPDATE 只觸發一次，不可疊加自動重試）
+```
+
+### 禁止
+
+```javascript
+// ❌ 用 unit_key 是否有值判斷要不要走 AI 覆蓋（單檔 AI 任務 unit_key 永遠是空字串）
+if (unitKey) { /* AI 路徑 */ } else { /* 一般路徑，會漏掉單檔 AI 任務 */ }
+
+// ❌ 取代 AI 分頁時只從 submitted_files 取 original_script（該欄位本來就不在這裡）
+const segment = { original_script: meta.original_script }; // undefined，會洗空批改文稿
+
+// ❌ 先 trash 舊檔再上傳新檔（上傳失敗會讓學生連舊檔都不見）
+DriveApp.getFileById(oldFileId).setTrashed(true);
+var file = folder.createFile(blob);
+```
 
 ## 改動前自問
 

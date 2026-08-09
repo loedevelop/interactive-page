@@ -2231,6 +2231,10 @@ window.FeatureExamJob = (function () {
                     : '';
                 if (!plain || autoFlag === '1' || (prevFrom && plain === prevFrom) || plain === '考試') {
                     t.title = rangeLabel;
+                    // 見 .cursor/rules/assignment-title-auto-inherit-invariant.mdc：
+                    // 這個旗標才是跨 reload 持久判斷「自動繼承中」的來源，不能只靠 DOM 的 data-title-auto
+                    if (!t.raw_data) t.raw_data = {};
+                    t.raw_data.title_auto_from_range = true;
                     if (titleEl) {
                         titleEl.textContent = rangeLabel;
                         titleEl.setAttribute('data-title-auto', '1');

@@ -40,16 +40,23 @@ window.BuilderStore = (() => {
         return label;
     }
 
-    /** 範圍層標題空白時，用 base 範圍（錄音 meta）自動產生；不覆寫老師已填標題 */
+    /**
+     * 範圍層標題空白、或仍標記為「自動繼承中」時，用 base 範圍（錄音 meta）自動產生；
+     * 不覆寫老師已真正手動填過的標題（title_auto_from_range === false 才算手動）。
+     */
     function fillBlankRangeGroupTitles(tasks) {
         (tasks || []).forEach(function (t) {
             if (!t || t.type !== 'group') return;
             if (t.subTasks) fillBlankRangeGroupTitles(t.subTasks);
             if (!(t.raw_data && t.raw_data.group_role === 'range')) return;
             const plain = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
-            if (plain) return;
+            const wasAuto = !!(t.raw_data && t.raw_data.title_auto_from_range);
+            if (plain && !wasAuto) return;
             const derived = deriveRangeTitleFromGroup(t);
-            if (derived) t.title = derived;
+            if (derived) {
+                t.title = derived;
+                t.raw_data.title_auto_from_range = true;
+            }
         });
     }
 
@@ -62,6 +69,15 @@ window.BuilderStore = (() => {
             if (titleEl) {
                 let text = titleEl.textContent.trim();
                 t.title = (text === '') ? '' : titleEl.innerHTML;
+                // 💣 雷區（見 skeleton-unit-invariant 類似坑）：曾發生「base 範圍自動算出的標題」
+                // 存檔後就凍死在畫面空白判斷之外──因為自動填的文字會直接寫進 t.title 這個會存檔的欄位，
+                // 下次重新整理時 t.title 已非空，系統就再也認不出這是「自動」還是「老師手打」，
+                // 導致老師怎麼改 base 範圍，標題永遠卡在第一次算出來的那個值（例："Unit 10"）。
+                // 修法：把「是否為自動繼承」獨立存成 raw_data.title_auto_from_range，
+                // 不再單靠「標題是否為空」判斷，這樣即使 t.title 有字，只要旗標仍是 true，
+                // 下次 render／sync 仍會繼續追隨最新 base 範圍，直到老師真的手動編輯過才凍結。
+                if (!t.raw_data) t.raw_data = {};
+                t.raw_data.title_auto_from_range = (titleEl.getAttribute('data-title-auto') === '1');
             }
             
             const dueEl = document.getElementById(`node-due-${pathStr}`);
@@ -79,13 +95,16 @@ window.BuilderStore = (() => {
             
             if (t.type === 'group') {
                 if (t.subTasks) syncTasksState(t.subTasks, pathArray);
-                // 範圍層標題空白 → 用底下錄音 base 範圍填上
+                // 範圍層標題：空白，或仍標記為「自動繼承中」→ 用底下錄音 base 範圍重新算一次
+                // （不能只看「標題是否為空」，否則存過一次非空標題後就再也追不到新的 base 範圍）
                 if (t.raw_data && t.raw_data.group_role === 'range') {
                     const plain = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
-                    if (!plain) {
+                    const wasAuto = !!(t.raw_data && t.raw_data.title_auto_from_range);
+                    if (!plain || wasAuto) {
                         const derived = deriveRangeTitleFromGroup(t);
                         if (derived) {
                             t.title = derived;
+                            t.raw_data.title_auto_from_range = true;
                             if (titleEl) titleEl.textContent = derived;
                         }
                     }
@@ -145,6 +164,7 @@ window.BuilderStore = (() => {
                             || (prevFrom && titlePlain === prevFrom);
                         if (shouldAuto) {
                             t.title = t.raw_data.material_range;
+                            t.raw_data.title_auto_from_range = true;
                             if (titleEl) {
                                 titleEl.textContent = t.raw_data.material_range;
                                 titleEl.setAttribute('data-title-auto', '1');
@@ -168,15 +188,48 @@ window.BuilderStore = (() => {
                     const studentPasteEl = document.getElementById(`node-student-text-paste-${pathStr}`);
 
                     if (scriptSource === 'paste') {
-                        if (scriptPasteEl) t.raw_data.original_script = sanitizeScript(scriptPasteEl.value);
-                        if (studentPasteEl) {
-                            const displayText = studentPasteEl.value;
-                            t.raw_data.student_text = displayText;
-                            t.raw_data.student_display = displayText;
-                            t.raw_data.student_display_text = displayText;
+                        // C：可拆成多個「視窗」（每頁／每個 exercise 各一段），DOM 結構見
+                        // ui-timeline-templates.js 的 renderPasteWindowRowHtml。存檔時：
+                        // 1) 結構化留一份 raw_data.paste_windows（供「由下往上收集文稿」直接讀，不用猜）
+                        // 2) 合併成既有 original_script／student_display（AI 批改管線讀法完全不變）；
+                        //    只有視窗數 >1 或任一視窗有標籤時，才會加上【label】前綴，
+                        //    單一視窗又沒標籤＝跟舊格式一模一樣（不污染最單純的案例）。
+                        const windowsContainer = document.getElementById(`node-paste-windows-${pathStr}`);
+                        const windowRowEls = windowsContainer ? Array.prototype.slice.call(windowsContainer.querySelectorAll('.paste-window-row')) : [];
+                        let pasteWindows;
+                        if (windowRowEls.length) {
+                            pasteWindows = windowRowEls.map(function (row) {
+                                const labelEl = row.querySelector('.paste-window-label');
+                                const scriptWinEl = row.querySelector('.paste-window-script');
+                                const studentWinEl = row.querySelector('.paste-window-student');
+                                return {
+                                    label: labelEl ? String(labelEl.value || '').trim() : '',
+                                    script: scriptWinEl ? scriptWinEl.value : '',
+                                    student: studentWinEl ? studentWinEl.value : ''
+                                };
+                            });
+                        } else if (scriptPasteEl || studentPasteEl) {
+                            pasteWindows = [{ label: '', script: scriptPasteEl ? scriptPasteEl.value : '', student: studentPasteEl ? studentPasteEl.value : '' }];
+                        } else {
+                            pasteWindows = Array.isArray(t.raw_data.paste_windows) ? t.raw_data.paste_windows : [];
                         }
-                        if (scriptEl && scriptPasteEl) scriptEl.value = scriptPasteEl.value;
-                        if (studentTextEl && studentPasteEl) studentTextEl.value = studentPasteEl.value;
+                        t.raw_data.paste_windows = pasteWindows;
+                        const hasMultiOrLabeled = pasteWindows.length > 1 || pasteWindows.some(function (w) { return w && w.label; });
+                        t.raw_data.original_script = sanitizeScript(pasteWindows.map(function (w) {
+                            const script = (w && w.script) || '';
+                            if (!script) return '';
+                            return (hasMultiOrLabeled && w.label) ? ('【' + w.label + '】\n' + script) : script;
+                        }).filter(Boolean).join('\n\n'));
+                        const displayText = pasteWindows.map(function (w) {
+                            const student = (w && w.student) || '';
+                            if (!student) return '';
+                            return (hasMultiOrLabeled && w.label) ? ('【' + w.label + '】\n' + student) : student;
+                        }).filter(Boolean).join('\n\n');
+                        t.raw_data.student_text = displayText;
+                        t.raw_data.student_display = displayText;
+                        t.raw_data.student_display_text = displayText;
+                        if (scriptEl) scriptEl.value = t.raw_data.original_script;
+                        if (studentTextEl) studentTextEl.value = displayText;
                     } else if (scriptSource === 'range_only') {
                         // 僅範圍：清掉顯示文稿本體（保留 material_range）
                         t.raw_data.student_display = '';
@@ -401,6 +454,8 @@ window.BuilderStore = (() => {
                                 || titlePlain === '考試';
                             if (shouldAuto) {
                                 t.title = examRange;
+                                if (!t.raw_data) t.raw_data = {};
+                                t.raw_data.title_auto_from_range = true;
                                 if (titleEl) {
                                     titleEl.textContent = examRange;
                                     titleEl.setAttribute('data-title-auto', '1');

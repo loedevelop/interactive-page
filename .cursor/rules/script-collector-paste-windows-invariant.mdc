@@ -1,0 +1,95 @@
+---
+description: 「C. 自行貼上」多視窗（paste_windows）＋「📥 由下往上收集文稿」鐵律——教材補齊的反向資料流
+globs: 110_teacher_core/ui-timeline-templates.js,110_teacher_core/feature-timeline.js,110_teacher_core/store-assignment-builder.js,110_teacher_core/feature-script-collector.js
+alwaysApply: false
+---
+
+# 「C. 自行貼上」多視窗＋「由下往上收集文稿」鐵律
+
+> 2026-08-08：老師提出教材補齊需要「由下往上」——先出作業時用 C（自行貼上）／E（單元骨架）
+> 貼的文字稿，要能被收集回來、整理成正式 meta／script（現有「教材／Layout 搭配」只有「由上到下」：
+> 先準備好 Excel → 產生 meta → 才能出作業）。動 C 模式面板、`paste_windows`、
+> `feature-script-collector.js` 前必讀。
+
+## 背景／設計決定
+
+- 貼上模式（C）長期以來只有「一個大文字框」，老師一次貼好幾頁／好幾個 exercise 混在一起，
+  事後很難拆回一頁一段。
+- 老師要求兩件事都做：(1) 往後出作業時就能直接分段輸入，不要事後才拆；(2) 已經貼過的舊資料，
+  要能被掃描、自動分段、整理匯出（格式用 txt，不是 Excel），供人工搬進「教材／Layout 搭配」。
+- 範圍：掃這位老師「名下所有班級的所有作業」，不是只看目前這個班（真正的「由下往上」）。
+
+## 資料模型：`raw_data.paste_windows`
+
+```
+raw_data.paste_windows = [{ label, script, student }, ...]
+```
+
+- `label`：選填短標籤（如 "Page 2"、"Ex.3"）。
+- `script`：這一段的 AI 批改文稿。
+- `student`：這一段的學生顯示文稿。
+
+存檔時（`store-assignment-builder.js` 的 `scriptSource === 'paste'` 分支）永遠會：
+
+1. 把 DOM 上的視窗列整理成 `paste_windows` 陣列，結構化存起來（供之後編輯／collector 直接讀取）。
+2. **同時**合併成既有的 `original_script`／`student_display`／`student_display_text`／`student_text`
+   （AI 批改管線讀法完全不變，不需要也不應該改 `process-audio-ai`）。
+3. 只有「視窗數 > 1」或「任一視窗有標籤」時，合併結果才會加上 `【label】\n` 前綴；
+   單一視窗又沒標籤時，輸出跟舊格式一模一樣（純文字，沒有任何前綴）——**不能污染最單純的案例**。
+
+## 不變量
+
+```
+paste_windows 是「輸入 UX」的結構化備份，AI 批改管線只認合併後的 original_script／
+  student_display，兩者必須同步（改一邊要連動另一邊），不能只改其中一個。
+
+單一視窗、標籤為空 → 合併輸出必須跟舊版「一個大文字框」格式完全一致（無 【】 前綴），
+  確保舊資料／最簡單的新資料都不會被污染。
+
+多視窗或任一視窗有標籤 → 合併輸出用 【label】\n 分段，這個標記格式也正好是
+  feature-script-collector.js 自動分段時會辨識的標記之一（見下）。
+```
+
+## 禁止
+
+```javascript
+// ❌ 只更新 original_script，不同步寫回 raw_data.paste_windows
+// （下次重新打開這份作業，視窗結構會消失，變回單一大文字框）
+t.raw_data.original_script = sanitizeScript(bigTextareaValue);
+
+// ❌ 單一視窗、沒標籤時也硬加 【】 前綴
+// （會讓所有舊資料、最簡單案例都多出一段沒意義的標記文字）
+t.raw_data.original_script = '【】\n' + script;
+```
+
+## `feature-script-collector.js`：由下往上收集
+
+- 資料來源：`window.TeacherDB.assignments`（登入時已整批載入，含 `.tasks` 遞迴樹）＋
+  `window.TeacherDB.classes`（班級名稱對照）。**純讀取記憶體，不打新的 API**，不影響
+  `page-refresh-perf-invariant.mdc` 的重整效能鐵律。
+- 掃描範圍：`type === 'audio_record'` 且 `raw_data.script_source` 屬於
+  `paste` / `resource` / `skeleton` 的節點，橫跨這位老師「所有班級、所有作業」。
+- 分段優先序：
+  1. `raw_data.paste_windows`（新版多視窗，結構化，最準）
+  2. `raw_data.grading_units`（骨架模式 E，本來就逐單元分好）
+  3. 都沒有 → 對舊的整段 `original_script`／`student_display` 跑 `autoSegmentText`
+     （偵測 Page/Unit/Ex/#題號/【label】等「整行只有標記」的模式；抓不到才 fallback
+     用「兩個以上換行」的空行分段）。這是 **best-effort**，切錯／切太細是預期中的事，
+     UI 上必須讓老師能手動調整（新增／刪除／改標籤／改內容），不能假裝一定切得準。
+- **完全唯讀**：這個工具不會回寫任何一筆原始作業的 `raw_data`／`tasks`。匯出只是把畫面上
+  目前的分段狀態（含老師手動調整過的）組成 `.txt` 文字下載，交給老師自己去搬進 Excel／
+  「教材／Layout 搭配」。**不可**在這裡新增「直接存回 meta.json」之類的寫入功能──那一步
+  的正確產線仍是既有的「教材／Layout 搭配」頁（見 `feature-material-layout-pairing.js` 開頭
+  的雷區說明），這裡只負責「收集＋整理＋匯出」。
+
+## 改動前自問
+
+若本次會動到 C 模式面板（`script-source-panel-paste-*`）、`paste_windows`、或
+`feature-script-collector.js`：
+
+1. 存檔時 `paste_windows` 跟合併後的 `original_script`／`student_display` 是否還同步？
+2. 單一視窗、沒標籤的最簡單案例，輸出格式是否還跟舊版完全一致？
+3. collector 是否仍然完全唯讀，沒有任何路徑會回寫到原始作業？
+4. 掃描邏輯是否仍然只讀 `window.TeacherDB` 現有記憶體資料，沒有另外觸發新的重量級 API？
+
+若任一否，停下。

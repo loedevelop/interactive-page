@@ -573,7 +573,7 @@ const ApiService = (() => {
         }
     };
 
-    const uploadToGAS = async (base64Data, fileName, mimeType, folderId, assignmentId = null, taskId = null) => {
+    const uploadToGAS = async (base64Data, fileName, mimeType, folderId, assignmentId = null, taskId = null, oldFileId = null) => {
         try {
             const cleanFolderId = extractDriveFolderId(folderId);
             if (!cleanFolderId) {
@@ -590,6 +590,9 @@ const ApiService = (() => {
             };
             if (assignmentId) payload.assignmentId = assignmentId;
             if (taskId) payload.taskId = taskId;
+            // 「取代特定已上傳檔」：指定要被覆蓋的舊檔 fileId，GAS 會在新檔成功上傳後才 trash 舊檔。
+            // 見 .cursor/rules/drive-folder-upload-invariants.mdc「取代特定已上傳檔」一節。
+            if (oldFileId) payload.oldFileId = oldFileId;
 
             try {
                 return await uploadToGASOnce(payload);
