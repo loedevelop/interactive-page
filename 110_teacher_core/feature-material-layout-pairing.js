@@ -2706,7 +2706,10 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const classId = classSelectEl ? classSelectEl.value : '';
                 window.FeatureTimeline.ensureMetaCatalog(classId, rootKind, { force: true }).catch(function () {});
             }
-            if (getMsgEl()) { getMsgEl().style.color = '#059669'; getMsgEl().textContent = '✅ 全部處理完畢，請看下方各活頁的上傳結果'; }
+            // 💣 雷區：這裡曾寫「請看下方」，但每個活頁的上傳結果（uploadHtml）其實 render 在
+            // rowsHtml 裡，畫面位置在這顆按鈕列的「上方」，不是下方——方向寫反會讓老師往下找
+            // 卻什麼都沒有（2026-08-09 使用者回報「什麼？？沒看到啊」）。
+            if (getMsgEl()) { getMsgEl().style.color = '#059669'; getMsgEl().textContent = '✅ 全部處理完畢，請看上方各活頁卡片內的上傳結果'; }
         } catch (err) {
             if (getMsgEl()) { getMsgEl().style.color = '#DC2626'; getMsgEl().textContent = '❌ ' + (err.message || err); }
         } finally {
