@@ -136,10 +136,15 @@ guessSubmittedKind 判斷「是不是音檔」只認 mime／檔名副檔名，�
   （task.type==='audio_record' 或 'drive' 一般資料夾上傳皆同）；一般資料夾上傳的 <input type="file">
   沒有 accept 限制，副檔名清單要跟其他音檔輸入框的 accept 保持一致（見 2026-08-09 修復，
   補上 .amr/.3gp/.wma/.mp4/.caf/.opus），否則同樣是音檔卻因副檔名沒列到而被當成一般檔案、沒有播放器
-已繳交檔案清單的頁碼標籤（labelChip）優先解析 base 範圍文字本身展開出的頁碼（pagesFromRangeText，
-  只在展開後的頁數剛好等於檔案數時採用），其次才退回骨架單元列表（grading_units 陣列位置對應）；
-  base 範圍文字是老師唯一「看得到、也最準」的頁數來源，不要求老師另外維護一份對得上的骨架列表
+已繳交檔案清單的頁碼標籤（labelChip）優先解析 base 範圍文字本身展開出的頁碼（pagesFromRangeText），
+  逐檔「位置對應」（idx < rangePages.length 就用 rangePages[idx]），其次才退回骨架單元列表
+  （grading_units 陣列位置對應）；base 範圍文字是老師唯一「看得到、也最準」的頁數來源，不要求老師
+  另外維護一份對得上的骨架列表
   （2026-08-09：光靠骨架單元列表對不上老師實際輸入習慣，導致標籤仍顯示「第 X 檔」）
+  （2026-08-10 再修：上一版要求「展開後的頁數剛好等於檔案數」才整批套用，只要學生多傳/少傳一個檔案
+  或任何原因導致數量對不齊，就整批打回「第 X 檔」，看起來完全沒生效——這才是老師持續回報
+  「還是沒有顯示頁碼編號」的真正原因，不是快取或部署問題。改成不要求整批數量相等，退回的
+  「第 X 檔」chip 也加上 title 顯示「解析出幾頁 vs. 共幾個檔案」，之後若再對不上可直接從畫面上看出原因）
 「共 X 頁 → 請上傳 X 檔」提示與「已選檔數 vs. 應有頁數」比對警告，兩處都優先用結構化 grading_units.length，
   沒有 grading_units 時才退回 pagesFromRangeText(material_range).length 當 fallback（同一套展開邏輯，
   由 UIStudentTimelineTemplates.pagesFromRangeText 匯出給 feature-student-timeline.js 的

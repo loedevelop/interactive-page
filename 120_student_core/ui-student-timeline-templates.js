@@ -170,10 +170,11 @@ window.UIStudentTimelineTemplates = (() => {
 
         const metas = Array.isArray(fileMetas) ? fileMetas : [];
         const fallbackUnits = Array.isArray(skeletonUnitsForLabel) ? skeletonUnitsForLabel : null;
-        // 優先序：① base 範圍文字展開的頁碼（檔數剛好對得上才用，避免上傳數跟範圍不符時瞎猜）
-        // ② 骨架單元列表（陣列位置對應）③ 都沒有才顯示「第 X 檔」
+        // 優先序：① base 範圍文字展開的頁碼 ② 骨架單元列表（陣列位置對應）③ 都沒有才顯示「第 X 檔」
+        // 🌟 2026-08-10 修正：之前要求「解析出的頁數 === 檔案數」才整批套用，只要學生多傳／少傳一個檔案，
+        // 全部檔案就整批打回「第 X 檔」，看起來完全沒生效（老師回報「還是沒有顯示頁碼編號」）。
+        // 改成逐檔位置對應：只要該位置有解析出頁碼就用，超出範圍的才 fallback，不要求整批數量剛好相等。
         const rangePages = pagesFromRangeText(materialRangeForLabel);
-        const useRangePages = rangePages.length === ids.length;
         const showLabel = ids.length > 1;
         let html = '<div style="display:flex; flex-direction:column; gap:6px; width:100%;">';
         ids.forEach((fileId, idx) => {
@@ -182,11 +183,12 @@ window.UIStudentTimelineTemplates = (() => {
             const viewUrl = resolveDriveViewUrl(fileId);
             const playerId = ids.length === 1 ? inlinePlayerId : `${inlinePlayerId}-${idx}`;
             const metaLabel = meta && meta.label ? String(meta.label).trim() : '';
-            const rangeLabel = useRangePages ? ('p. ' + rangePages[idx]) : '';
+            const rangeLabel = (idx < rangePages.length) ? ('p. ' + rangePages[idx]) : '';
             const unitLabel = metaLabel || rangeLabel || (fallbackUnits ? skeletonUnitLabelText(fallbackUnits[idx]) : '');
             const labelChip = (showLabel && unitLabel)
                 ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(unitLabel)}</span>`
-                : (showLabel ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
+                // title 帶診斷資訊（滑鼠移上去才看得到）：base 範圍解析出幾頁、目前共幾個檔案，方便回報問題時不用再猜。
+                : (showLabel ? `<span title="${escapeAttr('base 範圍解析出 ' + rangePages.length + ' 頁；本任務共 ' + ids.length + ' 個檔案，對不上才顯示檔案序號')}" style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
             const replaceBtnHtml = buildReplaceButtonHtml(fileId, meta, kind, courseId, taskId, statusId, idx);
 
             if (kind === 'audio') {
