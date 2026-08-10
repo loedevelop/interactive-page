@@ -2554,17 +2554,19 @@ window.FeatureMaterialLayoutPairing = (function () {
         refreshAppGenArea(rowEl, appId);
     }
 
-    function handleGeneratePreview(rowEl, appId) {
+    /**
+     * 核心「算列」邏輯，抽成獨立函式供「🔍 產生預覽」按鈕與「☁️ 確認上傳到 Drive」
+     * 自動補跑共用——不要各寫一份，之後改一邊漏改另一邊。只回報成敗，不碰 DOM 訊息／不 refresh，
+     * 交給呼叫端決定要不要顯示訊息、要不要重繪。
+     */
+    function generatePreviewForRow(rowEl, appId) {
         const state = ensureAppRowState(appId);
-        const msgEl = rowEl.querySelector('.mlp-app-gen-msg');
         const template = getCurrentAppTemplate(rowEl);
-        if (!template) {
-            if (msgEl) { msgEl.style.color = '#DC2626'; msgEl.textContent = '❌ 請先在最上面選一個 Layout Template'; }
-            return;
-        }
+        if (!template) return { ok: false, error: '請先在最上面選一個 Layout Template' };
+        const sheetNames = checkedSheetNames(state);
+        if (!sheetNames.length) return { ok: false, error: '請先勾選至少一個活頁' };
         const rowStartStr = rowEl.querySelector('.mlp-app-rowstart').value;
         const rowEndStr = rowEl.querySelector('.mlp-app-rowend').value;
-        const sheetNames = checkedSheetNames(state);
         sheetNames.forEach(function (name) {
             const prevOutputMeta = state.gen[name] && state.gen[name].outputMeta;
             const prevOutputScript = state.gen[name] && state.gen[name].outputScript;
@@ -2580,6 +2582,16 @@ window.FeatureMaterialLayoutPairing = (function () {
                 speakOverrides: prevOverrides
             });
         });
+        return { ok: true, sheetNames: sheetNames };
+    }
+
+    function handleGeneratePreview(rowEl, appId) {
+        const msgEl = rowEl.querySelector('.mlp-app-gen-msg');
+        const res = generatePreviewForRow(rowEl, appId);
+        if (!res.ok) {
+            if (msgEl) { msgEl.style.color = '#DC2626'; msgEl.textContent = '❌ ' + res.error; }
+            return;
+        }
         if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 預覽已更新，請確認內容無誤後再上傳'; }
         refreshAppGenArea(rowEl, appId);
     }
@@ -2612,21 +2624,41 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     async function handleConfirmUpload(rowEl, appId) {
         const state = ensureAppRowState(appId);
-        const msgEl = rowEl.querySelector('.mlp-app-gen-msg');
-        const uploadBtn = rowEl.querySelector('.mlp-app-gen-upload');
-        const sheetNames = checkedSheetNames(state);
+        // 💣 雷區：msgEl／uploadBtn 不能只在函式開頭查一次就整個 async 流程沿用同一個參考——
+        // 迴圈裡每上傳完一個活頁就會呼叫 refreshAppGenArea() 重寫 .mlp-app-gen-area 的 innerHTML，
+        // 舊的 DOM 節點會變成「已脫離文件」的孤兒，之後寫 .textContent 老師完全看不到（畫面像沒反應）。
+        // 改成每次要用之前都重新從 rowEl 查一次，rowEl 本身不會被整個換掉，永遠查得到目前真正在畫面上的節點。
+        const getMsgEl = function () { return rowEl.querySelector('.mlp-app-gen-msg'); };
+        const getUploadBtn = function () { return rowEl.querySelector('.mlp-app-gen-upload'); };
+        let sheetNames = checkedSheetNames(state);
+
+        // 💣 雷區：老師若沒手動按過「🔍 產生預覽」、直接按「☁️ 確認上傳到 Drive」，這顆按鈕原本會
+        // 因為 canConfirmUpload() 為 false 一路維持 disabled，點下去完全沒有任何反應也沒有任何訊息，
+        // 看起來像「壞掉」（2026-08-09 使用者回報「沒有看預覽，直接儲存，則沒有作用」）。改成：
+        // 沒有有效預覽時，自動先跑一次跟「產生預覽」按鈕一樣的算列邏輯，成功才繼續上傳，
+        // 失敗（例如還沒選 Template／Template 缺 is_ai_ref）才提示錯誤擋下來。
         if (!canConfirmUpload(state, sheetNames)) {
-            if (msgEl) { msgEl.style.color = '#DC2626'; msgEl.textContent = '❌ 請先「產生預覽」，確認每個活頁都有算出列數才能上傳'; }
-            return;
+            const genRes = generatePreviewForRow(rowEl, appId);
+            sheetNames = checkedSheetNames(state);
+            if (!genRes.ok || !canConfirmUpload(state, sheetNames)) {
+                const msgEl0 = getMsgEl();
+                if (msgEl0) {
+                    msgEl0.style.color = '#DC2626';
+                    msgEl0.textContent = '❌ ' + (genRes.ok ? '自動產生預覽後仍有活頁 0 列或有錯誤，請先手動按「🔍 產生預覽」檢查下方訊息' : genRes.error);
+                }
+                refreshAppGenArea(rowEl, appId);
+                return;
+            }
+            refreshAppGenArea(rowEl, appId);
         }
-        if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '⏳ 上傳中…'; }
-        if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 正在確認教材資料夾…'; }
+        if (getUploadBtn()) { getUploadBtn().disabled = true; getUploadBtn().textContent = '⏳ 上傳中…'; }
+        if (getMsgEl()) { getMsgEl().style.color = '#0F766E'; getMsgEl().textContent = '⏳ 正在確認教材資料夾…'; }
         try {
             const folderId = await resolveOrCreateAppFolderId(rowEl);
             for (let i = 0; i < sheetNames.length; i++) {
                 const name = sheetNames[i];
                 const g = state.gen[name];
-                if (msgEl) msgEl.textContent = '⏳ 上傳中（' + (i + 1) + '/' + sheetNames.length + '）：' + name + '…';
+                if (getMsgEl()) getMsgEl().textContent = '⏳ 上傳中（' + (i + 1) + '/' + sheetNames.length + '）：' + name + '…';
                 try {
                     // 💣 雷區：檔名輸入框只在 change（失焦）時才把值寫回 state.gen[name].outputMeta／
                     // outputScript。老師若接受畫面自動帶出的預設檔名、完全沒點過那個輸入框，change
@@ -2665,11 +2697,12 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const classId = classSelectEl ? classSelectEl.value : '';
                 window.FeatureTimeline.ensureMetaCatalog(classId, rootKind, { force: true }).catch(function () {});
             }
-            if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = '✅ 全部處理完畢，請看下方各活頁的上傳結果'; }
+            if (getMsgEl()) { getMsgEl().style.color = '#059669'; getMsgEl().textContent = '✅ 全部處理完畢，請看下方各活頁的上傳結果'; }
         } catch (err) {
-            if (msgEl) { msgEl.style.color = '#DC2626'; msgEl.textContent = '❌ ' + (err.message || err); }
+            if (getMsgEl()) { getMsgEl().style.color = '#DC2626'; getMsgEl().textContent = '❌ ' + (err.message || err); }
         } finally {
-            if (uploadBtn) { uploadBtn.disabled = !canConfirmUpload(state, sheetNames); uploadBtn.textContent = '☁️ 確認上傳到 Drive'; }
+            const finalBtn = getUploadBtn();
+            if (finalBtn) { finalBtn.disabled = !canConfirmUpload(state, sheetNames); finalBtn.textContent = '☁️ 確認上傳到 Drive'; }
         }
     }
 

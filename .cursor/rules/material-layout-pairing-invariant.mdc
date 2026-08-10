@@ -818,8 +818,18 @@ handleConfirmUpload(rowEl, appId)         // 逐活頁呼叫 GasService.uploadMa
 //    必須直接回錯誤訊息擋下來，逼老師先回 Layout Template 補上 is_ai_ref（buildGenerationForSheet
 //    的第一個檢查就是這個）
 
-// ❌ 「確認上傳到 Drive」按鈕在還沒按過「產生預覽」、或預覽有任何一個活頁是 0 列／有錯誤時
-//    仍可以按——canConfirmUpload() 必須逐活頁檢查 previewed && !error && rows.length > 0
+// ❌ 「確認上傳到 Drive」在預覽有任何一個活頁是 0 列／有錯誤時仍直接上傳——canConfirmUpload()
+//    必須逐活頁檢查 previewed && !error && rows.length > 0 才能真正送出上傳
+
+// ❌ 老師沒按過「產生預覽」就按「確認上傳到 Drive」時，讓按鈕維持 disabled、點下去毫無反應／
+//    毫無訊息——那看起來像「壞掉」，不是「請先按別的按鈕」（2026-08-09 使用者回報「沒有看
+//    預覽，直接儲存，則沒有作用」）。必須自動先跑一次跟「產生預覽」相同的算列邏輯
+//    （generatePreviewForRow，兩個按鈕共用同一份），成功才接著上傳；失敗才提示錯誤擋下來
+
+// ❌ handleConfirmUpload 開頭只查一次 msgEl／uploadBtn 就整個 async 流程沿用——迴圈裡每上傳完
+//    一個活頁都會呼叫 refreshAppGenArea() 整段重寫 .mlp-app-gen-area 的 innerHTML，舊的 DOM
+//    節點會變孤兒，之後寫 .textContent／.disabled 老師完全看不到。必須每次要用之前用
+//    rowEl.querySelector(...) 重新查（rowEl 本身不會被整個換掉）
 
 // ❌ 上傳用 GasService.uploadStudentLocalFile 或任何帶預設 subFolderName='01_Class_Resources'
 //    的呼叫——一定要用 uploadMaterialFile（明確不傳 subFolderName，直寫進 folderId 本身）
