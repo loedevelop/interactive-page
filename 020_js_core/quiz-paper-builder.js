@@ -293,11 +293,25 @@ window.QuizPaperBuilder = (function () {
         const folder = opts.materialFolder || '';
         const itemId = [folder || 'bank', sheet, isNaN(page) ? 'p' : page, isNaN(itemNo) ? 'i' : itemNo].join(':');
 
-        const cells = cellsToPlain(Eval.evaluateFields(opts.fields || '', row, opts.colMap));
-        let cellsAnswer = null;
-        if (opts.fieldsAnswer) {
-            cellsAnswer = cellsToPlain(Eval.evaluateFields(opts.fieldsAnswer, row, opts.colMap));
+        /**
+         * 💣 雷區：fields／fields_answer／quizPrompt／quizAnswer 公式字串來自
+         * layout_profile（可能是沒填過的占位公式，例如 LAYOUT_CATALOG 的
+         * vocab-no-image／vocab-with-image 目前還沒有真正的公式，見 feature-exam-job.js
+         * 的 LAYOUT_FIELD_HINTS 註解）。這裡不能讓 evaluateFields 對這種占位/壞公式
+         * 直接丟例外——那會讓「沒有 _layout.json、也沒設定過公式」的教材整份考卷產生
+         * 失敗，而不是「這題排版空一點但至少有題目跟答案」。所以全部包 try/catch，
+         * 失敗就當作沒算出東西（cells=[]／promptZh／answerEn 留空），交給下面的
+         * 具名欄位 fallback 補上。
+         */
+        function safeEvalFields(formula) {
+            if (!formula) return [];
+            try { return cellsToPlain(Eval.evaluateFields(formula, row, opts.colMap)); }
+            catch (_evalErr) { return []; }
         }
+
+        const cells = safeEvalFields(opts.fields || '');
+        let cellsAnswer = null;
+        if (opts.fieldsAnswer) cellsAnswer = safeEvalFields(opts.fieldsAnswer);
 
         /**
          * 💣 雷區（見 .cursor/rules/material-publish-setup-format.mdc）：
@@ -311,11 +325,11 @@ window.QuizPaperBuilder = (function () {
         let promptZh;
         let answerEn;
         if (opts.quizPrompt) {
-            const promptCells = cellsToPlain(Eval.evaluateFields(opts.quizPrompt, row, opts.colMap));
+            const promptCells = safeEvalFields(opts.quizPrompt);
             promptZh = promptCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
         }
         if (opts.quizAnswer) {
-            const answerCells = cellsToPlain(Eval.evaluateFields(opts.quizAnswer, row, opts.colMap));
+            const answerCells = safeEvalFields(opts.quizAnswer);
             answerEn = answerCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
         }
         // 舊慣例（相容無 quiz_prompt／quiz_answer 的教材）：第2欄提示（Y）、第3欄英文答案（X）
@@ -327,12 +341,32 @@ window.QuizPaperBuilder = (function () {
         }
 
         /**
-         * 「分開比對」多空格：meta 列由 feature-material-layout-pairing.js 的 buildGenerationForSheet
-         * 在書寫答案欄數>1時寫入 _answer_mode／_answer_keys（見 material-layout-pairing-invariant.mdc）。
-         * 這裡把每個 _answer_keys 各自的原始值拆成一個 sub_answers 元素——一題多個空格、各自獨立比對，
-         * 跟舊的「單一 answer_en 整句比對」是兩條並存的路徑，不影響既有教材（沒有 _answer_mode 的
-         * 列完全走舊路徑）。answer_en 仍會補上一個「合併預覽」字串，供舊版只認 answer_en 的畫面
-         * （例如老師端答案訂正列表）當退路顯示，但實際批改一律用 sub_answers。
+         * 「套用到教材」新工具（feature-material-layout-pairing.js）產生的 meta.json 不再有
+         * col_map／fields 公式能吃得懂的欄位（也沒有 _layout.json 這層）——row 本身就是具名
+         * semantic_key（display_zh／answer_en／pos／pre…），沒有 quiz_prompt／quiz_answer
+         * 公式、也沒對到 cells[1]/cells[2] 時，直接用具名欄位補答案，讓沒有 _layout.json
+         * 的教材（例如 vocab 單字表）也能正常出線上卷，不必等「Layout Template」跟這裡的
+         * layout_profile_id／_layout.json 串起來（見 material-layout-pairing-invariant.mdc）。
+         *
+         * _answer_mode==='combine'：書寫答案欄數>1且老師選「結合」時，_answer_keys 依序
+         * 串接（例如 pre="a"+answer_en="desert" → "a desert"）才是完整答案，不能只用
+         * answer_en 單欄（會漏掉 pre 那個字，例如 "a"／"an"）。
+         */
+        if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
+            answerEn = row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
+                .filter(Boolean).join(' ');
+        }
+        // 'separate' 模式的合併預覽字串要靠下面 subAnswers 那段算（逐欄各自的值），這裡先不要
+        // 用單欄 row.answer_en 卡位，否則下面 `if (!answerEn)` 會被誤判成「已經有了」而跳過。
+        if (!answerEn && row._answer_mode !== 'separate') answerEn = String(row.answer_en || '').trim();
+
+        /**
+         * 「分開比對」多空格：書寫答案欄數>1且老師選「分開比對」時，_answer_keys 各自
+         * 獨立比對——這裡把每個 _answer_keys 各自的原始值拆成一個 sub_answers 元素，
+         * 一題多個空格、各自獨立比對，跟上面「單一 answer_en 整句比對」是兩條並存的路徑，
+         * 不影響既有教材（沒有 _answer_mode 的列完全走舊路徑）。answer_en 仍會補上一個
+         * 「合併預覽」字串，供舊版只認 answer_en 的畫面（例如老師端答案訂正列表）當退路
+         * 顯示，但實際批改一律用 sub_answers。
          */
         let subAnswers = null;
         if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {

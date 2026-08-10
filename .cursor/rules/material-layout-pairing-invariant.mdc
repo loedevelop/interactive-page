@@ -1452,3 +1452,71 @@ if (airefCols.length === 1) rowObj[airefCols[0].semantic_key] = finalSpeak;
     → `to park`），meta.json 裡這兩欄各自的原始值（`to`／`park`）**沒有**被覆寫成合併後字串
 99. Template 清單上的「🎤 口說答案：」後面同時列出兩個欄位名稱（用「、」分隔），不是只顯示
     第一個
+
+### 這個工具不產生 `_manifest.json`／`_layout.json`——manifest 不需要，layout 已改成讓考卷產生端直接看懂新格式
+
+> 2026-08-09：老師問「manifest 跟 layout，不用產生嗎？」——這兩個檔案是舊管線
+> （`material_templates/publish_local.py`／已停用的 GAS `publish_material`）才會產生的東西，
+> 這次「套用到教材」新流程只上傳 `meta.json`／`script.txt` 兩個檔。
+
+**`_manifest.json`：確認不需要。**
+- 只有 `gas/Code.gs` 的 `listMaterialMasters`（教材資料夾下拉清單）會嘗試讀它，但只是「有的話
+  附加顯示」——資料夾底下真正的 `.meta.json` 清單是直接掃描檔名產生的，完全不依賴 manifest
+  存在。沒有它，教材資料夾／活頁下拉一切正常。
+
+**`_layout.json`：曾經是真缺口，這輪已經補上相容 fallback（不是靠產生 `_layout.json`）。**
+- 出線上考卷（`feature-exam-job.js` 的 `fetchLayoutAndMetaForSheets`）找不到 `_layout.json`
+  時，會 fallback 用老師選的 `layout_profile_id`（`LAYOUT_CATALOG` 六個內建模板之一）+
+  `LAYOUT_FIELD_HINTS` 猜出的 `fields` 公式（例如 `STACK(D,E,C), FONTSIZE(Y,-1), X`）跟
+  `FALLBACK_COL_MAP`（`X: 'script'`）。這套 fallback 是設計給**舊版**（column-letter 公式）
+  meta.json 用的，新工具的 meta.json 用具名 semantic_key（`display_zh`／`answer_en`／`pos`／
+  `pre`…），沒有 column letter 這層，答案欄位 `X→script` 對不到新格式的 `answer_en`；而
+  `vocab-no-image`／`vocab-with-image` 這兩個 profile 在 `LAYOUT_FIELD_HINTS` 裡根本沒有公式
+  （回傳占位字串 `（依 layout_profile）`），套用舊的 `evaluateFields` 沒包 try/catch 甚至可能
+  直接丟例外、讓整份考卷產生失敗。
+- 老師選了「改出考卷那邊，讓它直接看得懂新版 meta.json 的具名欄位」（而非額外產生一份相容
+  `_layout.json`）：`020_js_core/quiz-paper-builder.js` 的 `buildItemFromRow` 現在：
+  1. `fields`／`fields_answer`／`quizPrompt`／`quizAnswer` 四處 `evaluateFields` 呼叫全部包
+     `safeEvalFields()`（try/catch），占位／壞公式不會再讓整份考卷噴掉，只是這題排版欄位空。
+  2. 答案 fallback 鏈新增兩層（都排在 `cells[2]`／`row.script` 舊慣例**之後**，不影響舊教材）：
+     - `row._answer_mode === 'combine'` 且 `_answer_keys.length > 1`：依序把每個
+       `_answer_keys` 的原始值空白串接（例如 `pre="a"` + `answer_en="desert"` → `"a desert"`）
+       ——**不能只退回 `row.answer_en` 單欄**，會漏掉 `pre` 那個字。
+     - 其餘情況（沒有 `_answer_mode`，即單一答案欄的新格式教材）：`String(row.answer_en || '')`。
+     - `_answer_mode === 'separate'` 時**不要**先套用 bare `row.answer_en` fallback（會卡位讓
+       下面 `subAnswers` 那段的 `if (!answerEn)` 誤判成「已經有了」），要留給 `subAnswers` 那段
+       自己算「逐欄合併預覽」字串。
+
+```javascript
+// ❌ combine 模式退回單欄，會漏掉 pre／冠詞那個字
+if (!answerEn) answerEn = String(row.answer_en || '').trim(); // "desert"，漏了 "a"
+
+// ✅ combine 模式依 _answer_keys 順序把每一欄原始值串起來
+if (!answerEn && row._answer_mode === 'combine' && row._answer_keys.length > 1) {
+    answerEn = row._answer_keys.map(k => String(row[k] || '').trim()).filter(Boolean).join(' ');
+} // "a desert"
+
+// ❌ evaluateFields 沒包 try/catch，vocab-no-image 的占位公式（非合法語法）直接讓整份考卷失敗
+const cells = cellsToPlain(Eval.evaluateFields(opts.fields, row, opts.colMap));
+
+// ✅ 包 safeEvalFields()，壞公式當作沒算出東西，交給具名欄位 fallback 補
+const cells = safeEvalFields(opts.fields || '');
+```
+
+**這次刻意不做的事（跟「屏棄之前的做法」一致，避免走回頭路）：**
+- 不在「套用到教材」流程裡額外產生 `_layout.json`／`_manifest.json`——那是舊管線的產物，這次
+  改法是讓考卷產生端本身看懂新格式，不需要教材那邊多產生一個相容檔案。
+- 沒有把「Layout Template」（`material_field_templates`，欄位角色設定）跟 `layout_profile_id`／
+  `LAYOUT_CATALOG` 串接起來——這是更大的一輪工作（中央考卷模板管理，`vocab-with-image`／
+  `v2-extended` 圖片渲染／擴充公式仍是占位），這輪只確保「沒有 `_layout.json` 時，新格式
+  meta.json 至少题目跟答案都讀得到、不會整份考卷失敗或答案空白」。
+
+### 實測
+
+100. 用「套用到教材」新工具產生的 vocab 教材（書寫答案 2 欄、答案批改標準選「結合」，例如
+     `pre`+`answer_en`），只上傳 `meta.json`／`script.txt`（沒有 `_layout.json`），出線上考卷
+     時答案欄位是 `pre`＋`answer_en` 合併後的完整字串（例如 `a desert`），不是空白、也不是只有
+     `desert`
+101. 同一份教材選的 `layout_profile_id` 是 `vocab-no-image`（目前公式仍是占位）時，出考卷**不會
+     整份失敗**，題目至少能看到中文語意（`display_zh`），答案欄位仍正確
+102. 舊教材（有 `_layout.json`、或用舊 `script` 當 semantic_key）出考卷行為完全不變
