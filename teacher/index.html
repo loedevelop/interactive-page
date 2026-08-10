@@ -390,11 +390,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
-    <script src="../110_teacher_core/feature-exam-job.js?v=26"></script> <!-- v26 refreshAfterAudioSnapshot 同步寫入 raw_data.title_auto_from_range -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=27"></script> <!-- v27 出題行內編輯區新增「允許重考錯題（僅一次）」勾選，寫入 raw_data.allow_wrong_retake -->
     <script src="../110_teacher_core/feature-material-layout-pairing.js?v=37"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v37：「＋新增套用」/「＋新增搭配」新列加在清單最後面看起來像沒反應，補上 scrollIntoView+高亮＋try/catch 顯示錯誤 -->
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
-    <script src="../110_teacher_core/feature-exam-review.js?v=1"></script>
+    <script src="../110_teacher_core/feature-exam-review.js?v=2"></script> <!-- v2 學生清單附上錯題重考合併正確率 -->
     <script src="../110_teacher_core/feature-timeline.js?v=114"></script> <!-- v114 修「base 範圍會跑掉不見」：骨架(E) refreshSkeletonRangeLabel 加手動覆寫旗標＋非強制時不把欄位清空；refreshMaterialRangeLabel(A) 也補上 rows=0 時不清空的保護 -->
     <script src="../110_teacher_core/feature-resource.js?v=44"></script>
     <script src="../110_teacher_core/feature-profile.js?v=41"></script>

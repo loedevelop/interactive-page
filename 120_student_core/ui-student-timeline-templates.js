@@ -1391,12 +1391,25 @@ window.UIStudentTimelineTemplates = (() => {
                                 ? `<button type="button" class="btn-action" style="background:white; color:#0F766E; border:1px solid #99F6E4; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
                                         onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openReviewFromRaw('${safeCourseId}', '${safeTaskId}')">錯題／錯字</button>`
                                 : '';
+                            // 🔁 重考錯題（僅一次）：老師勾選 allow_wrong_retake 才會有這個按鈕；持久顯示在時間軸，
+                            // 讓學生繳交後不一定要當下重考，之後回來也看得到入口。done 後改顯示「整體報告」。
+                            const retake = quizRaw && quizRaw.quiz_retake;
+                            const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
+                            const retakeDone = !!(retake && retake.done);
+                            const retakeBtn = retakeEligible
+                                ? `<button type="button" class="btn-action" style="background:#B45309; color:white; border:none; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeQuiz('${safeCourseId}', '${safeTaskId}')">🔁 重考錯題（僅一次）</button>`
+                                : (retakeDone
+                                    ? `<button type="button" class="btn-action" style="background:white; color:#047857; border:1px solid #A7F3D0; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeReportFromRaw('${safeCourseId}', '${safeTaskId}')">📊 整體報告</button>`
+                                    : '');
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
                                     <button type="button" class="btn-action" style="background:#0F766E; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
                                         onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${quizBtnLabel}</button>
                                     ${reviewBtn}
+                                    ${retakeBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${itemN} 題</span>
                                 </div>
                             `;

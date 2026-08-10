@@ -22,5 +22,6 @@ alwaysApply: true
 | `material-publish-setup-format.mdc` | 教材發布 `_Setup` 合併格式／同活頁多區塊誤填 LAST／last_row_column 沒對齊實際欄位 | `material_templates/**` |
 | `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
 | `script-collector-paste-windows-invariant.mdc` | C 貼上多視窗（paste_windows）沒同步進 original_script／collector 誤回寫原始作業 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
+| `exam-wrong-retake-invariant.mdc` | 重考錯題（僅一次）判定範圍漂移／合併正確率分母算錯／重考按鈕找不到入口 | `feature-exam-job.js`, `feature-exam-review.js`, `feature-student-quiz.js`, `ui-student-timeline-templates.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

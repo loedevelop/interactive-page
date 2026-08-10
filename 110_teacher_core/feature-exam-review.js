@@ -114,11 +114,19 @@ window.FeatureExamReview = (function () {
             const rows = students.map(function (s) {
                 const c = byStudent.get(String(s.id));
                 const qr = c && c.raw_data && c.raw_data.quiz_result;
+                const retake = c && c.raw_data && c.raw_data.quiz_retake;
                 let statusHtml;
                 if (qr && qr.total != null) {
                     const color = qr.score >= 80 ? '#10B981' : (qr.score >= 50 ? '#F59E0B' : '#EF4444');
                     statusHtml = '<span style="color:' + color + '; font-weight:900;">' + qr.score + '%</span>'
                         + ' <span style="color:#94A3B8; font-size:0.78rem;">(' + qr.correct + '/' + qr.total + ')</span>';
+                    // 🔁 錯題重考已完成：附上合併正確率（原始＋訂正），方便老師一眼看訂正後結果
+                    if (retake && retake.done && retake.combined) {
+                        statusHtml += ' <span style="color:#B45309; font-size:0.78rem; font-weight:800;">→ 訂正後 '
+                            + retake.combined.rate + '% (' + retake.combined.correct + '/' + retake.combined.total + ')</span>';
+                    } else if (retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length) {
+                        statusHtml += ' <span style="color:#D97706; font-size:0.72rem;">（待重考錯題）</span>';
+                    }
                 } else {
                     statusHtml = '<span style="color:#CBD5E1;">尚未作答</span>';
                 }

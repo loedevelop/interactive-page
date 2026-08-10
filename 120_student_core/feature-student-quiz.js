@@ -19,6 +19,16 @@ window.FeatureStudentQuiz = (function () {
     const HISTORY_CAP = 40;
     const SPELLING_HISTORY_CAP = 250;
     const REVIEW_MODAL_ID = 'student-quiz-review';
+    /**
+     * 重考錯題（僅一次）：老師出題時勾選 raw_data.allow_wrong_retake 才會啟用。
+     * 交卷時若有錯題，凍結該次 wrong_items 的 item_id 清單成 task_completions.raw_data.quiz_retake
+     * ={ item_ids, done, answers, result, combined }；學生可當下或之後回來重考「原題」（同一批 item_id，
+     * 答案標準不變），只能考一次。重考只用一般 Tier B 彈窗＋isDirty，不套用整份考試的全螢幕／離開次數
+     * 防作弊機制（那套是給正式整卷考試用的，錯題訂正沒有必要一樣重）。
+     * 見 docs/quiz-json-contract-v0.2.md 與 exam-available-count-invariant.mdc。
+     */
+    const RETAKE_MODAL_ID = 'student-quiz-retake';
+    const RETAKE_REPORT_MODAL_ID = 'student-quiz-retake-report';
 
     let examGuardOn = false;
     let allowUnload = false;
@@ -314,6 +324,20 @@ window.FeatureStudentQuiz = (function () {
         const closeAction = opts.reloadOnClose
             ? "window.FeatureStudentQuiz.closeReview(true)"
             : "window.FeatureStudentQuiz.closeReview(false)";
+        // 這裡是塞進 onclick="...('safeAssign','safeTask')" 的 JS 字串常值，要跳單引號，不是 HTML escape（esc 只處理 &<>"）
+        const safeAssign = String(opts.assignmentId == null ? '' : opts.assignmentId).replace(/'/g, "\\'");
+        const safeTask = String(opts.taskId == null ? '' : opts.taskId).replace(/'/g, "\\'");
+        const retakeBannerHtml = opts.retakeEligible
+            ? ('<div style="margin-bottom:12px; padding:10px 12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
+                + '<span style="font-weight:800; color:#92400E; font-size:0.85rem;">🔁 這次有錯題，可以馬上重考一次（僅一次），也可以之後再回來考。</span>'
+                + '<button type="button" class="btn btn-action" style="background:#B45309; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.startRetakeFromReview(\'' + safeAssign + '\',\'' + safeTask + '\')">立刻重考錯題</button>'
+                + '</div>')
+            : (opts.retakeReportReady
+                ? ('<div style="margin-bottom:12px; padding:10px 12px; background:#ECFDF5; border:1px solid #A7F3D0; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
+                    + '<span style="font-weight:800; color:#047857; font-size:0.85rem;">✅ 錯題重考已完成。</span>'
+                    + '<button type="button" class="btn btn-action" style="background:#059669; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.openRetakeReportFromRaw(\'' + safeAssign + '\',\'' + safeTask + '\')">查看整體報告</button>'
+                    + '</div>')
+                : '');
         return (
             '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
@@ -326,6 +350,7 @@ window.FeatureStudentQuiz = (function () {
                     + ' · 中途退出 ' + esc(stats.quit_count) + ' 次'
                     + ' · 嘗試離開累計 ' + esc(stats.leave_count_total) + ' 次'
                 + '</div>' +
+                retakeBannerHtml +
                 '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">① 錯題本（本次）</div>' +
                 '<div style="max-height:32vh; overflow:auto; margin-bottom:12px;">' + wrongCards + '</div>' +
                 '<div style="font-weight:900; color:#0F766E; margin:10px 0 6px;">④ 歷史錯字紀錄（應打 → 曾寫成）</div>' +
@@ -354,11 +379,20 @@ window.FeatureStudentQuiz = (function () {
             total: qr.total != null ? qr.total : '—',
             score: qr.score != null ? qr.score : '—'
         };
+        const retake = raw.quiz_retake || null;
+        const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
+        const retakeReportReady = !!(retake && retake.done);
         if (!window.ModalOverlay) return;
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID,
             tier: 'A',
-            contentHtml: buildReviewHtml('作答檢討與錯字紀錄', result, stats, { reloadOnClose: false })
+            contentHtml: buildReviewHtml('作答檢討與錯字紀錄', result, stats, {
+                reloadOnClose: false,
+                assignmentId: assignmentId,
+                taskId: taskId,
+                retakeEligible: retakeEligible,
+                retakeReportReady: retakeReportReady
+            })
         });
     }
 
@@ -455,16 +489,17 @@ window.FeatureStudentQuiz = (function () {
         );
     }
 
-    function collectAnswers() {
+    function collectAnswers(bodyId) {
+        const scope = bodyId || (MODAL_ID + '-body');
         const map = {};
-        document.querySelectorAll('#' + MODAL_ID + '-body .quiz-sub-answer-input').forEach(function (el) {
+        document.querySelectorAll('#' + scope + ' .quiz-sub-answer-input').forEach(function (el) {
             const id = el.getAttribute('data-item-id');
             const key = el.getAttribute('data-sub-key');
             if (!id || !key) return;
             if (!map[id] || typeof map[id] !== 'object') map[id] = {};
             map[id][key] = el.value;
         });
-        document.querySelectorAll('#' + MODAL_ID + '-body .quiz-answer-input:not(.quiz-sub-answer-input)').forEach(function (el) {
+        document.querySelectorAll('#' + scope + ' .quiz-answer-input:not(.quiz-sub-answer-input)').forEach(function (el) {
             const id = el.getAttribute('data-item-id');
             if (id) map[id] = el.value;
         });
@@ -901,6 +936,26 @@ window.FeatureStudentQuiz = (function () {
             }
         };
 
+        // 老師勾了「允許重考錯題」才凍結這次的錯題 item_id 清單；每次整卷重考都會覆蓋成最新一次的錯題，
+        // 重考本身仍是「僅一次」（quiz_retake.done）。沒錯題就清空舊的重考狀態，避免留著上次的殘影。
+        const allowRetake = !!(task && task.raw_data && task.raw_data.allow_wrong_retake);
+        let retakeEligible = false;
+        if (allowRetake) {
+            if (stats.wrong_items.length) {
+                rawPayload.quiz_retake = {
+                    item_ids: stats.wrong_items.map(function (w) { return w.item_id; }),
+                    done: false,
+                    answers: {},
+                    result: null,
+                    combined: null,
+                    based_on_graded_at: gradedAt
+                };
+                retakeEligible = true;
+            } else {
+                rawPayload.quiz_retake = null;
+            }
+        }
+
         try {
             sessionSubmitted = true;
             sessionQuitSaved = true;
@@ -913,7 +968,12 @@ window.FeatureStudentQuiz = (function () {
             window.ModalOverlay.open({
                 id: REVIEW_MODAL_ID,
                 tier: 'A',
-                contentHtml: buildReviewHtml('繳交結果・錯題與錯字', result, stats, { reloadOnClose: true })
+                contentHtml: buildReviewHtml('繳交結果・錯題與錯字', result, stats, {
+                    reloadOnClose: true,
+                    assignmentId: assignmentId,
+                    taskId: taskId,
+                    retakeEligible: retakeEligible
+                })
             });
         } catch (err) {
             sessionSubmitted = false;
@@ -923,12 +983,215 @@ window.FeatureStudentQuiz = (function () {
         }
     }
 
+    function startRetakeFromReview(assignmentId, taskId) {
+        // 直接關閉，不走 closeReview(reload)：馬上重考不用整頁重整，重考完的報告關閉才 reload
+        if (window.ModalOverlay) window.ModalOverlay.close(REVIEW_MODAL_ID);
+        openRetakeQuiz(assignmentId, taskId);
+    }
+
+    function openRetakeQuiz(assignmentId, taskId) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        if (!task) return window.showFlash('找不到考試任務', 'error');
+        const paper = getPaper(task);
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) {
+            return window.showFlash('找不到考卷內容', 'error');
+        }
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const retake = raw.quiz_retake;
+        if (!retake || !Array.isArray(retake.item_ids) || !retake.item_ids.length) {
+            return window.showFlash('目前沒有可重考的錯題', 'warning');
+        }
+        if (retake.done) {
+            return openRetakeReportFromRaw(assignmentId, taskId);
+        }
+        const idSet = {};
+        retake.item_ids.forEach(function (id) { idSet[String(id)] = true; });
+        const retakeItems = paper.items.filter(function (it) { return idSet[String(it.item_id)]; });
+        if (!retakeItems.length) {
+            return window.showFlash('找不到對應的錯題內容（考卷可能已更動），無法重考', 'error');
+        }
+        const prevAnswers = raw.quiz_answers || {};
+        const title = String(task.title || (task.raw_data && task.raw_data.exam_title) || '線上考試')
+            .replace(/<[^>]*>?/gm, '');
+
+        const itemsHtml = retakeItems.map(function (it) {
+            return renderItemRow(it, prevAnswers[it.item_id]);
+        }).join('');
+
+        const safeAssign = String(assignmentId).replace(/'/g, "\\'");
+        const safeTask = String(taskId).replace(/'/g, "\\'");
+
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') {
+            return window.showFlash('ModalOverlay 未載入', 'error');
+        }
+
+        window.ModalOverlay.open({
+            id: RETAKE_MODAL_ID,
+            tier: 'B',
+            isDirty: function () { return true; },
+            unsavedMessage: '錯題重考尚未繳交，確定要關閉？',
+            onMount: function (overlay) { hardenAnswerInputs(overlay); },
+            contentHtml:
+                '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">🔁 錯題重考・' + esc(title) + '</h3>' +
+                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + RETAKE_MODAL_ID + '\')">關閉</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem; color:#92400E; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; padding:8px 10px; margin-bottom:10px;">' +
+                        '本次只重考上次答錯的 ' + retakeItems.length + ' 題，僅能重考一次，交卷後會產生整體報告（原始成績＋訂正後成績）。</div>' +
+                    '<div id="' + RETAKE_MODAL_ID + '-body" style="overflow:auto; flex:1;">' + itemsHtml + '</div>' +
+                    '<div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">' +
+                        '<button type="button" class="btn btn-action" style="background:#B45309; color:white; border:none; padding:8px 14px; font-weight:800;" ' +
+                            "onclick=\"window.FeatureStudentQuiz.submitRetake('" + safeAssign + "','" + safeTask + "')\">繳交錯題重考</button>" +
+                    '</div>' +
+                '</div>'
+        });
+    }
+
+    async function submitRetake(assignmentId, taskId) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        const paper = getPaper(task);
+        if (!paper) return window.showFlash('找不到考卷', 'error');
+        if (!window.QuizPaperBuilder) return window.showFlash('評分模組未載入', 'error');
+
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const retake = raw.quiz_retake;
+        if (!retake || !Array.isArray(retake.item_ids) || !retake.item_ids.length) {
+            return window.showFlash('找不到重考範圍，請關閉後重新整理再試', 'error');
+        }
+        const idSet = {};
+        retake.item_ids.forEach(function (id) { idSet[String(id)] = true; });
+        const retakeItems = paper.items.filter(function (it) { return idSet[String(it.item_id)]; });
+        const retakePaper = Object.assign({}, paper, { items: retakeItems });
+
+        const answers = collectAnswers(RETAKE_MODAL_ID + '-body');
+        const result = window.QuizPaperBuilder.gradeAnswers(retakePaper, answers);
+        const gradedAt = new Date().toISOString();
+
+        const retakeWrongItems = (result.wrong_items || []).map(function (d) {
+            const item = {
+                item_id: d.item_id,
+                seq: d.seq,
+                prompt_zh: d.prompt_zh || '',
+                expected: d.expected || '',
+                answer: d.answer || '',
+                source: d.source || null,
+                diff: d.diff || null,
+                spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
+            };
+            item.headline = headlineFromWrongItem(item);
+            return item;
+        });
+
+        const originalResult = raw.quiz_result || {};
+        const originalTotal = Number(originalResult.total) || 0;
+        const originalCorrect = Number(originalResult.correct) || 0;
+        // 合併正確率＝（原始答對＋錯題重考答對）/ 原始總題數（分母不變，重考題只是原始錯題的子集訂正）
+        const combinedCorrect = originalCorrect + result.correct;
+        const combinedRate = originalTotal > 0 ? Math.round((combinedCorrect / originalTotal) * 1000) / 10 : null;
+
+        const updatedRetake = {
+            item_ids: retake.item_ids.slice(),
+            done: true,
+            answers: answers,
+            graded_at: gradedAt,
+            result: {
+                score: result.score,
+                correct: result.correct,
+                total: result.total,
+                wrong_items: retakeWrongItems
+            },
+            combined: {
+                correct: combinedCorrect,
+                total: originalTotal,
+                rate: combinedRate
+            }
+        };
+
+        try {
+            await persistResult(assignmentId, taskId, { quiz_retake: updatedRetake }, true);
+            if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_MODAL_ID);
+            openRetakeReportModal(assignmentId, taskId, originalResult, updatedRetake);
+        } catch (err) {
+            console.error('[FeatureStudentQuiz] submitRetake', err);
+            window.showFlash('重考繳交失敗：' + (err.message || err), 'error');
+        }
+    }
+
+    function buildRetakeReportHtml(title, originalResult, retake) {
+        const combined = retake.combined || {};
+        const wrongItems = (retake.result && retake.result.wrong_items) || [];
+        const totalRetake = Array.isArray(retake.item_ids) ? retake.item_ids.length : 0;
+        const fixedCount = Math.max(0, totalRetake - wrongItems.length);
+        const wrongCards = wrongItems.length
+            ? wrongItems.map(renderWrongItemCard).join('')
+            : '<div style="color:#047857; font-weight:800; padding:12px;">重考的題目全部訂正成功！</div>';
+        return (
+            '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+                    '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">📊 ' + esc(title) + '・整體報告</h3>' +
+                    '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">關閉</button>' +
+                '</div>' +
+                '<div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;">' +
+                    '<div style="flex:1 1 200px; padding:10px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;">' +
+                        '<div style="font-size:0.75rem; color:#64748B; font-weight:800;">原始成績</div>' +
+                        '<div style="font-size:1.3rem; font-weight:900; color:#334155;">' + esc(originalResult.correct) + ' / ' + esc(originalResult.total) + '（' + esc(originalResult.score) + '%）</div>' +
+                    '</div>' +
+                    '<div style="flex:1 1 200px; padding:10px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">' +
+                        '<div style="font-size:0.75rem; color:#92400E; font-weight:800;">錯題重考訂正</div>' +
+                        '<div style="font-size:1.3rem; font-weight:900; color:#92400E;">' + esc(fixedCount) + ' / ' + esc(totalRetake) + ' 題訂正成功</div>' +
+                    '</div>' +
+                    '<div style="flex:1 1 200px; padding:10px; background:#ECFDF5; border:1px solid #A7F3D0; border-radius:8px;">' +
+                        '<div style="font-size:0.75rem; color:#047857; font-weight:800;">訂正後合併正確率</div>' +
+                        '<div style="font-size:1.3rem; font-weight:900; color:#047857;">' + esc(combined.correct) + ' / ' + esc(combined.total) + '（' + esc(combined.rate) + '%）</div>' +
+                    '</div>' +
+                '</div>' +
+                (wrongItems.length ? '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">重考後仍錯的題目</div>' : '') +
+                '<div style="max-height:38vh; overflow:auto; margin-bottom:8px;">' + wrongCards + '</div>' +
+                '<div style="display:flex; justify-content:flex-end; margin-top:12px;">' +
+                    '<button type="button" class="btn btn-action" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">知道了</button>' +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function openRetakeReportModal(assignmentId, taskId, originalResult, retake) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        const title = String((task && task.title) || '線上考試').replace(/<[^>]*>?/gm, '');
+        if (!window.ModalOverlay) return;
+        window.ModalOverlay.open({
+            id: RETAKE_REPORT_MODAL_ID,
+            tier: 'A',
+            contentHtml: buildRetakeReportHtml(title, originalResult, retake)
+        });
+    }
+
+    function openRetakeReportFromRaw(assignmentId, taskId) {
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const retake = raw.quiz_retake;
+        if (!retake || !retake.done) return window.showFlash('尚未完成錯題重考', 'warning');
+        openRetakeReportModal(assignmentId, taskId, raw.quiz_result || {}, retake);
+    }
+
+    function closeRetakeReport(reload) {
+        if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_REPORT_MODAL_ID);
+        if (reload) window.location.reload();
+    }
+
     return {
         openQuiz: openQuiz,
         submit: submit,
         requestCloseQuiz: requestCloseQuiz,
         closeReview: closeReview,
         openReviewFromRaw: openReviewFromRaw,
+        startRetakeFromReview: startRetakeFromReview,
+        openRetakeQuiz: openRetakeQuiz,
+        submitRetake: submitRetake,
+        openRetakeReportFromRaw: openRetakeReportFromRaw,
+        closeRetakeReport: closeRetakeReport,
         getLeaveStats: function () {
             return { leave_count: leaveCount, leave_log: leaveLog.slice() };
         },

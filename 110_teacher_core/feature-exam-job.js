@@ -1809,6 +1809,10 @@ window.FeatureExamJob = (function () {
                 </div>
                 <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center;">
                     <label><input id="exam-inline-shuffle-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle === false) ? '' : 'checked'}> shuffle</label>
+                    <label title="學生交卷後，若有錯題，可自己選擇要不要當下或之後重考一次錯的題目（原題原答案，只能重考一次），交卷後會產生合併正確率的整體報告。">
+                        <input id="exam-inline-allow-retake-${pathStr}" type="checkbox" ${raw.allow_wrong_retake ? 'checked' : ''}>
+                        🔁 允許重考錯題（僅一次）
+                    </label>
                 </div>
                 <div style="overflow-x:auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:980px;">
@@ -1944,6 +1948,8 @@ window.FeatureExamJob = (function () {
         task.raw_data.exam_job_id = jobId;
         task.raw_data.exam_title = String(task.title || '').replace(/<[^>]*>?/gm, '').trim() || task.raw_data.exam_title || '';
         task.raw_data.exam_job = payload;
+        const allowRetakeEl = document.getElementById('exam-inline-allow-retake-' + pathStr);
+        if (allowRetakeEl) task.raw_data.allow_wrong_retake = !!allowRetakeEl.checked;
         const jobIdEl = document.getElementById('exam-inline-jobid-' + pathStr);
         if (jobIdEl) jobIdEl.textContent = jobId;
 

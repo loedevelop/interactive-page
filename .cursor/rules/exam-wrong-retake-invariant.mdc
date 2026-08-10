@@ -1,0 +1,68 @@
+---
+description: 考試「重考錯題（僅一次）」與合併正確率整體報告鐵律
+globs: 110_teacher_core/feature-exam-job.js,110_teacher_core/feature-exam-review.js,120_student_core/feature-student-quiz.js,120_student_core/ui-student-timeline-templates.js
+alwaysApply: false
+---
+
+# 考試「重考錯題」鐵律（2026-08-10 新增）
+
+> 老師出考題時可勾選「🔁 允許重考錯題（僅一次）」；學生交卷後若有錯題，
+> 可當下或之後回來只重考那些錯的題目（原題原答案，不重抽），且只能重考一次，
+> 完成後產生「原始成績 + 訂正後合併正確率」的整體報告。
+
+## 資料模型
+
+```
+task.raw_data.allow_wrong_retake  ← 布林，老師端 exam-inline 編輯區勾選，syncInlineEditor 存入
+task_completions.raw_data.quiz_retake = {
+  item_ids: [item_id, ...],   // 凍結自「這次」quiz_result.wrong_items 的 item_id（僅一次的判定基準）
+  done: false,
+  answers: {},                // 重考時學生填的答案（同 quiz_answers 格式，含 sub_answers 物件）
+  result: null | { score, correct, total, wrong_items },
+  combined: null | { correct, total, rate },  // = (原始 correct + 重考 correct) / 原始 total
+  based_on_graded_at, graded_at
+}
+```
+
+## 不變量
+
+```
+allow_wrong_retake=false 或本次 wrong_items 為空 → 不產生／清空 quiz_retake（避免留上次殘影）
+quiz_retake.item_ids 只在「整卷交卷」（submit）時被覆寫成最新一次錯題；重考本身不會再改 item_ids
+重考只能一次：submitRetake 成功後 done=true，openRetakeQuiz 對 done=true 一律轉去看報告，不能再重考
+重考題目＝原題原答案：直接從 task.raw_data.quiz_paper.items 用 item_id 過濾出子集評分，
+  不重新抽題、不改標準答案（gradeAnswers 對這個子集 paper 呼叫，跟整卷評分同一套邏輯）
+合併正確率分母＝原始 quiz_result.total（不是重考題數），只有分子會因訂正而增加
+重考彈窗不套用整卷考試的全螢幕／離開次數防作弊（ModalOverlay tier B + isDirty 即可），
+  那套機制是給正式整卷考試用的，訂正幾題錯題沒必要一樣重
+```
+
+## 進入點（兩個，缺一都會被回報「沒反應」）
+
+1. 交卷後的檢討彈窗（`buildReviewHtml`）：有資格立刻重考才會出現「立刻重考錯題」按鈕
+2. 時間軸該考試任務列：只要 `quiz_retake` 存在且未 done，按鈕永遠在（讓學生「之後再回來做」也找得到），
+   done 後改顯示「📊 整體報告」
+
+## 禁止
+
+```javascript
+// ❌ 用整卷 wrong_items 現算，而不是凍結的 quiz_retake.item_ids 判斷能不能重考
+// 老師事後改標準答案重批（regradeCompletionRawData）會讓 wrong_items 變動，
+// 若不凍結，學生「已提交過的重考」範圍會跟著漂移
+
+// ❌ 重考完後又把 item_ids 換成「重考後仍錯的題目」，讓學生可以無限層重考下去
+// （使用者明確要求「僅一次」，只給一次訂正機會）
+
+// ❌ 合併正確率分母用「原始 total - 重考題數 + 重考題數」這種繞法，應直接用原始 total
+```
+
+## 老師端顯示
+
+`feature-exam-review.js` 學生清單：`quiz_retake.done` 時附「→ 訂正後 X%」；
+未 done 但有 item_ids 時附「（待重考錯題）」提示老師學生還沒訂正完。
+
+## 改動前自問
+
+若本次會動到 `feature-exam-job.js` 的 inline 編輯區、`feature-student-quiz.js` 的 submit／grading、
+或 `quiz_retake` 結構：僅一次重考的判定是否仍以「凍結的 item_ids + done 旗標」為準？
+合併正確率分母是否仍是原始總題數？若否，停下。
