@@ -55,7 +55,10 @@ window.UIStudentTimelineTemplates = (() => {
         const metaName = fileMeta && fileMeta.name ? String(fileMeta.name).toLowerCase() : '';
         const url = String(audioUrl || '').toLowerCase();
         const hay = metaMime + ' ' + metaName + ' ' + url;
-        if (/audio\/|\.wav|\.mp3|\.m4a|\.ogg|\.aac|\.webm|\.flac/.test(hay)) return 'audio';
+        // 🌟 只要收到的檔案「是音檔」就該給播放器，不分任務類型（錄音任務／一般資料夾上傳皆同）。
+        // 一般資料夾上傳（task.type==='drive'）的 <input type="file"> 沒有 accept 限制，什麼副檔名
+        // 都可能選到；補齊跟其他音檔輸入框 accept 清單一致的副檔名，避免漏判成一般檔案。
+        if (/audio\/|\.wav|\.mp3|\.m4a|\.ogg|\.aac|\.webm|\.flac|\.amr|\.3gp|\.wma|\.mp4|\.caf|\.opus/.test(hay)) return 'audio';
         if (/image\/|\.png|\.jpe?g|\.gif|\.webp|\.bmp|\.heic/.test(hay)) return 'image';
         if (/pdf|\.pdf|application\/pdf/.test(hay)) return 'pdf';
         // 🌟 拿掉「只要是 drive.google.com/file 網址就當音檔」這條過寬的預設值：
@@ -133,8 +136,31 @@ window.UIStudentTimelineTemplates = (() => {
         return stem || sub || '';
     };
 
+    /**
+     * 把 base 範圍文字（例如「pp. 243 ~ 247, p. 252」「A pp. 1~2；B pp. 3~4」）裡出現的所有
+     * 數字／數字區間依出現順序展開成頁碼陣列（例：[243,244,245,246,247,252]）。不管前綴是
+     * p./pp./stem 字母，一律直接抓數字——這是老師在畫面上唯一「看得到、也最準」的頁數來源，
+     * 比另外維護一份骨架單元列表更貼近老師實際操作習慣（見 2026-08-09 使用者回報）。
+     */
+    const pagesFromRangeText = (text) => {
+        const str = String(text || '').replace(/[～〜－—–-]/g, '~');
+        const pages = [];
+        const re = /(\d+)\s*~\s*(\d+)|(\d+)/g;
+        let m;
+        while ((m = re.exec(str))) {
+            if (m[1] && m[2]) {
+                let a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+                if (a > b) { const t = a; a = b; b = t; }
+                for (let i = a; i <= b; i++) pages.push(i);
+            } else if (m[3]) {
+                pages.push(parseInt(m[3], 10));
+            }
+        }
+        return pages;
+    };
+
     /** 已繳交檔：音檔播放／圖片顯示／文件開預覽（開的是檔案，不是資料夾）；每筆都可「🔁 取代」 */
-    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas, courseId, taskId, statusId, skeletonUnitsForLabel) => {
+    const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas, courseId, taskId, statusId, skeletonUnitsForLabel, materialRangeForLabel) => {
         const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean).map(String) : [];
         if (ids.length === 0 && audioUrl) {
             const m = String(audioUrl).match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -144,6 +170,10 @@ window.UIStudentTimelineTemplates = (() => {
 
         const metas = Array.isArray(fileMetas) ? fileMetas : [];
         const fallbackUnits = Array.isArray(skeletonUnitsForLabel) ? skeletonUnitsForLabel : null;
+        // 優先序：① base 範圍文字展開的頁碼（檔數剛好對得上才用，避免上傳數跟範圍不符時瞎猜）
+        // ② 骨架單元列表（陣列位置對應）③ 都沒有才顯示「第 X 檔」
+        const rangePages = pagesFromRangeText(materialRangeForLabel);
+        const useRangePages = rangePages.length === ids.length;
         const showLabel = ids.length > 1;
         let html = '<div style="display:flex; flex-direction:column; gap:6px; width:100%;">';
         ids.forEach((fileId, idx) => {
@@ -152,7 +182,8 @@ window.UIStudentTimelineTemplates = (() => {
             const viewUrl = resolveDriveViewUrl(fileId);
             const playerId = ids.length === 1 ? inlinePlayerId : `${inlinePlayerId}-${idx}`;
             const metaLabel = meta && meta.label ? String(meta.label).trim() : '';
-            const unitLabel = metaLabel || (fallbackUnits ? skeletonUnitLabelText(fallbackUnits[idx]) : '');
+            const rangeLabel = useRangePages ? ('p. ' + rangePages[idx]) : '';
+            const unitLabel = metaLabel || rangeLabel || (fallbackUnits ? skeletonUnitLabelText(fallbackUnits[idx]) : '');
             const labelChip = (showLabel && unitLabel)
                 ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(unitLabel)}</span>`
                 : (showLabel ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
@@ -1289,7 +1320,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     course.id,
                                     task.id,
                                     statusId,
-                                    skeletonUnitsForLabel
+                                    skeletonUnitsForLabel,
+                                    materialRange
                                 );
                             }
 

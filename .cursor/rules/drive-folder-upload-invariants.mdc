@@ -132,6 +132,14 @@ updateProgress 寫表成功後，必須把 rawData 合併回 window._studentTask
   否則上傳／取代成功後畫面仍是舊快取，音檔播放器／縮圖要等下次整頁重新整理才會出現新檔案
   （2026-08-09 修復：這條之前完全沒做，AI 分頁路徑靠 applyLocalCompletionAfterAudioSubmit 沒事，
   一般／非 AI 路徑則會出現「取代後畫面看起來像沒換」）
+guessSubmittedKind 判斷「是不是音檔」只認 mime／檔名副檔名，不分任務類型
+  （task.type==='audio_record' 或 'drive' 一般資料夾上傳皆同）；一般資料夾上傳的 <input type="file">
+  沒有 accept 限制，副檔名清單要跟其他音檔輸入框的 accept 保持一致（見 2026-08-09 修復，
+  補上 .amr/.3gp/.wma/.mp4/.caf/.opus），否則同樣是音檔卻因副檔名沒列到而被當成一般檔案、沒有播放器
+已繳交檔案清單的頁碼標籤（labelChip）優先解析 base 範圍文字本身展開出的頁碼（pagesFromRangeText，
+  只在展開後的頁數剛好等於檔案數時採用），其次才退回骨架單元列表（grading_units 陣列位置對應）；
+  base 範圍文字是老師唯一「看得到、也最準」的頁數來源，不要求老師另外維護一份對得上的骨架列表
+  （2026-08-09：光靠骨架單元列表對不上老師實際輸入習慣，導致標籤仍顯示「第 X 檔」）
 ```
 
 ### 禁止
