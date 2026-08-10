@@ -383,6 +383,25 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
     }
 
+    /**
+     * 「＋新增」按鈕加的新列永遠是加在清單最後面——如果清單已經有其他列（例如剛存過一筆），
+     * 新列會出現在畫面很下面，老師視線還停在上面剛存好的那一列，看起來就像「按了沒反應」
+     * （2026-08-09 使用者回報「新增套用，根本無法再次使用」）。捲動到新列＋短暫外框高亮，
+     * 讓「有新增成功」這件事變成看得到的動作，不用老師自己往下找。
+     */
+    function highlightNewRow(rowEl) {
+        if (!rowEl || typeof rowEl.scrollIntoView !== 'function') return;
+        rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const prevOutline = rowEl.style.outline;
+        const prevOffset = rowEl.style.outlineOffset;
+        rowEl.style.outline = '3px solid #6366F1';
+        rowEl.style.outlineOffset = '2px';
+        setTimeout(function () {
+            rowEl.style.outline = prevOutline || '';
+            rowEl.style.outlineOffset = prevOffset || '';
+        }, 1600);
+    }
+
     async function fetchPairs(force) {
         if (_cache && !force) return _cache;
         if (_loadPromise && !force) return _loadPromise;
@@ -3034,13 +3053,20 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
 
         document.getElementById('mlp-add-row').onclick = function () {
-            const empty = rowsEl.querySelector('.mlp-empty-hint');
-            if (empty) empty.remove();
-            const div = document.createElement('div');
-            div.innerHTML = renderRow({ id: 'mlp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), material_folder: '', root_kind: 'teacher', class_id: '', sheet_id: '', layout_profile_ids: [] }, layoutCatalog);
-            const newRow = div.firstElementChild;
-            rowsEl.appendChild(newRow);
-            bindRowEvents(newRow);
+            try {
+                const empty = rowsEl.querySelector('.mlp-empty-hint');
+                if (empty) empty.remove();
+                const div = document.createElement('div');
+                div.innerHTML = renderRow({ id: 'mlp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), material_folder: '', root_kind: 'teacher', class_id: '', sheet_id: '', layout_profile_ids: [] }, layoutCatalog);
+                const newRow = div.firstElementChild;
+                rowsEl.appendChild(newRow);
+                bindRowEvents(newRow);
+                refreshFolderSelect(newRow);
+                highlightNewRow(newRow);
+            } catch (err) {
+                console.error('[FeatureMaterialLayoutPairing] 新增搭配列失敗', err);
+                window.showFlash && window.showFlash('❌ 新增搭配列失敗：' + (err.message || err), 'error');
+            }
         };
 
         document.getElementById('mlp-save').onclick = async function () {
@@ -3071,14 +3097,20 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
 
         document.getElementById('mlp-app-add-row').onclick = function () {
-            const empty = appRowsEl.querySelector('.mlp-app-empty-hint');
-            if (empty) empty.remove();
-            const div = document.createElement('div');
-            div.innerHTML = renderAppRow({ id: 'mta_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), template_name: '', root_kind: 'teacher', class_id: '', material_folder: '', sheet_ids: [], row_start: '', row_end: '' });
-            const newRow = div.firstElementChild;
-            appRowsEl.appendChild(newRow);
-            bindAppRowEvents(newRow);
-            refreshAppFolderSelect(newRow);
+            try {
+                const empty = appRowsEl.querySelector('.mlp-app-empty-hint');
+                if (empty) empty.remove();
+                const div = document.createElement('div');
+                div.innerHTML = renderAppRow({ id: 'mta_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), template_name: '', root_kind: 'teacher', class_id: '', material_folder: '', sheet_ids: [], row_start: '', row_end: '' });
+                const newRow = div.firstElementChild;
+                appRowsEl.appendChild(newRow);
+                bindAppRowEvents(newRow);
+                refreshAppFolderSelect(newRow);
+                highlightNewRow(newRow);
+            } catch (err) {
+                console.error('[FeatureMaterialLayoutPairing] 新增套用列失敗', err);
+                window.showFlash && window.showFlash('❌ 新增套用列失敗：' + (err.message || err), 'error');
+            }
         };
 
         document.getElementById('mlp-app-save').onclick = async function () {

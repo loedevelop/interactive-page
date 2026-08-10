@@ -1531,3 +1531,47 @@ const cells = safeEvalFields(opts.fields || '');
 101. 同一份教材選的 `layout_profile_id` 是 `vocab-no-image`（目前公式仍是占位）時，出考卷**不會
      整份失敗**，題目至少能看到中文語意（`display_zh`），答案欄位仍正確
 102. 舊教材（有 `_layout.json`、或用舊 `script` 當 semantic_key）出考卷行為完全不變
+
+### 「＋新增套用」看起來完全沒反應（新列加在最下面、老師視線在上面）
+
+> 2026-08-09：老師剛存完一列「套用到教材」，接著按「＋新增套用」想再登記一筆，回報「根本無法
+> 再次使用」「應該畫面要從頭來」。新列本身的資料模型（`ensureAppRowState` 給全新 appId）跟畫面
+> （空白的 Layout Template／教材資料夾／活頁勾選）都是正確的「從頭來」狀態，問題是它被
+> `appendChild` 加在清單**最後面**——如果上面已經有一列填滿＋上傳成功的紀錄，新的空白列會出現
+> 在畫面很下面，老師視線還停在剛剛那一列，看起來就像「按了什麼都沒發生」。
+
+- 修正（`mlp-app-add-row`／`mlp-add-row` 兩個「＋新增」按鈕都一致補上）：
+  1. 新列 `appendChild` 之後立刻 `scrollIntoView({behavior:'smooth', block:'center'})`，並加 1.6
+     秒的外框高亮（`highlightNewRow()`），讓「新增成功」變成看得到的畫面動作。
+  2. 整個 handler 包 try/catch——任何一步（`renderAppRow`／`bindAppRowEvents`／
+     `refreshAppFolderSelect`）拋例外都不會再靜默失敗，會用 `window.showFlash` 顯示紅字錯誤，
+     跟「確認上傳到 Drive」那顆按鈕同一套「至少要有錯誤訊息」原則（見上面兩節）。
+  3. `mlp-add-row`（教材／考試 Layout 搭配區塊的新列）原本沒呼叫 `refreshFolderSelect(newRow)`，
+     這次一併補上，跟套用列一致，避免新列的教材資料夾下拉在極端情況下沒被背景刷新流程覆蓋到。
+
+```javascript
+// ❌ 新列加在最後面就結束，老師視線在別處時感覺不到任何變化；handler 沒有 try/catch，
+//    渲染／綁定任何一步失敗都是完全靜默（console 才看得到），畫面上跟沒按一樣
+appRowsEl.appendChild(newRow);
+bindAppRowEvents(newRow);
+refreshAppFolderSelect(newRow);
+
+// ✅ 捲動＋高亮讓新增這個動作「看得到」，並且任何失敗都要冒出來
+try {
+    appRowsEl.appendChild(newRow);
+    bindAppRowEvents(newRow);
+    refreshAppFolderSelect(newRow);
+    highlightNewRow(newRow); // scrollIntoView + 1.6 秒外框高亮
+} catch (err) {
+    window.showFlash('❌ 新增套用列失敗：' + (err.message || err), 'error');
+}
+```
+
+### 實測
+
+103. 「套用到教材」已有一列填滿內容並上傳成功，按「＋新增套用」——畫面自動捲動到新出現的空白
+     列，該列短暫有明顯的外框高亮，且該列的 Layout Template／教材資料夾／活頁勾選全部是空的
+     （不是延續上一列的選擇）
+104. 「教材／考試 Layout 搭配」區塊按「＋新增搭配」同樣會捲動＋高亮到新列
+105. 刻意讓 `renderAppRow`／`bindAppRowEvents` 拋出例外（開發測試用）時，畫面會用紅字 flash 顯示
+     「❌ 新增套用列失敗：...」，不會安靜地什麼都不做
