@@ -391,7 +391,7 @@
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
     <script src="../110_teacher_core/feature-exam-job.js?v=26"></script> <!-- v26 refreshAfterAudioSnapshot 同步寫入 raw_data.title_auto_from_range -->
-    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=34"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v34：沒按過「產生預覽」直接按「確認上傳到 Drive」時自動補跑算列邏輯，不再靜默 disabled 沒反應；修正上傳迴圈中 msgEl/uploadBtn 因 refreshAppGenArea 重繪而變孤兒節點 -->
+    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=35"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v35：修正「確認上傳到 Drive」按鈕真正的 bug 根源——按鈕原本會用 canConfirmUpload() render 出 disabled 屬性，disabled 的 button 完全不會發出 click 事件，v34 加的自動補跑預覽邏輯因此從未被呼叫到；改成一律可點，交給 handleConfirmUpload 自己判斷 -->
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
     <script src="../110_teacher_core/feature-exam-review.js?v=1"></script>

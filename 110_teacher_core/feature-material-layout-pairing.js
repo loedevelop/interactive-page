@@ -2442,7 +2442,16 @@ window.FeatureMaterialLayoutPairing = (function () {
             + rowsHtml
             + '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">'
             + '<button type="button" class="mlp-app-gen-preview btn" style="padding:6px 14px; font-size:0.78rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:6px; cursor:pointer;">🔍 產生預覽</button>'
-            + '<button type="button" class="mlp-app-gen-upload btn btn-primary" style="padding:6px 14px; font-size:0.78rem; font-weight:800;" ' + (canConfirmUpload(state, sheetNames) ? '' : 'disabled') + '>☁️ 確認上傳到 Drive</button>'
+            /**
+             * 💣 雷區：這顆按鈕絕對不能再用 canConfirmUpload() 加 disabled——
+             * disabled 的 <button> 在瀏覽器裡完全不會發出 click 事件，`bindAppGenAreaEvents`
+             * 掛的 addEventListener('click', handleConfirmUpload) 永遠不會被呼叫到，
+             * handleConfirmUpload 內部「沒有預覽就自動補跑」的邏輯因此變成死碼——這正是
+             * 「沒有看預覽，按了儲存，沒有作用」的真正原因（2026-08-09 使用者回報兩次，
+             * 上一輪只修了函式內部邏輯，忘了拿掉這裡的 disabled，等於沒修到）。
+             * 一律可點，交給 handleConfirmUpload 自己判斷要不要先補跑預覽、或顯示錯誤訊息。
+             */
+            + '<button type="button" class="mlp-app-gen-upload btn btn-primary" style="padding:6px 14px; font-size:0.78rem; font-weight:800;">☁️ 確認上傳到 Drive</button>'
             + '<span class="mlp-app-gen-msg" style="font-size:0.76rem; font-weight:800;"></span>'
             + '</div>'
             + '</div>';

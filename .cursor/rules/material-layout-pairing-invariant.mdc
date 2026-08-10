@@ -822,9 +822,20 @@ handleConfirmUpload(rowEl, appId)         // 逐活頁呼叫 GasService.uploadMa
 //    必須逐活頁檢查 previewed && !error && rows.length > 0 才能真正送出上傳
 
 // ❌ 老師沒按過「產生預覽」就按「確認上傳到 Drive」時，讓按鈕維持 disabled、點下去毫無反應／
-//    毫無訊息——那看起來像「壞掉」，不是「請先按別的按鈕」（2026-08-09 使用者回報「沒有看
+//    毫無訊息——那看起來像「壞掉」，不是「請先按別的按鈕」（2026-08-09 使用者回報兩次「沒有看
 //    預覽，直接儲存，則沒有作用」）。必須自動先跑一次跟「產生預覽」相同的算列邏輯
 //    （generatePreviewForRow，兩個按鈕共用同一份），成功才接著上傳；失敗才提示錯誤擋下來
+//
+// ⚠️ 真正的根因（第一輪只改了 handleConfirmUpload 內部邏輯，沒改到這個，等於沒修到）：
+//    renderAppGenAreaHtml 產生按鈕 HTML 時，曾經用 canConfirmUpload() 決定要不要加 disabled
+//    屬性——瀏覽器對「disabled 的 <button>」完全不會發出 click 事件，bindAppGenAreaEvents 掛的
+//    addEventListener('click', handleConfirmUpload) 因此永遠不會被呼叫到，內部那段「自動補跑
+//    預覽」的程式碼變成死碼，跟寫對寫錯無關，因為根本沒機會執行。正確做法：這顆按鈕永遠不要
+//    render 成 disabled（只有「上傳進行中」那幾秒可以暫時 disabled，且上傳結束的 finally 一定
+//    要恢復），可點與否的判斷完全交給 handleConfirmUpload 函式內部去做，不要在 render HTML
+//    那層再攔一次。
+// ❌ renderAppGenAreaHtml 裡：'<button ... ' + (canConfirmUpload(state, sheetNames) ? '' : 'disabled') + '>☁️ 確認上傳到 Drive</button>'
+// ✅ renderAppGenAreaHtml 裡：'<button ...>☁️ 確認上傳到 Drive</button>'（不判斷、一律可點）
 
 // ❌ handleConfirmUpload 開頭只查一次 msgEl／uploadBtn 就整個 async 流程沿用——迴圈裡每上傳完
 //    一個活頁都會呼叫 refreshAppGenArea() 整段重寫 .mlp-app-gen-area 的 innerHTML，舊的 DOM
