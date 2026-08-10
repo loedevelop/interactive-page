@@ -140,6 +140,12 @@ guessSubmittedKind 判斷「是不是音檔」只認 mime／檔名副檔名，�
   只在展開後的頁數剛好等於檔案數時採用），其次才退回骨架單元列表（grading_units 陣列位置對應）；
   base 範圍文字是老師唯一「看得到、也最準」的頁數來源，不要求老師另外維護一份對得上的骨架列表
   （2026-08-09：光靠骨架單元列表對不上老師實際輸入習慣，導致標籤仍顯示「第 X 檔」）
+「共 X 頁 → 請上傳 X 檔」提示與「已選檔數 vs. 應有頁數」比對警告，兩處都優先用結構化 grading_units.length，
+  沒有 grading_units 時才退回 pagesFromRangeText(material_range).length 當 fallback（同一套展開邏輯，
+  由 UIStudentTimelineTemplates.pagesFromRangeText 匯出給 feature-student-timeline.js 的
+  uploadAudioFilesForGrading 重用，不要各寫一份）；只手動貼 base 範圍文字、沒跑過 meta／骨架流程的
+  錄音作業，也要能提醒「選了幾檔 vs. 範圍展開後應有幾頁」——這個警告是 window.showFlash('warning')，
+  **非阻擋式**，不會擋上傳、不會截斷已選檔案（2026-08-09 使用者回報「一頁錄一檔，為什只有一個檔案」）
 ```
 
 ### 禁止

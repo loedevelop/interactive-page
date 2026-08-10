@@ -2628,11 +2628,30 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const g = state.gen[name];
                 if (msgEl) msgEl.textContent = '⏳ 上傳中（' + (i + 1) + '/' + sheetNames.length + '）：' + name + '…';
                 try {
+                    // 💣 雷區：檔名輸入框只在 change（失焦）時才把值寫回 state.gen[name].outputMeta／
+                    // outputScript。老師若接受畫面自動帶出的預設檔名、完全沒點過那個輸入框，change
+                    // 永遠不會觸發，g.outputMeta/outputScript 就一路是 undefined——傳給 GAS 的
+                    // fileName 是 undefined，Code.gs 對 undefined 呼叫 .replace() 就會炸
+                    // 「Cannot read properties of undefined (reading 'replace')」（2026-08-09 回報）。
+                    // 上傳前一律用「畫面上實際顯示的檔名」三層 fallback：DOM 現值 → state 快取 → 預設檔名，
+                    // 絕不把 undefined 傳給 GAS；同時寫回 state，避免下次重繪又跑掉。
+                    let sheetRowEl = null;
+                    rowEl.querySelectorAll('.mlp-app-gen-sheet').forEach(function (el) {
+                        if (el.getAttribute('data-sheet') === name) sheetRowEl = el;
+                    });
+                    const metaNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-metaname') : null;
+                    const scriptNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-scriptname') : null;
+                    const defaults = defaultOutputNames(name);
+                    const finalMetaName = (metaNameInput && metaNameInput.value.trim()) || g.outputMeta || defaults.meta;
+                    const finalScriptName = (scriptNameInput && scriptNameInput.value.trim()) || g.outputScript || defaults.script;
+                    g.outputMeta = finalMetaName;
+                    g.outputScript = finalScriptName;
+
                     const metaJson = JSON.stringify(g.rows, null, 2);
                     const scriptTxt = g.scriptLines.join('\n') + (g.scriptLines.length ? '\n' : '');
-                    const metaRes = await window.GasService.uploadMaterialFile(utf8ToBase64(metaJson), g.outputMeta, 'application/json', folderId);
-                    const scriptRes = await window.GasService.uploadMaterialFile(utf8ToBase64(scriptTxt), g.outputScript, 'text/plain', folderId);
-                    g.uploadStatus = { ok: true, text: '✅ 已上傳：' + (metaRes.finalFileName || g.outputMeta) + '、' + (scriptRes.finalFileName || g.outputScript) };
+                    const metaRes = await window.GasService.uploadMaterialFile(utf8ToBase64(metaJson), finalMetaName, 'application/json', folderId);
+                    const scriptRes = await window.GasService.uploadMaterialFile(utf8ToBase64(scriptTxt), finalScriptName, 'text/plain', folderId);
+                    g.uploadStatus = { ok: true, text: '✅ 已上傳：' + (metaRes.finalFileName || finalMetaName) + '、' + (scriptRes.finalFileName || finalScriptName) };
                 } catch (sheetErr) {
                     g.uploadStatus = { ok: false, text: '❌ 上傳失敗：' + (sheetErr.message || sheetErr) };
                 }

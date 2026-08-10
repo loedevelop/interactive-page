@@ -391,7 +391,7 @@
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
     <script src="../110_teacher_core/feature-exam-job.js?v=26"></script> <!-- v26 refreshAfterAudioSnapshot 同步寫入 raw_data.title_auto_from_range -->
-    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=32"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v32：口說答案 checkbox 真正改成可複選（拿掉 JS 手動維持的互斥邏輯），下游生成/覆寫邏輯改吃多欄 -->
+    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=33"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v33：確認上傳到 Drive 前補上檔名 fallback（DOM 現值→state→預設檔名），修正沒碰過檔名輸入框時 outputMeta/outputScript 是 undefined，導致 GAS 端 rawFileName.replace 炸 TypeError -->
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
     <script src="../110_teacher_core/feature-exam-review.js?v=1"></script>

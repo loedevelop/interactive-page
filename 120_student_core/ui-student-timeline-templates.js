@@ -954,6 +954,11 @@ window.UIStudentTimelineTemplates = (() => {
         playGoogleTTS,
         playStudentAudioSlice, 
 
+        // 供上傳流程（feature-student-timeline.js）重用：把 base 範圍文字展開成頁碼陣列，
+        // 讓「已選檔數 vs. 範圍應有頁數」的提醒跟「已繳交檔頁碼標籤」共用同一套展開邏輯，
+        // 避免兩處各寫一份、之後改一邊漏改另一邊。
+        pagesFromRangeText,
+
         // 供「學習分析」頁籤（feature-student-analytics.js）重用，不必複製一份邏輯。
         getScoresFromAi,
         renderScriptWithErrorHighlightsHtml,
@@ -1454,9 +1459,15 @@ window.UIStudentTimelineTemplates = (() => {
                     let finalDescText = cleanTaskDesc;
                     let recordingUnitHintHtml = '';
                     if (task.type === 'audio_record') {
-                        const unitCount = (task.raw_data && Array.isArray(task.raw_data.grading_units))
+                        let unitCount = (task.raw_data && Array.isArray(task.raw_data.grading_units))
                             ? task.raw_data.grading_units.length
                             : 0;
+                        // 沒有結構化 grading_units（老師只手動貼 base 範圍文字，沒跑 meta／骨架流程）時，
+                        // 退回展開 base 範圍文字算頁數，跟 uploadAudioFilesForGrading 的比對提醒用同一套邏輯，
+                        // 否則老師手動貼範圍的作業永遠看不到「共 X 頁 → 請上傳 X 檔」提示（2026-08-09 使用者回報）。
+                        if (!unitCount && task.raw_data && task.raw_data.material_range) {
+                            unitCount = pagesFromRangeText(task.raw_data.material_range).length;
+                        }
                         const uploadLine = unitCount > 0
                             ? `繳交時，可複選多檔一次上傳（本作業共 <strong>${unitCount}</strong> 頁 → 請上傳 <strong>${unitCount}</strong> 檔）`
                             : '繳交時，可複選多檔一次上傳';

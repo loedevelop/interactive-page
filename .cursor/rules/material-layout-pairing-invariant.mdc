@@ -826,6 +826,14 @@ handleConfirmUpload(rowEl, appId)         // 逐活頁呼叫 GasService.uploadMa
 
 // ❌ 上傳完成後不刷新 FeatureTimeline._metaCatalog——老師剛產生的新 .meta.json 在同一頁
 //    的獨立考試／其他下拉會繼續顯示「舊清單」，直到下次意外觸發背景刷新才會出現
+
+// ❌ 上傳時直接傳 g.outputMeta / g.outputScript 給 GasService.uploadMaterialFile，不做 fallback——
+//    這兩個欄位只在檔名輸入框觸發 change（失焦）事件時才會寫進 state；老師若接受畫面自動帶出的
+//    預設檔名、完全沒點過那個輸入框，change 永遠不會觸發，值就一路是 undefined。傳 undefined
+//    給 GAS 的 upload_file，Code.gs 對 undefined 呼叫 rawFileName.replace(...) 會直接炸
+//    「TypeError: Cannot read properties of undefined (reading 'replace')」（2026-08-09 回報）。
+//    上傳前必須用「DOM 現值 → state 快取 → defaultOutputNames() 預設檔名」三層 fallback
+//    （見 handleConfirmUpload），絕不把 undefined 傳給 GAS。
 ```
 
 ### 實測

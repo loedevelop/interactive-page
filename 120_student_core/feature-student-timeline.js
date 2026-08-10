@@ -432,6 +432,35 @@ window.FeatureStudentTimeline = (() => {
                 );
             }
 
+            // 💣 雷區：上面的頁數比對只認「結構化 grading_units」，老師若只是手動在
+            // 「base 範圍」貼文字（例：「p. 376 Exercise 28, p. 378 Exercise 29...」）
+            // 卻沒有跑過 meta／骨架流程產生 grading_units，學生選錯檔數時完全沒有提示，
+            // 只會默默少收幾頁（2026-08-09 使用者回報「為什只有一個檔案」）。
+            // 沒有 grading_units 時改用展開 base 範圍文字算出的頁數比對，非阻擋式提醒。
+            if (!effectiveUnits.length) {
+                const rawMaterialRangeText = (taskConfig && taskConfig.raw_data && taskConfig.raw_data.material_range)
+                    ? String(taskConfig.raw_data.material_range).trim()
+                    : '';
+                const rangePages = (rawMaterialRangeText && window.UIStudentTimelineTemplates
+                    && typeof window.UIStudentTimelineTemplates.pagesFromRangeText === 'function')
+                    ? window.UIStudentTimelineTemplates.pagesFromRangeText(rawMaterialRangeText)
+                    : [];
+                if (rangePages.length > 1) {
+                    const existingFileCount = (existingCompletion && existingCompletion.raw_data && Array.isArray(existingCompletion.raw_data.drive_file_ids))
+                        ? existingCompletion.raw_data.drive_file_ids.length
+                        : 0;
+                    const totalAfterUpload = existingFileCount + items.length;
+                    if (totalAfterUpload !== rangePages.length) {
+                        window.showFlash(
+                            `已選 ${items.length} 檔`
+                            + (existingFileCount > 0 ? `（加上先前已上傳 ${existingFileCount} 檔，共 ${totalAfterUpload} 檔）` : '')
+                            + `；範圍顯示應為 ${rangePages.length} 頁（${rawMaterialRangeText}），請確認是否已依頁面順序上傳齊全。`,
+                            'warning'
+                        );
+                    }
+                }
+            }
+
             const uploaded = [];
             for (let i = 0; i < pairCount; i++) {
                 const item = items[i];
