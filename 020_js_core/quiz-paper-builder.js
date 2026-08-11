@@ -41,10 +41,18 @@ window.QuizPaperBuilder = (function () {
             .trim();
     }
 
+    /**
+     * 💣 雷區（2026-08-11 老師回報「to/a 顯示成 to a」「say(s) - said - said - saying 被拆散」）：
+     * 只用來給答錯時的對比顯示（analyzeAnswerDiff／alignTokens／renderAnswerDiffHtml）分詞，
+     * 不影響對錯判定本身（判定是 normalizeAnswer 整串比對，不拆字）。以前用
+     * `[^a-z0-9']+` 排除法分詞，會把 `/`、`-`、`(`、`)` 這些答案裡常見的合法符號也當成
+     * 斷詞邊界切開，重組顯示時符號就消失了，讓老師誤以為系統連對錯都判斷錯了。
+     * 改成只依「空白」分詞，符號留在單字裡（跟 normalizeAnswer 一致，只做小寫／壓空白）。
+     */
     function tokenizeWords(s) {
         const n = normalizeAnswer(s);
         if (!n) return [];
-        return n.split(/[^a-z0-9']+/).filter(Boolean);
+        return n.split(/\s+/).filter(Boolean);
     }
 
     /**
@@ -348,10 +356,18 @@ window.QuizPaperBuilder = (function () {
          * 的教材（例如 vocab 單字表）也能正常出線上卷，不必等「Layout Template」跟這裡的
          * layout_profile_id／_layout.json 串起來（見 material-layout-pairing-invariant.mdc）。
          *
-         * _answer_mode==='combine'：書寫答案欄數>1且老師選「結合」時，_answer_keys 依序
-         * 串接（例如 pre="a"+answer_en="desert" → "a desert"）才是完整答案，不能只用
-         * answer_en 單欄（會漏掉 pre 那個字，例如 "a"／"an"）。
+         * _answer_mode==='combine'：書寫答案欄數>1且老師選「結合」時，完整答案要靠老師在
+         * Layout Template 設定的 answer_combine_note 公式（例如 AN&" "&AO）才對，不是隨便
+         * 用空白把各欄接起來就好（曾發生：批改結果跟公式設定不一致，"/" 也被誤判成分隔符）。
+         * 💣 雷區（2026-08-11 老師回報「書寫答案結合批改結果是錯的」）：以前這裡完全沒去讀
+         * feature-material-layout-pairing.js 產生 meta 時已經算好、寫進 row._answer_combined_text
+         * 的公式結果，而是自己用固定空白 join 重算一次——兩邊邏輯對不上，公式設定形同虛設。
+         * 現在優先讀 _answer_combined_text（已經是公式算出來、老師也能逐列修正過的最終值），
+         * 真的沒有（例如舊教材／沒重新產生過）才退回舊版空白 join 相容路徑。
          */
+        if (!answerEn && row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
+            answerEn = String(row._answer_combined_text).trim();
+        }
         if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
             answerEn = row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
                 .filter(Boolean).join(' ');

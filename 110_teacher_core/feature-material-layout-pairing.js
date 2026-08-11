@@ -460,6 +460,87 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
     }
 
+    /**
+     * 2026-08-10（老師指出圖二／圖三兩套 layout 沒串起來）：Layout Template（欄位對應範本）
+     * 跟出題畫面的 layout_profile_id（LAYOUT_CATALOG，決定 fields／fields_answer 排版公式）
+     * 原本是兩套完全獨立系統——LAYOUT_CATALOG 6 個選項全部是舊版 GEPT／vocab 欄字母公式
+     * （STACK(D,E,C) 等），對新版具名 semantic_key meta.json（display_zh／answer_en…）
+     * 完全不合用。這裡把每個已存 Template 換算成同形狀的 profile，讓兩份清單能合併，
+     * 不用刪掉舊的，也不用老師自己亂猜一個不相關的舊選項。
+     *
+     * LayoutFieldsEval.lookupColumn 本來就會優先拿「識別字」當 row 自己的鍵去找（大小寫不拘），
+     * 找不到才退回 Excel 欄字母 colMap；所以 fields 公式直接寫 semantic_key（如 display_zh）
+     * 對新版 meta 是完全合法、會正確求值的，不需要额外欄字母對照表。
+     * @param {object} template
+     * @returns {{profile_id:string, label:string, fields:string, fields_answer:string, lines_per_page:number}|null}
+     */
+    function buildProfileFromTemplate(template) {
+        if (!template || !template.id) return null;
+        const cols = Array.isArray(template.columns) ? template.columns : [];
+        const infoKeys = cols.filter(function (c) { return c && c.is_info && c.semantic_key; }).map(function (c) { return c.semantic_key; });
+        const questionKeys = cols.filter(function (c) { return c && c.is_question && c.semantic_key; }).map(function (c) { return c.semantic_key; });
+        const answerKeys = cols.filter(function (c) { return c && c.is_answer && c.semantic_key; }).map(function (c) { return c.semantic_key; });
+
+        const segments = [];
+        if (infoKeys.length) segments.push('STACK(' + infoKeys.join(',') + ')');
+        questionKeys.forEach(function (k) { segments.push(k); });
+        if (!segments.length) segments.push('"（Template「' + String(template.name || '').replace(/"/g, '') + '」沒有勾選任何題目／訊息欄）"');
+        const fields = segments.join(', ');
+
+        const sep = template.answer_mode === 'separate' ? ' / ' : ' ';
+        const fieldsAnswer = answerKeys.length
+            ? 'TEXTJOIN("' + sep + '", ' + answerKeys.join(', ') + ')'
+            : '""';
+
+        return {
+            profile_id: 'tpl:' + template.id,
+            label: template.name,
+            fields: fields,
+            fields_answer: fieldsAnswer,
+            lines_per_page: 10
+        };
+    }
+
+    /** 出題畫面 layout_profile_id 下拉合併用：把目前所有已存 Template 換算成排版 profile 清單 */
+    function getTemplateDerivedProfiles() {
+        return getFieldTemplatesCachedSync().map(buildProfileFromTemplate).filter(Boolean);
+    }
+
+    /**
+     * 依教材資料夾＋活頁，找「這份 meta 實際是用哪個 Template 套用產生的」（material_template_applications）。
+     * 這比「🧩 教材／考試 Layout 搭配」手動登記的建議更準：套用到教材時系統就已經記下
+     * 「這個資料夾／活頁 用了哪個 Template」，不需要老師另外再登記一次。
+     * 活頁完全比對優先於資料夾內第一筆套用。
+     * @param {string} materialFolder
+     * @param {string[]} [sheetIds]
+     * @returns {string} 'tpl:xxx'，找不到回空字串
+     */
+    function getSuggestedTemplateProfileId(materialFolder, sheetIds) {
+        const folder = String(materialFolder || '').trim();
+        if (!folder) return '';
+        const sids = (sheetIds || []).map(function (s) { return String(s || '').trim().toUpperCase(); }).filter(Boolean);
+        const apps = getTemplateApplicationsCachedSync().filter(function (a) {
+            return a && String(a.material_folder || '').trim() === folder && a.template_id;
+        });
+        if (!apps.length) return '';
+        for (let i = 0; i < sids.length; i++) {
+            const hit = apps.find(function (a) {
+                return (a.sheet_ids || []).map(function (s) { return String(s).toUpperCase(); }).indexOf(sids[i]) !== -1;
+            });
+            if (hit) return 'tpl:' + hit.template_id;
+        }
+        return 'tpl:' + apps[0].template_id;
+    }
+
+    /** 依 'tpl:xxx' 反查 Template，換算出排版 profile；不是 tpl: 開頭或找不到都回 null */
+    function resolveTemplateProfile(profileId) {
+        const id = String(profileId || '').trim();
+        if (id.indexOf('tpl:') !== 0) return null;
+        const templateId = id.slice(4);
+        const template = getFieldTemplatesCachedSync().find(function (t) { return t.id === templateId; });
+        return template ? buildProfileFromTemplate(template) : null;
+    }
+
     async function savePairs(pairs) {
         const { data: { user } } = await window.supabaseClient.auth.getUser();
         if (!user) throw new Error('尚未登入');
@@ -899,6 +980,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         return {
             columns: segColumnsToTemplateColumns(seg),
             answer_mode: seg.answerMode === 'separate' ? 'separate' : 'combine',
+            answer_combine_note: seg.answerCombineNote || '',
             speak_mode: ['formula', 'complex', 'paste'].indexOf(seg.speakMode) !== -1 ? seg.speakMode : 'formula',
             speak_formula: seg.speakFormula || ''
         };
@@ -2201,9 +2283,9 @@ window.FeatureMaterialLayoutPairing = (function () {
      * script.txt／scriptLines，不會混進 meta.json 個別欄位裡。
      */
     /** 「套用到教材」用：從某個 appId 已選好的本機檔案取矩陣，其餘生成邏輯共用 buildGenerationFromMatrix */
-    function buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr, overrides) {
+    function buildGenerationForSheet(appId, sheetName, template, rowStartStr, rowEndStr, overrides, answerOverrides) {
         const matrix = parseAppSheetMatrix(appId, sheetName);
-        return buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides);
+        return buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides, answerOverrides);
     }
 
     /**
@@ -2212,7 +2294,7 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 卡片內的即時預覽（segment 用 parseExcelSegmentMatrix 取矩陣）共用這一份，避免兩邊各寫一次、
      * 之後改邏輯又要改兩處、漏改一處。
      */
-    function buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides) {
+    function buildGenerationFromMatrix(matrix, template, rowStartStr, rowEndStr, overrides, answerOverrides) {
         if (!matrix || !matrix.length) {
             return { ok: false, error: '找不到活頁資料或活頁是空的，請確認本機 Excel 檔案已選擇、活頁名稱正確' };
         }
@@ -2221,6 +2303,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const answerCols = cols.filter(function (c) { return c && c.is_answer && c.letter && c.semantic_key; });
         const aCount = answerCols.length;
         const answerMode = template && template.answer_mode === 'separate' ? 'separate' : 'combine';
+        const answerCombineNote = (template && template.answer_combine_note) || '';
         const speakMode = (template && ['formula', 'complex', 'paste'].indexOf(template.speak_mode) !== -1) ? template.speak_mode : 'formula';
         const speakFormula = (template && template.speak_formula) || '';
         const fieldMap = cols.filter(function (c) { return c && c.letter && c.semantic_key; }).map(function (c) {
@@ -2231,6 +2314,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const letterToSemantic = {};
         fieldMap.forEach(function (f) { letterToSemantic[f.letter] = f.key; });
         const overrideMap = overrides || {};
+        const answerOverrideMap = answerOverrides || {};
 
         let rowStart = parseInt(rowStartStr, 10);
         if (isNaN(rowStart) || rowStart < 1) rowStart = 2;
@@ -2243,10 +2327,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         const scriptLines = [];
         const rowNos = [];
         const speakComputed = [];
+        const answerComputed = [];
         const warnings = [];
         let formulaWarned = false;
         let missingAiRefCount = 0;
         let formulaErrorWarned = false;
+        let answerFormulaErrorWarned = false;
         for (let r = rowStart; r <= rowEnd; r++) {
             const rowArr = matrix[r - 1] || [];
             const rowObj = {};
@@ -2269,6 +2355,46 @@ window.FeatureMaterialLayoutPairing = (function () {
             if (aCount > 1) {
                 rowObj._answer_mode = answerMode;
                 rowObj._answer_keys = answerCols.map(function (c) { return c.semantic_key; });
+
+                /**
+                 * 💣 雷區（2026-08-11 老師回報「書寫答案結合沒有按照 layout 設定執行，例如
+                 * AN&" "&AO」）：以前完全沒有執行過 answer_combine_note，批改時
+                 * quiz-paper-builder.js 只能自己用固定空白 join 猜，公式跟「跳過空欄」的行為
+                 * 常常對不上。這裡在產生 meta 的當下把公式真的算一次，結果存進
+                 * rowObj._answer_combined_text，批改時直接讀這個值，不用再猜、也不用擔心
+                 * 公式跟猜測結果不一致。
+                 */
+                if (answerMode === 'combine') {
+                    let answerCandidate = '';
+                    if (answerCombineNote && window.LayoutFieldsEval) {
+                        try {
+                            const aCells = window.LayoutFieldsEval.evaluateFields(answerCombineNote, rowObj, letterToSemantic);
+                            answerCandidate = (aCells && aCells[0] && aCells[0].text != null) ? String(aCells[0].text) : '';
+                        } catch (_ae) {
+                            answerCandidate = '';
+                            if (!answerFormulaErrorWarned) {
+                                warnings.push('⚠️ 書寫答案結合公式「' + answerCombineNote + '」計算失敗（例如第 ' + r + ' 列），這幾列先用「跳過空欄、空白接起來」頂著，請確認公式或在下方逐列修正。');
+                                answerFormulaErrorWarned = true;
+                            }
+                        }
+                    }
+                    if (!answerCandidate) {
+                        // 沒填公式、或公式算出空值時的安全預設：跳過空欄，其餘用空白接起來
+                        // （語意等同 TEXTJOIN(" ", ...)，跟舊版行為一致，不是新的破壞性改動）
+                        answerCandidate = answerCols.map(function (c) { return rowObj[c.semantic_key]; })
+                            .filter(function (v) { return v !== null && v !== undefined && String(v).trim() !== ''; })
+                            .map(function (v) { return String(v).trim(); })
+                            .join(' ');
+                    }
+                    const answerOverride = answerOverrideMap[r];
+                    const finalAnswer = (answerOverride !== null && answerOverride !== undefined) ? String(answerOverride) : answerCandidate;
+                    rowObj._answer_combined_text = finalAnswer;
+                    answerComputed.push(answerCandidate);
+                } else {
+                    answerComputed.push('');
+                }
+            } else {
+                answerComputed.push('');
             }
 
             // 候選口說答案值：書寫答案≤1欄＝維持舊行為（口說答案欄原始值，可複選後多欄用空白串接）；
@@ -2326,6 +2452,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             scriptLines: scriptLines,
             rowNos: rowNos,
             speakComputed: speakComputed,
+            answerComputed: answerComputed,
+            answerCombineNote: answerCombineNote,
             aCount: aCount,
             speakMode: speakMode,
             answerMode: answerMode,
@@ -2413,6 +2541,42 @@ window.FeatureMaterialLayoutPairing = (function () {
         `;
     }
 
+    /**
+     * 書寫答案欄數>1 且批改標準為「結合」時，逐列確認／修正表格：計算值（唯讀，來自
+     * answer_combine_note 公式，或算不出來時的空白接起來安全值）對照修正後值（可編輯，
+     * 預填為目前最終值＝row._answer_combined_text），修正後即為最終寫入 meta.json、
+     * 批改時比對用的內容。不影響「分開比對」模式（那種模式本來就逐欄各自比對，不需要
+     * 結合成一個字串）。
+     */
+    function renderAnswerOverrideAreaHtml(name, g) {
+        if (!g || !g.previewed || g.error || !Array.isArray(g.rows) || !g.rows.length) return '';
+        if (!(g.aCount > 1) || g.answerMode !== 'combine') return '';
+        const rowsHtml = g.rows.map(function (row, i) {
+            const rowNo = g.rowNos ? g.rowNos[i] : (g.rowStart + i);
+            const computed = (g.answerComputed && g.answerComputed[i]) || '';
+            const finalVal = row._answer_combined_text != null ? row._answer_combined_text : '';
+            const answerPreview = (Array.isArray(row._answer_keys) ? row._answer_keys : []).map(function (k) { return row[k]; }).filter(function (v) { return v != null && v !== ''; }).join(' / ');
+            return '<tr>'
+                + '<td style="padding:3px 6px; font-size:0.7rem; color:#94A3B8; white-space:nowrap;">第' + rowNo + '列</td>'
+                + '<td style="padding:3px 6px; font-size:0.72rem; color:#334155;">' + esc(answerPreview) + '</td>'
+                + '<td style="padding:3px 6px; font-size:0.72rem; color:#94A3B8;">' + (computed ? esc(computed) : '（無）') + '</td>'
+                + '<td style="padding:3px 6px;"><input type="text" class="form-control mlp-app-answer-override" data-row-no="' + rowNo + '" data-idx="' + i + '" value="' + esc(finalVal) + '" style="width:100%; padding:4px; font-size:0.76rem;"></td>'
+                + '</tr>';
+        }).join('');
+        return `
+            <div style="margin-top:8px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:6px; padding:8px;">
+                <div style="font-size:0.74rem; font-weight:800; color:#1D4ED8; margin-bottom:4px;">✍️ 書寫答案（結合）逐列確認／修正（共 ${g.rows.length} 列，修正後即為最終批改比對內容）</div>
+                ${g.answerCombineNote ? ('<div style="font-size:0.7rem; color:#3B82F6; margin-bottom:4px;">結合公式：<code>' + esc(g.answerCombineNote) + '</code></div>') : '<div style="font-size:0.7rem; color:#B45309; margin-bottom:4px;">⚠️ 尚未在 Layout Template 填結合公式，目前用「跳過空欄、空白接起來」安全值，可在下方逐列修正。</div>'}
+                <div style="max-height:260px; overflow-y:auto; margin-top:6px;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead><tr style="text-align:left; font-size:0.68rem; color:#78716C;"><th style="padding:3px 6px;">列號</th><th style="padding:3px 6px;">各欄書寫答案</th><th style="padding:3px 6px;">計算值</th><th style="padding:3px 6px;">最終結合答案（可修正）</th></tr></thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
     function renderAppGenAreaHtml(appId) {
         const state = ensureAppRowState(appId);
         if (state.sourceKind !== 'local') {
@@ -2441,7 +2605,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         : '';
                     const warnHtml = (g.warnings || []).map(function (w) { return '<div style="color:#B45309; font-size:0.72rem; margin-top:2px;">' + esc(w) + '</div>'; }).join('');
                     bodyHtml = '<div style="font-size:0.76rem; color:#0F766E; font-weight:800; margin-top:4px;">✅ 共 ' + g.rows.length + ' 列（下方預覽前 ' + sample.length + ' 列），script.txt ' + g.scriptLines.length + ' 行</div>'
-                        + warnHtml + sampleHtml + renderSpeakOverrideAreaHtml(name, g);
+                        + warnHtml + sampleHtml + renderAnswerOverrideAreaHtml(name, g) + renderSpeakOverrideAreaHtml(name, g);
                 }
             }
             const uploadHtml = g.uploadStatus
@@ -2529,6 +2693,23 @@ window.FeatureMaterialLayoutPairing = (function () {
                 if (airefCols.length === 1 && g.rows && g.rows[idx]) g.rows[idx][airefCols[0].semantic_key] = this.value;
             });
         });
+        /**
+         * 書寫答案（結合）逐列修正輸入框：改一列＝立刻更新 g.answerOverrides 與
+         * g.rows[idx]._answer_combined_text（供上傳／批改直接採用），不動任何原始欄位值。
+         */
+        rowEl.querySelectorAll('.mlp-app-answer-override').forEach(function (input) {
+            input.addEventListener('change', function () {
+                const sheetEl = this.closest('.mlp-app-gen-sheet');
+                const name = sheetEl ? sheetEl.getAttribute('data-sheet') : '';
+                const g = state.gen[name];
+                if (!g) return;
+                const rowNo = parseInt(this.getAttribute('data-row-no'), 10);
+                const idx = parseInt(this.getAttribute('data-idx'), 10);
+                if (!g.answerOverrides) g.answerOverrides = {};
+                g.answerOverrides[rowNo] = this.value;
+                if (g.rows && g.rows[idx]) g.rows[idx]._answer_combined_text = this.value;
+            });
+        });
         rowEl.querySelectorAll('.mlp-app-speak-paste-apply').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 const sheetEl = this.closest('.mlp-app-gen-sheet');
@@ -2598,16 +2779,19 @@ window.FeatureMaterialLayoutPairing = (function () {
         sheetNames.forEach(function (name) {
             const prevOutputMeta = state.gen[name] && state.gen[name].outputMeta;
             const prevOutputScript = state.gen[name] && state.gen[name].outputScript;
-            // speakOverrides（老師逐列修正／貼上的口說答案）要跨「重新產生預覽」保留下來，
-            // 不能因為改了行數起迄或重按一次預覽就整批被公式算出來的候選值蓋掉
+            // speakOverrides／answerOverrides（老師逐列修正／貼上的口說答案、書寫答案結合修正）
+            // 要跨「重新產生預覽」保留下來，不能因為改了行數起迄或重按一次預覽就整批被
+            // 公式算出來的候選值蓋掉
             const prevOverrides = (state.gen[name] && state.gen[name].speakOverrides) || {};
-            const result = buildGenerationForSheet(appId, name, template, rowStartStr, rowEndStr, prevOverrides);
+            const prevAnswerOverrides = (state.gen[name] && state.gen[name].answerOverrides) || {};
+            const result = buildGenerationForSheet(appId, name, template, rowStartStr, rowEndStr, prevOverrides, prevAnswerOverrides);
             state.gen[name] = Object.assign({}, result, {
                 previewed: true,
                 outputMeta: prevOutputMeta,
                 outputScript: prevOutputScript,
                 uploadStatus: null,
-                speakOverrides: prevOverrides
+                speakOverrides: prevOverrides,
+                answerOverrides: prevAnswerOverrides
             });
         });
         return { ok: true, sheetNames: sheetNames };
@@ -3024,14 +3208,17 @@ window.FeatureMaterialLayoutPairing = (function () {
             </div>
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <h3 style="margin:0; color:var(--primary-dark);">🧩 教材／考試 Layout 搭配</h3>
+                    <h3 style="margin:0; color:var(--primary-dark);">🧩 教材／考試 Layout 搭配（只給「內建 6 種舊版排版」用）</h3>
                     <div style="display:flex; gap:8px;">
                         <button type="button" id="mlp-add-row" class="btn btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE;">＋ 新增搭配</button>
                         <button type="button" id="mlp-save" class="btn btn-primary" style="padding:8px 18px; font-weight:800;">💾 儲存</button>
                     </div>
                 </div>
                 <p style="color:#64748B; font-size:0.85rem; margin-top:0;">
-                    這裡登記的是「建議」：出題畫面選好教材資料夾／活頁後，符合的 layout 會標「⭐建議」排到最前面，但仍可自由改選其他 layout。
+                    ⚠️ 如果這個資料夾／活頁是用上面「📎 套用到教材」套過 Layout Template 產生的，<b>不需要在這裡另外登記</b>——
+                    出題畫面會自動偵測「這份 meta 實際是哪個 Template 套用產生的」，直接標「⭐」帶出對應的 Template 排版，不會用到下面這份清單。
+                    這裡登記的「建議」只影響出題畫面下拉裡<b>內建 6 種舊版 GEPT／vocab 排版</b>要不要標星號排到最前面（給沒有用新版 Template 的舊教材用）：
+                    出題畫面選好教材資料夾／活頁後，符合的 layout 會標「⭐建議」排到最前面，但仍可自由改選其他 layout。
                     同一活頁若真的需要兩種不同排版（例如整句翻譯＋句子填空都要），請建立兩個考試任務分別套用，不是在這裡塞兩個 layout 到同一份考卷。
                 </p>
                 <div id="mlp-rows">${pairs.map(function (p) { return renderRow(p, layoutCatalog); }).join('') || '<div class="mlp-empty-hint" style="color:#94A3B8; padding:12px;">尚未登記任何搭配，按「＋ 新增搭配」開始。</div>'}</div>
@@ -3147,6 +3334,9 @@ window.FeatureMaterialLayoutPairing = (function () {
     return {
         render: render,
         getSuggestedLayoutIds: getSuggestedLayoutIds,
-        getCachedSync: getCachedSync
+        getCachedSync: getCachedSync,
+        getTemplateDerivedProfiles: getTemplateDerivedProfiles,
+        getSuggestedTemplateProfileId: getSuggestedTemplateProfileId,
+        resolveTemplateProfile: resolveTemplateProfile
     };
 })();
