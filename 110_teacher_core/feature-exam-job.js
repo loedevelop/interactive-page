@@ -40,6 +40,12 @@ window.FeatureExamJob = (function () {
     const DEFAULT_LINES_PER_PAGE = 10;
 
     function layoutFieldHint(layoutId) {
+        if (String(layoutId || '').indexOf('tpl:') === 0) {
+            const tplProfile = window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.resolveTemplateProfile === 'function'
+                ? window.FeatureMaterialLayoutPairing.resolveTemplateProfile(layoutId)
+                : null;
+            return tplProfile ? (tplProfile.fields + '｜答案：' + tplProfile.fields_answer) : '（Template 已被刪除，請重選 layout_profile_id）';
+        }
         return LAYOUT_FIELD_HINTS[layoutId] || '（依 layout_profile）';
     }
 
@@ -1539,8 +1545,10 @@ window.FeatureExamJob = (function () {
         const raw = (task && task.raw_data) || {};
         const job = raw.exam_job || {};
         const jobId = raw.exam_job_id || job.job_id || '';
-        const bankId = job.bank_id || (BANK_CATALOG[0] && BANK_CATALOG[0].id) || '';
-        const layoutId = job.layout_profile_id || (LAYOUT_CATALOG[0] && LAYOUT_CATALOG[0].id) || '';
+        // 💣 雷區：bankId／layoutId 從未明確選過時，不可偷偷預設成清單第一項（曾造成「明明沒選過
+        // GEPT-2／整句翻譯，畫面卻顯示已選好」的誤導）。真正的預設值要等下面算出 suggestedLayoutIds
+        // 後才決定（有登記建議 → 採建議；沒有 → 留空顯示「尚未選擇」，強制老師自己挑）。
+        const bankId = job.bank_id || '';
         let sections = Array.isArray(job.sections) ? job.sections.slice() : [];
 
         // 區段空白時，自動從同層錄音 meta（圖二）繼承 A/B/C…＋pp. 範圍
@@ -1569,10 +1577,11 @@ window.FeatureExamJob = (function () {
                 exclude_nums: ''
             }];
         }
-        const bankOpts = BANK_CATALOG.map(function (b) {
-            return '<option value="' + esc(b.id) + '"' + (bankId === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>';
-        }).join('');
-        const fieldHint = layoutFieldHint(layoutId);
+        // 未選過就顯示「尚未選擇」，不要用清單第一項偷偷頂替（見上方雷區說明）
+        const bankOpts = '<option value=""' + (bankId ? '' : ' selected') + '>（尚未選擇）</option>'
+            + BANK_CATALOG.map(function (b) {
+                return '<option value="' + esc(b.id) + '"' + (bankId === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>';
+            }).join('');
         const paperItemCount = (raw.quiz_paper && Array.isArray(raw.quiz_paper.items))
             ? raw.quiz_paper.items.length
             : 0;
@@ -1598,9 +1607,26 @@ window.FeatureExamJob = (function () {
             : ((siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs)
                 && siblingAudio.raw_data.material_refs[0] && siblingAudio.raw_data.material_refs[0].material_folder) || '');
         const layoutSectionSheetIds = sections.map(function (s) { return s.sheet_id; }).filter(Boolean);
-        const suggestedLayoutIds = (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds === 'function')
-            ? window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds(layoutMaterialFolder, layoutSectionSheetIds)
+        const mlp = window.FeatureMaterialLayoutPairing;
+        const suggestedLayoutIds = (mlp && typeof mlp.getSuggestedLayoutIds === 'function')
+            ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, layoutSectionSheetIds)
             : [];
+        /**
+         * 💣 雷區（2026-08-10 老師指出圖二／圖三兩套 layout 沒串起來）：LAYOUT_CATALOG 是舊版
+         * GEPT／vocab 欄字母排版公式，對「套用到教材」產生的新版具名 meta 完全不合用。
+         * 這裡改成優先查 material_template_applications（這份 meta 實際是哪個 Template 套用
+         * 產生的，套用時系統就記下了，不用老師另外登記）；查不到才退回舊的手動登記建議。
+         */
+        const suggestedTemplateProfileId = (mlp && typeof mlp.getSuggestedTemplateProfileId === 'function')
+            ? mlp.getSuggestedTemplateProfileId(layoutMaterialFolder, layoutSectionSheetIds)
+            : '';
+        const templateProfiles = (mlp && typeof mlp.getTemplateDerivedProfiles === 'function')
+            ? mlp.getTemplateDerivedProfiles()
+            : [];
+        // 從未明確選過時：套用紀錄查得到就用那個 Template 換算的 profile；查不到才退回手動登記建議
+        // 第一項；兩者都沒有才留空，顯示「尚未選擇」逼老師自己挑，不可再偷偷退回 LAYOUT_CATALOG[0]。
+        const layoutId = job.layout_profile_id || suggestedTemplateProfileId || suggestedLayoutIds[0] || '';
+        const fieldHint = layoutFieldHint(layoutId);
         const orderedLayoutCatalog = suggestedLayoutIds.length
             ? LAYOUT_CATALOG.slice().sort(function (a, b) {
                 const ai = suggestedLayoutIds.indexOf(a.id);
@@ -1611,11 +1637,25 @@ window.FeatureExamJob = (function () {
                 return ai - bi;
             })
             : LAYOUT_CATALOG;
-        const layoutOpts = orderedLayoutCatalog.map(function (l) {
+        const builtinLayoutOptsHtml = orderedLayoutCatalog.map(function (l) {
             const isSuggested = suggestedLayoutIds.indexOf(l.id) !== -1;
             const label = (isSuggested ? '⭐ ' : '') + l.label;
             return '<option value="' + esc(l.id) + '"' + (layoutId === l.id ? ' selected' : '') + '>' + esc(label) + '</option>';
         }).join('');
+        // 我的 Layout Template（依「套用到教材」欄位設定自動換算 fields／fields_answer），跟內建 6 種
+        // 並列，不刪舊的——實際用哪個由老師自己選，套用過的那個會標「⭐這份 meta 實際用的」。
+        const templateLayoutOptsHtml = templateProfiles.length
+            ? ('<option disabled>── 我的 Layout Template（依套用到教材的欄位設定自動產生）──</option>'
+                + templateProfiles.map(function (p) {
+                    const isSuggested = p.profile_id === suggestedTemplateProfileId;
+                    const label = (isSuggested ? '⭐ ' : '') + p.label;
+                    return '<option value="' + esc(p.profile_id) + '"' + (layoutId === p.profile_id ? ' selected' : '') + '>' + esc(label) + '</option>';
+                }).join(''))
+            : '';
+        const layoutOpts = '<option value=""' + (layoutId ? '' : ' selected') + '>（尚未選擇，下面列出全部可選 Layout）</option>'
+            + templateLayoutOptsHtml
+            + '<option disabled>── 內建（舊版 GEPT／vocab 欄字母排版）──</option>'
+            + builtinLayoutOptsHtml;
 
         // 教材資料夾下拉：優先吃 FeatureTimeline 已快取的清單（跟錄音 Material Snapshot 共用同一份快取，
         // 見 exam-standalone-material-invariant.mdc），沒快取才在渲染後非同步補抓，避免老師手打資料夾名稱
@@ -1736,14 +1776,26 @@ window.FeatureExamJob = (function () {
                             title="同一活頁需要套用不只一個 layout 時，開兩個區段、各自選不同 layout 即可，不用複製 meta 檔">
                             <option value="">（沿用上方預設）</option>
                             ${(function () {
-                                const rowSuggested = (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds === 'function')
-                                    ? window.FeatureMaterialLayoutPairing.getSuggestedLayoutIds(layoutMaterialFolder, [s.sheet_id])
+                                const rowSuggested = (mlp && typeof mlp.getSuggestedLayoutIds === 'function')
+                                    ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, [s.sheet_id])
                                     : [];
-                                return LAYOUT_CATALOG.map(function (l) {
+                                const rowSuggestedTpl = (mlp && typeof mlp.getSuggestedTemplateProfileId === 'function')
+                                    ? mlp.getSuggestedTemplateProfileId(layoutMaterialFolder, [s.sheet_id])
+                                    : '';
+                                const tplOptsHtml = templateProfiles.length
+                                    ? ('<option disabled>── 我的 Layout Template ──</option>'
+                                        + templateProfiles.map(function (p) {
+                                            const isSuggested = p.profile_id === rowSuggestedTpl;
+                                            const label = (isSuggested ? '⭐ ' : '') + p.label;
+                                            return '<option value="' + esc(p.profile_id) + '"' + (String(s.layout_profile_id || '') === p.profile_id ? ' selected' : '') + '>' + esc(label) + '</option>';
+                                        }).join(''))
+                                    : '';
+                                const builtinOptsHtml = '<option disabled>── 內建 ──</option>' + LAYOUT_CATALOG.map(function (l) {
                                     const isSuggested = rowSuggested.indexOf(l.id) !== -1;
                                     const label = (isSuggested ? '⭐ ' : '') + l.label;
                                     return '<option value="' + esc(l.id) + '"' + (String(s.layout_profile_id || '') === l.id ? ' selected' : '') + '>' + esc(label) + '</option>';
                                 }).join('');
+                                return tplOptsHtml + builtinOptsHtml;
                             })()}
                         </select>
                     </td>
@@ -2748,17 +2800,52 @@ window.FeatureExamJob = (function () {
 
             let layout = fetched.layout;
             if (!layout) {
+                /**
+                 * 💣 雷區：一份考卷可能好幾個區段各自覆蓋不同 layout_profile_id（見上方
+                 * sectionlayout 下拉），不能只塞「job 層級預設」這一個 profile 進 layout.profiles，
+                 * 否則區段覆蓋值在 pickProfile() 裡永遠找不到、被迫默默退回預設，覆蓋等於沒作用。
+                 * 這裡把 job 預設＋所有區段用到的 id 去重後，各自換算一個 profile 塞進同一個
+                 * profiles 陣列。tpl:xxx（Layout Template 換算）跟舊版 LAYOUT_FIELD_HINTS 是兩條路：
+                 * Template 的 fields／fields_answer 已經是完整、可直接求值的公式（見
+                 * FeatureMaterialLayoutPairing.buildProfileFromTemplate），不能再套 layoutFieldHint
+                 * 那個「只認 3 個舊 id、其餘回退成純提示字串」的邏輯，否則會整份排版壞掉。
+                 */
+                const idsNeeded = [examJob.layout_profile_id].concat(
+                    (Array.isArray(examJob.sections) ? examJob.sections : []).map(function (sec) { return sec && sec.layout_profile_id; })
+                ).filter(Boolean);
+                const seenIds = {};
+                const profiles = [];
+                idsNeeded.forEach(function (pid) {
+                    if (seenIds[pid]) return;
+                    seenIds[pid] = true;
+                    const tplProfile = String(pid).indexOf('tpl:') === 0
+                        && window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.resolveTemplateProfile === 'function'
+                        ? window.FeatureMaterialLayoutPairing.resolveTemplateProfile(pid)
+                        : null;
+                    profiles.push(tplProfile || {
+                        profile_id: pid,
+                        label: pid,
+                        fields: layoutFieldHint(pid),
+                        fields_answer: 'X',
+                        lines_per_page: DEFAULT_LINES_PER_PAGE
+                    });
+                });
+                // 全部區段都沒設 layout_profile_id（teacher 完全沒選）：仍要放一個非空 profile 進去，
+                // 否則 pickProfile 拿到空陣列會回 null，下面 fields 變空字串直接整份考卷生成失敗。
+                if (!profiles.length) {
+                    profiles.push({
+                        profile_id: '',
+                        label: '（尚未選擇）',
+                        fields: layoutFieldHint(''),
+                        fields_answer: 'X',
+                        lines_per_page: DEFAULT_LINES_PER_PAGE
+                    });
+                }
                 layout = {
                     material_folder: ctx.materialFolder,
                     default_profile_id: examJob.layout_profile_id,
                     col_map: (window.QuizPaperBuilder && window.QuizPaperBuilder.FALLBACK_COL_MAP) || {},
-                    profiles: [{
-                        profile_id: examJob.layout_profile_id,
-                        label: examJob.layout_profile_id,
-                        fields: layoutFieldHint(examJob.layout_profile_id),
-                        fields_answer: 'X',
-                        lines_per_page: DEFAULT_LINES_PER_PAGE
-                    }]
+                    profiles: profiles
                 };
             }
 
