@@ -159,8 +159,16 @@ window.FeatureStudentQuiz = (function () {
         stats.history = list;
     }
 
-    function headlineFromWrongItem(d) {
-        const seq = d && d.seq != null ? String(d.seq) : '';
+    /**
+     * 💣 雷區（2026-08-12 老師回報「題目/解答編號 35、21、36…根本對不起來」）：`d.seq` 是這題在
+     * 出卷當下「產生順序」的固定編號，跟畫面上實際排第幾題完全無關——尤其現在 openQuiz／
+     * openRetakeQuiz 每次重做都會重新洗牌顯示順序（見 displayOrderItems），如果編號還是印
+     * 原始 seq，學生／老師看到「35. ...」「21. ...」這種跳號會誤以為卷子亂掉或對不起來。
+     * 這裡改成一律用「這題在目前列表中排第幾個」（displayNo，1-based）當標籤，seq 只在
+     * 沒給 displayNo 時（相容舊資料）當退路。
+     */
+    function headlineFromWrongItem(d, displayNo) {
+        const seq = displayNo != null ? String(displayNo) : (d && d.seq != null ? String(d.seq) : '');
         const src = (d && d.source) || {};
         const sheet = String(src.sheet_id || '').trim().toUpperCase();
         const page = src.page != null && src.page !== '' ? String(src.page) : '';
@@ -242,7 +250,37 @@ window.FeatureStudentQuiz = (function () {
         return item;
     }
 
-    function renderWrongItemCard(item) {
+    /**
+     * 申訴狀態→顯示（見「錯題申訴」規劃）：沒有 opts.allowAppeal（老師沒開這個功能）
+     * 完全不顯示任何申訴相關 UI。已申訴過（不論 pending/accepted/rejected）不再顯示
+     * checkbox——申訴僅一次，要調整由老師端逐題編輯，不提供學生重送介面。
+     */
+    function appealsByItemIdFromRaw(raw) {
+        const list = (raw && Array.isArray(raw.quiz_appeals)) ? raw.quiz_appeals : [];
+        const map = {};
+        list.forEach(function (a) { if (a && a.item_id != null) map[String(a.item_id)] = a; });
+        return map;
+    }
+
+    function renderAppealAreaHtml(item, opts) {
+        if (!opts || !opts.allowAppeal) return '';
+        const appeal = (opts.appealsByItemId || {})[String(item.item_id)];
+        if (!appeal) {
+            return '<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:0.78rem; font-weight:700; color:#7C3AED; cursor:pointer;">'
+                + '<input type="checkbox" class="quiz-appeal-checkbox" data-item-id="' + esc(item.item_id) + '" data-seq="' + esc(item.seq) + '" data-answer="' + esc(item.answer || '') + '" data-expected="' + esc(item.expected || '') + '">'
+                + '🚩 申訴這個答案（送出後老師/助教會審核）'
+                + '</label>';
+        }
+        if (appeal.status === 'accepted') {
+            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#047857;">✅ 申訴已被接受，成績已更新（重新整理／重新打開檢討可看到最新結果）</div>';
+        }
+        if (appeal.status === 'rejected') {
+            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#DC2626;">❌ 申訴未通過審核</div>';
+        }
+        return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B45309;">🕐 申訴審核中，請等候老師/助教處理</div>';
+    }
+
+    function renderWrongItemCard(item, opts) {
         ensureItemDiff(item);
         const headline = item.headline || headlineFromWrongItem(item);
         const ops = (item.diff && item.diff.ops) || item.ops || [];
@@ -256,6 +294,7 @@ window.FeatureStudentQuiz = (function () {
                 '<div style="font-size:0.75rem; color:#047857; font-weight:800; margin-bottom:2px;">正確答案</div>' +
                 '<div style="font-size:1rem; font-weight:800; color:#047857; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>' +
                 renderSpellingPairsHtml(pairs) +
+                renderAppealAreaHtml(item, opts) +
             '</div>'
         );
     }
@@ -317,8 +356,11 @@ window.FeatureStudentQuiz = (function () {
     function buildReviewHtml(title, result, stats, opts) {
         opts = opts || {};
         const wrongItems = stats.wrong_items || [];
+        const appealsByItemId = opts.appealsByItemId || {};
+        const cardOpts = { allowAppeal: opts.allowAppeal, appealsByItemId: appealsByItemId };
+        const wrongCardsBodyId = REVIEW_MODAL_ID + '-wrongcards';
         const wrongCards = wrongItems.length
-            ? wrongItems.map(renderWrongItemCard).join('')
+            ? wrongItems.map(function (item) { return renderWrongItemCard(item, cardOpts); }).join('')
             : '<div style="color:#047857; font-weight:800; padding:12px;">本次全對，沒有錯題。</div>';
         const ledgerHtml = renderSpellingLedgerHtml(stats.spelling_ledger);
         const closeAction = opts.reloadOnClose
@@ -327,6 +369,12 @@ window.FeatureStudentQuiz = (function () {
         // 這裡是塞進 onclick="...('safeAssign','safeTask')" 的 JS 字串常值，要跳單引號，不是 HTML escape（esc 只處理 &<>"）
         const safeAssign = String(opts.assignmentId == null ? '' : opts.assignmentId).replace(/'/g, "\\'");
         const safeTask = String(opts.taskId == null ? '' : opts.taskId).replace(/'/g, "\\'");
+        const hasAppealable = opts.allowAppeal && wrongItems.some(function (item) { return !appealsByItemId[String(item.item_id)]; });
+        const appealSubmitHtml = hasAppealable
+            ? ('<div style="display:flex; justify-content:flex-end; margin:6px 0 12px;">'
+                + '<button type="button" class="btn btn-action" style="background:#7C3AED; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.submitAppeals(\'' + safeAssign + '\',\'' + safeTask + '\',\'' + wrongCardsBodyId + '\',\'review\')">📮 送出申訴</button>'
+                + '</div>')
+            : '';
         const retakeBannerHtml = opts.retakeEligible
             ? ('<div style="margin-bottom:12px; padding:10px 12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
                 + '<span style="font-weight:800; color:#92400E; font-size:0.85rem;">🔁 這次有錯題，可以馬上重考一次（僅一次），也可以之後再回來考。</span>'
@@ -352,7 +400,8 @@ window.FeatureStudentQuiz = (function () {
                 + '</div>' +
                 retakeBannerHtml +
                 '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">① 錯題本（本次）</div>' +
-                '<div style="max-height:32vh; overflow:auto; margin-bottom:12px;">' + wrongCards + '</div>' +
+                '<div id="' + wrongCardsBodyId + '" style="max-height:32vh; overflow:auto; margin-bottom:12px;">' + wrongCards + '</div>' +
+                appealSubmitHtml +
                 '<div style="font-weight:900; color:#0F766E; margin:10px 0 6px;">④ 歷史錯字紀錄（應打 → 曾寫成）</div>' +
                 '<div style="max-height:22vh; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; padding:8px 12px;">'
                     + ledgerHtml + '</div>' +
@@ -369,7 +418,18 @@ window.FeatureStudentQuiz = (function () {
         if (reload) window.location.reload();
     }
 
-    function openReviewFromRaw(assignmentId, taskId) {
+    async function openReviewFromRaw(assignmentId, taskId) {
+        if (!window.ModalOverlay) return;
+        window.ModalOverlay.open({
+            id: REVIEW_MODAL_ID,
+            tier: 'A',
+            contentHtml: '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取最新批改結果…</div>'
+        });
+        await refreshCompletionFromDb(assignmentId, taskId);
+        renderReviewFromCache(assignmentId, taskId, false);
+    }
+
+    function renderReviewFromCache(assignmentId, taskId, reloadOnClose) {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const stats = readStats(raw);
@@ -382,22 +442,26 @@ window.FeatureStudentQuiz = (function () {
         const retake = raw.quiz_retake || null;
         const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
         const retakeReportReady = !!(retake && retake.done);
-        if (!window.ModalOverlay) return;
+        const task = findTaskInAssignments(assignmentId, taskId);
+        const allowAppeal = !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID,
             tier: 'A',
             contentHtml: buildReviewHtml('作答檢討與錯字紀錄', result, stats, {
-                reloadOnClose: false,
+                reloadOnClose: !!reloadOnClose,
                 assignmentId: assignmentId,
                 taskId: taskId,
                 retakeEligible: retakeEligible,
-                retakeReportReady: retakeReportReady
+                retakeReportReady: retakeReportReady,
+                allowAppeal: allowAppeal,
+                appealsByItemId: appealsByItemIdFromRaw(raw)
             })
         });
     }
 
-    function formatItemHeadline(it) {
-        const seq = it && it.seq != null ? String(it.seq) : '';
+    /** 同 headlineFromWrongItem 的雷區說明：displayNo（畫面上排第幾題）優先於 it.seq。 */
+    function formatItemHeadline(it, displayNo) {
+        const seq = displayNo != null ? String(displayNo) : (it && it.seq != null ? String(it.seq) : '');
         const src = (it && it.source) || {};
         const sheet = String(src.sheet_id || '').trim().toUpperCase();
         const page = src.page != null && src.page !== '' ? String(src.page) : '';
@@ -458,11 +522,11 @@ window.FeatureStudentQuiz = (function () {
         });
     }
 
-    function renderItemRow(it, prevAnswer) {
+    function renderItemRow(it, prevAnswer, displayNo) {
         const prompt = it.prompt_zh || (it.cells && it.cells[1] && it.cells[1].text) || '';
         const fontDelta = (it.cells && it.cells[1] && it.cells[1].fontDelta) || 0;
         const fontSize = Math.max(0.75, 1 + (fontDelta * 0.08));
-        const headline = formatItemHeadline(it);
+        const headline = formatItemHeadline(it, displayNo);
         const cloze = it.quiz_mode === 'cloze' && it.cloze_stem
             ? '<div style="margin-top:4px; color:#0F766E; font-weight:700; white-space:pre-wrap;">' + esc(it.cloze_stem) + '</div>'
             : '';
@@ -580,6 +644,66 @@ window.FeatureStudentQuiz = (function () {
         }
         row.raw_data = Object.assign({}, row.raw_data || {}, rawPayload);
         if (completed) row.status = 'completed';
+    }
+
+    /**
+     * 💣 雷區（2026-08-11 老師回報「再做一次，題目順序跟第一次一模一樣」）：`quiz_paper.items`
+     * 是老師產生線上卷時「只排序一次」存下來的固定順序，不管哪個學生、第幾次打開都是同一份
+     * 靜態陣列，老師勾的 shuffle 只在「產生線上卷」那一刻生效，之後每次重新打開都是同一個
+     * 順序——這樣重做／重考完全失去「打亂順序」的意義。
+     * 修正：只影響「畫面顯示順序」，不動 paper.items 本身（批改／檢討仍以 item_id 對應，跟
+     * 順序無關，見 gradeAnswers／collectAnswers），每次開始作答／重做都重新洗牌一次，
+     * 老師若在出題設定關掉 shuffle 才維持固定順序。
+     */
+    function displayOrderItems(paper, task) {
+        const items = (paper && paper.items) || [];
+        const opts = task && task.raw_data && task.raw_data.exam_job && task.raw_data.exam_job.options;
+        const shuffleOn = !(opts && opts.shuffle === false);
+        if (!shuffleOn || !window.QuizPaperBuilder || typeof window.QuizPaperBuilder.shuffleInPlace !== 'function') {
+            return items;
+        }
+        return window.QuizPaperBuilder.shuffleInPlace(items.slice());
+    }
+
+    function replaceLocalCompletion(assignmentId, taskId, row) {
+        if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
+        const idx = window._studentTaskCompletions.findIndex(function (c) {
+            return String(c.task_id) === String(taskId) && String(c.assignment_id) === String(assignmentId);
+        });
+        if (idx === -1) window._studentTaskCompletions.push(row);
+        else window._studentTaskCompletions[idx] = row;
+    }
+
+    /**
+     * 💣 雷區（2026-08-11 學生回報「點錯題檢討，分數沒有重算」）：`window._studentTaskCompletions`
+     * 只在整頁載入（`fetchData`）時抓過一次；老師端「考試批改」／申訴審核接受後是直接改資料庫，
+     * 學生瀏覽器裡的舊快取不會自動跟著變。開「檢討」／「整體報告」前先跟資料庫要一次最新的
+     * completion，不要只信任 page load 時的快取。失敗（離線／RLS）就靜默退回舊快取，不擋開啟。
+     */
+    async function refreshCompletionFromDb(assignmentId, taskId) {
+        try {
+            if (!window.supabaseClient || !isAssignmentId(assignmentId)) return findCompletion(assignmentId, taskId);
+            const auth = await getAuthContext();
+            const { data, error } = await window.supabaseClient
+                .from('task_completions')
+                .select('id, assignment_id, task_id, status, raw_data')
+                .eq('assignment_id', assignmentId)
+                .eq('task_id', String(taskId))
+                .eq('student_id', auth.userId)
+                .is('deleted_at', null)
+                .maybeSingle();
+            if (error || !data) return findCompletion(assignmentId, taskId);
+            let rawData = data.raw_data;
+            if (typeof rawData === 'string') {
+                try { rawData = JSON.parse(rawData); } catch (_e) { rawData = {}; }
+            }
+            const row = { id: data.id, assignment_id: data.assignment_id, task_id: String(data.task_id), status: data.status, raw_data: rawData || {} };
+            replaceLocalCompletion(assignmentId, taskId, row);
+            return row;
+        } catch (err) {
+            console.warn('[FeatureStudentQuiz] refreshCompletionFromDb', err);
+            return findCompletion(assignmentId, taskId);
+        }
     }
 
     async function getAuthContext() {
@@ -786,9 +910,6 @@ window.FeatureStudentQuiz = (function () {
         sessionSubmitted = false;
         sessionQuitSaved = false;
 
-        let prevAnswers = {};
-        if (prevRaw.quiz_answers) prevAnswers = prevRaw.quiz_answers;
-
         const stats = readStats(prevRaw);
         stats.attempt_count += 1;
         pushHistory(stats, { at: new Date().toISOString(), type: 'open' });
@@ -803,8 +924,16 @@ window.FeatureStudentQuiz = (function () {
             ? ('<div style="margin-bottom:10px; padding:8px 10px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;">' + statsHtml + '</div>')
             : '';
 
-        const itemsHtml = paper.items.map(function (it) {
-            return renderItemRow(it, prevAnswers[it.item_id]);
+        // 💣 雷區（2026-08-11 老師回報「重做又把上次答案帶進來」）：這裡不能拿 prevRaw.quiz_answers
+        // 幫每格 input 帶預設值。這個 app 沒有「作答中途暫存」機制，quiz_answers 只會在 submit()
+        // 成功繳交後才寫入——換句話說，只要 prevRaw.quiz_answers 有值，就一定代表學生已經交過
+        // 一次，現在是重新開始作答（不是「還沒交、續寫上次沒填完的」），所以一律要空白，跟
+        // openRetakeQuiz 的錯題重做同精神，不要用「上次交的答案」預先幫學生填好。
+        // 💣 雷區（2026-08-12 老師回報「題號 35、21、36…看起來亂掉」）：洗牌只能動「顯示順序」，
+        // 標題編號要跟著畫面上排第幾題（idx+1）走，不能繼續印 it.seq（那是出卷時的固定編號，
+        // 洗牌後跟畫面位置對不上，看起來像是卷子壞了）。
+        const itemsHtml = displayOrderItems(paper, task).map(function (it, idx) {
+            return renderItemRow(it, undefined, idx + 1);
         }).join('');
 
         const title = String(task.title || (task.raw_data && task.raw_data.exam_title) || '線上考試')
@@ -893,7 +1022,7 @@ window.FeatureStudentQuiz = (function () {
         stats.leave_count_total += leaveCount;
         stats.last_leave_count = leaveCount;
         stats.last_leave_log = leaveLog.slice();
-        stats.wrong_items = (result.wrong_items || []).map(function (d) {
+        stats.wrong_items = (result.wrong_items || []).map(function (d, idx) {
             const item = {
                 item_id: d.item_id,
                 seq: d.seq,
@@ -904,7 +1033,9 @@ window.FeatureStudentQuiz = (function () {
                 diff: d.diff || null,
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
             };
-            item.headline = headlineFromWrongItem(item);
+            // 錯題本編號＝這題在錯題清單裡排第幾個（idx+1），不要印出卷時的固定 seq
+            // （seq 是「原卷第幾題」的內部編號，跳號會讓學生／老師誤以為卷子對不起來）。
+            item.headline = headlineFromWrongItem(item, idx + 1);
             return item;
         });
         appendSpellingHistory(stats, stats.wrong_items, stats.complete_count, gradedAt);
@@ -972,7 +1103,9 @@ window.FeatureStudentQuiz = (function () {
                     reloadOnClose: true,
                     assignmentId: assignmentId,
                     taskId: taskId,
-                    retakeEligible: retakeEligible
+                    retakeEligible: retakeEligible,
+                    allowAppeal: !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false),
+                    appealsByItemId: appealsByItemIdFromRaw(rawPayload)
                 })
             });
         } catch (err) {
@@ -1007,16 +1140,19 @@ window.FeatureStudentQuiz = (function () {
         }
         const idSet = {};
         retake.item_ids.forEach(function (id) { idSet[String(id)] = true; });
-        const retakeItems = paper.items.filter(function (it) { return idSet[String(it.item_id)]; });
+        const retakeItems = displayOrderItems(paper, task).filter(function (it) { return idSet[String(it.item_id)]; });
         if (!retakeItems.length) {
             return window.showFlash('找不到對應的錯題內容（考卷可能已更動），無法重考', 'error');
         }
-        const prevAnswers = raw.quiz_answers || {};
         const title = String(task.title || (task.raw_data && task.raw_data.exam_title) || '線上考試')
             .replace(/<[^>]*>?/gm, '');
 
-        const itemsHtml = retakeItems.map(function (it) {
-            return renderItemRow(it, prevAnswers[it.item_id]);
+        // 💣 雷區（2026-08-11 老師回報「錯題重做直接帶入第一次答案」）：這裡故意不傳
+        // 第二個參數——錯題重做要讓學生看著空白重寫，不能把「當初寫錯的答案」直接帶入
+        // input（那樣等於叫學生重新照抄一次錯的答案）。openQuiz 整份重做同理也已經拿掉
+        // 同樣的 prevAnswers 帶入邏輯，兩邊行為現在是一致的。
+        const itemsHtml = retakeItems.map(function (it, idx) {
+            return renderItemRow(it, undefined, idx + 1);
         }).join('');
 
         const safeAssign = String(assignmentId).replace(/'/g, "\\'");
@@ -1070,7 +1206,7 @@ window.FeatureStudentQuiz = (function () {
         const result = window.QuizPaperBuilder.gradeAnswers(retakePaper, answers);
         const gradedAt = new Date().toISOString();
 
-        const retakeWrongItems = (result.wrong_items || []).map(function (d) {
+        const retakeWrongItems = (result.wrong_items || []).map(function (d, idx) {
             const item = {
                 item_id: d.item_id,
                 seq: d.seq,
@@ -1081,7 +1217,7 @@ window.FeatureStudentQuiz = (function () {
                 diff: d.diff || null,
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
             };
-            item.headline = headlineFromWrongItem(item);
+            item.headline = headlineFromWrongItem(item, idx + 1);
             return item;
         });
 
@@ -1113,21 +1249,34 @@ window.FeatureStudentQuiz = (function () {
         try {
             await persistResult(assignmentId, taskId, { quiz_retake: updatedRetake }, true);
             if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_MODAL_ID);
-            openRetakeReportModal(assignmentId, taskId, originalResult, updatedRetake);
+            openRetakeReportModal(assignmentId, taskId, originalResult, updatedRetake, appealsByItemIdFromRaw(raw));
         } catch (err) {
             console.error('[FeatureStudentQuiz] submitRetake', err);
             window.showFlash('重考繳交失敗：' + (err.message || err), 'error');
         }
     }
 
-    function buildRetakeReportHtml(title, originalResult, retake) {
+    function buildRetakeReportHtml(title, originalResult, retake, opts) {
+        opts = opts || {};
         const combined = retake.combined || {};
         const wrongItems = (retake.result && retake.result.wrong_items) || [];
         const totalRetake = Array.isArray(retake.item_ids) ? retake.item_ids.length : 0;
         const fixedCount = Math.max(0, totalRetake - wrongItems.length);
+        const appealsByItemId = opts.appealsByItemId || {};
+        const cardOpts = { allowAppeal: opts.allowAppeal, appealsByItemId: appealsByItemId };
+        const wrongCardsBodyId = RETAKE_REPORT_MODAL_ID + '-wrongcards';
         const wrongCards = wrongItems.length
-            ? wrongItems.map(renderWrongItemCard).join('')
+            ? wrongItems.map(function (item) { return renderWrongItemCard(item, cardOpts); }).join('')
             : '<div style="color:#047857; font-weight:800; padding:12px;">重考的題目全部訂正成功！</div>';
+        // 這裡是塞進 onclick="...('safeAssign','safeTask')" 的 JS 字串常值，要跳單引號，不是 HTML escape
+        const safeAssign = String(opts.assignmentId == null ? '' : opts.assignmentId).replace(/'/g, "\\'");
+        const safeTask = String(opts.taskId == null ? '' : opts.taskId).replace(/'/g, "\\'");
+        const hasAppealable = opts.allowAppeal && wrongItems.some(function (item) { return !appealsByItemId[String(item.item_id)]; });
+        const appealSubmitHtml = hasAppealable
+            ? ('<div style="display:flex; justify-content:flex-end; margin:6px 0 8px;">'
+                + '<button type="button" class="btn btn-action" style="background:#7C3AED; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.submitAppeals(\'' + safeAssign + '\',\'' + safeTask + '\',\'' + wrongCardsBodyId + '\',\'retake\')">📮 送出申訴</button>'
+                + '</div>')
+            : '';
         return (
             '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
@@ -1149,7 +1298,8 @@ window.FeatureStudentQuiz = (function () {
                     '</div>' +
                 '</div>' +
                 (wrongItems.length ? '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">重考後仍錯的題目</div>' : '') +
-                '<div style="max-height:38vh; overflow:auto; margin-bottom:8px;">' + wrongCards + '</div>' +
+                '<div id="' + wrongCardsBodyId + '" style="max-height:38vh; overflow:auto; margin-bottom:8px;">' + wrongCards + '</div>' +
+                appealSubmitHtml +
                 '<div style="display:flex; justify-content:flex-end; margin-top:12px;">' +
                     '<button type="button" class="btn btn-action" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">知道了</button>' +
                 '</div>' +
@@ -1157,28 +1307,102 @@ window.FeatureStudentQuiz = (function () {
         );
     }
 
-    function openRetakeReportModal(assignmentId, taskId, originalResult, retake) {
+    function openRetakeReportModal(assignmentId, taskId, originalResult, retake, appealsByItemId) {
         const task = findTaskInAssignments(assignmentId, taskId);
         const title = String((task && task.title) || '線上考試').replace(/<[^>]*>?/gm, '');
+        const allowAppeal = !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
         if (!window.ModalOverlay) return;
         window.ModalOverlay.open({
             id: RETAKE_REPORT_MODAL_ID,
             tier: 'A',
-            contentHtml: buildRetakeReportHtml(title, originalResult, retake)
+            contentHtml: buildRetakeReportHtml(title, originalResult, retake, {
+                assignmentId: assignmentId,
+                taskId: taskId,
+                allowAppeal: allowAppeal,
+                appealsByItemId: appealsByItemId || {}
+            })
         });
     }
 
-    function openRetakeReportFromRaw(assignmentId, taskId) {
+    async function openRetakeReportFromRaw(assignmentId, taskId) {
+        // 跟 openReviewFromRaw 同理：老師端接受申訴／重新批閱是直接改資料庫，這裡開報告
+        // 前也要先跟資料庫要一次最新資料，不要只信任 page load 時的舊快取。
+        if (window.ModalOverlay) {
+            window.ModalOverlay.open({
+                id: RETAKE_REPORT_MODAL_ID,
+                tier: 'A',
+                contentHtml: '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取最新批改結果…</div>'
+            });
+        }
+        await refreshCompletionFromDb(assignmentId, taskId);
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const retake = raw.quiz_retake;
-        if (!retake || !retake.done) return window.showFlash('尚未完成錯題重考', 'warning');
-        openRetakeReportModal(assignmentId, taskId, raw.quiz_result || {}, retake);
+        if (!retake || !retake.done) {
+            if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_REPORT_MODAL_ID);
+            return window.showFlash('尚未完成錯題重考', 'warning');
+        }
+        openRetakeReportModal(assignmentId, taskId, raw.quiz_result || {}, retake, appealsByItemIdFromRaw(raw));
     }
 
     function closeRetakeReport(reload) {
         if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_REPORT_MODAL_ID);
         if (reload) window.location.reload();
+    }
+
+    /**
+     * 送出申訴（見「錯題申訴」規劃）：批次送出，勾了才送，不邊勾邊存。同一 item_id 若已經
+     * 有申訴紀錄（不論 pending/accepted/rejected）就跳過，不重複加——申訴僅一次，要調整
+     * 由老師端逐題編輯。source 只是決定送出後要重新渲染哪個畫面（review 或 retake 報告），
+     * 不影響寫入的資料結構（quiz_appeals 是同一個扁平陣列，不分來源）。
+     */
+    async function submitAppeals(assignmentId, taskId, scopeBodyId, source) {
+        const scopeEl = document.getElementById(scopeBodyId);
+        if (!scopeEl) return window.showFlash('找不到申訴範圍，請重新整理再試', 'error');
+        const checked = Array.prototype.slice.call(scopeEl.querySelectorAll('.quiz-appeal-checkbox:checked'));
+        if (!checked.length) return window.showFlash('請先勾選要申訴的題目', 'warning');
+
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const existing = Array.isArray(raw.quiz_appeals) ? raw.quiz_appeals.slice() : [];
+        const existingIds = {};
+        existing.forEach(function (a) { if (a && a.item_id != null) existingIds[String(a.item_id)] = true; });
+
+        const appealedAt = new Date().toISOString();
+        const newAppeals = [];
+        checked.forEach(function (el) {
+            const itemId = el.getAttribute('data-item-id');
+            if (itemId == null || existingIds[String(itemId)]) return;
+            newAppeals.push({
+                item_id: itemId,
+                seq: Number(el.getAttribute('data-seq')) || null,
+                answer: el.getAttribute('data-answer') || '',
+                expected: el.getAttribute('data-expected') || '',
+                status: 'pending',
+                appealed_at: appealedAt
+            });
+            existingIds[String(itemId)] = true;
+        });
+        if (!newAppeals.length) return window.showFlash('這些題目已經送出過申訴了', 'warning');
+
+        const merged = existing.concat(newAppeals);
+        try {
+            await persistResult(assignmentId, taskId, { quiz_appeals: merged }, true);
+            window.showFlash('已送出 ' + newAppeals.length + ' 筆申訴，等候老師/助教審核', 'success');
+            const freshPrev = findCompletion(assignmentId, taskId);
+            const freshRaw = (freshPrev && freshPrev.raw_data) ? freshPrev.raw_data : {};
+            if (source === 'retake') {
+                const retake = freshRaw.quiz_retake;
+                if (retake && retake.done) {
+                    openRetakeReportModal(assignmentId, taskId, freshRaw.quiz_result || {}, retake, appealsByItemIdFromRaw(freshRaw));
+                }
+            } else {
+                openReviewFromRaw(assignmentId, taskId);
+            }
+        } catch (err) {
+            console.error('[FeatureStudentQuiz] submitAppeals', err);
+            window.showFlash('申訴送出失敗：' + (err.message || err), 'error');
+        }
     }
 
     return {
@@ -1192,6 +1416,7 @@ window.FeatureStudentQuiz = (function () {
         submitRetake: submitRetake,
         openRetakeReportFromRaw: openRetakeReportFromRaw,
         closeRetakeReport: closeRetakeReport,
+        submitAppeals: submitAppeals,
         getLeaveStats: function () {
             return { leave_count: leaveCount, leave_log: leaveLog.slice() };
         },

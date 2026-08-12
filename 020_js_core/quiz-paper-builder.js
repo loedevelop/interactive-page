@@ -42,6 +42,57 @@ window.QuizPaperBuilder = (function () {
     }
 
     /**
+     * 中央可接受答案白名單（2026-08-11 新增，見「錯題申訴」規劃）：常見英文縮寫等價形式，
+     * 雙向都算對——寫 "I am" 或 "I'm" 都不該被判錯，不需要老師/助教一個個手動加
+     * accepted_answers 或等學生申訴才補。每組 [完整形式, 縮寫形式]，皆為已 normalizeAnswer
+     * 過的小寫字串。之後如需擴充，直接在這個陣列加一組即可（尚未開放老師自行增補）。
+     */
+    const EQUIVALENCE_PAIRS = [
+        ['i am', "i'm"], ['i will', "i'll"], ['i have', "i've"], ['i had', "i'd"], ['i would', "i'd"],
+        ['you are', "you're"], ['you will', "you'll"], ['you have', "you've"], ['you would', "you'd"],
+        ['he is', "he's"], ['he will', "he'll"], ['he has', "he's"],
+        ['she is', "she's"], ['she will', "she'll"], ['she has', "she's"],
+        ['it is', "it's"], ['it will', "it'll"], ['it has', "it's"],
+        ['we are', "we're"], ['we will', "we'll"], ['we have', "we've"], ['we would', "we'd"],
+        ['they are', "they're"], ['they will', "they'll"], ['they have', "they've"], ['they would', "they'd"],
+        ['that is', "that's"], ['there is', "there's"], ['what is', "what's"], ['who is', "who's"],
+        ['let us', "let's"],
+        ['is not', "isn't"], ['are not', "aren't"], ['was not', "wasn't"], ['were not', "weren't"],
+        ['do not', "don't"], ['does not', "doesn't"], ['did not', "didn't"],
+        ['have not', "haven't"], ['has not', "hasn't"], ['had not', "hadn't"],
+        ['will not', "won't"], ['would not', "wouldn't"], ['can not', "can't"], ['cannot', "can't"],
+        ['could not', "couldn't"], ['should not', "shouldn't"], ['must not', "mustn't"]
+    ];
+
+    /**
+     * 對一個（已 normalizeAnswer 過的）字串，套用中央白名單雙向整詞替換，回傳所有算出來
+     * 的等價變體（不含輸入本身、去重）。用整字邊界 \b 避免誤傷（例如 "isn't" 不該影響
+     * "wasn't"），且只針對每組配對各替換一次、不做多組疊加排列組合——答案通常很短，
+     * 這樣已經夠涵蓋常見情境，也避免變體數量爆炸。
+     */
+    function expandWithEquivalents(normalized) {
+        const src = String(normalized || '');
+        if (!src) return [];
+        const variants = {};
+        EQUIVALENCE_PAIRS.forEach(function (pair) {
+            const full = pair[0];
+            const short = pair[1];
+            const fullRe = new RegExp('\\b' + full.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
+            const shortRe = new RegExp('\\b' + short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['’]") + '\\b', 'g');
+            if (fullRe.test(src)) {
+                const v = src.replace(fullRe, short);
+                if (v !== src) variants[v] = true;
+            }
+            if (shortRe.test(src)) {
+                const v = src.replace(shortRe, full);
+                if (v !== src) variants[v] = true;
+            }
+        });
+        delete variants[src];
+        return Object.keys(variants);
+    }
+
+    /**
      * 💣 雷區（2026-08-11 老師回報「to/a 顯示成 to a」「say(s) - said - said - saying 被拆散」）：
      * 只用來給答錯時的對比顯示（analyzeAnswerDiff／alignTokens／renderAnswerDiffHtml）分詞，
      * 不影響對錯判定本身（判定是 normalizeAnswer 整串比對，不拆字）。以前用
@@ -292,6 +343,23 @@ window.QuizPaperBuilder = (function () {
         });
     }
 
+    /**
+     * 中央白名單 bake-in：產生線上卷當下，把「完整形式／縮寫」等價變體直接寫進
+     * accepted_answers（而不是每次批改都動態展開），老師在「考試批改」畫面本來就能
+     * 看到這些是白名單自動加入的（跟老師自己按「+ 新增可接受答案」加的長一樣，沒有
+     * 特殊標記——這是刻意的，維持既有 UI 不用另外分辨來源）。answerEn 開頭若是大寫，
+     * 變體也跟著首字大寫，避免全部變成小寫看起來不像正常英文。
+     */
+    function equivalentAcceptedSeed(answerEn) {
+        const norm = normalizeAnswer(answerEn);
+        if (!norm) return [];
+        const variants = expandWithEquivalents(norm);
+        const wasCapitalized = /^[A-Z]/.test(String(answerEn || '').trim());
+        return variants.map(function (v) {
+            return (wasCapitalized && v) ? (v.charAt(0).toUpperCase() + v.slice(1)) : v;
+        });
+    }
+
     function buildItemFromRow(row, opts) {
         const Eval = window.LayoutFieldsEval;
         if (!Eval) throw new Error('LayoutFieldsEval 未載入');
@@ -336,7 +404,27 @@ window.QuizPaperBuilder = (function () {
             const promptCells = safeEvalFields(opts.quizPrompt);
             promptZh = promptCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
         }
-        if (opts.quizAnswer) {
+
+        /**
+         * 💣 雷區（2026-08-11 老師回報「正確答案只有前置詞，沒有英文單字那欄」——答案結合
+         * 公式形同虛設）：`_answer_mode === 'combine'` 是老師在 Layout Template 明確設定過
+         * 「書寫答案有多欄，要用 answer_combine_note 公式（例如 AN&" "&AO）結合」，算出來、
+         * 也允許逐列修正的最終值（row._answer_combined_text），**優先權必須最高**。
+         * 之前這段寫在 `opts.quizAnswer` / cells[2] 舊慣例 fallback 之後，且用 `if (!answerEn)`
+         * 卡門——只要舊版 quiz_answer／fields 公式（通常只認得單一欄，例如只挑到 AN 這欄）
+         * 先算出任何非空字串，answerEn 就已經「有值」，下面整段 combine 判斷直接被跳過，
+         * 導致學生看到／用來批改的「正確答案」只有 AN（前置詞），完全漏掉 AO（動詞變化）。
+         * 現在改成：combine 模式一律優先讀 _answer_combined_text，其餘 quiz_answer／cells[2]／
+         * row.answer_en 都退到後面當 fallback，且只在「非 combine 模式」或「combine 但沒算出
+         * 結合值」時才會用到。
+         */
+        if (row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
+            answerEn = String(row._answer_combined_text).trim();
+        } else if (row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
+            answerEn = row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
+                .filter(Boolean).join(' ');
+        }
+        if (!answerEn && opts.quizAnswer) {
             const answerCells = safeEvalFields(opts.quizAnswer);
             answerEn = answerCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
         }
@@ -348,30 +436,6 @@ window.QuizPaperBuilder = (function () {
             clozeStem = cellsAnswer[1].text || '';
         }
 
-        /**
-         * 「套用到教材」新工具（feature-material-layout-pairing.js）產生的 meta.json 不再有
-         * col_map／fields 公式能吃得懂的欄位（也沒有 _layout.json 這層）——row 本身就是具名
-         * semantic_key（display_zh／answer_en／pos／pre…），沒有 quiz_prompt／quiz_answer
-         * 公式、也沒對到 cells[1]/cells[2] 時，直接用具名欄位補答案，讓沒有 _layout.json
-         * 的教材（例如 vocab 單字表）也能正常出線上卷，不必等「Layout Template」跟這裡的
-         * layout_profile_id／_layout.json 串起來（見 material-layout-pairing-invariant.mdc）。
-         *
-         * _answer_mode==='combine'：書寫答案欄數>1且老師選「結合」時，完整答案要靠老師在
-         * Layout Template 設定的 answer_combine_note 公式（例如 AN&" "&AO）才對，不是隨便
-         * 用空白把各欄接起來就好（曾發生：批改結果跟公式設定不一致，"/" 也被誤判成分隔符）。
-         * 💣 雷區（2026-08-11 老師回報「書寫答案結合批改結果是錯的」）：以前這裡完全沒去讀
-         * feature-material-layout-pairing.js 產生 meta 時已經算好、寫進 row._answer_combined_text
-         * 的公式結果，而是自己用固定空白 join 重算一次——兩邊邏輯對不上，公式設定形同虛設。
-         * 現在優先讀 _answer_combined_text（已經是公式算出來、老師也能逐列修正過的最終值），
-         * 真的沒有（例如舊教材／沒重新產生過）才退回舊版空白 join 相容路徑。
-         */
-        if (!answerEn && row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
-            answerEn = String(row._answer_combined_text).trim();
-        }
-        if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
-            answerEn = row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
-                .filter(Boolean).join(' ');
-        }
         // 'separate' 模式的合併預覽字串要靠下面 subAnswers 那段算（逐欄各自的值），這裡先不要
         // 用單欄 row.answer_en 卡位，否則下面 `if (!answerEn)` 會被誤判成「已經有了」而跳過。
         if (!answerEn && row._answer_mode !== 'separate') answerEn = String(row.answer_en || '').trim();
@@ -387,7 +451,8 @@ window.QuizPaperBuilder = (function () {
         let subAnswers = null;
         if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
             subAnswers = row._answer_keys.map(function (key) {
-                return { key: key, label: key, answer_en: String(row[key] || '').trim(), accepted_answers: [] };
+                const subAnswerEn = String(row[key] || '').trim();
+                return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: equivalentAcceptedSeed(subAnswerEn) };
             });
             if (!answerEn) answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
         }
@@ -399,7 +464,7 @@ window.QuizPaperBuilder = (function () {
             prompt_zh: promptZh,
             answer_en: answerEn,
             cloze_stem: clozeStem,
-            accepted_answers: [],
+            accepted_answers: equivalentAcceptedSeed(answerEn),
             sub_answers: subAnswers,
             cells: cells,
             cells_answer: cellsAnswer,
@@ -563,6 +628,25 @@ window.QuizPaperBuilder = (function () {
     }
 
     /**
+     * 對錯判定的「動態白名單防呆」：直接比對沒過，再展開中央白名單（EQUIVALENCE_PAIRS）
+     * 雙向比對一次。涵蓋兩種情況：(1) 舊考卷產生時還沒有 bake-in accepted_answers；
+     * (2) 白名單之後又新增了配對，但這份線上卷還沒重新產生——都不必逼老師重新出考卷。
+     * 一般情況（已 bake-in）直接命中 okList，不會走到這裡，效能沒有額外負擔。
+     */
+    function isAcceptableAnswer(gotN, okList) {
+        if (gotN === '') return false;
+        if (okList.indexOf(gotN) !== -1) return true;
+        const gotVariants = expandWithEquivalents(gotN);
+        for (let i = 0; i < gotVariants.length; i++) {
+            if (okList.indexOf(gotVariants[i]) !== -1) return true;
+        }
+        for (let j = 0; j < okList.length; j++) {
+            if (expandWithEquivalents(okList[j]).indexOf(gotN) !== -1) return true;
+        }
+        return false;
+    }
+
+    /**
      * 一題多空格（分開比對）：got 是 { [sub_key]: string } 物件，每個空格各自跟自己的
      * answer_en／accepted_answers 比對，全部空格都對才算這一題對。回傳形狀跟單答案題一致
      * （answer/expected 是合併後字串，供既有畫面顯示／diff），另外多帶 sub_results 給之後
@@ -574,7 +658,7 @@ window.QuizPaperBuilder = (function () {
         const subResults = it.sub_answers.map(function (sa) {
             const g = normalizeAnswer(gotObj[sa.key]);
             const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
-            const ok = g !== '' && okList.indexOf(g) !== -1;
+            const ok = isAcceptableAnswer(g, okList);
             if (!ok) allOk = false;
             return { key: sa.key, label: sa.label, answer: gotObj[sa.key] == null ? '' : String(gotObj[sa.key]), expected: sa.answer_en, ok: ok };
         });
@@ -597,7 +681,7 @@ window.QuizPaperBuilder = (function () {
             const ok = isSubAnswer ? subGrade.ok : (function () {
                 const gotN = normalizeAnswer(got);
                 const okList = [it.answer_en].concat(it.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
-                return gotN !== '' && okList.indexOf(gotN) !== -1;
+                return isAcceptableAnswer(gotN, okList);
             })();
             if (ok) correct += 1;
             const expected = isSubAnswer ? subGrade.expected : (it.answer_en || '');
@@ -641,6 +725,13 @@ window.QuizPaperBuilder = (function () {
      */
     function renderAnswerDiffHtml(ops) {
         if (!ops || !ops.length) return '<span style="color:#94A3B8;">（未作答）</span>';
+        // 💣 雷區（2026-08-11 老師回報「你的答案一排全是〔缺〕很白痴」）：完全沒作答時，
+        // 逐字對齊會把「正確答案」的每一個字都各自標成一個 del（缺漏），排出一整排〔缺〕〔缺〕
+        // 〔缺〕……對老師／學生來說毫無資訊量，只要看得出「整題都沒寫」就好，不需要重複每個字都
+        // 標一次。只有當「至少有一個字是真的打錯／多打」時，才逐字顯示 del／sub／ins 的完整對齊。
+        if (ops.every(function (op) { return op.type === 'del'; })) {
+            return '<span style="color:#94A3B8;">（未作答）</span>';
+        }
         return ops.map(function (op) {
             if (op.type === 'match') {
                 return '<span style="color:#1E293B; font-weight:700;">' + escHtml(op.got) + '</span>';
@@ -786,6 +877,27 @@ window.QuizPaperBuilder = (function () {
         }
         nextRawData.quiz_stats = stats;
 
+        /**
+         * 💣 雷區（2026-08-11「重考後對比歷史資料」規劃）：quiz_retake.combined 是老師端
+         * 「合併正確率」報告用的（原始 correct + 重考 correct）／原始 total。以前這裡完全
+         * 不會動 quiz_retake，若學生已完成重考（done=true）之後，老師才接受某題申訴／改了
+         * accepted_answers 導致這次重批的 correct 變動，歷史重考報告會留著重批前的舊數字，
+         * 跟新分數對不起來。這裡只在 quiz_retake.done 且結果真的變動時才重算 combined；
+         * item_ids（重考凍結的題號集合）維持不動，不屬於這次要處理的範圍。
+         */
+        if (src.quiz_retake && src.quiz_retake.done && src.quiz_retake.result && changed) {
+            const retake = Object.assign({}, src.quiz_retake);
+            const retakeCorrect = Number(retake.result.correct) || 0;
+            const combinedCorrect = result.correct + retakeCorrect;
+            const combinedTotal = result.total;
+            retake.combined = {
+                correct: combinedCorrect,
+                total: combinedTotal,
+                rate: combinedTotal > 0 ? Math.round((combinedCorrect / combinedTotal) * 1000) / 10 : 0
+            };
+            nextRawData.quiz_retake = retake;
+        }
+
         return {
             rawData: nextRawData,
             changed: changed,
@@ -811,6 +923,11 @@ window.QuizPaperBuilder = (function () {
         addAcceptedAnswer: addAcceptedAnswer,
         removeAcceptedAnswer: removeAcceptedAnswer,
         setPrimaryAnswer: setPrimaryAnswer,
-        regradeCompletionRawData: regradeCompletionRawData
+        regradeCompletionRawData: regradeCompletionRawData,
+        EQUIVALENCE_PAIRS: EQUIVALENCE_PAIRS,
+        expandWithEquivalents: expandWithEquivalents,
+        isAcceptableAnswer: isAcceptableAnswer,
+        equivalentAcceptedSeed: equivalentAcceptedSeed,
+        shuffleInPlace: shuffleInPlace
     };
 })();

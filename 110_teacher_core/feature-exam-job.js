@@ -39,6 +39,102 @@ window.FeatureExamJob = (function () {
     const SHEET_SUGGESTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
     const DEFAULT_LINES_PER_PAGE = 10;
 
+    /**
+     * 📋「同一班級記住上次出題設定」（2026-08-11 老師要求）：老師出題很雜，每次都要重新設定
+     * bank_id／layout_profile_id／各活頁區段。這裡把「上次成功產生線上卷」那次的設定記下來，
+     * 之後在同一班開新的考試任務時，可以按「套用上次設定」一次帶入，而不是從零開始。
+     *
+     * 儲存位置：沿用老師 profiles.raw_data（不新增資料表，跟 material_layout_pairs／
+     * teacher-prefs.js 同一個既有作法），鍵是 exam_last_config_by_class = { [classId]: {...} }。
+     *
+     * 💣 雷區：這是「老師主動按才套用」的建議，不是自動預設──這份對話裡已經因為「自動預設卻選錯」
+     * 被罵過很多次（bank_id／layout_profile_id 都曾經因為偷偷預設第一項而搞錯）。絕對不要在渲染時
+     * 靜默把這份上次設定塞進新任務，只能透過老師明確點擊的按鈕套用。
+     */
+    let _lastConfigCache = null;
+    let _lastConfigLoadPromise = null;
+
+    async function fetchLastConfigByClass(force) {
+        if (_lastConfigCache && !force) return _lastConfigCache;
+        if (_lastConfigLoadPromise && !force) return _lastConfigLoadPromise;
+        _lastConfigLoadPromise = (async function () {
+            if (!window.supabaseClient) { _lastConfigCache = _lastConfigCache || {}; return _lastConfigCache; }
+            const { data: authData } = await window.supabaseClient.auth.getUser();
+            const user = authData && authData.user;
+            if (!user) { _lastConfigCache = {}; return _lastConfigCache; }
+            const { data: profile, error } = await window.supabaseClient
+                .from('profiles')
+                .select('raw_data')
+                .eq('id', user.id)
+                .maybeSingle();
+            if (error) {
+                console.warn('[FeatureExamJob] 讀取上次出題設定失敗', error);
+                _lastConfigCache = _lastConfigCache || {};
+                return _lastConfigCache;
+            }
+            const raw = (profile && profile.raw_data) || {};
+            _lastConfigCache = (raw.exam_last_config_by_class && typeof raw.exam_last_config_by_class === 'object')
+                ? raw.exam_last_config_by_class : {};
+            return _lastConfigCache;
+        })().finally(function () { _lastConfigLoadPromise = null; });
+        return _lastConfigLoadPromise;
+    }
+
+    /** 同步讀「目前已知」的上次設定（跟 getSuggestedLayoutIds 同精神：第一次呼叫順便觸發背景載入） */
+    function getCachedLastConfigForClass(classId) {
+        if (_lastConfigCache === null && !_lastConfigLoadPromise) fetchLastConfigByClass(false).catch(function () {});
+        return (classId && _lastConfigCache) ? (_lastConfigCache[classId] || null) : null;
+    }
+
+    /** 產生線上卷成功後呼叫：把這次的教材＋layout＋出題設定記下來，供同班下次出題時套用 */
+    async function saveLastConfigForClass(classId, config) {
+        if (!classId || !window.supabaseClient) return;
+        try {
+            const { data: authData } = await window.supabaseClient.auth.getUser();
+            const user = authData && authData.user;
+            if (!user) return;
+            const current = await fetchLastConfigByClass(false);
+            const byClass = Object.assign({}, current);
+            byClass[classId] = Object.assign({}, config, { updated_at: new Date().toISOString() });
+            const { data: profile, error: readErr } = await window.supabaseClient
+                .from('profiles')
+                .select('raw_data')
+                .eq('id', user.id)
+                .maybeSingle();
+            if (readErr) { console.warn('[FeatureExamJob] 記錄上次出題設定：讀取 profile 失敗', readErr); return; }
+            const mergedRawData = Object.assign({}, (profile && profile.raw_data) || {}, { exam_last_config_by_class: byClass });
+            const { error: updateErr } = await window.supabaseClient
+                .from('profiles')
+                .update({ raw_data: mergedRawData })
+                .eq('id', user.id);
+            if (updateErr) { console.warn('[FeatureExamJob] 記錄上次出題設定失敗', updateErr); return; }
+            _lastConfigCache = byClass;
+        } catch (err) {
+            console.warn('[FeatureExamJob] saveLastConfigForClass 例外', err);
+        }
+    }
+
+    /** 老師按「套用上次設定」：把記下來的 bank_id／layout_profile_id／sections 寫回目前任務並重繪 */
+    function applyLastConfigForClass(pathStr) {
+        const task = getBuilderTaskByPath(pathStr);
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!task || !bState) return;
+        const cfg = getCachedLastConfigForClass(bState.classId);
+        if (!cfg) return window.showFlash('這個班級還沒有可套用的上次出題設定', 'warning');
+        if (!task.raw_data) task.raw_data = {};
+        if (!task.raw_data.exam_job) task.raw_data.exam_job = {};
+        const job = task.raw_data.exam_job;
+        job.bank_id = cfg.bank_id || job.bank_id || '';
+        job.layout_profile_id = cfg.layout_profile_id || job.layout_profile_id || '';
+        if (Array.isArray(cfg.sections) && cfg.sections.length) {
+            // 深拷貝，避免多個任務共用同一份陣列參考互相污染
+            job.sections = cfg.sections.map(function (s) { return Object.assign({}, s); });
+        }
+        job.options = Object.assign({}, job.options, cfg.options);
+        refreshExamBuilder();
+        window.showFlash('已套用本班上次出題設定（' + (cfg.material_folder || cfg.sections && cfg.sections[0] && cfg.sections[0].sheet_id || '') + '），請確認後按「儲存作業」（會自動產生線上卷）', 'success');
+    }
+
     function layoutFieldHint(layoutId) {
         if (String(layoutId || '').indexOf('tpl:') === 0) {
             const tplProfile = window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.resolveTemplateProfile === 'function'
@@ -1545,10 +1641,14 @@ window.FeatureExamJob = (function () {
         const raw = (task && task.raw_data) || {};
         const job = raw.exam_job || {};
         const jobId = raw.exam_job_id || job.job_id || '';
-        // 💣 雷區：bankId／layoutId 從未明確選過時，不可偷偷預設成清單第一項（曾造成「明明沒選過
-        // GEPT-2／整句翻譯，畫面卻顯示已選好」的誤導）。真正的預設值要等下面算出 suggestedLayoutIds
+        // 💣 雷區：layoutId 從未明確選過時，不可偷偷預設成清單第一項（曾造成「明明沒選過
+        // 整句翻譯，畫面卻顯示已選好」的誤導）。真正的預設值要等下面算出 suggestedLayoutIds
         // 後才決定（有登記建議 → 採建議；沒有 → 留空顯示「尚未選擇」，強制老師自己挑）。
-        const bankId = job.bank_id || '';
+        // bank_id 不一樣：它只是原樣寫進匯出給 Python 排版系統的 spec_ref.bank_id 標籤，不影響
+        // 線上卷實際抽哪些題，且目前 BANK_CATALOG 只有一個選項——只有一個選項時沒有「選錯」的
+        // 可能，逼老師每次手動點一次沒有意義，直接預設成唯一選項（BANK_CATALOG 之後真的變成
+        // 多選項時，這裡會自動變回「尚未選擇」，不用再改這段）。
+        const bankId = job.bank_id || (BANK_CATALOG.length === 1 ? BANK_CATALOG[0].id : '');
         let sections = Array.isArray(job.sections) ? job.sections.slice() : [];
 
         // 區段空白時，自動從同層錄音 meta（圖二）繼承 A/B/C…＋pp. 範圍
@@ -1588,6 +1688,14 @@ window.FeatureExamJob = (function () {
         const paperCountHint = paperItemCount
             ? ('｜線上卷 ' + paperItemCount + ' 題')
             : '';
+        // 💣 雷區：「產生線上卷」已經拿掉獨立按鈕，改成按「儲存作業」時自動偵測＋重新產生
+        // （見 needsExamRegeneration／saveBlock），這裡只負責畫一句現況提示，不要再放按鈕。
+        const pendingRegen = needsExamRegeneration(task);
+        const genStatusInitialHtml = pendingRegen
+            ? (paperItemCount
+                ? '⚠ 設定已變更，尚未套用到線上卷——按「儲存作業」時會自動重新產生'
+                : '⚠ 尚未產生線上卷——填好區段（活頁／範圍）後按「儲存作業」，系統會自動產生')
+            : (paperItemCount ? ('✅ 線上卷已是最新（' + paperItemCount + ' 題）') : '');
 
         let siblingAudio = null;
         let currentClassId = '';
@@ -1818,7 +1926,7 @@ window.FeatureExamJob = (function () {
                     <td style="padding:4px;"><input id="exam-inline-count-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.count)}" style="${countStyle}" title="${esc(countTitle)}"${refreshAttr}></td>
                     <td style="padding:4px; color:${availColor}; font-size:0.78rem; font-weight:800; text-align:center;" title="${esc(availTitle)}">${esc(availStr)}</td>
                     <td style="padding:4px; color:#64748B; font-size:0.75rem; text-align:center;">${esc(pctStr)}</td>
-                    <td style="padding:4px;"><button type="button" class="btn" style="padding:2px 6px; color:#B91C1C;" onclick="window.FeatureExamJob._inlineRemoveSection('${pathStr}', ${idx})">刪</button></td>
+                    <td style="padding:4px; position:sticky; right:0; background:#F0FDFA;"><button type="button" class="btn" style="padding:2px 8px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; font-weight:800; background:white;" title="刪除這個區段" onclick="window.FeatureExamJob._inlineRemoveSection('${pathStr}', ${idx})">🗑 刪除區段</button></td>
                 </tr>
             `;
         }).join('');
@@ -1865,6 +1973,10 @@ window.FeatureExamJob = (function () {
                         <input id="exam-inline-allow-retake-${pathStr}" type="checkbox" ${raw.allow_wrong_retake ? 'checked' : ''}>
                         🔁 允許重考錯題（僅一次）
                     </label>
+                    <label title="學生對錯題可以勾選「申訴答案」，送出後老師/助教會在「考試批改」看到待審核清單，可接受／不接受，接受後該答案會加入標準答案並自動重新批改全班。預設開啟，取消勾選才會關閉。">
+                        <input id="exam-inline-allow-appeal-${pathStr}" type="checkbox" ${raw.allow_answer_appeal === false ? '' : 'checked'}>
+                        🚩 允許申訴答案
+                    </label>
                 </div>
                 <div style="overflow-x:auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:980px;">
@@ -1883,7 +1995,7 @@ window.FeatureExamJob = (function () {
                                 <th style="padding:4px;">題數</th>
                                 <th style="padding:4px;">可用題</th>
                                 <th style="padding:4px;">顯示%</th>
-                                <th style="padding:4px;"></th>
+                                <th style="padding:4px; position:sticky; right:0; background:#CCFBF1;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="exam-inline-tbody-${pathStr}">${rows}</tbody>
@@ -1893,6 +2005,11 @@ window.FeatureExamJob = (function () {
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#CCFBF1; color:#0F766E; border:1px solid #99F6E4;"
                         onclick="window.FeatureExamJob._inlineAddSection('${pathStr}')"
                         title="在已帶入的基礎上再加一列（常用於同活頁另一段範圍）。日常請先按「從錄音範圍帶入」。">＋ 加區段</button>
+                    ${getCachedLastConfigForClass(currentClassId) ? `
+                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#EDE9FE; color:#5B21B6; border:1px solid #DDD6FE;"
+                        onclick="window.FeatureExamJob._inlineApplyLastConfig('${pathStr}')"
+                        title="套用這個班級上次成功產生線上卷時的教材／layout／區段設定，套用後請自行確認再按「儲存作業」（會自動產生線上卷）。">📋 套用上次設定（本班）</button>
+                    ` : ''}
                     ${isStandaloneExam ? `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
@@ -1900,17 +2017,15 @@ window.FeatureExamJob = (function () {
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineImportFromSiblingAudio('${pathStr}')">↻ 從同作業錄音範圍帶入</button>
                     `}
-                    <button type="button" id="exam-inline-gen-btn-${pathStr}" class="btn btn-action" style="padding:4px 10px; background:#0F766E; color:white; border:none;"
-                        onclick="window.FeatureExamJob._inlineGeneratePaper('${pathStr}')">📝 產生線上卷</button>
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
                         onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ JSON</button>
                     <span style="margin-left:auto; font-weight:800; color:#134E4A; font-size:0.85rem;">總計考題 ${totalCountSum}${paperCountHint}</span>
                 </div>
-                <div id="exam-inline-gen-status-${pathStr}" style="margin-top:8px; min-height:1.2em; font-size:0.8rem; font-weight:800; color:#0F766E;"></div>
+                <div id="exam-inline-gen-status-${pathStr}" style="margin-top:8px; min-height:1.2em; font-size:0.8rem; font-weight:800; color:${pendingRegen ? '#B45309' : '#0F766E'};">${genStatusInitialHtml}</div>
                 <div id="exam-inline-standalone-status-${pathStr}" style="margin-top:4px; min-height:1.2em; font-size:0.78rem; font-weight:700;"></div>
                 <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">${isStandaloneExam
-                    ? '請先填「教材資料夾」、活頁（sheet_id）與範圍，再按「🔄 讀取可用題數」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。'
-                    : '請先「從錄音範圍帶入」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。'}</div>
+                    ? '請先填「教材資料夾」、活頁（sheet_id）與範圍，再按「🔄 讀取可用題數」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。線上卷已拿掉獨立產生按鈕，改成按「儲存作業」時自動偵測設定變更並重新產生。'
+                    : '請先「從錄音範圍帶入」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。線上卷已拿掉獨立產生按鈕，改成按「儲存作業」時自動偵測設定變更並重新產生。'}</div>
             </div>
         `;
     }
@@ -2002,6 +2117,10 @@ window.FeatureExamJob = (function () {
         task.raw_data.exam_job = payload;
         const allowRetakeEl = document.getElementById('exam-inline-allow-retake-' + pathStr);
         if (allowRetakeEl) task.raw_data.allow_wrong_retake = !!allowRetakeEl.checked;
+        // 💣 雷區：跟 allow_wrong_retake 預設方向相反——這個預設「開」，只有明確取消勾選
+        // 才要寫 false；沒讀到這個 checkbox（畫面還沒渲染）時完全不要動這個欄位。
+        const allowAppealEl = document.getElementById('exam-inline-allow-appeal-' + pathStr);
+        if (allowAppealEl) task.raw_data.allow_answer_appeal = !!allowAppealEl.checked;
         const jobIdEl = document.getElementById('exam-inline-jobid-' + pathStr);
         if (jobIdEl) jobIdEl.textContent = jobId;
 
@@ -2097,7 +2216,10 @@ window.FeatureExamJob = (function () {
         if (!task) return;
         syncInlineEditor(pathStr, task);
         const job = task.raw_data.exam_job;
-        if (!job || !Array.isArray(job.sections) || job.sections.length <= 1) return;
+        if (!job || !Array.isArray(job.sections)) return;
+        if (job.sections.length <= 1) {
+            return window.showFlash('至少要保留一個區段（可以改內容，但不能刪到 0 個）', 'warning');
+        }
         job.sections.splice(idx, 1);
         refreshExamBuilder();
     }
@@ -2725,41 +2847,95 @@ window.FeatureExamJob = (function () {
         };
     }
 
+    /** 只在這個考試節點目前恰好展開（DOM 有渲染）時才更新現況文字；沒展開就靜靜跳過。 */
     function setGenerateStatus(pathStr, text, tone) {
         const el = document.getElementById('exam-inline-gen-status-' + pathStr);
-        const btn = document.getElementById('exam-inline-gen-btn-' + pathStr);
-        if (el) {
-            el.textContent = text || '';
-            el.style.color = tone === 'error' ? '#B91C1C'
-                : (tone === 'success' ? '#059669'
-                    : (tone === 'warn' ? '#D97706' : '#0F766E'));
-        }
-        if (btn) {
-            const busy = tone === 'busy';
-            btn.disabled = !!busy;
-            btn.style.opacity = busy ? '0.65' : '1';
-            btn.textContent = busy ? '⏳ 產生中…' : '📝 產生線上卷';
-        }
+        if (!el) return;
+        el.textContent = text || '';
+        el.style.color = tone === 'error' ? '#B91C1C'
+            : (tone === 'success' ? '#059669'
+                : (tone === 'warn' ? '#D97706' : '#0F766E'));
     }
 
-    async function inlineGeneratePaper(pathStr) {
+    /**
+     * 依 examJob 的內容算一個簽章，用來判斷「設定有沒有變」——存檔時只有簽章跟上次產生時不一樣
+     * （或根本還沒產生過）才需要重新抽題排版，避免老師隨便改個截止日期、加個備註，
+     * 每次「儲存作業」都白白重打一次 Drive／重新抽題（見 page-refresh-perf-invariant 鐵律）。
+     */
+    function examJobSignature(examJob) {
+        if (!examJob) return '';
+        try {
+            return JSON.stringify({
+                bank_id: examJob.bank_id || '',
+                layout_profile_id: examJob.layout_profile_id || '',
+                shuffle: !(examJob.options && examJob.options.shuffle === false),
+                sections: (examJob.sections || []).map(function (s) {
+                    s = s || {};
+                    return {
+                        sheet_id: s.sheet_id || '', layout_profile_id: s.layout_profile_id || '',
+                        range_type: s.range_type || '', start: s.start != null ? s.start : '', end: s.end != null ? s.end : '',
+                        count: s.count != null ? s.count : '', lines_per_page: s.lines_per_page || '',
+                        difficulty: s.difficulty || '', include_nums: s.include_nums || '', exclude_nums: s.exclude_nums || ''
+                    };
+                })
+            });
+        } catch (_e) { return ''; }
+    }
+
+    /** 這個考試任務的區段設定是否「填得夠完整、值得嘗試產生」（至少一個區段填了活頁 sheet_id）。 */
+    function examJobLooksReady(examJob) {
+        if (!examJob || !Array.isArray(examJob.sections) || !examJob.sections.length) return false;
+        return examJob.sections.some(function (s) { return s && String(s.sheet_id || '').trim(); });
+    }
+
+    /** 存檔前判斷：這個考試任務需不需要（重新）產生線上卷。 */
+    function needsExamRegeneration(task) {
+        if (!task || task.type !== 'exam' || !task.raw_data) return false;
+        const examJob = task.raw_data.exam_job;
+        if (!examJobLooksReady(examJob)) return false;
+        const paper = task.raw_data.quiz_paper;
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) return true;
+        return examJobSignature(examJob) !== task.raw_data.quiz_paper_signature;
+    }
+
+    /**
+     * 💣 雷區（2026-08-11 老師回報「產生線上卷按鈕是廢物功能」）：拿掉手動「📝 產生線上卷」
+     * 按鈕，改成「儲存作業」時自動偵測每個考試任務設定有沒有變（見 needsExamRegeneration），
+     * 有變才自動重新產生＋排版。這個函式因此多了 opts 參數，讓 saveBlock 可以用「靜音批次」
+     * 模式呼叫（不彈 showFlash／alert，回傳結果讓外層彙整成一句訊息），跟老師直接觸發（例如
+     * 之後若還有除錯用途）共用同一套邏輯，避免兩份程式碼分岔。
+     * @param {string} pathStr
+     * @param {{silent?:boolean, skipAutoSave?:boolean}} [opts]
+     * @returns {Promise<{ok:boolean, error?:string, itemCount?:number, skipped?:boolean}>}
+     */
+    async function inlineGeneratePaper(pathStr, opts) {
+        opts = opts || {};
+        const silent = !!opts.silent;
+        const skipAutoSave = !!opts.skipAutoSave;
+        function fail(msg) {
+            setGenerateStatus(pathStr, '❌ ' + msg, 'error');
+            if (!silent) window.showFlash(msg, 'error');
+            return { ok: false, error: msg };
+        }
         if (!window.QuizPaperBuilder || typeof window.QuizPaperBuilder.buildQuizPaper !== 'function') {
-            return window.showFlash('QuizPaperBuilder 未載入，請硬重新整理老師頁', 'error');
+            return fail('QuizPaperBuilder 未載入，請硬重新整理老師頁');
         }
         if (!window.LayoutFieldsEval) {
-            return window.showFlash('LayoutFieldsEval 未載入，請硬重新整理老師頁', 'error');
+            return fail('LayoutFieldsEval 未載入，請硬重新整理老師頁');
         }
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
         const bState = window.BuilderStore && window.BuilderStore.getState();
-        if (!task || !bState) return;
-        const examJob = syncInlineEditor(pathStr, task);
+        if (!task || !bState) return { ok: false, error: '找不到任務' };
+        // 這個考試節點若目前沒展開（手風琴收合），DOM 讀不到值，syncInlineEditor 會直接回
+        // undefined——這時退回讀 task.raw_data.exam_job（上次它有展開、有編輯時就已經同步過）。
+        const examJob = syncInlineEditor(pathStr, task) || task.raw_data.exam_job;
         if (!examJob || !examJob.sections || !examJob.sections.length) {
-            return window.showFlash('請至少填一個區段', 'error');
+            return fail('請至少填一個區段');
         }
         for (let i = 0; i < examJob.sections.length; i++) {
             if (!examJob.sections[i].sheet_id) {
-                return window.showFlash('區段 ' + (i + 1) + ' 缺少 sheet_id', 'error');
+                return fail('區段 ' + (i + 1) + ' 缺少 sheet_id');
             }
         }
 
@@ -2768,12 +2944,11 @@ window.FeatureExamJob = (function () {
         try {
             ctx = resolveExamMaterialContext(pathStr, bState, audioHit);
         } catch (err) {
-            setGenerateStatus(pathStr, '❌ ' + (err.message || err), 'error');
-            return window.showFlash(err.message || String(err), 'error');
+            return fail(err.message || String(err));
         }
 
         setGenerateStatus(pathStr, '⏳ 正在產生線上卷…（優先用 Snapshot 快取）', 'busy');
-        window.showFlash('正在產生線上卷…', 'info');
+        if (!silent) window.showFlash('正在產生線上卷…', 'info');
         try {
             const audioRaw = (audioHit && audioHit.task && audioHit.task.raw_data) || {};
             // 獨立考試已用「讀取可用題數」自快取到考試任務自己的 raw_data，一併當本地快取用，避免重抓
@@ -2889,6 +3064,7 @@ window.FeatureExamJob = (function () {
 
             if (!task.raw_data) task.raw_data = {};
             task.raw_data.quiz_paper = paper;
+            task.raw_data.quiz_paper_signature = examJobSignature(examJob);
             task.raw_data.exam_job = examJob;
             task.raw_data.exam_job_id = examJob.job_id;
             if (audioHit && audioHit.task && ctx.refs.length) {
@@ -2896,20 +3072,65 @@ window.FeatureExamJob = (function () {
                 audioHit.task.raw_data.material_refs = ctx.refs;
             }
 
+            // 產生成功＝這套設定至少是可用的，記下來讓老師之後在同班出題可以「套用上次設定」
+            saveLastConfigForClass(bState.classId, {
+                material_folder: ctx.materialFolder || '',
+                root_kind: ctx.rootKind || '',
+                bank_id: examJob.bank_id || '',
+                layout_profile_id: examJob.layout_profile_id || '',
+                sections: (examJob.sections || []).map(function (s) {
+                    return {
+                        sheet_id: s.sheet_id, layout_profile_id: s.layout_profile_id || '',
+                        range_type: s.range_type, start: s.start, end: s.end, count: s.count,
+                        lines_per_page: s.lines_per_page, difficulty: s.difficulty || '',
+                        include_nums: s.include_nums || '', exclude_nums: s.exclude_nums || ''
+                    };
+                }),
+                options: examJob.options || {}
+            }).catch(function () {});
+
             refreshExamBuilder();
             const noticeTxt = (Array.isArray(paper.notices) && paper.notices.length)
                 ? ('｜⚠ ' + paper.notices.join('；'))
                 : '';
-            const msg = '✅ 已產生線上卷 ' + (paper.items || []).length
-                + ' 題。請立刻按「儲存作業」，學生端才看得到。' + noticeTxt;
-            setGenerateStatus(pathStr, msg, noticeTxt ? 'warn' : 'success');
-            window.showFlash(msg, noticeTxt ? 'warning' : 'success');
+
+            // 💣 雷區（2026-08-11 老師回報「明明產生過線上卷，學生端卻顯示尚未產生」）：以前
+            // 只把 quiz_paper 寫進瀏覽器記憶體，還要老師另外記得按「儲存作業」才會真的落地，
+            // 中間任何一次忘記按、或被別的操作蓋掉，學生端就永遠看不到。現在「產生線上卷」已經
+            // 沒有獨立按鈕，一律是「儲存作業」流程裡自動觸發，所以這裡只在「這個作業區塊本來
+            // 就已經存過」（bState.editId 有值）且不是被 saveBlock 批次呼叫（skipAutoSave）時，
+            // 才順手多存一次；saveBlock 批次呼叫時它自己接下來就會整包存檔，不用這裡重複寫。
+            let autoSaved = false;
+            let autoSaveErr = '';
+            if (!skipAutoSave && window.FeatureTimeline && typeof window.FeatureTimeline.quickSaveTasksOnly === 'function') {
+                setGenerateStatus(pathStr, '⏳ 自動儲存中…', 'busy');
+                const saveResult = await window.FeatureTimeline.quickSaveTasksOnly();
+                if (saveResult && saveResult.ok) {
+                    autoSaved = true;
+                } else if (saveResult && saveResult.error !== 'not_saved_yet') {
+                    autoSaveErr = saveResult.error || '';
+                }
+            }
+
+            const msg = skipAutoSave
+                ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題' + noticeTxt)
+                : autoSaved
+                    ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題，並已自動儲存到雲端，學生端可直接看到。' + noticeTxt)
+                    : autoSaveErr
+                        ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題，但自動儲存失敗（' + autoSaveErr + '），請務必立刻按「儲存作業」！' + noticeTxt)
+                        : ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題。請立刻按「儲存作業」，學生端才看得到。' + noticeTxt);
+            setGenerateStatus(pathStr, msg, (noticeTxt || (!autoSaved && autoSaveErr && !skipAutoSave)) ? 'warn' : 'success');
+            if (!silent) window.showFlash(msg, (noticeTxt || (!autoSaved && autoSaveErr && !skipAutoSave)) ? 'warning' : 'success');
+            return { ok: true, itemCount: (paper.items || []).length, notices: paper.notices || [] };
         } catch (err) {
             console.error('[FeatureExamJob] generate paper', err);
             const msg = '產生線上卷失敗：' + (err.message || err);
             setGenerateStatus(pathStr, '❌ ' + msg, 'error');
-            window.showFlash(msg, 'error');
-            try { window.alert(msg); } catch (_e) {}
+            if (!silent) {
+                window.showFlash(msg, 'error');
+                try { window.alert(msg); } catch (_e) {}
+            }
+            return { ok: false, error: err.message || String(err) };
         }
     }
 
@@ -3034,6 +3255,14 @@ window.FeatureExamJob = (function () {
             if (!task) return;
             syncInlineEditor(pathStr, task);
             refreshExamBuilder();
+        },
+        _inlineApplyLastConfig: applyLastConfigForClass,
+        getCachedLastConfigForClass: getCachedLastConfigForClass,
+        /** 給「儲存作業」批次流程用：這個考試任務的設定是否需要（重新）產生線上卷 */
+        needsExamRegeneration: needsExamRegeneration,
+        /** 給「儲存作業」批次流程用：靜音產生（不彈 flash/alert），並跳過內部自動存檔（外層會整包存） */
+        generatePaperForSave: function (pathStr) {
+            return inlineGeneratePaper(pathStr, { silent: true, skipAutoSave: true });
         },
         /** 給「🧩 教材/Layout 搭配」central 頁用：目前可選的 layout_profile_id 清單 */
         getLayoutCatalog: function () { return LAYOUT_CATALOG.slice(); },

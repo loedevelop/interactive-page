@@ -202,7 +202,7 @@
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
     <script src="../020_js_core/modal-overlay.js?v=2"></script>
     <script src="../020_js_core/layout-fields-eval.js?v=3"></script>
-    <script src="../020_js_core/quiz-paper-builder.js?v=11"></script>
+    <script src="../020_js_core/quiz-paper-builder.js?v=14"></script> <!-- v14 renderAnswerDiffHtml：完全沒作答時只顯示「（未作答）」，不再逐字排一整排〔缺〕；匯出 shuffleInPlace 供學生端重做/重考時重新洗牌顯示順序 -->
 
     <script src="../120_student_core/ui-audio-templates.js?v=57"></script>
     <script src="../120_student_core/ui-student-timeline-templates.js?v=138"></script> <!-- v138 考試任務列新增「重考錯題（僅一次）」／「整體報告」按鈕入口 -->
@@ -210,7 +210,7 @@
     <script defer src="../120_student_core/feature-student-audio.js?v=58"></script>
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>
     <script defer src="../120_student_core/feature-student-messages.js?v=13"></script>
-    <script defer src="../120_student_core/feature-student-quiz.js?v=11"></script> <!-- v11 新增「重考錯題（僅一次）」與合併正確率整體報告 -->
+    <script defer src="../120_student_core/feature-student-quiz.js?v=16"></script> <!-- v16 題號改印「畫面/清單上排第幾題」而非出卷時的固定 seq：openQuiz/openRetakeQuiz 用洗牌後的顯示位置編號；錯題本 headline 用錯題清單中的位置編號，不再出現 35、21、36 這種跳號讓人誤以為卷子對不起來 -->
     <script defer src="../120_student_core/feature-student-timeline.js?v=102"></script> <!-- v102 錄音上傳：沒有結構化 grading_units 時，改用 base 範圍文字展開頁數比對已選/已上傳檔數，數量不符時跳非阻擋式提醒 -->
     <script defer src="../120_student_core/feature-student-analytics.js?v=3"></script>
     

@@ -1963,6 +1963,37 @@ window.FeatureTimeline = (() => {
                 };
 
                 await processTasksForUpload(bState.tasks);
+
+                /**
+                 * 💣 雷區（2026-08-11 老師回報「產生線上卷按鈕是廢物功能，應該存檔時自動產生」）：
+                 * 拿掉「📝 產生線上卷」獨立按鈕，改成「儲存作業」流程裡自動掃過整份作業樹，對每個
+                 * 「設定變了或還沒產生過」的考試任務（needsExamRegeneration）自動重新抽題排版。
+                 * 只在設定真的變了才重打 Drive／重新抽題（見 examJobSignature），避免老師隨便改個
+                 * 標題／截止日期，每次存檔都白白重跑一次考試產生（page-refresh-perf-invariant 鐵律的
+                 * 同一種精神）。單一考試產生失敗不擋整份作業存檔——失敗的維持原樣（不會清空舊卷），
+                 * 存完後用一句彙整警告告訴老師哪些考試沒產生成功，讓老師自己回去補設定。
+                 */
+                const examWarnings = [];
+                const processExamPapers = async (tasks, prefix) => {
+                    for (let i = 0; i < (tasks || []).length; i++) {
+                        const t = tasks[i];
+                        const p = prefix ? (prefix + '-' + i) : String(i);
+                        if (t.type === 'group' && t.subTasks) {
+                            await processExamPapers(t.subTasks, p);
+                        } else if (t.type === 'exam' && window.FeatureExamJob
+                            && typeof window.FeatureExamJob.needsExamRegeneration === 'function'
+                            && window.FeatureExamJob.needsExamRegeneration(t)) {
+                            const examTitle = String(t.title || '考試').replace(/<[^>]*>?/gm, '').trim() || '考試';
+                            btnEl.innerHTML = `⏳ 產生線上考卷：${examTitle}...`;
+                            const r = await window.FeatureExamJob.generatePaperForSave(p);
+                            if (!r || !r.ok) {
+                                examWarnings.push(examTitle + '：' + ((r && r.error) || '產生失敗'));
+                            }
+                        }
+                    }
+                };
+                await processExamPapers(bState.tasks, '');
+
                 btnEl.innerHTML = '⏳ 儲存至雲端...';
 
                 let mergedRawData = bState.raw_data || {};
@@ -1998,9 +2029,47 @@ window.FeatureTimeline = (() => {
                 const savedClassId = bState.classId; 
                 window.BuilderStore.clear();
                 renderTimeline(savedClassId, 'target', `assign-block-${savedId}`);
+                if (examWarnings.length) {
+                    window.showFlash('作業已儲存，但以下考試線上卷自動產生失敗，請回去檢查設定：' + examWarnings.join('；'), 'warning');
+                }
             } catch (err) {
                 window.showFlash('作業儲存失敗：' + err.message, 'error');
                 btnEl.innerHTML = originalText; btnEl.disabled = false;
+            }
+        },
+        /**
+         * 💣 雷區（2026-08-11 老師回報「明明產生過線上卷，學生端卻顯示尚未產生」）：
+         * 「產生線上卷」跟「儲存作業」以前是兩個獨立步驟——按了產生只是寫進瀏覽器記憶體裡的
+         * bState.tasks，沒有另外按「完成並儲存區塊」，一離開／被別的操作蓋掉就整份不見，
+         * 老師很容易誤以為「產生」＝「已存檔」。
+         * 這裡給一個只寫 tasks 欄位的輕量存檔（不動 title／due_date／late_policy 等），只在
+         * 「這個作業區塊本來就已經存在資料庫」（bState.editId 有值）才能用；全新、還沒按過
+         * 「完成並儲存區塊」的區塊沒有 assignment id 可以 update，仍必須維持舊提示叫老師手動存。
+         * 目前只接在「產生線上卷」成功之後（見 feature-exam-job.js inlineGeneratePaper），
+         * 讓「產生」當下就直接落地，不再依賴老師記得再按一次存檔。
+         */
+        quickSaveTasksOnly: async () => {
+            if (!window.BuilderStore || typeof window.BuilderStore.getState !== 'function') {
+                return { ok: false, error: '找不到 BuilderStore' };
+            }
+            const bState = window.BuilderStore.getState();
+            if (!bState) return { ok: false, error: '找不到目前編輯狀態' };
+            if (!bState.editId) return { ok: false, error: 'not_saved_yet' };
+            try {
+                const { data: updatedRows, error } = await window.supabaseClient
+                    .from('assignments')
+                    .update({ tasks: [...bState.tasks] })
+                    .eq('id', bState.editId)
+                    .is('deleted_at', null)
+                    .select();
+                if (error) throw new Error(error.message);
+                if (!updatedRows || updatedRows.length === 0) throw new Error('資料庫拒絕了修改');
+                const idx = db.assignments.findIndex(a => a.id === bState.editId);
+                if (idx !== -1) db.assignments[idx].tasks = updatedRows[0].tasks;
+                return { ok: true };
+            } catch (err) {
+                console.warn('[FeatureTimeline] quickSaveTasksOnly failed', err);
+                return { ok: false, error: (err && err.message) || String(err) };
             }
         },
         cancelBuilder: () => {
