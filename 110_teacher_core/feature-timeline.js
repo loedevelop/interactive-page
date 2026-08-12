@@ -1984,10 +1984,27 @@ window.FeatureTimeline = (() => {
                             && typeof window.FeatureExamJob.needsExamRegeneration === 'function'
                             && window.FeatureExamJob.needsExamRegeneration(t)) {
                             const examTitle = String(t.title || '考試').replace(/<[^>]*>?/gm, '').trim() || '考試';
-                            btnEl.innerHTML = `⏳ 產生線上考卷：${examTitle}...`;
-                            const r = await window.FeatureExamJob.generatePaperForSave(p);
-                            if (!r || !r.ok) {
-                                examWarnings.push(examTitle + '：' + ((r && r.error) || '產生失敗'));
+                            // 💣 雷區（2026-08-12 老師提問「即便不是針對考卷做改變，存檔是否也會強迫重出考卷」）：
+                            // 簽章比對理論上設定沒變就不會誤觸發，但這份卷若已經有學生真的交過答案，
+                            // 任何一次「誤判成設定變了」代價都很高（重新抽題會讓已作答的題目對不起來）。
+                            // 這裡加最後一道防線：已經有題目的舊卷，一律先查有沒有學生答案，有就不自動
+                            // 靜默重新產生，只彈警告，交老師自己到考試設定按「🔁 立即重新產生」確認後才跑
+                            // （見 feature-exam-job.js 的 taskHasSubmittedAnswers／_inlineForceGeneratePaper）。
+                            const hadPaperBefore = !!(t.raw_data && t.raw_data.quiz_paper
+                                && Array.isArray(t.raw_data.quiz_paper.items) && t.raw_data.quiz_paper.items.length);
+                            let blockedBySubmittedAnswers = false;
+                            if (hadPaperBefore && bState.editId
+                                && typeof window.FeatureExamJob.taskHasSubmittedAnswers === 'function') {
+                                blockedBySubmittedAnswers = await window.FeatureExamJob.taskHasSubmittedAnswers(bState.editId, t.id || t.task_id);
+                            }
+                            if (blockedBySubmittedAnswers) {
+                                examWarnings.push(examTitle + '：設定看起來已變更，但已有學生作答，為避免影響現有成績未自動重新產生，請到該考試設定按「🔁 立即重新產生」手動確認');
+                            } else {
+                                btnEl.innerHTML = `⏳ 產生線上考卷：${examTitle}...`;
+                                const r = await window.FeatureExamJob.generatePaperForSave(p);
+                                if (!r || !r.ok) {
+                                    examWarnings.push(examTitle + '：' + ((r && r.error) || '產生失敗'));
+                                }
                             }
                         } else if (t.type === 'exam' && window.FeatureExamJob
                             && typeof window.FeatureExamJob.ensureExamPaperSignatureBackfilled === 'function') {

@@ -1690,10 +1690,17 @@ window.FeatureExamJob = (function () {
             : '';
         // 💣 雷區：「產生線上卷」已經拿掉獨立按鈕，改成按「儲存作業」時自動偵測＋重新產生
         // （見 needsExamRegeneration／saveBlock），這裡只負責畫一句現況提示，不要再放按鈕。
+        // 例外：這份卷已經產生過（paperItemCount>0）又偵測到設定變更時，「儲存作業」那邊
+        // 若查到已有學生交過答案會保守跳過自動重新產生（見 taskHasSubmittedAnswers 的雷區
+        // 說明），這裡才要補一個手動「立即重新產生」逃生口，否則老師會卡住、看不到怎麼繼續。
         const pendingRegen = needsExamRegeneration(task);
+        const forceGenBtnHtml = (pendingRegen && paperItemCount)
+            ? (' <button type="button" class="btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px;" '
+                + 'onclick="window.FeatureExamJob._inlineForceGeneratePaper(\'' + pathStr + '\')">🔁 立即重新產生</button>')
+            : '';
         const genStatusInitialHtml = pendingRegen
             ? (paperItemCount
-                ? '⚠ 設定已變更，尚未套用到線上卷——按「儲存作業」時會自動重新產生'
+                ? ('⚠ 設定已變更，尚未套用到線上卷——按「儲存作業」時會自動重新產生（若已有學生作答則會保守跳過，需按右側按鈕手動確認）' + forceGenBtnHtml)
                 : '⚠ 尚未產生線上卷——填好區段（活頁／範圍）後按「儲存作業」，系統會自動產生')
             : (paperItemCount ? ('✅ 線上卷已是最新（' + paperItemCount + ' 題）') : '');
 
@@ -2922,6 +2929,29 @@ window.FeatureExamJob = (function () {
     }
 
     /**
+     * 額外防呆（2026-08-12 老師提問「即便不是針對考卷做改變，儲存作業時是否也會強迫重出考卷」）：
+     * needsExamRegeneration 用簽章比對，理論上設定沒變就不會誤觸發——但這份考卷一旦已經有
+     * 學生作答過，任何「誤判成設定變了」的情況（不管是簽章機制本身的邊界案例，還是之後改動
+     * 這段程式又不小心引入新的判斷錯誤）代價都很高，重新抽題會讓已作答的題目對不起來。
+     * 這裡加一道最後防線：只要這個考試任務已經有學生交過答案，一律不自動靜默重新產生，
+     * 交回老師自己在畫面上手動確認、按下才會真的重跑（見 renderInlineEditorHtml 的
+     * 「🔁 立即重新產生」按鈕，只在 needsExamRegeneration 為 true 時才會出現）。
+     * 查詢失敗（離線／RLS）時保守放行（回 false），不要因為連線問題就卡住整份作業存檔。
+     */
+    async function taskHasSubmittedAnswers(assignmentId, taskId) {
+        if (!assignmentId || !taskId) return false;
+        if (!window.ApiQuizReview || typeof window.ApiQuizReview.fetchCompletionsForTask !== 'function') return false;
+        try {
+            const list = await window.ApiQuizReview.fetchCompletionsForTask(assignmentId, taskId);
+            return (list || []).some(function (c) {
+                return c && c.raw_data && c.raw_data.quiz_answers && Object.keys(c.raw_data.quiz_answers).length > 0;
+            });
+        } catch (_e) {
+            return false;
+        }
+    }
+
+    /**
      * 💣 雷區（2026-08-11 老師回報「產生線上卷按鈕是廢物功能」）：拿掉手動「📝 產生線上卷」
      * 按鈕，改成「儲存作業」時自動偵測每個考試任務設定有沒有變（見 needsExamRegeneration），
      * 有變才自動重新產生＋排版。這個函式因此多了 opts 參數，讓 saveBlock 可以用「靜音批次」
@@ -3268,6 +3298,17 @@ window.FeatureExamJob = (function () {
         getSiblingAudioRangeLabel: getSiblingAudioRangeLabel,
         _inlineExport: inlineExport,
         _inlineGeneratePaper: inlineGeneratePaper,
+        /** 手動逃生口：只在 needsExamRegeneration 為 true 時才會出現的按鈕用（見上方雷區說明） */
+        _inlineForceGeneratePaper: function (pathStr) {
+            const ok = window.confirm(
+                '設定已變更，確定要重新產生這份線上卷嗎？\n\n'
+                + '⚠️ 如果已經有學生作答過，重新產生後題目組合／順序可能改變，'
+                + '該學生原本的作答紀錄會跟新卷對不起來（分數、錯題對照都可能不準）。\n'
+                + '確定沒有學生受影響，或已經確認可以接受，才按「確定」。'
+            );
+            if (!ok) return;
+            inlineGeneratePaper(pathStr);
+        },
         _inlineOnExamMaterialChange: inlineOnExamMaterialChange,
         _inlineOnExamMaterialFolderSelectChange: inlineOnExamMaterialFolderSelectChange,
         _inlineReloadMaterialFolders: inlineReloadMaterialFolders,
@@ -3284,6 +3325,7 @@ window.FeatureExamJob = (function () {
         /** 給「儲存作業」批次流程用：這個考試任務的設定是否需要（重新）產生線上卷 */
         needsExamRegeneration: needsExamRegeneration,
         ensureExamPaperSignatureBackfilled: ensureExamPaperSignatureBackfilled,
+        taskHasSubmittedAnswers: taskHasSubmittedAnswers,
         /** 給「儲存作業」批次流程用：靜音產生（不彈 flash/alert），並跳過內部自動存檔（外層會整包存） */
         generatePaperForSave: function (pathStr) {
             return inlineGeneratePaper(pathStr, { silent: true, skipAutoSave: true });

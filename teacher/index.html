@@ -390,12 +390,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
-    <script src="../110_teacher_core/feature-exam-job.js?v=36"></script> <!-- v36 修正 needsExamRegeneration：既有考卷缺 quiz_paper_signature（此功能上線前產生）不再視為「設定變了」強制重抽題，改只補寫簽章（ensureExamPaperSignatureBackfilled），避免已有學生作答的舊考卷第一次存檔就被打亂 -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=37"></script> <!-- v37 新增 taskHasSubmittedAnswers 防呆：即使簽章判斷「設定變了」，只要這份卷已經有學生作答，存檔就不自動靜默重新產生，改成顯示「🔁 立即重新產生」按鈕交老師手動確認（_inlineForceGeneratePaper） -->
     <script src="../110_teacher_core/feature-material-layout-pairing.js?v=39"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v39：buildGenerationFromMatrix 真正執行 answer_combine_note 公式並存進 row._answer_combined_text，新增「書寫答案（結合）逐列確認／修正」UI 與 answerOverrides -->
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
     <script src="../110_teacher_core/feature-exam-review.js?v=4"></script> <!-- v4 學生清單頁新增不需申訴也能用的「重新批閱本任務所有學生」按鈕（改完答案公式／重新產生線上卷後，一鍵重批全班） -->
-    <script src="../110_teacher_core/feature-timeline.js?v=117"></script> <!-- v117 saveBlock：不需要重新產生的考試任務改呼叫 ensureExamPaperSignatureBackfilled 只補簽章，不觸發重抽題 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=118"></script> <!-- v118 saveBlock：需要重新產生的考試若已有學生作答，先查 taskHasSubmittedAnswers，有就跳過自動重抽題只彈警告，避免影響已作答學生 -->
     <script src="../110_teacher_core/feature-resource.js?v=44"></script>
     <script src="../110_teacher_core/feature-profile.js?v=41"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=40"></script>
