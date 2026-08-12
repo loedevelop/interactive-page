@@ -839,8 +839,27 @@ window.QuizPaperBuilder = (function () {
         const prevCorrect = prevResult ? prevResult.correct : null;
         const changed = prevScore !== result.score || prevCorrect !== result.correct;
 
+        /**
+         * 💣 雷區（2026-08-12 老師回報「重新批閱之後，錯題編號又對不起來」）：`headline`
+         * 是學生實際交卷那一刻，依「畫面上真正看到的題目順序」算出來的顯示編號（見
+         * feature-student-quiz.js 的 sessionDisplayOrder／displayNo 說明），跟這裡
+         * `gradeAnswers` 內部固定的 `paper.items` 順序完全無關。重新批閱只是要更新
+         * 對錯／accepted_answers 比對結果，不該連帶把 headline 也重算掉——重算的話會
+         * 用回 `d.seq`（出卷當下的內部編號）當退路，讓編號跟學生當時看到的畫面又對不起來，
+         * 造成「改好又壞掉」的錯覺。同一題（item_id 相同）一律沿用舊 headline；只有
+         * 全新出現的錯題（例如老師改了主答案讓原本對的變錯）才沒有舊 headline 可用。
+         */
+        const prevWrongByItemId = {};
+        const prevWrongList = (src.quiz_stats && Array.isArray(src.quiz_stats.wrong_items))
+            ? src.quiz_stats.wrong_items
+            : ((prevResult && Array.isArray(prevResult.wrong_items)) ? prevResult.wrong_items : []);
+        prevWrongList.forEach(function (w) {
+            if (w && w.item_id != null && w.headline) prevWrongByItemId[String(w.item_id)] = w.headline;
+        });
+
         const wrongItemsCompact = result.wrong_items.map(function (d) {
-            return {
+            const prevHeadline = prevWrongByItemId[String(d.item_id)];
+            const row = {
                 item_id: d.item_id,
                 seq: d.seq,
                 answer: d.answer,
@@ -850,6 +869,8 @@ window.QuizPaperBuilder = (function () {
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
                 sub_results: d.sub_results || null
             };
+            if (prevHeadline) row.headline = prevHeadline;
+            return row;
         });
 
         const nextRawData = Object.assign({}, src);

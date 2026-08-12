@@ -47,6 +47,25 @@ window.FeatureStudentQuiz = (function () {
     let sessionSubmitted = false;
     let sessionQuitSaved = false;
     let sessionBaseRaw = {};
+    /**
+     * 💣 雷區（2026-08-12 老師回報「解答根本對不起來」）：openQuiz／openRetakeQuiz 顯示的
+     * 題目順序是「這次打開才洗牌」的結果（見 displayOrderItems），只存在畫面／這次
+     * session 裡，`paper.items` 本身的固定順序完全是另一組。submit()／submitRetake()
+     * 如果自己重新照 `paper.items`（或又呼叫一次 displayOrderItems 重新洗牌）算編號，
+     * 算出來的號碼會跟學生剛剛在畫面上實際看到的號碼「兩份不同的洗牌結果」，於是繳交
+     * 後的錯題報告上「第 5 題」跟學生剛剛作答時看到的「第 5 題」是不同題目，看起來就像
+     * 「解答跟考卷根本對不起來」。修正：openQuiz／openRetakeQuiz 顯示時，把這次實際排出
+     * 來的 item_id 順序記下來，submit／submitRetake 一律照這份記錄算編號，不要重新洗牌
+     * 或改用其他順序。
+     */
+    let sessionDisplayOrder = [];
+    let sessionRetakeDisplayOrder = [];
+
+    function orderIndexMap(idList) {
+        const map = {};
+        (idList || []).forEach(function (id, idx) { map[String(id)] = idx + 1; });
+        return map;
+    }
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -931,8 +950,11 @@ window.FeatureStudentQuiz = (function () {
         // openRetakeQuiz 的錯題重做同精神，不要用「上次交的答案」預先幫學生填好。
         // 💣 雷區（2026-08-12 老師回報「題號 35、21、36…看起來亂掉」）：洗牌只能動「顯示順序」，
         // 標題編號要跟著畫面上排第幾題（idx+1）走，不能繼續印 it.seq（那是出卷時的固定編號，
-        // 洗牌後跟畫面位置對不上，看起來像是卷子壞了）。
-        const itemsHtml = displayOrderItems(paper, task).map(function (it, idx) {
+        // 洗牌後跟畫面位置對不上，看起來像是卷子壞了）。這裡順便把這次實際顯示的順序記下來
+        // （sessionDisplayOrder），submit() 交卷時要用同一份順序算編號，不能再重新洗牌一次。
+        const displayItems = displayOrderItems(paper, task);
+        sessionDisplayOrder = displayItems.map(function (it) { return it.item_id; });
+        const itemsHtml = displayItems.map(function (it, idx) {
             return renderItemRow(it, undefined, idx + 1);
         }).join('');
 
@@ -1022,6 +1044,9 @@ window.FeatureStudentQuiz = (function () {
         stats.leave_count_total += leaveCount;
         stats.last_leave_count = leaveCount;
         stats.last_leave_log = leaveLog.slice();
+        // 錯題本編號＝這題在「這次作答畫面上」排第幾題（sessionDisplayOrder），不是錯題清單裡
+        // 排第幾個、也不是出卷時的固定 seq——用畫面順序才能讓學生對得起來「剛剛看到的第幾題」。
+        const displayOrderIdx = orderIndexMap(sessionDisplayOrder);
         stats.wrong_items = (result.wrong_items || []).map(function (d, idx) {
             const item = {
                 item_id: d.item_id,
@@ -1033,9 +1058,8 @@ window.FeatureStudentQuiz = (function () {
                 diff: d.diff || null,
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
             };
-            // 錯題本編號＝這題在錯題清單裡排第幾個（idx+1），不要印出卷時的固定 seq
-            // （seq 是「原卷第幾題」的內部編號，跳號會讓學生／老師誤以為卷子對不起來）。
-            item.headline = headlineFromWrongItem(item, idx + 1);
+            const displayNo = displayOrderIdx[String(d.item_id)] || (idx + 1);
+            item.headline = headlineFromWrongItem(item, displayNo);
             return item;
         });
         appendSpellingHistory(stats, stats.wrong_items, stats.complete_count, gradedAt);
@@ -1144,6 +1168,8 @@ window.FeatureStudentQuiz = (function () {
         if (!retakeItems.length) {
             return window.showFlash('找不到對應的錯題內容（考卷可能已更動），無法重考', 'error');
         }
+        // 同 openQuiz：記下這次重考實際顯示的順序，submitRetake 交卷時要用同一份順序算編號。
+        sessionRetakeDisplayOrder = retakeItems.map(function (it) { return it.item_id; });
         const title = String(task.title || (task.raw_data && task.raw_data.exam_title) || '線上考試')
             .replace(/<[^>]*>?/gm, '');
 
@@ -1206,6 +1232,9 @@ window.FeatureStudentQuiz = (function () {
         const result = window.QuizPaperBuilder.gradeAnswers(retakePaper, answers);
         const gradedAt = new Date().toISOString();
 
+        // 同 submit()：編號要照這次重考畫面實際顯示的順序（sessionRetakeDisplayOrder），
+        // 不是重批清單裡排第幾個。
+        const retakeDisplayOrderIdx = orderIndexMap(sessionRetakeDisplayOrder);
         const retakeWrongItems = (result.wrong_items || []).map(function (d, idx) {
             const item = {
                 item_id: d.item_id,
@@ -1217,7 +1246,8 @@ window.FeatureStudentQuiz = (function () {
                 diff: d.diff || null,
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
             };
-            item.headline = headlineFromWrongItem(item, idx + 1);
+            const displayNo = retakeDisplayOrderIdx[String(d.item_id)] || (idx + 1);
+            item.headline = headlineFromWrongItem(item, displayNo);
             return item;
         });
 

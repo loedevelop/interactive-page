@@ -363,7 +363,7 @@
     <script src="../020_js_core/task-script-resolver.js?v=4"></script>
     <script src="../020_js_core/material-snapshot.js?v=11"></script> <!-- v11：parseRangeSpec 容忍「活頁代號＋空白＋範圍」（例：G p. 1），不再誤判成裸數字沒前綴 -->
     <script src="../020_js_core/layout-fields-eval.js?v=3"></script>
-    <script src="../020_js_core/quiz-paper-builder.js?v=14"></script> <!-- v14 renderAnswerDiffHtml：完全沒作答時只顯示「（未作答）」，不再逐字排一整排〔缺〕；匯出 shuffleInPlace 供學生端重做/重考時重新洗牌顯示順序 -->
+    <script src="../020_js_core/quiz-paper-builder.js?v=15"></script> <!-- v15 regradeCompletionRawData 重批時沿用舊 headline（依 item_id），不再回退成出卷時的固定 seq，避免重批一次錯題編號又亂掉 -->
     <script src="../020_js_core/modal-overlay.js?v=2"></script>
     <script src="../020_js_core/assignment-clone.js?v=2"></script>
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
@@ -390,12 +390,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
-    <script src="../110_teacher_core/feature-exam-job.js?v=35"></script> <!-- v35 拿掉「📝 產生線上卷」獨立按鈕；改成 needsExamRegeneration + generatePaperForSave 給「儲存作業」批次呼叫，設定有變才自動重新產生，畫面改顯示現況提示文字 -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=36"></script> <!-- v36 修正 needsExamRegeneration：既有考卷缺 quiz_paper_signature（此功能上線前產生）不再視為「設定變了」強制重抽題，改只補寫簽章（ensureExamPaperSignatureBackfilled），避免已有學生作答的舊考卷第一次存檔就被打亂 -->
     <script src="../110_teacher_core/feature-material-layout-pairing.js?v=39"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v39：buildGenerationFromMatrix 真正執行 answer_combine_note 公式並存進 row._answer_combined_text，新增「書寫答案（結合）逐列確認／修正」UI 與 answerOverrides -->
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
     <script src="../110_teacher_core/feature-exam-review.js?v=4"></script> <!-- v4 學生清單頁新增不需申訴也能用的「重新批閱本任務所有學生」按鈕（改完答案公式／重新產生線上卷後，一鍵重批全班） -->
-    <script src="../110_teacher_core/feature-timeline.js?v=116"></script> <!-- v116 saveBlock 存檔時自動掃過整份作業樹，對設定變更的考試任務呼叫 FeatureExamJob.generatePaperForSave 自動重新產生線上卷；quickSaveTasksOnly 保留供其他情境輕量存檔用 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=117"></script> <!-- v117 saveBlock：不需要重新產生的考試任務改呼叫 ensureExamPaperSignatureBackfilled 只補簽章，不觸發重抽題 -->
     <script src="../110_teacher_core/feature-resource.js?v=44"></script>
     <script src="../110_teacher_core/feature-profile.js?v=41"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=40"></script>

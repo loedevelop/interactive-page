@@ -1989,6 +1989,11 @@ window.FeatureTimeline = (() => {
                             if (!r || !r.ok) {
                                 examWarnings.push(examTitle + '：' + ((r && r.error) || '產生失敗'));
                             }
+                        } else if (t.type === 'exam' && window.FeatureExamJob
+                            && typeof window.FeatureExamJob.ensureExamPaperSignatureBackfilled === 'function') {
+                            // 不需要重新產生：既有考卷若缺簽章（此功能上線前產生的）只補寫，不重新抽題
+                            // （見 needsExamRegeneration 的雷區說明，避免每份舊考試第一次存檔就被打亂）。
+                            window.FeatureExamJob.ensureExamPaperSignatureBackfilled(t);
                         }
                     }
                 };

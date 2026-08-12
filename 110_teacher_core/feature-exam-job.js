@@ -2888,14 +2888,37 @@ window.FeatureExamJob = (function () {
         return examJob.sections.some(function (s) { return s && String(s.sheet_id || '').trim(); });
     }
 
-    /** 存檔前判斷：這個考試任務需不需要（重新）產生線上卷。 */
+    /**
+     * 存檔前判斷：這個考試任務需不需要（重新）產生線上卷。
+     * 💣 雷區（2026-08-12 老師／學生回報「解答根本對不起來」）：這個簽章機制是後來才加的，
+     * 在此之前就已經產生、可能已經有學生作答過的考卷，`quiz_paper_signature` 一定是空的——
+     * 如果「沒有簽章」也算「跟目前設定不一致」，等於每一份既有考試第一次被存檔（哪怕只是
+     * 改個完全無關的欄位）都會被強制重新抽題／重新排序。區段若有設定 `count`（隨機抽題），
+     * 重新抽的結果幾乎不可能跟原本一樣，會讓已經在考／已經交卷的學生看到的題目跟新的
+     * quiz_paper 對不起來（有些原本考過的題目消失、換成沒考過的新題目）。
+     * 正確做法：沒有舊簽章時，視為「現有這份就是最新版，只是還沒補寫簽章」，不觸發重新產生，
+     * 交給呼叫端（generatePaperForSave／saveBlock）之後直接補寫簽章即可，之後設定真的改了
+     * 才會偵測到差異。
+     */
     function needsExamRegeneration(task) {
         if (!task || task.type !== 'exam' || !task.raw_data) return false;
         const examJob = task.raw_data.exam_job;
         if (!examJobLooksReady(examJob)) return false;
         const paper = task.raw_data.quiz_paper;
         if (!paper || !Array.isArray(paper.items) || !paper.items.length) return true;
+        if (!task.raw_data.quiz_paper_signature) return false;
         return examJobSignature(examJob) !== task.raw_data.quiz_paper_signature;
+    }
+
+    /** 既有卷缺簽章時，只補寫、不重新產生（見 needsExamRegeneration 的雷區說明）。 */
+    function ensureExamPaperSignatureBackfilled(task) {
+        if (!task || task.type !== 'exam' || !task.raw_data) return;
+        const paper = task.raw_data.quiz_paper;
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) return;
+        if (task.raw_data.quiz_paper_signature) return;
+        const examJob = task.raw_data.exam_job;
+        if (!examJobLooksReady(examJob)) return;
+        task.raw_data.quiz_paper_signature = examJobSignature(examJob);
     }
 
     /**
@@ -3260,6 +3283,7 @@ window.FeatureExamJob = (function () {
         getCachedLastConfigForClass: getCachedLastConfigForClass,
         /** 給「儲存作業」批次流程用：這個考試任務的設定是否需要（重新）產生線上卷 */
         needsExamRegeneration: needsExamRegeneration,
+        ensureExamPaperSignatureBackfilled: ensureExamPaperSignatureBackfilled,
         /** 給「儲存作業」批次流程用：靜音產生（不彈 flash/alert），並跳過內部自動存檔（外層會整包存） */
         generatePaperForSave: function (pathStr) {
             return inlineGeneratePaper(pathStr, { silent: true, skipAutoSave: true });
