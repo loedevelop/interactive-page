@@ -37,11 +37,19 @@ window.ApiQuizReview = (function () {
         return data;
     }
 
-    /** 取某一考試任務下、所有學生的 task_completions（含 id，供改分用） */
+    /**
+     * 取某一考試任務下、所有學生的 task_completions（含 id，供改分用）。
+     * 💣 雷區（2026-08-13）：task_completions 資料表**沒有** score 這個欄位——分數全部存在
+     * raw_data.quiz_result.score（JSONB，見 feature-progress.js／feature-exam-review.js 讀分數
+     * 都是讀 raw_data.quiz_result.score，不是讀 top-level 欄位）。之前 select 裡多寫了 `score`，
+     * PostgREST 會直接報錯「column task_completions.score does not exist」，讓整個「查看／批改
+     * 考卷」（從班級進度總表點考試格子）打不開。絕對不要再加回這個欄位，除非真的先用 migration
+     * 建出這個欄位。
+     */
     async function fetchCompletionsForTask(assignmentId, taskId) {
         const { data, error } = await db()
             .from('task_completions')
-            .select('id, student_id, class_id, status, score, raw_data, updated_at')
+            .select('id, student_id, class_id, status, raw_data, updated_at')
             .eq('assignment_id', assignmentId)
             .eq('task_id', taskId)
             .is('deleted_at', null);
@@ -70,10 +78,14 @@ window.ApiQuizReview = (function () {
         return result.tasks;
     }
 
-    /** 寫回單一學生 completion 的 raw_data（＋分數） */
-    async function saveCompletionRawData(completionId, rawData, score) {
+    /**
+     * 寫回單一學生 completion 的 raw_data。
+     * score 參數保留（呼叫端仍會傳，例如 regradeAndSaveTask 算出的 nextScore）只是為了不用動呼叫端，
+     * 但**不會**寫進 task_completions.score——那個欄位不存在，分數本來就已經包在 rawData.quiz_result.score
+     * 裡面了（regradeCompletionRawData 寫入的），不需要也不能再多寫一個 top-level 欄位。
+     */
+    async function saveCompletionRawData(completionId, rawData, _scoreUnused) {
         const payload = { raw_data: rawData };
-        if (score != null) payload.score = score;
         const { error } = await db().from('task_completions').update(payload).eq('id', completionId);
         if (error) throw new Error('儲存批改結果失敗：' + error.message);
         return true;

@@ -259,12 +259,23 @@ window.FeatureStudentQuiz = (function () {
         return window.QuizPaperBuilder.renderSpellingPairsHtml(pairs);
     }
 
+    /**
+     * 💣 雷區（2026-08-13 老師回報「改了對齊演算法／配色，畫面還是舊的，句號還是不見、
+     * 還是有那個空格」）：這裡原本「已經有 item.diff.ops 就直接用，不重算」——但
+     * item.diff 是很久以前交卷當下用「當時那一版」演算法算好、存進 task_completions.raw_data
+     * 的舊結果，之後不管怎麼修 analyzeAnswerDiff／alignTokens 的邏輯，畫面看到的都還是
+     * 交卷當時凍結的舊 ops，等於改了程式却看不到效果，老師還以為沒修好。
+     * 這裡的對齊只是「顯示用」，不是評分依據（對錯早在 gradeAnswers 時就已經用
+     * isAcceptableAnswer 判定好、寫進 item.ok，不會因為重新算 diff 而改變），所以永遠用
+     * 目前這一版演算法「即時重新計算」顯示用的逐字對齊，不要沿用交卷當下凍結的舊結果。
+     */
     function ensureItemDiff(item) {
-        if (item && item.diff && Array.isArray(item.diff.ops)) return item;
         if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.analyzeAnswerDiff === 'function') {
             const diff = window.QuizPaperBuilder.analyzeAnswerDiff(item.expected || '', item.answer || '');
             item.diff = diff;
             item.spelling_pairs = diff.spelling_pairs || [];
+        } else if (!item.diff) {
+            item.diff = { ops: [], spelling_pairs: [] };
         }
         return item;
     }
@@ -303,16 +314,17 @@ window.FeatureStudentQuiz = (function () {
         ensureItemDiff(item);
         const headline = item.headline || headlineFromWrongItem(item);
         const ops = (item.diff && item.diff.ops) || item.ops || [];
-        const pairs = (item.diff && item.diff.spelling_pairs) || item.spelling_pairs || [];
+        // 2026-08-13 老師要求先關掉「拼錯紀錄」：目前逐字對齊機制抓出來的拼錯配對還不夠準確、
+        // 對學生／老師來說沒有參考意義，先不顯示（renderAnswerDiffHtml 本身的上下對齊已經夠用），
+        // 之後演算法夠準了再考慮恢復 renderSpellingPairsHtml(pairs)。
         return (
             '<div style="border:1px solid #FECACA; border-radius:10px; padding:12px; margin-bottom:10px; background:#FFF7F7;">' +
                 '<div style="font-size:0.85rem; color:#B91C1C; font-weight:900; margin-bottom:4px;">' + esc(headline) + '</div>' +
                 '<div style="font-size:0.92rem; font-weight:800; color:#1E293B; margin-bottom:8px; white-space:pre-wrap;">' + esc(item.prompt_zh || '') + '</div>' +
                 '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>' +
                 '<div style="font-size:1rem; line-height:1.7; margin-bottom:6px;">' + renderStudentStrikeHtml(ops) + '</div>' +
-                '<div style="font-size:0.75rem; color:#047857; font-weight:800; margin-bottom:2px;">正確答案</div>' +
-                '<div style="font-size:1rem; font-weight:800; color:#047857; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>' +
-                renderSpellingPairsHtml(pairs) +
+                '<div style="font-size:0.75rem; color:#DC2626; font-weight:800; margin-bottom:2px;">正確答案</div>' +
+                '<div style="font-size:1rem; font-weight:800; color:#DC2626; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>' +
                 renderAppealAreaHtml(item, opts) +
             '</div>'
         );
@@ -365,8 +377,9 @@ window.FeatureStudentQuiz = (function () {
         }
         const wrongN = (st.wrong_items && st.wrong_items.length) ? st.wrong_items.length : 0;
         if (wrongN > 0) parts.push('最近錯題 ' + wrongN);
-        const spellN = Object.keys(st.spelling_ledger || {}).length;
-        if (spellN > 0) parts.push('歷史錯字 ' + spellN + ' 組');
+        // 2026-08-13 老師要求先關掉「歷史錯字」相關顯示（目前抓錯機制還不夠準確、沒有參考
+        // 意義）：這裡也一併拿掉，不要讓「歷史錯字 N 組」還留在進度列摘要裡（spelling_ledger
+        // 底層仍照常累積記錄，只是先不顯示出來）。
         return '<div style="font-size:0.78rem; font-weight:800; color:#334155; line-height:1.45;">'
             + esc(parts.join(' · '))
             + '</div>';
@@ -381,7 +394,6 @@ window.FeatureStudentQuiz = (function () {
         const wrongCards = wrongItems.length
             ? wrongItems.map(function (item) { return renderWrongItemCard(item, cardOpts); }).join('')
             : '<div style="color:#047857; font-weight:800; padding:12px;">本次全對，沒有錯題。</div>';
-        const ledgerHtml = renderSpellingLedgerHtml(stats.spelling_ledger);
         const closeAction = opts.reloadOnClose
             ? "window.FeatureStudentQuiz.closeReview(true)"
             : "window.FeatureStudentQuiz.closeReview(false)";
@@ -421,9 +433,9 @@ window.FeatureStudentQuiz = (function () {
                 '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">① 錯題本（本次）</div>' +
                 '<div id="' + wrongCardsBodyId + '" style="max-height:32vh; overflow:auto; margin-bottom:12px;">' + wrongCards + '</div>' +
                 appealSubmitHtml +
-                '<div style="font-weight:900; color:#0F766E; margin:10px 0 6px;">④ 歷史錯字紀錄（應打 → 曾寫成）</div>' +
-                '<div style="max-height:22vh; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; padding:8px 12px;">'
-                    + ledgerHtml + '</div>' +
+                // 2026-08-13 老師要求先關掉「歷史錯字紀錄」：目前抓錯機制（逐字對齊）還不夠準確，
+                // 累積出來的 spelling_ledger 對老師／學生沒有參考意義，先不顯示這一區塊，之後
+                // 演算法夠準了再考慮恢復（ledgerHtml／renderSpellingLedgerHtml 保留，沒有刪掉邏輯）。
                 '<div style="display:flex; justify-content:flex-end; margin-top:12px;">' +
                     '<button type="button" class="btn btn-action" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;" onclick="'
                         + closeAction + '">知道了</button>' +
@@ -1046,6 +1058,13 @@ window.FeatureStudentQuiz = (function () {
         stats.last_leave_log = leaveLog.slice();
         // 錯題本編號＝這題在「這次作答畫面上」排第幾題（sessionDisplayOrder），不是錯題清單裡
         // 排第幾個、也不是出卷時的固定 seq——用畫面順序才能讓學生對得起來「剛剛看到的第幾題」。
+        // 💣 雷區（2026-08-13 老師回報「編號還是 7,1,6,4 這樣亂跳」）：上面這段只修到「每一張
+        // 卡片標籤該寫哪個數字」，從來沒有修到「這些卡片本身要照哪個順序排」——result.wrong_items
+        // 本來是照 gradeAnswers 內部走 paper.items 的固有順序（不是畫面洗牌後的順序），只把
+        // headline 換算成畫面順序、卻沒有把陣列本身也重新排序，於是卡片還是照舊順序一張一張
+        // 排出來，只是每張卡片頭上印的號碼變成了畫面順序，兩者對不起來就會看到號碼跳來跳去。
+        // 這裡在算完每張卡片的 displayNo 之後，一定要連陣列順序一起重新排序，號碼跟排列順序
+        // 才會一致（1、4、6、7 這樣照順序排，不是 7、1、6、4）。
         const displayOrderIdx = orderIndexMap(sessionDisplayOrder);
         stats.wrong_items = (result.wrong_items || []).map(function (d, idx) {
             const item = {
@@ -1060,8 +1079,11 @@ window.FeatureStudentQuiz = (function () {
             };
             const displayNo = displayOrderIdx[String(d.item_id)] || (idx + 1);
             item.headline = headlineFromWrongItem(item, displayNo);
+            item._sortDisplayNo = displayNo;
             return item;
         });
+        stats.wrong_items.sort(function (a, b) { return a._sortDisplayNo - b._sortDisplayNo; });
+        stats.wrong_items.forEach(function (item) { delete item._sortDisplayNo; });
         appendSpellingHistory(stats, stats.wrong_items, stats.complete_count, gradedAt);
         pushHistory(stats, {
             at: gradedAt,
@@ -1233,7 +1255,8 @@ window.FeatureStudentQuiz = (function () {
         const gradedAt = new Date().toISOString();
 
         // 同 submit()：編號要照這次重考畫面實際顯示的順序（sessionRetakeDisplayOrder），
-        // 不是重批清單裡排第幾個。
+        // 不是重批清單裡排第幾個。同一個雷區：算完 displayNo 後，陣列本身也要照 displayNo
+        // 重新排序，不能只換算號碼卻維持舊順序（見 submit() 裡的說明）。
         const retakeDisplayOrderIdx = orderIndexMap(sessionRetakeDisplayOrder);
         const retakeWrongItems = (result.wrong_items || []).map(function (d, idx) {
             const item = {
@@ -1248,8 +1271,11 @@ window.FeatureStudentQuiz = (function () {
             };
             const displayNo = retakeDisplayOrderIdx[String(d.item_id)] || (idx + 1);
             item.headline = headlineFromWrongItem(item, displayNo);
+            item._sortDisplayNo = displayNo;
             return item;
         });
+        retakeWrongItems.sort(function (a, b) { return a._sortDisplayNo - b._sortDisplayNo; });
+        retakeWrongItems.forEach(function (item) { delete item._sortDisplayNo; });
 
         const originalResult = raw.quiz_result || {};
         const originalTotal = Number(originalResult.total) || 0;

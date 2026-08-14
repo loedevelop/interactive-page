@@ -353,8 +353,21 @@ function resolveFolderPath(parentFolder, pathArray) {
  *   我以為的那個資料夹」（例如帳號綁錯、Drive 捷徑 vs 真實資料夾等，肉眼比 ID 最準）。
  * - subFolderCount：GAS 這次真的數到幾個子資料夾（在套用任何 .meta.json 或其他前端過濾之前）。
  */
-var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-06-b';
+var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-13-searchbatch';
 
+/**
+ * 2026-08-13（老師回報「資料夾內容出不來，很容易出問題」）：舊版對「每一個子資料夾」各打
+ * 2 次 Drive API（sub.getFilesByName('_manifest.json') + sub.getFiles() 全量列舉再逐一比對
+ * 檔名），子資料夾一多（教材資料夾隨使用自然會越積越多），這裡就變成 N*2 次真實網路往返，
+ * 實測 20+ 個資料夾就常常卡到 20 秒以上甚至逾時——這才是「教材資料夾清單載入很容易出問題」
+ * 的根本原因，不是 Web App 網址失效（見 api-gas-service.js postGasJson 的錯誤訊息也常常
+ * 誤導成「網址已失效」，其實是這裡真的太慢）。
+ *
+ * 改法：先用 mastersRoot.getFolders() 列出全部子資料夾（本來就是單一 lazy iterator，便宜），
+ * 再用 DriveApp.searchFiles 以「這批子資料夾 id 的 OR 條件」批次查一次 .meta.json／
+ * _manifest.json，把 N*2 次往返降到 ceil(N/CHUNK_SIZE) 次。CHUNK_SIZE 是為了避免單次查詢
+ * 字串太長被 Drive 拒絕，不是效能考量。
+ */
 function listMaterialMasters(rootFolderId, rootKind) {
   var rootFolder = DriveApp.getFolderById(rootFolderId);
   var kind = normalizeMaterialsRootKind(rootKind);
@@ -370,45 +383,52 @@ function listMaterialMasters(rootFolderId, rootKind) {
     };
   }
 
-  var materials = [];
+  var materialsList = [];
+  var bucketByFolderId = {};
   var subFolders = mastersRoot.getFolders();
   while (subFolders.hasNext()) {
     var sub = subFolders.next();
-    var manifest = null;
-    var manifestFiles = sub.getFilesByName('_manifest.json');
-    if (manifestFiles.hasNext()) {
-      try {
-        manifest = JSON.parse(manifestFiles.next().getBlob().getDataAsString('UTF-8'));
-      } catch (manifestErr) {
-        manifest = null;
-      }
-    }
+    var bucket = { folderName: sub.getName(), folderId: sub.getId(), manifest: null, metaFiles: [] };
+    materialsList.push(bucket);
+    bucketByFolderId[bucket.folderId] = bucket;
+  }
 
-    var metaFiles = [];
-    var files = sub.getFiles();
-    while (files.hasNext()) {
-      var file = files.next();
+  var CHUNK_SIZE = 40;
+  for (var start = 0; start < materialsList.length; start += CHUNK_SIZE) {
+    var chunk = materialsList.slice(start, start + CHUNK_SIZE);
+    var parentClauses = chunk.map(function (f) { return "'" + f.folderId + "' in parents"; }).join(' or ');
+    var query = '(' + parentClauses + ") and trashed = false and (title contains '.meta.json' or title = '_manifest.json')";
+    var found = DriveApp.searchFiles(query);
+    while (found.hasNext()) {
+      var file = found.next();
       var fileName = file.getName();
-      if (fileName.indexOf('.meta.json') !== -1) {
-        metaFiles.push({ name: fileName, fileId: file.getId() });
+      var isManifest = fileName === '_manifest.json';
+      var isMeta = fileName.indexOf('.meta.json') !== -1;
+      if (!isManifest && !isMeta) continue; // Drive 的 contains 是全文模糊比對，保險起見還是精確再篩一次
+      var parents = file.getParents();
+      while (parents.hasNext()) {
+        var parentBucket = bucketByFolderId[parents.next().getId()];
+        if (!parentBucket) continue; // 不是這批子資料夾（例如同名檔案被複製到別處），略過
+        if (isManifest) {
+          try {
+            parentBucket.manifest = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+          } catch (manifestErr) {
+            parentBucket.manifest = null;
+          }
+        } else {
+          parentBucket.metaFiles.push({ name: fileName, fileId: file.getId() });
+        }
       }
     }
-
-    materials.push({
-      folderName: sub.getName(),
-      folderId: sub.getId(),
-      manifest: manifest,
-      metaFiles: metaFiles
-    });
   }
 
   return {
-    materials: materials,
+    materials: materialsList,
     rootKind: kind,
     debugVersion: LIST_MATERIAL_MASTERS_DEBUG_VERSION,
     resolvedRootId: mastersRoot.getId(),
     resolvedRootName: mastersRoot.getName(),
-    subFolderCount: materials.length
+    subFolderCount: materialsList.length
   };
 }
 
@@ -510,6 +530,44 @@ function readDriveTextFileById(fileId) {
     content: file.getBlob().getDataAsString('UTF-8'),
     mimeType: file.getMimeType()
   };
+}
+
+/**
+ * 🗑️ 刪除某教材資料夾底下「一個活頁（stem）」的 meta.json／script.txt（送進垂圾桶，非永久刪除）。
+ * 用「資料夾名稱＋stem」查找（跟 readMaterialFile／locateMaterialFile 同一套解析邏輯），
+ * 兩個檔案只要找到就都刪，其中一個不存在不算錯誤（老師可能只上傳過其中一種）；
+ * 兩個都找不到才視為錯誤，避免老師誤以為刪除成功、下拉卻還是看得到舊活頁。
+ */
+function deleteMaterialStemFiles(rootFolderId, materialFolderName, stem, rootKind) {
+  var rootFolder = DriveApp.getFolderById(rootFolderId);
+  var kind = normalizeMaterialsRootKind(rootKind);
+  var mastersRoot = resolveMaterialsRoot(rootFolder, kind, false);
+  if (!mastersRoot) {
+    throw new Error(kind === 'teacher'
+      ? '找不到 01_My_Materials，請先確認老師個人資料夾已綁定。'
+      : '找不到 00_Class_Materials，請先確認班級資料夾已設定。');
+  }
+  var cleanStem = String(stem || '').trim();
+  if (!cleanStem) throw new Error('缺少活頁代號（stem）');
+  var cleanFolderName = String(materialFolderName || '').trim();
+  if (!cleanFolderName) throw new Error('缺少教材資料夾名稱');
+  var targetSub = findSubFolderInsensitive(mastersRoot, cleanFolderName);
+  if (!targetSub) {
+    throw new Error('找不到教材資料夾：' + cleanFolderName);
+  }
+  var deleted = [];
+  [cleanStem + '.meta.json', cleanStem + '.script.txt'].forEach(function (name) {
+    var files = targetSub.getFilesByName(name);
+    while (files.hasNext()) {
+      var f = files.next();
+      f.setTrashed(true);
+      deleted.push(name);
+    }
+  });
+  if (!deleted.length) {
+    throw new Error('在「' + cleanFolderName + '」找不到 ' + cleanStem + '.meta.json 或 ' + cleanStem + '.script.txt');
+  }
+  return { deleted: deleted, folderName: targetSub.getName(), stem: cleanStem };
 }
 
 /** 老師工作區根目錄：統一 _Teachers（若有舊名 Teachers 則改名對齊） */
@@ -890,6 +948,21 @@ function doPost(e) {
         status: 'success',
         files: batchResult.files,
         rootKind: batchResult.rootKind
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'delete_material_stem') {
+      var delFolderId = data.targetFolderId ? String(data.targetFolderId).trim() : '';
+      var delMaterialFolder = data.materialFolder ? String(data.materialFolder).trim() : '';
+      var delStem = data.stem ? String(data.stem).trim() : '';
+      var delRootKind = data.rootKind || data.materialsRootKind || 'class';
+      if (!delFolderId) throw new Error('缺少 targetFolderId');
+      var delResult = deleteMaterialStemFiles(delFolderId, delMaterialFolder, delStem, delRootKind);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        deleted: delResult.deleted,
+        folderName: delResult.folderName,
+        stem: delResult.stem
       })).setMimeType(ContentService.MimeType.JSON);
     }
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>班級管理 | 老師控制台 (SaaS 升級版)</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../010_css/style.css?v=36">
+    <link rel="stylesheet" href="../010_css/style.css?v=37">
     
     <!-- 🌟 安全注入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -363,7 +363,7 @@
     <script src="../020_js_core/task-script-resolver.js?v=4"></script>
     <script src="../020_js_core/material-snapshot.js?v=11"></script> <!-- v11：parseRangeSpec 容忍「活頁代號＋空白＋範圍」（例：G p. 1），不再誤判成裸數字沒前綴 -->
     <script src="../020_js_core/layout-fields-eval.js?v=3"></script>
-    <script src="../020_js_core/quiz-paper-builder.js?v=15"></script> <!-- v15 regradeCompletionRawData 重批時沿用舊 headline（依 item_id），不再回退成出卷時的固定 seq，避免重批一次錯題編號又亂掉 -->
+    <script src="../020_js_core/quiz-paper-builder.js?v=22"></script> <!-- v22 紅字（正確解答那一行）字體改回跟藍字一樣大，不用縮小；每個字本來就已經上下分行顯示，字體加大瀏覽器會自動撐寬 cell，不會跟旁邊重疊 -->
     <script src="../020_js_core/modal-overlay.js?v=2"></script>
     <script src="../020_js_core/assignment-clone.js?v=2"></script>
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
@@ -371,7 +371,7 @@
     <script src="../020_js_core/material-folder-picker.js?v=2"></script> <!-- 🧩 共用：教材資料夾下拉載入/空清單失敗重試，feature-exam-job.js 與 feature-material-layout-pairing.js 共用；v2 空清單附除錯資訊＋20秒逾時提示 -->
 
     <!-- 🌟 110_teacher_core: UI 核心控制與模板 -->
-    <script src="../110_teacher_core/api-gas-service.js?v=62"></script> <!-- batch read_material_files；fileId 直讀；v62 listMaterialMasters 附 debugVersion/resolvedRootId 除錯欄位 -->
+    <script src="../110_teacher_core/api-gas-service.js?v=65"></script> <!-- batch read_material_files；fileId 直讀；v65：postGasJson 遇到「回應是 HTML 而非 JSON」時先自動重試 1 次（固定延遲，非無限），實測 Google 前端偶爾對轉址回暫時性驗證頁，重試往往就成功，避免老師看到嚇人的「網址已失效」；真正常態變慢的根因是 GAS listMaterialMasters，見 gas/Code.gs v=lm-2026-08-13-searchbatch（此檔需手動重新部署 GAS 才會生效，git push 不會更新線上 Web App） -->
     <script src="../110_teacher_core/ui-core.js?v=53"></script>
     <script src="../110_teacher_core/ui-class-templates.js?v=47"></script>
     <script src="../110_teacher_core/ui-timeline-templates.js?v=84"></script> <!-- v84 骨架(E) base 範圍欄位加 data-range-auto 旗標＋oninput，避免手動覆寫被路徑異動自動蓋回去 -->
@@ -390,12 +390,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=8"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
-    <script src="../110_teacher_core/feature-exam-job.js?v=37"></script> <!-- v37 新增 taskHasSubmittedAnswers 防呆：即使簽章判斷「設定變了」，只要這份卷已經有學生作答，存檔就不自動靜默重新產生，改成顯示「🔁 立即重新產生」按鈕交老師手動確認（_inlineForceGeneratePaper） -->
-    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=39"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v39：buildGenerationFromMatrix 真正執行 answer_combine_note 公式並存進 row._answer_combined_text，新增「書寫答案（結合）逐列確認／修正」UI 與 answerOverrides -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=38"></script> <!-- v38 needsExamRegeneration 新增可選 pathStr 參數，存檔前先強制用畫面上目前的值同步一次 exam_job，不再只信賴各欄位 change 事件；並匯出 examJobLooksReady 供 feature-timeline.js 判斷「完全沒填活頁」時要跳出警告 -->
+    <script src="../110_teacher_core/feature-material-layout-pairing.js?v=54"></script> <!-- 🧩 老師個人：教材資料夾/活頁 ↔ layout_profile_id 建議搭配（中央管理端）；v54：三個總覽卡片即時聯動——自動記錄配對紀錄改存「真正落地的檔名 stem」（不是套 Layout 前的活頁原名，修正 v51 命名規則後配對紀錄永遠對不到真檔案的根因）；「快速套用」與「＋新增套用」都改用自然鍵（root_kind+資料夾+template_id）合併，重複套用不再長出重複項；已配對組合的 Layout 名稱改成即時查 template_id（改名／刪除立即反映，不用整頁重整）；「儲存所有套用」不再整批覆寫，改成先抓最新清單再合併 -->
     <script src="../110_teacher_core/feature-script-collector.js?v=1"></script> <!-- 📥 v1 新增：由下往上收集文稿——掃全班全作業的 C 貼上/D 資源/E 骨架文稿，自動分段＋勾選匯出 txt，供人工搬進教材/Layout 搭配 -->
-    <script src="../110_teacher_core/api-quiz-review.js?v=1"></script>
-    <script src="../110_teacher_core/feature-exam-review.js?v=4"></script> <!-- v4 學生清單頁新增不需申訴也能用的「重新批閱本任務所有學生」按鈕（改完答案公式／重新產生線上卷後，一鍵重批全班） -->
-    <script src="../110_teacher_core/feature-timeline.js?v=118"></script> <!-- v118 saveBlock：需要重新產生的考試若已有學生作答，先查 taskHasSubmittedAnswers，有就跳過自動重抽題只彈警告，避免影響已作答學生 -->
+    <script src="../110_teacher_core/api-quiz-review.js?v=2"></script> <!-- v2：移除不存在的 task_completions.score 欄位查詢/寫入，改回全靠 raw_data.quiz_result.score（修「無法讀取學生作答紀錄」錯誤） -->
+    <script src="../110_teacher_core/feature-exam-review.js?v=5"></script> <!-- v5 老師要求先關掉「拼錯紀錄」顯示（目前逐字對齊抓出來的拼錯配對還不夠準確、沒有參考意義），只留 renderAnswerDiffHtml 本身的上下對齊 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=120"></script> <!-- v120 儲存作業時 processExamPapers 呼叫 needsExamRegeneration 改傳 pathStr（強制先同步畫面值）；考試任務完全沒填活頁又還沒產生過線上卷時，不再靜音跳過，明確跳警告提醒老師 -->
     <script src="../110_teacher_core/feature-resource.js?v=44"></script>
     <script src="../110_teacher_core/feature-profile.js?v=41"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=40"></script>

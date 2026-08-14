@@ -10,8 +10,19 @@ window.GasService = (function() {
 
   /**
    * 統一 POST：辨識「打到 doGet 健康檢查」與「回 HTML」兩種常見部署故障。
+   *
+   * 2026-08-13（老師回報「資料夾內容出不來，很容易出問題」，圖三顯示「GAS Web App
+   * 網址已失效（回傳「找不到網頁」）」）：實測發現這句話常常是誤診——用同一個 GAS_WEB_APP_URL
+   * 手動重打，多半立刻就成功回 JSON，代表 Web App 部署本身沒壞，是 Google 前端
+   * （script.google.com → script.googleusercontent.com 這段轉址）偶爾會回一頁暫時性的
+   * 驗證/防護 HTML，不是真的部署失效。真正常發生「很容易出問題」的根因是 GAS 端
+   * listMaterialMasters 對每個教材子資料夾都要打 2 次 Drive API、資料夾一多就慢到逾時
+   * （見 gas/Code.gs 該函式的說明，已改用批次搜尋大幅減少往返次數）——但前端這裡仍應該
+   * 對「回應是 HTML 而非 JSON」這個特定情境多容忍一次，不要一次就跳出嚇人的「網址已失效」。
+   * 只重試 1 次、固定延遲（不是遞增/無限重試），跟 AI 批改管線禁止的「連線失敗就自動延遲
+   * 重試再 invoke 造成雪崩」是不同情境（這裡是單次前端 fetch 重試，不會疊加觸發後端批改）。
    */
-  async function postGasJson(payload) {
+  async function postGasJson(payload, _isRetry) {
     const response = await fetch(GAS_WEB_APP_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
@@ -23,15 +34,19 @@ window.GasService = (function() {
       result = JSON.parse(text);
     } catch (_parseErr) {
       if (/^\s*</.test(text)) {
+        if (!_isRetry) {
+          await new Promise(function (resolve) { setTimeout(resolve, 600); });
+          return postGasJson(payload, true);
+        }
         if (/找不到網頁|Moved Temporarily|Page not found/i.test(text)) {
           throw new Error(
-            'GAS Web App 網址已失效（回傳「找不到網頁」）。'
-            + '請在 script.google.com → 部署 → 管理部署作業 → 編輯 → 選「新版本」→ 對象「任何人」後部署；'
+            'GAS 暫時性錯誤（已自動重試一次仍回「找不到網頁」）。多半是 Google 前端短暫異常，'
+            + '請先重新整理頁面再試一次；若持續發生，才需要在 script.google.com → 部署 → 管理部署作業 → 編輯 → 選「新版本」→ 對象「任何人」後部署；'
             + '若網址變了，請同步更新 api-gas-service.js 與 api.js 的 GAS URL。'
           );
         }
         throw new Error(
-          'GAS 回傳 HTML 而非 JSON（常見：Web App 權限不是「任何人」、或部署網址過期）。'
+          'GAS 回傳 HTML 而非 JSON（已自動重試一次仍失敗；常見：Web App 權限不是「任何人」、或部署網址過期）。'
           + '請重新部署：執行身分＝我、誰可以存取＝任何人，並核對前端 GAS_WEB_APP_URL。'
         );
       }
@@ -73,28 +88,13 @@ window.GasService = (function() {
         if (!fileId) {
           throw new Error('無法解析網址：請確認是否為有效的 Google Drive 或 Google Sheets 連結。');
         }
-
-        const payload = {
+        const result = await postGasJson({
           action: 'extract_sheet',
           fileId: fileId,
           sheetName: sheetName,
           range: range
-        };
-
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
         });
-
-        const result = await response.json();
-        
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 伺服器解析失敗，請確認檔案權限與活頁簿名稱。');
-        }
-
         return result.extractedText;
-
       } catch (error) {
         console.error('[GasService] Excel 萃取發生嚴重錯誤:', error);
         throw error;
@@ -116,24 +116,11 @@ window.GasService = (function() {
         if (shareEmails) {
           payload.shareEmails = Array.isArray(shareEmails) ? shareEmails : [shareEmails];
         }
-
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-        
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 伺服器建立資料夾失敗');
-        }
-
+        const result = await postGasJson(payload);
         return {
           folderId: result.folderId,
           folderUrl: result.folderUrl
         };
-
       } catch (error) {
         console.error('[GasService] 建立資料夾發生錯誤:', error);
         throw error;
@@ -146,32 +133,18 @@ window.GasService = (function() {
      */
     async migrateStudentData(parentFolderId, studentName, studentShortId, oldFolderId) {
       try {
-        const payload = {
+        const result = await postGasJson({
           action: 'migrate_student_data',
           parentFolderId: parentFolderId,
           studentName: studentName,
           studentShortId: studentShortId,
           oldFolderId: oldFolderId
-        };
-
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
         });
-
-        const result = await response.json();
-        
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 伺服器資料夾轉移失敗');
-        }
-
         return {
           folderId: result.folderId,
           folderUrl: result.folderUrl,
           movedCount: result.movedCount
         };
-
       } catch (error) {
         console.error('[GasService] 轉移學生資料夾發生錯誤:', error);
         throw error;
@@ -186,14 +159,8 @@ window.GasService = (function() {
     async downloadFile(fileId) {
       try {
         if (!fileId) throw new Error('缺少 fileId');
-        const payload = { action: 'download_file', fileId: String(fileId).trim() };
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
-        });
-        const result = await response.json();
-        if (result.status !== 'success' || !result.fileData) {
+        const result = await postGasJson({ action: 'download_file', fileId: String(fileId).trim() });
+        if (!result.fileData) {
           throw new Error(result.message || 'GAS 下載失敗');
         }
         const binary = atob(result.fileData);
@@ -218,7 +185,7 @@ window.GasService = (function() {
      */
     async uploadStudentLocalFile(base64, fileName, mimeType, folderId, assignId = '', taskId = '', subFolderName = '01_Class_Resources') {
       try {
-        const payload = {
+        const result = await postGasJson({
           action: 'upload_file',
           fileData: base64,
           fileName: fileName,
@@ -227,22 +194,8 @@ window.GasService = (function() {
           subFolderName: subFolderName,
           assignmentId: assignId,
           taskId: taskId
-        };
-
-        const response = await fetch(GAS_WEB_APP_URL, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'text/plain' }, 
-          body: JSON.stringify(payload) 
         });
-        
-        const result = await response.json();
-        
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 伺服器上傳失敗');
-        }
-        
         return result.fileUrl;
-
       } catch (error) {
         console.error('[GasService] 檔案上傳發生嚴重錯誤:', error);
         throw error;
@@ -259,22 +212,13 @@ window.GasService = (function() {
      */
     async uploadMaterialFile(base64, fileName, mimeType, folderId) {
       try {
-        const payload = {
+        const result = await postGasJson({
           action: 'upload_file',
           fileData: base64,
           fileName: fileName,
           mimeType: mimeType,
           folderId: folderId
-        };
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
         });
-        const result = await response.json();
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 伺服器上傳失敗');
-        }
         return { fileId: result.fileId, fileUrl: result.fileUrl, finalFileName: result.finalFileName };
       } catch (error) {
         console.error('[GasService] 教材檔案上傳發生錯誤:', error);
@@ -292,21 +236,12 @@ window.GasService = (function() {
      */
     async ensureMaterialFolder(rootFolderId, materialsRootName, materialFolderName) {
       try {
-        const payload = {
+        const result = await postGasJson({
           action: 'create_folder',
           folderName: materialFolderName,
           parentFolderId: rootFolderId,
           folderPath: [materialsRootName]
-        };
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
         });
-        const result = await response.json();
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 伺服器建立教材資料夾失敗');
-        }
         return { folderId: result.folderId, folderUrl: result.folderUrl };
       } catch (error) {
         console.error('[GasService] 建立教材資料夾發生錯誤:', error);
@@ -328,18 +263,7 @@ window.GasService = (function() {
         if (emails && emails.length) {
           payload.shareEmails = Array.isArray(emails) ? emails : [emails];
         }
-
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 資料夾權限設定失敗');
-        }
-        return result;
+        return await postGasJson(payload);
       } catch (error) {
         console.error('[GasService] 資料夾權限設定錯誤:', error);
         throw error;
@@ -352,24 +276,12 @@ window.GasService = (function() {
      */
     async publishMaterial(sourceFileId, targetFolderId, rootKind = 'class') {
       try {
-        const payload = {
+        return await postGasJson({
           action: 'publish_material',
           sourceFileId: sourceFileId,
           targetFolderId: targetFolderId,
           rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
-        };
-
-        const response = await fetch(GAS_WEB_APP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(payload)
         });
-
-        const result = await response.json();
-        if (result.status !== 'success') {
-          throw new Error(result.message || 'GAS 教材發布失敗');
-        }
-        return result;
       } catch (error) {
         console.error('[GasService] 教材發布錯誤:', error);
         throw error;
@@ -419,6 +331,20 @@ window.GasService = (function() {
       return postGasJson(payload);
     },
 
+    /**
+     * 🗑️ 刪除某教材資料夾底下一個活頁（stem）的 meta.json／script.txt（GAS 端送進垂圾桶，非永久刪除）。
+     * 對接 Code.gs 的 delete_material_stem，跟 readMaterialFile 同一套「資料夾名稱＋stem」解析邏輯。
+     */
+    async deleteMaterialStem(targetFolderId, materialFolder, stem, rootKind = 'class') {
+      return postGasJson({
+        action: 'delete_material_stem',
+        targetFolderId: targetFolderId,
+        materialFolder: materialFolder || '',
+        stem: stem,
+        rootKind: rootKind === 'teacher' ? 'teacher' : 'class'
+      });
+    },
+
     /** 一批讀多個 meta／layout（一次 GAS 往返） */
     async readMaterialFiles(targetFolderId, items, rootKind = 'class') {
       const result = await postGasJson({
@@ -437,38 +363,18 @@ window.GasService = (function() {
     },
 
     async ensureTeacherWorkspace(teacherName, teacherShortId) {
-      const payload = {
+      return postGasJson({
         action: 'ensure_teacher_workspace',
         teacherName: teacherName,
         teacherShortId: teacherShortId
-      };
-      const response = await fetch(GAS_WEB_APP_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
       });
-      const result = await response.json();
-      if (result.status !== 'success') {
-        throw new Error(result.message || '無法建立老師工作區');
-      }
-      return result;
     },
 
     async listChildFolders(parentFolderId) {
-      const payload = {
+      return postGasJson({
         action: 'list_child_folders',
         parentFolderId: parentFolderId
-      };
-      const response = await fetch(GAS_WEB_APP_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
       });
-      const result = await response.json();
-      if (result.status !== 'success') {
-        throw new Error(result.message || '無法列出子資料夾');
-      }
-      return result;
     }
   };
 })();

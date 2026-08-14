@@ -155,6 +155,29 @@ window.FeatureTimeline = (() => {
     }
 
     /**
+     * 💣 雷區（2026-08-12 老師回報「刪除 meta/script 後，畫面停留在舊畫面，要手動 reload」）：
+     * 刪除後緊接著呼叫 ensureMetaCatalog({force:true}) 重新打一次 list_material_masters，
+     * 但那是「剛才 trash 檔案」跟「這次重新列表」兩次獨立的 Drive API 往返，偶爾會遇到極短暫的
+     * 列表未即時反映（trash 生效但下一秒的 list 還沒同步），畫面看起來像完全沒更新，只能等老師
+     * 手動整頁重新整理（那時已經過了足夠時間，自然抓到最新狀態）。
+     * 修法：刪除成功那一刻先直接把這幾個檔名從既有快取裡樂觀移除（不等 Drive 重新確認），
+     * 畫面立刻反映；背景仍照舊強制重抓一次校正（見呼叫端 feature-material-layout-pairing.js），
+     * 但不依賴它才能看到變化。
+     */
+    function removeMetaCatalogFileOption(classId, rootKind, folderName, fileNames) {
+        const key = metaCatalogKey(classId, rootKind);
+        const entry = _metaCatalog[key];
+        if (!entry || !Array.isArray(entry.options)) return;
+        const folderClean = String(folderName || '');
+        const namesSet = {};
+        (fileNames || []).forEach(function (n) { if (n) namesSet[n] = true; });
+        entry.options = entry.options.filter(function (o) {
+            if (!o || String(o.folderName || '') !== folderClean) return true;
+            return !namesSet[o.fileName];
+        });
+    }
+
+    /**
      * 把 ensureMetaCatalog 存的 debug 資訊格式化成一行文字，給「教材資料夾清單是空的」的警告
      * 訊息附加在後面——2026-08-06 老師連續回報「明明有資料夾，下拉還是空的」，這行字讓老師
      * 下次遇到同樣狀況時，可以直接把畫面上這段文字複製貼給我，不用再靠截圖互相猜測：
@@ -1982,7 +2005,10 @@ window.FeatureTimeline = (() => {
                             await processExamPapers(t.subTasks, p);
                         } else if (t.type === 'exam' && window.FeatureExamJob
                             && typeof window.FeatureExamJob.needsExamRegeneration === 'function'
-                            && window.FeatureExamJob.needsExamRegeneration(t)) {
+                            // 傳 p（這個任務目前的 pathStr）：needsExamRegeneration 內部會先強制用畫面上
+                            // 目前的值同步一次 exam_job，不要只信賴各欄位各自的 change 事件有沒有漏接
+                            // （2026-08-13 老師回報「明明填了，儲存後學生端還是說沒產生線上卷」）。
+                            && window.FeatureExamJob.needsExamRegeneration(t, p)) {
                             const examTitle = String(t.title || '考試').replace(/<[^>]*>?/gm, '').trim() || '考試';
                             // 💣 雷區（2026-08-12 老師提問「即便不是針對考卷做改變，存檔是否也會強迫重出考卷」）：
                             // 簽章比對理論上設定沒變就不會誤觸發，但這份卷若已經有學生真的交過答案，
@@ -2011,6 +2037,20 @@ window.FeatureTimeline = (() => {
                             // 不需要重新產生：既有考卷若缺簽章（此功能上線前產生的）只補寫，不重新抽題
                             // （見 needsExamRegeneration 的雷區說明，避免每份舊考試第一次存檔就被打亂）。
                             window.FeatureExamJob.ensureExamPaperSignatureBackfilled(t);
+                            // 💣 雷區（2026-08-13 老師回報「明明填了區段跟範圍，儲存後學生端還是說『老師尚未
+                            // 產生線上卷』，畫面卻顯示存檔成功」）：走到這個分支代表 needsExamRegeneration
+                            // 判定「不需要重新產生」——但這不等於「這份考卷是完整的」，也可能是這個考試任務
+                            // 從頭到尾就沒有任何區段填過活頁（examJobLooksReady 一路是 false），本來就沒東西
+                            // 可產生，之前的流程對這種情況完全靜音、老師存檔時看到的是跟正常存檔一模一樣的
+                            // 綠色成功訊息，完全沒有線索可以發現。這裡明確補一句警告，讓老師存檔後至少
+                            // 看得到「這份考試還沒設定好」，不用等學生回報才發現。
+                            const hasPaperNow = !!(t.raw_data && t.raw_data.quiz_paper
+                                && Array.isArray(t.raw_data.quiz_paper.items) && t.raw_data.quiz_paper.items.length);
+                            if (!hasPaperNow && typeof window.FeatureExamJob.examJobLooksReady === 'function'
+                                && !window.FeatureExamJob.examJobLooksReady(t.raw_data && t.raw_data.exam_job)) {
+                                const examTitle2 = String(t.title || '考試').replace(/<[^>]*>?/gm, '').trim() || '考試';
+                                examWarnings.push(examTitle2 + '：目前還沒有任何區段填好活頁（sheet_id），尚未產生線上卷，請展開這個考試任務確認設定');
+                            }
                         }
                     }
                 };
@@ -2484,6 +2524,7 @@ window.FeatureTimeline = (() => {
         // 避免各自各刻一份 GasService.listMaterialMasters 呼叫（見 exam-standalone-material-invariant.mdc）
         ensureMetaCatalog: ensureMetaCatalog,
         getMetaCatalogEntry: getMetaCatalogEntry,
+        removeMetaCatalogFileOption: removeMetaCatalogFileOption,
         // 2026-08-06：教材資料夾清單「查到空的」時的除錯文字（GAS 版本戳記／實際解析到的
         // 資料夾 ID／子資料夾數），給 MaterialFolderPicker 等下拉的 emptyMessage 用
         getMetaCatalogDebugText: getMetaCatalogDebugText,

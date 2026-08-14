@@ -107,12 +107,35 @@ window.QuizPaperBuilder = (function () {
     }
 
     /**
-     * LCS 對齊後合併相鄰 del+ins → sub
+     * 💣 雷區（2026-08-13 老師回報「學生明明有打句號／大寫字，程式完全沒有如實記錄」）：
+     * 對錯判定／逐字對齊（alignTokens）本來就該用 normalizeAnswer 過的版本比對（小寫、
+     * 去掉句尾標點），不然大小寫或句尾標點不同就會誤判成拼錯；但顯示給師生看的「你的
+     * 答案」必須「如實記錄」學生打的每一個字元——包括大小寫、句尾標點（. , ! ? 等）、
+     * 學生自己打的引號樣式，一個都不能因為「拿去比對用」的正規化而被畫面上跟著吃掉。
+     * 之前這裡誤把 normalizeAnswer 那套「去尾標點／轉直式引號」的正規化也複製過來，
+     * 只差沒轉小寫，結果句尾的句號、學生打的引號樣式一樣被這裡吃掉——這是錯的：這份
+     * 陣列唯一的功能是「跟 tokenizeWords 逐字對應、換回畫面顯示用的原始文字」，除了
+     * 用空白分詞（純粹是為了跟比對用陣列的斷詞數量對齊，不是要動內容）之外，不應該對
+     * 學生輸入的內容做任何字元層級的修改。
+     */
+    function tokenizeWordsOriginalCase(s) {
+        const n = String(s || '').replace(/\s+/g, ' ').trim();
+        if (!n) return [];
+        return n.split(/\s+/).filter(Boolean);
+    }
+
+    /**
+     * LCS 對齊後合併相鄰 del+ins → sub。
+     * expTokens／actTokens 是用來「判斷是否相等」的正規化（小寫）版本；expOrig／actOrig
+     * 是跟前面兩個陣列逐字對應、但保留原始大小寫的版本——沒給時退回用正規化版本本身
+     * （相容舊呼叫端）。輸出的 expected／got 一律用原始大小寫版本，不是比對用的小寫版本。
      * @returns {{ type: 'match'|'sub'|'del'|'ins', expected: string, got: string }[]}
      */
-    function alignTokens(expTokens, actTokens) {
+    function alignTokens(expTokens, actTokens, expOrig, actOrig) {
         const exp = expTokens || [];
         const act = actTokens || [];
+        const expO = expOrig || exp;
+        const actO = actOrig || act;
         const m = exp.length;
         const n = act.length;
         const dp = [];
@@ -132,27 +155,51 @@ window.QuizPaperBuilder = (function () {
         let j = n;
         while (i > 0 || j > 0) {
             if (i > 0 && j > 0 && exp[i - 1] === act[j - 1]) {
-                raw.push({ type: 'match', expected: exp[i - 1], got: act[j - 1] });
+                raw.push({ type: 'match', expected: expO[i - 1], got: actO[j - 1] });
                 i -= 1;
                 j -= 1;
             } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-                raw.push({ type: 'ins', expected: '', got: act[j - 1] });
+                raw.push({ type: 'ins', expected: '', got: actO[j - 1] });
                 j -= 1;
             } else {
-                raw.push({ type: 'del', expected: exp[i - 1], got: '' });
+                raw.push({ type: 'del', expected: expO[i - 1], got: '' });
                 i -= 1;
             }
         }
         raw.reverse();
+        // 💣 雷區（2026-08-13 老師回報「I 後面留白很怪，don't/recognize 各自標示看不懂，
+        // 明明就是 can't read/recognize 被寫成 don't recognize，應該當『一整段』的錯誤」）：
+        // 舊邏輯只合併「剛好一個 del 緊接著一個 ins」這一組，兩個字以上的替換（expected 2 個字
+        // vs got 2 個字，兩邊完全不重疊）會被拆成 del＋ins 分開顯示（一個留白缺字、一個標成
+        // 多打），對老師／學生來說完全看不出這其實是「同一段話被整段寫錯」。
+        // 改成：兩個 match 之間，只要中間有一整串連續的 del／ins（不管順序、不管幾個），
+        // 一律當成同一個區塊——只要區塊裡同時有 del 又有 ins，就整段合併成一個 sub
+        // （expected＝這段裡所有 del 的字依序接起來，got＝這段裡所有 ins 的字依序接起來）；
+        // 若整段只有 del（真的整段沒寫）才維持 del，只有 ins（真的整段多打）才維持 ins。
+        // 這樣「can't read/recognize」對「don't recognize」就會變成一個紅色區塊、正下方
+        // 一次補上完整的正確片語，不會再切成一個留白＋一個看不懂色碼的字。
         const ops = [];
-        for (let k = 0; k < raw.length; k++) {
-            if (raw[k].type === 'del' && raw[k + 1] && raw[k + 1].type === 'ins') {
-                ops.push({ type: 'sub', expected: raw[k].expected, got: raw[k + 1].got });
-                k += 1;
+        let bufDel = [];
+        let bufIns = [];
+        function flushBuf() {
+            if (!bufDel.length && !bufIns.length) return;
+            if (bufDel.length && bufIns.length) {
+                ops.push({ type: 'sub', expected: bufDel.join(' '), got: bufIns.join(' ') });
+            } else if (bufDel.length) {
+                ops.push({ type: 'del', expected: bufDel.join(' '), got: '' });
             } else {
-                ops.push(raw[k]);
+                ops.push({ type: 'ins', expected: '', got: bufIns.join(' ') });
             }
+            bufDel = [];
+            bufIns = [];
         }
+        raw.forEach(function (op) {
+            if (op.type === 'del') { bufDel.push(op.expected); return; }
+            if (op.type === 'ins') { bufIns.push(op.got); return; }
+            flushBuf();
+            ops.push(op);
+        });
+        flushBuf();
         return ops;
     }
 
@@ -162,7 +209,9 @@ window.QuizPaperBuilder = (function () {
     function analyzeAnswerDiff(expected, got) {
         const exp = tokenizeWords(expected);
         const act = tokenizeWords(got);
-        const ops = alignTokens(exp, act);
+        const expOrig = tokenizeWordsOriginalCase(expected);
+        const actOrig = tokenizeWordsOriginalCase(got);
+        const ops = alignTokens(exp, act, expOrig, actOrig);
         const spelling_pairs = [];
         ops.forEach(function (op) {
             if (op.type === 'sub') {
@@ -360,6 +409,27 @@ window.QuizPaperBuilder = (function () {
         });
     }
 
+    /**
+     * 2026-08-13（老師要求：白名單展開不能只在「產生線上考卷」當下才算，meta 建立當下
+     * 〔feature-material-layout-pairing.js 的 buildGenerationFromMatrix〕就該先展開凍結進
+     * row._accepted_answers／row._accepted_answers_by_key）：這裡把「meta 裡已經凍結好的
+     * 變體」跟「用目前 answerEn 現場重算一次」的結果聯集起來，兩邊都要——凍結值是給其他不會
+     * 走 buildItemFromRow 這條路徑的消費者用（例如日後有別的工具直接讀 meta.json），現場重算
+     * 是為了保護沒有凍結值的舊教材、以及 answerEn 來源是公式／老師事後修正而跟凍結值不同步的
+     * 情況（雙重保險，兩邊有差異取聯集，不會漏掉任何一邊算出來的變體）。
+     */
+    function mergeAcceptedAnswers(computed, precomputed) {
+        const seen = {};
+        const out = [];
+        (computed || []).concat(precomputed || []).forEach(function (v) {
+            const key = normalizeAnswer(v);
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            out.push(v);
+        });
+        return out;
+    }
+
     function buildItemFromRow(row, opts) {
         const Eval = window.LayoutFieldsEval;
         if (!Eval) throw new Error('LayoutFieldsEval 未載入');
@@ -452,7 +522,8 @@ window.QuizPaperBuilder = (function () {
         if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
             subAnswers = row._answer_keys.map(function (key) {
                 const subAnswerEn = String(row[key] || '').trim();
-                return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: equivalentAcceptedSeed(subAnswerEn) };
+                const precomputed = (row._accepted_answers_by_key && row._accepted_answers_by_key[key]) || [];
+                return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(subAnswerEn), precomputed) };
             });
             if (!answerEn) answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
         }
@@ -464,7 +535,7 @@ window.QuizPaperBuilder = (function () {
             prompt_zh: promptZh,
             answer_en: answerEn,
             cloze_stem: clozeStem,
-            accepted_answers: equivalentAcceptedSeed(answerEn),
+            accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(answerEn), row._accepted_answers),
             sub_answers: subAnswers,
             cells: cells,
             cells_answer: cellsAnswer,
@@ -720,28 +791,49 @@ window.QuizPaperBuilder = (function () {
     }
 
     /**
-     * 學生句：對的黑字；錯的／多打的紅線刪除；缺漏顯示淡紅〔缺〕。
+     * 學生句：對的黑字；錯的／多打的純藍字（2026-08-13 老師回報「cross out 的線擋住了字，
+     * 看不清楚學生的答案」，改成只用顏色標示，不再加刪除線；同一天老師又要求「學生答案用
+     * 黑色，錯的部分用藍色，解答的部分用紅色」，把原本「錯的用紅、解答用綠」的配色對調＋
+     * 換色——這裡的「藍」專指學生寫錯／多寫的那個字，「紅」專指正下方補上的正確解答）。
+     * 💣 雷區（2026-08-13 老師再次明確要求「不要用那個 stupid〔缺〕了」）：缺漏／打錯／多打
+     * 都不再用文字標記或整句重複顯示正確答案，改成「逐字對齊、上下兩行」——上排是學生寫的
+     * （對的黑字／錯的或多打的紅字／缺漏處留白只用底線佔位），**正下方**直接補上「這一個字
+     * 該有的正確部分」（綠字，只補這一個字，不是整句話重複一次）；對的字下面不重複顯示。
      * 師生兩端共用同一份渲染，避免各自維護一份、之後長歪（曾發生過）。
      */
     function renderAnswerDiffHtml(ops) {
         if (!ops || !ops.length) return '<span style="color:#94A3B8;">（未作答）</span>';
         // 💣 雷區（2026-08-11 老師回報「你的答案一排全是〔缺〕很白痴」）：完全沒作答時，
-        // 逐字對齊會把「正確答案」的每一個字都各自標成一個 del（缺漏），排出一整排〔缺〕〔缺〕
-        // 〔缺〕……對老師／學生來說毫無資訊量，只要看得出「整題都沒寫」就好，不需要重複每個字都
+        // 逐字對齊會把「正確答案」的每一個字都各自標成一個 del（缺漏），排出一整排缺漏標記，
+        // 對老師／學生來說毫無資訊量，只要看得出「整題都沒寫」就好，不需要重複每個字都
         // 標一次。只有當「至少有一個字是真的打錯／多打」時，才逐字顯示 del／sub／ins 的完整對齊。
         if (ops.every(function (op) { return op.type === 'del'; })) {
             return '<span style="color:#94A3B8;">（未作答）</span>';
         }
-        return ops.map(function (op) {
+        const cells = ops.map(function (op) {
             if (op.type === 'match') {
-                return '<span style="color:#1E293B; font-weight:700;">' + escHtml(op.got) + '</span>';
+                return '<span style="display:inline-flex; flex-direction:column; align-items:center;">'
+                    + '<span style="color:#1E293B; font-weight:700;">' + escHtml(op.got) + '</span>'
+                    + '</span>';
             }
-            if (op.type === 'sub' || op.type === 'ins') {
-                return '<span style="color:#DC2626; font-weight:800; text-decoration:line-through; text-decoration-thickness:2px;">'
-                    + escHtml(op.got) + '</span>';
-            }
-            return '<span style="color:#F87171; font-weight:700; font-size:0.85em;">〔缺〕</span>';
-        }).join(' ');
+            // sub／ins：學生真的寫了字，但是錯的／多寫的，上排藍字顯示學生寫的內容，且底下
+            // 加底線（老師要求「藍色的部分也要畫底線」，跟 del 缺字佔位的底線樣式一致，
+            // 才看得出「這裡有問題」是同一種標記，不是顏色一種、底線又是另一種樣式）；
+            // del：學生這裡什麼都沒寫，上排不放任何文字標記，只用一條底線佔位示意「這裡缺一個字」。
+            const topHtml = op.type === 'del'
+                ? '<span style="display:inline-block; min-width:1.4em; border-bottom:3px solid #93C5FD;">&nbsp;</span>'
+                : '<span style="color:#2563EB; font-weight:800; border-bottom:3px solid #93C5FD; padding-bottom:1px;">' + escHtml(op.got) + '</span>';
+            // 正下方只補「這一個字」該有的正確部分（op.expected），不是整句答案——ins（多打，
+            // 完全沒有對應的正確字）expected 是空字串，這時下面不顯示任何東西。
+            // 2026-08-13 老師問「紅字比較小是不是怕跟旁邊重疊」：不是，每個字本來就已經是
+            // 上下兩排（column）各自一個獨立的 cell，紅字本來就已經在「下一行」，寬度不夠時
+            // 瀏覽器會把這個 cell 撐寬、不會跟旁邊的字重疊——所以字體大小可以放心跟藍字一樣大。
+            const bottomHtml = op.expected
+                ? ('<span style="color:#DC2626; font-weight:800; margin-top:1px;">' + escHtml(op.expected) + '</span>')
+                : '';
+            return '<span style="display:inline-flex; flex-direction:column; align-items:center;">' + topHtml + bottomHtml + '</span>';
+        });
+        return '<span style="display:inline-flex; flex-wrap:wrap; gap:8px; align-items:flex-start;">' + cells.join('') + '</span>';
     }
 
     function renderSpellingPairsHtml(pairs) {
@@ -949,6 +1041,7 @@ window.QuizPaperBuilder = (function () {
         expandWithEquivalents: expandWithEquivalents,
         isAcceptableAnswer: isAcceptableAnswer,
         equivalentAcceptedSeed: equivalentAcceptedSeed,
+        mergeAcceptedAnswers: mergeAcceptedAnswers,
         shuffleInPlace: shuffleInPlace
     };
 })();

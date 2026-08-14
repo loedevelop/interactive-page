@@ -2907,8 +2907,17 @@ window.FeatureExamJob = (function () {
      * 交給呼叫端（generatePaperForSave／saveBlock）之後直接補寫簽章即可，之後設定真的改了
      * 才會偵測到差異。
      */
-    function needsExamRegeneration(task) {
+    /**
+     * @param {object} task
+     * @param {string} [pathStr] 有給就先強制用目前畫面上（如果這個考試節點目前是展開狀態）的
+     * 值同步一次 task.raw_data.exam_job，不要只信賴之前每個欄位各自的 change 事件有沒有漏接
+     * （2026-08-13 老師回報「明明填了，儲存後學生端還是說沒產生線上卷」：懷疑是某些欄位互動
+     * 沒觸發 syncInlineEditor，讓這裡讀到的 exam_job 是存檔前一刻的舊資料，"看起來"沒填好，
+     * 直接被 examJobLooksReady 判定不值得產生，全程沒有任何警告，老師完全不會發現）。
+     */
+    function needsExamRegeneration(task, pathStr) {
         if (!task || task.type !== 'exam' || !task.raw_data) return false;
+        if (pathStr) syncInlineEditor(pathStr, task);
         const examJob = task.raw_data.exam_job;
         if (!examJobLooksReady(examJob)) return false;
         const paper = task.raw_data.quiz_paper;
@@ -3324,6 +3333,7 @@ window.FeatureExamJob = (function () {
         getCachedLastConfigForClass: getCachedLastConfigForClass,
         /** 給「儲存作業」批次流程用：這個考試任務的設定是否需要（重新）產生線上卷 */
         needsExamRegeneration: needsExamRegeneration,
+        examJobLooksReady: examJobLooksReady,
         ensureExamPaperSignatureBackfilled: ensureExamPaperSignatureBackfilled,
         taskHasSubmittedAnswers: taskHasSubmittedAnswers,
         /** 給「儲存作業」批次流程用：靜音產生（不彈 flash/alert），並跳過內部自動存檔（外層會整包存） */

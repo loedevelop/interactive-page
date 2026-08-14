@@ -384,8 +384,10 @@ window.FeatureExamReview = (function () {
             studentAnsHtml = '<span style="color:#047857; font-weight:800;">' + esc(got) + '</span>';
         } else {
             const best = window.QuizPaperBuilder.bestDiffForAnswer(item, got);
-            studentAnsHtml = window.QuizPaperBuilder.renderAnswerDiffHtml(best.diff.ops)
-                + window.QuizPaperBuilder.renderSpellingPairsHtml(best.diff.spelling_pairs);
+            // 2026-08-13 老師要求先關掉「拼錯紀錄」：目前逐字對齊機制抓出來的拼錯配對還不夠
+            // 準確、對老師來說沒有參考意義，先不顯示（renderAnswerDiffHtml 本身的上下對齊已經
+            // 夠用），之後演算法夠準了再考慮恢復 renderSpellingPairsHtml。
+            studentAnsHtml = window.QuizPaperBuilder.renderAnswerDiffHtml(best.diff.ops);
         }
 
         const primaryEditing = state.editingPrimaryIdx === idx;
