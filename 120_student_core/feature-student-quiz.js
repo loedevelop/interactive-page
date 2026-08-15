@@ -29,6 +29,9 @@ window.FeatureStudentQuiz = (function () {
      */
     const RETAKE_MODAL_ID = 'student-quiz-retake';
     const RETAKE_REPORT_MODAL_ID = 'student-quiz-retake-report';
+    /** ✍️ 輸入練習／🔧 輸入改正（見下方對應函式區塊的說明註解） */
+    const INPUT_PRACTICE_MODAL_ID = 'student-input-practice';
+    const INPUT_CORRECTION_MODAL_ID = 'student-input-correction';
 
     let examGuardOn = false;
     let allowUnload = false;
@@ -417,6 +420,13 @@ window.FeatureStudentQuiz = (function () {
                     + '<button type="button" class="btn btn-action" style="background:#059669; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.openRetakeReportFromRaw(\'' + safeAssign + '\',\'' + safeTask + '\')">查看整體報告</button>'
                     + '</div>')
                 : '');
+        // 🔧 輸入改正（獨立於重考錯題／申訴答案）：老師開啟且這次有錯題才顯示入口。
+        const inputCorrectionBannerHtml = (opts.inputCorrectionEnabled && wrongItems.length)
+            ? ('<div style="margin-bottom:12px; padding:10px 12px; background:#FFF7ED; border:1px solid #FDBA74; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
+                + '<span style="font-weight:800; color:#9A3412; font-size:0.85rem;">🔧 這次有錯題，可以做打字改正練習（照打正確答案）。</span>'
+                + '<button type="button" class="btn btn-action" style="background:#B45309; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.openInputCorrection(\'' + safeAssign + '\',\'' + safeTask + '\')">開始錯題改正練習</button>'
+                + '</div>')
+            : '';
         return (
             '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
@@ -430,6 +440,7 @@ window.FeatureStudentQuiz = (function () {
                     + ' · 嘗試離開累計 ' + esc(stats.leave_count_total) + ' 次'
                 + '</div>' +
                 retakeBannerHtml +
+                inputCorrectionBannerHtml +
                 '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">① 錯題本（本次）</div>' +
                 '<div id="' + wrongCardsBodyId + '" style="max-height:32vh; overflow:auto; margin-bottom:12px;">' + wrongCards + '</div>' +
                 appealSubmitHtml +
@@ -485,6 +496,7 @@ window.FeatureStudentQuiz = (function () {
                 retakeEligible: retakeEligible,
                 retakeReportReady: retakeReportReady,
                 allowAppeal: allowAppeal,
+                inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
                 appealsByItemId: appealsByItemIdFromRaw(raw)
             })
         });
@@ -1151,6 +1163,7 @@ window.FeatureStudentQuiz = (function () {
                     taskId: taskId,
                     retakeEligible: retakeEligible,
                     allowAppeal: !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false),
+                    inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
                     appealsByItemId: appealsByItemIdFromRaw(rawPayload)
                 })
             });
@@ -1461,6 +1474,312 @@ window.FeatureStudentQuiz = (function () {
         }
     }
 
+    /**
+     * ✍️ 輸入練習／🔧 輸入改正（2026-08-14 老師確認規格）：
+     * - 輸入練習：整份考卷變成打字練習，答案本來就顯示（紅字），沒有另外的「一般作答」步驟，
+     *   逐字比對＋逐字擋錯，連續打對指定次數才算完成該題；完成後答案消失、輸入框鎖住。
+     * - 輸入改正：交卷批改後，針對「答錯」的題目做同樣的打字改正練習，跟重考錯題／申訴答案
+     *   互相獨立（不共用資料，也不影響彼此的完成狀態）。
+     * - 兩者共用逐字比對引擎（QuizPaperBuilder.attachStrictRetypeInput，含 IME 組字感知），
+     *   共用同一套渲染／掛載邏輯（kind='practice'|'correction' 只影響 DOM id 前綴與資料來源）。
+     * - 進度可續打：每打對一次就即時存進 task_completions.raw_data（input_practice_progress／
+     *   input_correction_progress，形狀是 { [item_id]: { [part_key]: 已打對次數 } }），重開題目
+     *   時從這裡還原，不會讓已經打對的次數歸零。
+     */
+    function getItemExpectedParts(it) {
+        if (Array.isArray(it.sub_answers) && it.sub_answers.length > 1) {
+            return it.sub_answers.map(function (sa, idx) {
+                return { key: String(sa.key || ('sub' + idx)), expected: String(sa.answer_en || ''), label: sa.label || ('空格 ' + (idx + 1)) };
+            });
+        }
+        return [{ key: '_single', expected: String(it.answer_en || ''), label: null }];
+    }
+
+    /**
+     * 建立統一格式的練習題清單。kind='practice' 時 rawList 是 paper.items（完整題目，全部練習）；
+     * kind='correction' 時 rawList 是 quiz_stats.wrong_items（壓縮後的錯題紀錄，只有合併後的單一
+     * expected 字串——多空格分開比對的細節在批改當下已經合併，這裡不逐空格拆開，整段一起改正）。
+     */
+    function buildPracticeNormItems(kind, rawList) {
+        return (rawList || []).map(function (src, idx) {
+            if (kind === 'practice') {
+                return {
+                    item_id: String(src.item_id),
+                    headline: formatItemHeadline(src, idx + 1),
+                    prompt: src.prompt_zh || (src.cells && src.cells[1] && src.cells[1].text) || '',
+                    parts: getItemExpectedParts(src)
+                };
+            }
+            return {
+                item_id: String(src.item_id),
+                headline: src.headline || headlineFromWrongItem(src, idx + 1),
+                prompt: src.prompt_zh || '',
+                parts: [{ key: '_single', expected: String(src.expected || ''), label: null }]
+            };
+        });
+    }
+
+    function practiceProgressReps(progressMap, itemId, partKey) {
+        return (progressMap[itemId] && progressMap[itemId][partKey]) || 0;
+    }
+
+    function summarizePracticeProgress(normItems, requiredCount, progressMap) {
+        let done = 0;
+        normItems.forEach(function (it) {
+            const itemDone = it.parts.every(function (p) { return practiceProgressReps(progressMap, it.item_id, p.key) >= requiredCount; });
+            if (itemDone) done += 1;
+        });
+        return { total: normItems.length, done: done, allDone: normItems.length > 0 && done === normItems.length };
+    }
+
+    function renderPracticeSessionHtml(kind, normItems, requiredCount, progressMap) {
+        return normItems.map(function (it, i) {
+            const partsHtml = it.parts.map(function (p, j) {
+                const reps = practiceProgressReps(progressMap, it.item_id, p.key);
+                const rowId = 'pi-row-' + kind + '-' + i + '-' + j;
+                const labelHtml = p.label ? ('<div style="font-size:0.7rem; color:#64748B; font-weight:700;">' + esc(p.label) + '</div>') : '';
+                // 💣 老師要求（2026-08-14）：完成後紅字答案不要消失——完成只是拿掉輸入框，
+                // 答案本身仍留著給學生對照，不要整段被「✅ 已完成」取代掉。
+                if (reps >= requiredCount) {
+                    return '<div id="' + rowId + '" style="margin-top:6px;">' + labelHtml
+                        + '<div style="color:#DC2626; font-weight:900; font-size:1em; white-space:pre-wrap; margin-bottom:4px;">' + esc(p.expected) + '</div>'
+                        + '<div style="color:#047857; font-weight:800; font-size:0.85rem;">✅ 已完成（' + requiredCount + '/' + requiredCount + ' 次）</div></div>';
+                }
+                return (
+                    '<div id="' + rowId + '" style="margin-top:6px;">' + labelHtml +
+                        '<div id="pi-answer-' + kind + '-' + i + '-' + j + '" style="color:#DC2626; font-weight:900; font-size:1em; white-space:pre-wrap; margin-bottom:4px;">' + esc(p.expected) + '</div>' +
+                        '<input id="pi-input-' + kind + '-' + i + '-' + j + '" class="quiz-answer-input" type="text" lang="en" inputmode="text" ' +
+                            'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" ' +
+                            'data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" data-lt-active="false" ' +
+                            'placeholder="請照打上方答案" ' +
+                            'style="width:100%; padding:8px 10px; border:1px solid #CBD5E1; border-radius:8px; font-size:0.95rem;">' +
+                        '<div id="pi-counter-' + kind + '-' + i + '-' + j + '" style="font-size:0.72rem; color:#94A3B8; font-weight:700; margin-top:2px;">第 ' + (reps + 1) + '/' + requiredCount + ' 次</div>' +
+                    '</div>'
+                );
+            }).join('');
+            const allDone = it.parts.every(function (p) { return practiceProgressReps(progressMap, it.item_id, p.key) >= requiredCount; });
+            return (
+                '<div id="pi-card-' + kind + '-' + i + '" style="border:1px solid #E2E8F0; border-radius:10px; padding:12px; margin-bottom:10px; background:' + (allDone ? '#F0FDF4' : '#F8FAFC') + ';">' +
+                    '<div id="pi-head-' + kind + '-' + i + '" style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">' +
+                        '<div style="font-size:0.85rem; color:#0F766E; font-weight:900;">' + esc(it.headline) + '</div>' +
+                        (allDone ? '<span class="pi-done-badge" style="font-size:0.75rem; color:#047857; font-weight:900;">✅ 完成</span>' : '') +
+                    '</div>' +
+                    '<div style="font-size:1rem; font-weight:800; color:#1E293B; white-space:pre-wrap; margin:4px 0;">' + esc(it.prompt) + '</div>' +
+                    partsHtml +
+                '</div>'
+            );
+        }).join('');
+    }
+
+    /**
+     * 游標自動跳下一欄位（2026-08-14 老師要求）：某個空格打對達到指定次數（該欄位不用再打）後，
+     * 自動把焦點移到「目前這個空格之後、還沒完成的下一個輸入框」——可能是同一題的下一個
+     * sub_answer 空格，也可能是下一題的第一個空格；找不到（代表全部都完成了）就不做事。
+     */
+    function focusNextPracticeInput(kind, normItems, requiredCount, progressMap, fromI, fromJ) {
+        for (let i = fromI; i < normItems.length; i++) {
+            const it = normItems[i];
+            const startJ = (i === fromI) ? fromJ + 1 : 0;
+            for (let j = startJ; j < it.parts.length; j++) {
+                if (practiceProgressReps(progressMap, it.item_id, it.parts[j].key) >= requiredCount) continue;
+                const nextInput = document.getElementById('pi-input-' + kind + '-' + i + '-' + j);
+                if (nextInput) {
+                    nextInput.focus();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 掛上逐字比對引擎；已完成的空格不掛（避免完成後還被誤觸發）。回傳 detachAll()。 */
+    function wirePracticeSession(kind, normItems, requiredCount, progressMap, onProgress, onAllDone) {
+        const detachers = [];
+        normItems.forEach(function (it, i) {
+            it.parts.forEach(function (p, j) {
+                if (practiceProgressReps(progressMap, it.item_id, p.key) >= requiredCount) return;
+                const inputEl = document.getElementById('pi-input-' + kind + '-' + i + '-' + j);
+                if (!inputEl || !window.QuizPaperBuilder || typeof window.QuizPaperBuilder.attachStrictRetypeInput !== 'function') return;
+                const handle = window.QuizPaperBuilder.attachStrictRetypeInput(inputEl, p.expected, function () {
+                    if (!progressMap[it.item_id]) progressMap[it.item_id] = {};
+                    const nowReps = (progressMap[it.item_id][p.key] || 0) + 1;
+                    progressMap[it.item_id][p.key] = nowReps;
+                    if (typeof onProgress === 'function') onProgress(progressMap);
+                    if (nowReps >= requiredCount) {
+                        const rowEl = document.getElementById('pi-row-' + kind + '-' + i + '-' + j);
+                        if (rowEl) {
+                            const labelHtml = p.label ? ('<div style="font-size:0.7rem; color:#64748B; font-weight:700;">' + esc(p.label) + '</div>') : '';
+                            // 紅字答案不要消失，只是拿掉輸入框（見上方 renderPracticeSessionHtml 同一份規則）
+                            rowEl.innerHTML = labelHtml
+                                + '<div style="color:#DC2626; font-weight:900; font-size:1em; white-space:pre-wrap; margin-bottom:4px;">' + esc(p.expected) + '</div>'
+                                + '<div style="color:#047857; font-weight:800; font-size:0.85rem;">✅ 已完成（' + requiredCount + '/' + requiredCount + ' 次）</div>';
+                        }
+                        handle.detach();
+                        // 這個欄位不用再打了，游標自動移到下一個還沒完成的欄位，不用學生自己去點
+                        focusNextPracticeInput(kind, normItems, requiredCount, progressMap, i, j);
+                        const itemAllDone = it.parts.every(function (pp) { return practiceProgressReps(progressMap, it.item_id, pp.key) >= requiredCount; });
+                        if (itemAllDone) {
+                            const cardEl = document.getElementById('pi-card-' + kind + '-' + i);
+                            const headEl = document.getElementById('pi-head-' + kind + '-' + i);
+                            if (cardEl) cardEl.style.background = '#F0FDF4';
+                            if (headEl && !headEl.querySelector('.pi-done-badge')) {
+                                const span = document.createElement('span');
+                                span.className = 'pi-done-badge';
+                                span.style.fontSize = '0.75rem';
+                                span.style.color = '#047857';
+                                span.style.fontWeight = '900';
+                                span.textContent = '✅ 完成';
+                                headEl.appendChild(span);
+                            }
+                        }
+                        const allSessionDone = normItems.every(function (oit) {
+                            return oit.parts.every(function (pp) { return practiceProgressReps(progressMap, oit.item_id, pp.key) >= requiredCount; });
+                        });
+                        if (allSessionDone && typeof onAllDone === 'function') onAllDone();
+                    } else {
+                        inputEl.value = '';
+                        const counterEl = document.getElementById('pi-counter-' + kind + '-' + i + '-' + j);
+                        if (counterEl) counterEl.textContent = '第 ' + (nowReps + 1) + '/' + requiredCount + ' 次';
+                    }
+                });
+                detachers.push(handle.detach);
+            });
+        });
+        return function detachAll() { detachers.forEach(function (fn) { fn(); }); };
+    }
+
+    function openInputPractice(assignmentId, taskId) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        if (!task) return window.showFlash('找不到考試任務', 'error');
+        if (!task.raw_data || !task.raw_data.input_practice_enabled) return window.showFlash('這份考卷沒有開啟輸入練習', 'warning');
+        const paper = getPaper(task);
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) {
+            return window.showFlash('老師尚未產生線上卷（請先按「產生線上卷」並儲存作業）', 'warning');
+        }
+        if (!window.QuizPaperBuilder) return window.showFlash('作答模組未載入', 'error');
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return window.showFlash('ModalOverlay 未載入', 'error');
+
+        const requiredCount = Math.max(1, Number(task.raw_data.input_practice_count) || 1);
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const progressMap = JSON.parse(JSON.stringify(raw.input_practice_progress || {}));
+        const normItems = buildPracticeNormItems('practice', paper.items);
+        const title = String(task.title || task.raw_data.exam_title || '線上考試').replace(/<[^>]*>?/gm, '');
+
+        let detachAll = null;
+        window.ModalOverlay.open({
+            id: INPUT_PRACTICE_MODAL_ID,
+            tier: 'B',
+            // 每打對一次就即時存檔，沒有「未儲存」風險，隨時可以安全關閉。
+            isDirty: function () { return false; },
+            onClose: function () { if (detachAll) { detachAll(); detachAll = null; } },
+            onMount: function () {
+                detachAll = wirePracticeSession('practice', normItems, requiredCount, progressMap, function (pm) {
+                    persistResult(assignmentId, taskId, { input_practice_progress: pm }, false).catch(function (err) {
+                        console.warn('[FeatureStudentQuiz] persist input_practice_progress', err);
+                    });
+                }, function () {
+                    persistResult(assignmentId, taskId, { input_practice_progress: progressMap, input_practice_done: true }, true).then(function () {
+                        window.showFlash('🎉 輸入練習全部完成！', 'success');
+                    }).catch(function (err) {
+                        console.warn('[FeatureStudentQuiz] persist input_practice_done', err);
+                    });
+                });
+                // 開啟（或續打）當下，直接把焦點放到第一個還沒完成的欄位，不用學生自己點進去
+                focusNextPracticeInput('practice', normItems, requiredCount, progressMap, 0, -1);
+            },
+            contentHtml:
+                '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">✍️ 輸入練習・' + esc(title) + '</h3>' +
+                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + INPUT_PRACTICE_MODAL_ID + '\')">關閉</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem; color:#64748B; margin-bottom:10px;">答案已直接顯示在上方（紅字），請照打；打錯會被立刻擋下（無法繼續往下打），需連續打對 '
+                        + requiredCount + ' 次才算完成該題。可隨時關閉，進度自動儲存，下次回來會從中斷處繼續。</div>' +
+                    '<div style="overflow:auto; flex:1;">' + renderPracticeSessionHtml('practice', normItems, requiredCount, progressMap) + '</div>' +
+                '</div>'
+        });
+    }
+
+    function openInputCorrection(assignmentId, taskId) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        if (!task) return window.showFlash('找不到考試任務', 'error');
+        if (!task.raw_data || !task.raw_data.input_correction_enabled) return window.showFlash('這份考卷沒有開啟輸入改正', 'warning');
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const stats = readStats(raw);
+        const wrongItems = stats.wrong_items || [];
+        if (!wrongItems.length) return window.showFlash('目前沒有錯題可以改正', 'warning');
+        if (!window.QuizPaperBuilder) return window.showFlash('作答模組未載入', 'error');
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return window.showFlash('ModalOverlay 未載入', 'error');
+
+        const requiredCount = Math.max(1, Number(task.raw_data.input_correction_count) || 1);
+        const progressMap = JSON.parse(JSON.stringify(raw.input_correction_progress || {}));
+        const normItems = buildPracticeNormItems('correction', wrongItems);
+        const title = String(task.title || task.raw_data.exam_title || '線上考試').replace(/<[^>]*>?/gm, '');
+
+        let detachAll = null;
+        window.ModalOverlay.open({
+            id: INPUT_CORRECTION_MODAL_ID,
+            tier: 'B',
+            isDirty: function () { return false; },
+            onClose: function () { if (detachAll) { detachAll(); detachAll = null; } },
+            onMount: function () {
+                detachAll = wirePracticeSession('correction', normItems, requiredCount, progressMap, function (pm) {
+                    persistResult(assignmentId, taskId, { input_correction_progress: pm }, true).catch(function (err) {
+                        console.warn('[FeatureStudentQuiz] persist input_correction_progress', err);
+                    });
+                }, function () {
+                    persistResult(assignmentId, taskId, { input_correction_progress: progressMap, input_correction_done: true }, true).then(function () {
+                        window.showFlash('🎉 錯題改正練習全部完成！', 'success');
+                    }).catch(function (err) {
+                        console.warn('[FeatureStudentQuiz] persist input_correction_done', err);
+                    });
+                });
+                focusNextPracticeInput('correction', normItems, requiredCount, progressMap, 0, -1);
+            },
+            contentHtml:
+                '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">🔧 錯題改正練習・' + esc(title) + '</h3>' +
+                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + INPUT_CORRECTION_MODAL_ID + '\')">關閉</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem; color:#64748B; margin-bottom:10px;">正確答案已直接顯示在上方（紅字），請照打；打錯會被立刻擋下，需連續打對 '
+                        + requiredCount + ' 次才算完成該題改正。可隨時關閉，進度自動儲存。</div>' +
+                    '<div style="overflow:auto; flex:1;">' + renderPracticeSessionHtml('correction', normItems, requiredCount, progressMap) + '</div>' +
+                '</div>'
+        });
+    }
+
+    function getInputPracticeSummary(assignmentId, taskId) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        if (!task || !task.raw_data || !task.raw_data.input_practice_enabled) return null;
+        const paper = getPaper(task);
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) return { total: 0, done: 0, allDone: false, requiredCount: 1 };
+        const requiredCount = Math.max(1, Number(task.raw_data.input_practice_count) || 1);
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const normItems = buildPracticeNormItems('practice', paper.items);
+        const summary = summarizePracticeProgress(normItems, requiredCount, raw.input_practice_progress || {});
+        summary.requiredCount = requiredCount;
+        return summary;
+    }
+
+    function getInputCorrectionSummary(assignmentId, taskId) {
+        const task = findTaskInAssignments(assignmentId, taskId);
+        if (!task || !task.raw_data || !task.raw_data.input_correction_enabled) return null;
+        const prev = findCompletion(assignmentId, taskId);
+        const raw = (prev && prev.raw_data) ? prev.raw_data : {};
+        const stats = readStats(raw);
+        const wrongItems = stats.wrong_items || [];
+        const requiredCount = Math.max(1, Number(task.raw_data.input_correction_count) || 1);
+        if (!wrongItems.length) return { total: 0, done: 0, allDone: true, requiredCount: requiredCount, noWrong: true };
+        const normItems = buildPracticeNormItems('correction', wrongItems);
+        const summary = summarizePracticeProgress(normItems, requiredCount, raw.input_correction_progress || {});
+        summary.requiredCount = requiredCount;
+        return summary;
+    }
+
     return {
         openQuiz: openQuiz,
         submit: submit,
@@ -1473,6 +1792,10 @@ window.FeatureStudentQuiz = (function () {
         openRetakeReportFromRaw: openRetakeReportFromRaw,
         closeRetakeReport: closeRetakeReport,
         submitAppeals: submitAppeals,
+        openInputPractice: openInputPractice,
+        openInputCorrection: openInputCorrection,
+        getInputPracticeSummary: getInputPracticeSummary,
+        getInputCorrectionSummary: getInputCorrectionSummary,
         getLeaveStats: function () {
             return { leave_count: leaveCount, leave_log: leaveLog.slice() };
         },

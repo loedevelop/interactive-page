@@ -607,7 +607,12 @@ window.FeatureStudentTimeline = (() => {
                     .single(),
                 window.supabaseClient
                     .from('assignments')
-                    .select('id, title, target_date, due_date, tasks, raw_data, is_published, class_id')
+                    // 💣 雷區（2026-08-15 老師回報「細節描述在學生端根本沒顯示」）：這裡以前沒選
+                    // description 欄位，導致 ui-student-timeline-templates.js 用到的 course.description
+                    // 永遠是 undefined——不是渲染邏輯錯，是這裡的查詢從一開始就沒把這欄抓回來。
+                    // 老師端 a.description（見 ui-timeline-templates.js getAssignmentBlockHtml）能顯示，
+                    // 是因為老師端載入作業清單走的是別的查詢（select('*') 或含 description 的清單）。
+                    .select('id, title, description, target_date, due_date, tasks, raw_data, is_published, class_id')
                     .eq('class_id', classId)
                     .eq('is_published', true)
                     .is('deleted_at', null),

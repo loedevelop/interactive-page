@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
     <!-- v55 終極更新：強制破除快取，釋放最新 UI 狀態與 AI 容錯卡片 -->
-    <link rel="stylesheet" href="../010_css/style.css?v=57">
+    <link rel="stylesheet" href="../010_css/style.css?v=58">
     
     <style>
         body {
@@ -202,16 +202,16 @@
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
     <script src="../020_js_core/modal-overlay.js?v=2"></script>
     <script src="../020_js_core/layout-fields-eval.js?v=3"></script>
-    <script src="../020_js_core/quiz-paper-builder.js?v=22"></script> <!-- v22 紅字（正確解答那一行）字體改回跟藍字一樣大，不用縮小；每個字本來就已經上下分行顯示，字體加大瀏覽器會自動撐寬 cell，不會跟旁邊重疊 -->
+    <script src="../020_js_core/quiz-paper-builder.js?v=23"></script> <!-- v23 新增 attachStrictRetypeInput：✍️ 輸入練習／🔧 輸入改正共用的逐字元比對＋IME 組字感知輸入引擎 -->
 
     <script src="../120_student_core/ui-audio-templates.js?v=57"></script>
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=138"></script> <!-- v138 考試任務列新增「重考錯題（僅一次）」／「整體報告」按鈕入口 -->
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=139"></script> <!-- v139 考試任務列新增「✍️ 輸入練習」（取代一般作答）／「🔧 錯題改正練習」按鈕入口 -->
 
     <script defer src="../120_student_core/feature-student-audio.js?v=58"></script>
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>
     <script defer src="../120_student_core/feature-student-messages.js?v=13"></script>
-    <script defer src="../120_student_core/feature-student-quiz.js?v=21"></script> <!-- v21 修正關鍵雷區：ensureItemDiff 之前「已有 diff.ops 就不重算」，導致舊資料（交卷當下用舊版演算法算好、存進 DB 的 diff）永遠顯示舊結果，改哪個演算法／配色都看不出效果；改成永遠即時重算，畫面才會跟上最新的對齊／配色邏輯 -->
-    <script defer src="../120_student_core/feature-student-timeline.js?v=102"></script> <!-- v102 錄音上傳：沒有結構化 grading_units 時，改用 base 範圍文字展開頁數比對已選/已上傳檔數，數量不符時跳非阻擋式提醒 -->
+    <script defer src="../120_student_core/feature-student-quiz.js?v=23"></script> <!-- v23 完成一個欄位後自動跳下一欄（不用手動點）；完成後紅字答案不消失，只拿掉輸入框；開啟練習當下自動 focus 第一個未完成欄位 -->
+    <script defer src="../120_student_core/feature-student-timeline.js?v=103"></script> <!-- v103 老師回報「細節描述在學生端根本沒顯示」——根因是 fetchData() 查 assignments 時沒選 description 欄位，course.description 永遠是 undefined；補上這欄，v102 錄音上傳：沒有結構化 grading_units 時，改用 base 範圍文字展開頁數比對已選/已上傳檔數，數量不符時跳非阻擋式提醒 -->
     <script defer src="../120_student_core/feature-student-analytics.js?v=3"></script>
     
     <script defer>

@@ -1381,8 +1381,27 @@ window.UIStudentTimelineTemplates = (() => {
                                 quizScoreHtml = `<span style="font-size:0.8rem; font-weight:800; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:2px 8px; border-radius:6px;">${escapeAttr(qr.correct)}/${escapeAttr(qr.total)}（${escapeAttr(qr.score)}%）</span>`;
                             }
                         }
+                        // ✍️ 輸入練習：老師勾選後，整份考卷變成打字練習（答案直接顯示，逐字打對指定次數
+                        // 才算完成），沒有另外的「一般作答」步驟，所以要整個取代下面一般考試按鈕，不是並存。
+                        const inputPracticeEnabled = !!(task.raw_data && task.raw_data.input_practice_enabled);
                         if (!itemN) {
                             btn = `<div style="color:#92400E; font-size:0.85rem; font-weight:800; background:#FFFBEB; padding:4px 10px; border-radius:6px; border:1px solid #FDE68A;">老師尚未產生線上卷</div>`;
+                        } else if (inputPracticeEnabled) {
+                            const practiceSummary = (window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.getInputPracticeSummary === 'function')
+                                ? window.FeatureStudentQuiz.getInputPracticeSummary(course.id, task.id)
+                                : null;
+                            const pTotal = practiceSummary ? practiceSummary.total : itemN;
+                            const pDone = practiceSummary ? practiceSummary.done : 0;
+                            const pAllDone = !!(practiceSummary && practiceSummary.allDone);
+                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${pAllDone ? 'checked' : ''} onclick="return false;" tabindex="-1" title="完成所有題目的輸入練習後自動打勾">`;
+                            const practiceBtnLabel = pAllDone ? '✅ 已完成・重新練習' : (pDone > 0 ? '✍️ 繼續輸入練習' : '✍️ 開始輸入練習');
+                            btn = `
+                                <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    <button type="button" class="btn-action" style="background:#0F766E; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openInputPractice('${safeCourseId}', '${safeTaskId}')">${practiceBtnLabel}</button>
+                                    <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pDone}/${pTotal} 題已完成</span>
+                                </div>
+                            `;
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
                             const hasQuizDone = !!(quizRaw && (quizRaw.quiz_result || (quizRaw.quiz_stats && quizRaw.quiz_stats.complete_count)));
@@ -1403,6 +1422,14 @@ window.UIStudentTimelineTemplates = (() => {
                                     ? `<button type="button" class="btn-action" style="background:white; color:#047857; border:1px solid #A7F3D0; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
                                         onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeReportFromRaw('${safeCourseId}', '${safeTaskId}')">📊 整體報告</button>`
                                     : '');
+                            // 🔧 輸入改正（獨立於重考錯題／申訴答案）：有錯題才顯示；完成後顯示已完成狀態。
+                            const correctionSummary = (hasQuizDone && window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.getInputCorrectionSummary === 'function')
+                                ? window.FeatureStudentQuiz.getInputCorrectionSummary(course.id, task.id)
+                                : null;
+                            const correctionBtn = (correctionSummary && correctionSummary.total > 0)
+                                ? `<button type="button" class="btn-action" style="background:${correctionSummary.allDone ? 'white' : '#EA580C'}; color:${correctionSummary.allDone ? '#B45309' : 'white'}; border:${correctionSummary.allDone ? '1px solid #FDBA74' : 'none'}; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openInputCorrection('${safeCourseId}', '${safeTaskId}')">${correctionSummary.allDone ? '✅ 改正練習已完成' : `🔧 錯題改正練習 (${correctionSummary.done}/${correctionSummary.total})`}</button>`
+                                : '';
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
@@ -1410,6 +1437,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${quizBtnLabel}</button>
                                     ${reviewBtn}
                                     ${retakeBtn}
+                                    ${correctionBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${itemN} 題</span>
                                 </div>
                             `;

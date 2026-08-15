@@ -1575,3 +1575,61 @@ try {
 104. 「教材／考試 Layout 搭配」區塊按「＋新增搭配」同樣會捲動＋高亮到新列
 105. 刻意讓 `renderAppRow`／`bindAppRowEvents` 拋出例外（開發測試用）時，畫面會用紅字 flash 顯示
      「❌ 新增套用列失敗：...」，不會安靜地什麼都不做
+
+## 「畫面老是卡在本機 Excel」：上傳成功後沒把 source_kind 改回 drive（2026-08-14）
+
+> 老師回報：切到「☁️ 用上面歸屬資料夾的活頁」、按儲存，重新整理後又跳回
+> 「🖥️ 改用本機 Excel 掃描活頁名稱」＋舊檔名（例如 `GEPT-2.xlsx`），來回切、來回存都沒用。
+
+### 根因（不可再犯）
+
+```
+📄「活頁來源」的 local 模式，設計上只是「怎麼知道要套用哪些活頁」的一次性輔助手段
+（見本檔最上面 2026-08-06 規劃備註）——本機檔名本身不該是這筆配對紀錄長期的身分。
+
+但「產生 meta / script 並上傳」成功後的自動記錄邏輯（handleConfirmUpload 內，
+2026-08-13 老師要求「上傳成功後自動記住配對」那段）只修正了 sheet_ids 要換成真正落地的
+finalStem，卻沒把 source_kind／source_file_name 也改回 'drive'——導致：
+
+1. material_sheets 該組所有列被永久存成 source_kind='local' + source_file_name='GEPT-2.xlsx'
+2. ensureAppRowState 每次都依 app.source_kind==='local' 把畫面預設打回本機模式
+3. 老師手動切回「☁️」只改到記憶體內 state，只要程式之後任何流程重新 collectAppFromRow()
+   並存檔（例如又上傳了其他活頁），又會把 local 寫回去，形成「怎麼切都切不掉」的錶死結
+```
+
+### 正確做法
+
+```javascript
+// ✅ handleConfirmUpload 的自動記錄區塊：上傳成功即代表這筆配對「現在真的是 Drive 來源」，
+//    要強制改寫，不能只改 sheet_ids
+appRecord.source_kind = 'drive';
+appRecord.source_file_name = '';
+// 存檔成功後畫面也要立刻同步，不能等下次整頁重新整理
+state.sourceKind = 'drive';
+state.localFileName = '';
+state.localSheetNames = [];
+refreshAppSheetsArea(rowEl, appId);
+```
+
+```javascript
+// ❌ 只換 sheet_ids，source_kind／source_file_name 原樣存回去
+appRecord.sheet_ids = realSheetIds;
+await saveTemplateApplications(merged); // source_kind 仍是 'local'，畫面永遠卡住
+```
+
+### 修復已卡住的既有資料
+
+一次性資料修正（不是每次都要跑）：
+
+```sql
+UPDATE public.material_sheets
+SET source_kind = 'drive', source_file_name = NULL, updated_at = now()
+WHERE source_kind = 'local' AND layout_template_id IS NOT NULL;
+```
+
+### 實測
+
+106. 用「🖥️ 本機 Excel」模式產生並上傳成功後，該列**立刻**自動切回「☁️ 用上面歸屬資料夾的活頁」
+     顯示，不用手動點、也不用重新整理
+107. 重新整理老師頁、重新進這個作業／教材列表，該列仍維持「☁️」模式，不會跳回本機檔名
+108. 之後又用本機 Excel 對同一組追加上傳其他活頁，不會把已經是 drive 狀態的既有活頁打回 local

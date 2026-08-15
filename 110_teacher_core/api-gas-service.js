@@ -21,13 +21,39 @@ window.GasService = (function() {
    * 對「回應是 HTML 而非 JSON」這個特定情境多容忍一次，不要一次就跳出嚇人的「網址已失效」。
    * 只重試 1 次、固定延遲（不是遞增/無限重試），跟 AI 批改管線禁止的「連線失敗就自動延遲
    * 重試再 invoke 造成雪崩」是不同情境（這裡是單次前端 fetch 重試，不會疊加觸發後端批改）。
+   *
+   * 💣 雷區（2026-08-14 老師回報「教材資料夾一直卡在『⏳ 載入資料夾清單…』，重新整理也一樣，
+   * 從來不會變成錯誤訊息或成功」）：這裡的 fetch() 以前完全沒有逾時設定——如果 GAS 那邊真的
+   * 卡住（子資料夾很多、Drive searchFiles 慢、或 Google 前端轉址那段偶發卡住不回應），
+   * 瀏覽器會無限期等下去，前端所有依賴這次 fetch 的 Promise（ensureMetaCatalog／
+   * MaterialFolderPicker 的 loading 狀態）永遠不會 resolve 也不會 reject，UI 就會卡死在
+   * 「載入中」文字，重新整理也只是重啟一次一樣會卡住的請求，看起來像「永遠壞掉」。
+   * 修法：用 AbortController 設 55 秒逾時，逾時就丟明確的逾時錯誤，讓呼叫端既有的
+   * catch／重試按鈕流程接手，不再無限期卡住。
    */
   async function postGasJson(payload, _isRetry) {
-    const response = await fetch(GAS_WEB_APP_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(payload)
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(function () { controller.abort(); }, 55000);
+    let response;
+    try {
+      response = await fetch(GAS_WEB_APP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+    } catch (fetchErr) {
+      if (fetchErr && fetchErr.name === 'AbortError') {
+        throw new Error(
+          'GAS 逾時（等了 55 秒仍沒有回應，動作：' + (payload && payload.action ? payload.action : '?') + '）。'
+          + '常見原因：教材資料夾裡的檔案／子資料夾太多、Drive 端暫時變慢，或 GAS 冷啟動。'
+          + '請按重試；若持續逾時，可考慮先減少該資料夾底下的檔案數量再試。'
+        );
+      }
+      throw fetchErr;
+    } finally {
+      clearTimeout(timeoutId);
+    }
     const text = await response.text();
     var result;
     try {

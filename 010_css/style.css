@@ -97,21 +97,21 @@ body {
    Teacher Portal 專屬排版 (Sidebar & Layout)
    ========================================= */
 /* 2026-08-13 老師回報：班級一多，下面「全域管理」整排（班群管理／教材Layout搭配／收集文稿…）
-   會被 body 的 overflow:hidden 直接切掉、完全點不到——sidebar 本身要能自己捲動，
-   不能整頁沒有任何捲軸卻讓內容硬生生溢出消失。
-   💣 雷區（2026-08-14 老師回報「講過要自動捲軸，怎麼還是被切掉」）：上面這行 overflow-y:auto
-   在 2026-08-13 就已經加了，但 teacher/index.html／student/index.html 對 style.css 的
-   ?v= 快取版本號那次沒有跟著 bump，導致舊訪客的瀏覽器一直吃到「加 overflow-y:auto 之前」
-   那份快取的 style.css，畫面上等於完全沒改到——這裡順手補上 min-height:0，避免
-   body（row flex 容器）在極端情況下用 align-items:stretch 算出的高度被內容撐破、
-   讓 overflow-y:auto 真的失效；實際快取問題請看 index.html 內 style.css?v= 是否已 bump。 */
-.sidebar { width: 260px; min-height: 0; background: var(--card-bg); border-right: 1px solid #E2E8F0; display: flex; flex-direction: column; padding: 20px; z-index: 10; overflow-y: auto; }
-.sidebar-logo { font-size: 1.5rem; font-weight: 900; color: var(--primary); margin-bottom: 30px; text-align: center; }
+   會被 body 的 overflow:hidden 直接切掉、完全點不到。
+   2026-08-14 再調整：不要讓「我的班級」跟「全域管理」共用同一條捲軸（那樣班級一多，
+   要先捲到底才看得到全域管理，體感還是像被藏起來）。改成上下兩個獨立區塊：
+   上面「.sidebar-classes」自己有 flex:1+overflow-y:auto，班級再多也只在這塊裡面捲動；
+   下面「.bottom-nav」永遠固定在 sidebar 最下方、不隨班級清單捲動、也不會被切掉。 */
+.sidebar { width: 260px; min-height: 0; background: var(--card-bg); border-right: 1px solid #E2E8F0; display: flex; flex-direction: column; padding: 20px; z-index: 10; overflow: hidden; }
+.sidebar-logo { font-size: 1.5rem; font-weight: 900; color: var(--primary); margin-bottom: 20px; text-align: center; flex-shrink: 0; }
+/* 上區塊：班級清單，自己捲動，不會把下面的全域管理擠出畫面 */
+.sidebar-classes { flex: 1; min-height: 0; overflow-y: auto; }
 .nav-section-title { font-size: 0.8rem; color: var(--text-muted); font-weight: 800; margin-bottom: 10px; padding-left: 5px; letter-spacing: 1px; }
 .class-item { padding: 12px 15px; margin-bottom: 8px; border-radius: 10px; color: var(--text-muted); font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: 0.2s; }
 .class-item:hover { background: var(--primary-light); color: var(--primary-dark); }
 .class-item.active { background: var(--primary); color: white; box-shadow: var(--shadow); }
-.bottom-nav { margin-top: auto; border-top: 1px solid #E2E8F0; padding-top: 20px; }
+/* 下區塊：全域管理，永遠固定顯示在 sidebar 最下方，不參與上面那塊的捲動、也不被壓縮 */
+.bottom-nav { flex-shrink: 0; border-top: 1px solid #E2E8F0; padding-top: 20px; }
 
 /* 🌟 真正的遠見架構：將主內容區改為 Flex 容器，並鎖死外層捲動 */
 .main-content { 

@@ -443,7 +443,7 @@ window.BuilderStore = (() => {
                 }
 
                 if (t.type === 'exam') {
-                    // 考試標題空白／自動繼承 → 跟同層錄音 base 範圍
+                    // 考試標題空白／自動繼承 → 跟同層錄音的標題（不是 base 範圍，見 getSiblingAudioRangeLabel 說明）
                     if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         const examRange = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
                         if (examRange) {

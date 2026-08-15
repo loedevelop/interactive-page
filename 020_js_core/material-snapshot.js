@@ -135,6 +135,25 @@ window.MaterialSnapshot = (function () {
         return stemStr;
     }
 
+    /**
+     * 找不到列時，把這份 meta 實際偵測到的頁碼／題號列出來，老師才能立刻判斷是「選錯檔案」
+     * 還是「範圍打錯」——原本只丟「此範圍找不到任何列：pp. 1~2」，老師完全看不出這份檔案
+     * 實際內容是從第幾頁開始，只能自己開 meta.json 或 Excel 逐行核對。
+     */
+    function describeAvailableForKind(rows, kind) {
+        var seen = {};
+        (rows || []).forEach(function (row) {
+            var v = kind === 'item'
+                ? toNumber(row.item_no != null ? row.item_no : row.itemNo)
+                : toNumber(row.page);
+            if (!isNaN(v)) seen[v] = true;
+        });
+        var nums = Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+        if (!nums.length) return '這份 meta 完全沒有可辨識的' + (kind === 'item' ? '題號' : '頁碼') + '（可能欄位對應設錯，或該欄整批留白）';
+        var preview = nums.length > 12 ? (nums.slice(0, 12).join(', ') + '…共 ' + nums.length + ' 個') : nums.join(', ');
+        return '這份 meta 實際偵測到的' + (kind === 'item' ? '題號' : '頁碼') + '有：' + preview;
+    }
+
     function filterRowsByRangeSpec(rows, rangeSpec) {
         var spec = typeof rangeSpec === 'string' ? parseRangeSpec(rangeSpec) : rangeSpec;
         if (!spec) throw new Error('缺少範圍');
@@ -161,7 +180,7 @@ window.MaterialSnapshot = (function () {
             throw new Error('未知範圍類型');
         }
         if (list.length === 0) {
-            throw new Error('此範圍找不到任何列：' + (spec.label || ''));
+            throw new Error('此範圍找不到任何列：' + (spec.label || '') + '。' + describeAvailableForKind(rows, spec.kind));
         }
         return list;
     }
@@ -214,7 +233,8 @@ window.MaterialSnapshot = (function () {
         }
 
         if (list.length === 0) {
-            throw new Error('此範圍找不到任何列，請確認 meta 內容與篩選條件');
+            var kindForHint = mode === 'item_range' ? 'item' : 'page';
+            throw new Error('此範圍找不到任何列，請確認 meta 內容與篩選條件。' + describeAvailableForKind(rows, kindForHint));
         }
         return list;
     }

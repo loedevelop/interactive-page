@@ -135,14 +135,86 @@ window.FeatureExamJob = (function () {
         window.showFlash('已套用本班上次出題設定（' + (cfg.material_folder || cfg.sections && cfg.sections[0] && cfg.sections[0].sheet_id || '') + '），請確認後按「儲存作業」（會自動產生線上卷）', 'success');
     }
 
-    function layoutFieldHint(layoutId) {
-        if (String(layoutId || '').indexOf('tpl:') === 0) {
-            const tplProfile = window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.resolveTemplateProfile === 'function'
-                ? window.FeatureMaterialLayoutPairing.resolveTemplateProfile(layoutId)
-                : null;
-            return tplProfile ? (tplProfile.fields + '｜答案：' + tplProfile.fields_answer) : '（Template 已被刪除，請重選 layout_profile_id）';
+    /**
+     * 2026-08-14（範本庫合併）：考卷範本跟擷取範本現在是同一張表 material_templates
+     * （見 feature-template-library.js），用 is_exam_role 角色勾選框篩選，不再是各自獨立的
+     * material_exam_templates。這裡全部改成呼叫共用資料層，不自己直接查資料庫——避免這裡跟
+     * feature-material-layout-pairing.js 各自維護一份取資料邏輯，之後改一邊漏一邊。
+     * LAYOUT_CATALOG／LAYOUT_FIELD_HINTS 兩個常數保留純粹是給 resolveExamTemplateProfile()
+     * 萬一資料庫種子資料缺失時的最後一層安全網，不是主要來源。
+     */
+    async function fetchExamTemplates(force) {
+        await window.FeatureTemplateLibrary.fetchTemplates(force);
+        return window.FeatureTemplateLibrary.getExamTemplates();
+    }
+
+    /** 同步讀「目前已知」的考卷範本清單，第一次呼叫順便觸發背景載入（跟其他 CachedSync helper 同精神） */
+    function getExamTemplatesCachedSync() {
+        return window.FeatureTemplateLibrary.getExamTemplates();
+    }
+
+    /** 新增純考卷範本（不勾擷取角色）；若要讓既有擷取範本「加開」試卷角色，改用
+     * FeatureTemplateLibrary.addRole(id,'exam')（見 feature-material-layout-pairing.js
+     * 「✏️ 編輯」表單裡的「🧾 考卷範本」checkbox，2026-08-15 起搬進編輯表單，不再放在清單），
+     * 不要走這裡新增一筆重複的資料。 */
+    async function createExamTemplate(fields) {
+        const payload = Object.assign({ is_extraction_role: false, is_exam_role: true }, fields || {});
+        return window.FeatureTemplateLibrary.createTemplate(payload);
+    }
+
+    async function updateExamTemplate(id, fields) {
+        return window.FeatureTemplateLibrary.updateTemplate(id, fields);
+    }
+
+    /** 角色感知刪除：若這筆範本也勾了擷取角色（雙用），只關掉試卷角色，不會波及擷取範本那一側資料 */
+    async function deleteExamTemplate(id) {
+        return window.FeatureTemplateLibrary.removeRole(id, 'exam');
+    }
+
+    /**
+     * 統一考卷範本解析：委派給 FeatureTemplateLibrary.resolveTemplateProfile()（單一實作，
+     * 涵蓋新格式 uuid／legacy_profile_id（舊 LAYOUT_CATALOG 字串）／legacy_id（遷移前 mft_xxx
+     * 字串）／'tpl:{id}' 四種來源），不再各自寫一份。找不到時才退回 LAYOUT_CATALOG 常數當最後安全網。
+     * @returns {{profile_id, label, fields, fields_answer, quiz_prompt, quiz_answer, lines_per_page}|null}
+     */
+    function resolveExamTemplateProfile(pid) {
+        const id = String(pid || '').trim();
+        if (!id) return null;
+        const resolved = window.FeatureTemplateLibrary.resolveTemplateProfile(id);
+        if (resolved) return resolved;
+        // 資料庫種子資料缺失時的最後安全網（正常情況不會走到這裡，backfill 已覆蓋所有已用過教材系統的老師）
+        const builtin = LAYOUT_CATALOG.find(function (l) { return l.id === id; });
+        if (!builtin) return null;
+        return {
+            profile_id: id,
+            label: builtin.label,
+            fields: LAYOUT_FIELD_HINTS[id] || '',
+            fields_answer: 'X',
+            quiz_prompt: '',
+            quiz_answer: '',
+            lines_per_page: DEFAULT_LINES_PER_PAGE
+        };
+    }
+
+    /** 出題下拉「⭐建議」用：只讀資料庫已有的考卷範本清單，不再自動把擷取範本換算成選項 */
+    function buildExamTemplateSelectOptionsHtml(selectedId, suggestedId) {
+        const templates = getExamTemplatesCachedSync();
+        if (!templates.length) {
+            return '<option value="">（尚未建立任何考卷範本，請到「🧾 考卷範本」新增）</option>';
         }
-        return LAYOUT_FIELD_HINTS[layoutId] || '（依 layout_profile）';
+        return templates.map(function (t) {
+            const isSuggested = !!(suggestedId && t.id === suggestedId);
+            const isSelected = selectedId === t.id || (!!t.legacy_profile_id && selectedId === t.legacy_profile_id);
+            const label = (isSuggested ? '⭐ ' : '') + t.name;
+            return '<option value="' + esc(t.id) + '"' + (isSelected ? ' selected' : '') + '>' + esc(label) + '</option>';
+        }).join('');
+    }
+
+    function layoutFieldHint(layoutId) {
+        const profile = resolveExamTemplateProfile(layoutId);
+        if (profile) return profile.fields + (profile.fields_answer ? ('｜答案：' + profile.fields_answer) : '');
+        if (String(layoutId || '').indexOf('tpl:') === 0) return '（擷取範本已被刪除，請重選 layout_profile_id）';
+        return layoutId ? '（找不到這個考卷範本，可能已被刪除）' : '（依 layout_profile）';
     }
 
     function metaStemFromFileName(fileName) {
@@ -296,14 +368,34 @@ window.FeatureExamJob = (function () {
         return [];
     }
 
-    /** 找與考試任務同層（或整棵樹）的錄音任務，同層優先 */
+    /** 找與考試任務「同層」的錄音任務（只看同一個 subTasks 陣列，不跨區塊） */
     function findPreferredAudioTask(tasksRoot, examPathStr) {
         const hit = findPreferredAudioHit(tasksRoot, examPathStr);
         return hit ? hit.task : null;
     }
 
-    /** @returns {{ task: object, pathStr: string }|null} */
+    /**
+     * 💣 雷區（2026-08-14 老師回報「獨立的小考，怎麼一直有問題，為什麼只能選 layout，
+     * 不用選 meta」）：這裡原本「同層找不到才 walkTasks 整棵樹（全部作業區塊）找第一個
+     * audio_record」——這完全違反 exam-standalone-material-invariant.mdc 明訂的
+     * 「同層有 audio_record 才維持 combo，同層沒有才顯示教材來源下拉」。一個作業裡通常
+     * 有好幾個單元（各自一組錄音＋考試），這個考試任務只要「同層」沒有錄音任務（老師故意
+     * 只放一個獨立小考，不放錄音），就會被這個 walkTasks 誤抓到「整份作業裡任何一個、
+     * 完全不相關單元」的錄音任務，被系統偷偷當成 combo 配對——於是 isStandaloneExam
+     * 變成 false，「🗂 教材來源」＋「教材資料夾」下拉整個不顯示，老師想選 meta（活頁）
+     * 卻連選項都看不到，只能看到 layout。改成同層真的沒有就直接回 null，不要跨區塊亂配對。
+     */
     function findPreferredAudioHit(tasksRoot, examPathStr) {
+        const hits = findAllSiblingAudioHits(tasksRoot, examPathStr);
+        return hits.length ? hits[0] : null;
+    }
+
+    /**
+     * 同層「所有」錄音任務（不是只回第一個）：一個作業裡如果同層放了不只一個單元的錄音
+     * （老師回報「有兩個呢？」），「從同作業錄音範圍帶入」需要知道有幾個才能輪流套用，
+     * 不能只偷偷抓第一個交差。
+     */
+    function findAllSiblingAudioHits(tasksRoot, examPathStr) {
         const arr = String(examPathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
         let siblingList = tasksRoot;
         let siblingBasePath = [];
@@ -321,19 +413,14 @@ window.FeatureExamJob = (function () {
                 siblingBasePath = base;
             }
         }
+        const hits = [];
         for (let i = 0; i < (siblingList || []).length; i++) {
             const t = siblingList[i];
             if (t && t.type === 'audio_record') {
-                return { task: t, pathStr: siblingBasePath.concat([i]).join('-') };
+                hits.push({ task: t, pathStr: siblingBasePath.concat([i]).join('-') });
             }
         }
-        let found = null;
-        walkTasks(tasksRoot || [], function (t, pathArr) {
-            if (!found && t && t.type === 'audio_record') {
-                found = { task: t, pathStr: pathArr.join('-') };
-            }
-        });
-        return found;
+        return hits;
     }
 
     /** 從錄音節點 DOM 讀 meta 列（比 raw_data 新：加第 3 筆後尚未 Snapshot 也能帶入） */
@@ -670,10 +757,17 @@ window.FeatureExamJob = (function () {
         return ((q / avail) * 100).toFixed(1) + '%';
     }
 
-    function expectedSlotsForSection(section) {
+    /**
+     * @param {object} section
+     * @param {number} [fallbackLpp] 這一列沒手動設過每頁行數時的退回值——老師強烈回報「範本裡都有
+     * 每頁行數，算不出來嗎」：這裡的 fallback 應該優先用「這一列實際套用的考卷範本」自己的
+     * lines_per_page（呼叫端傳入 resolveExamTemplateProfile(...).lines_per_page），只有連範本都
+     * 解析不到時才退回全站預設 DEFAULT_LINES_PER_PAGE，不可一律用寫死的 10 蓋過範本設定的值。
+     */
+    function expectedSlotsForSection(section, fallbackLpp) {
         const start = Number(section && section.start);
         const end = Number(section && section.end);
-        const lpp = Number(section && section.lines_per_page) || DEFAULT_LINES_PER_PAGE;
+        const lpp = Number(section && section.lines_per_page) || Number(fallbackLpp) || DEFAULT_LINES_PER_PAGE;
         if (isNaN(start) || isNaN(end)) return null;
         if ((section.range_type || 'page') !== 'page') return null;
         return Math.max(1, end - start + 1) * lpp;
@@ -685,7 +779,8 @@ window.FeatureExamJob = (function () {
         jobId: '',
         examTitle: '',
         bankId: BANK_CATALOG[0] ? BANK_CATALOG[0].id : '',
-        layoutProfileId: LAYOUT_CATALOG[0] ? LAYOUT_CATALOG[0].id : '',
+        // 💣 雷區：不可再偷偷退回內建考卷範本第一項——逼老師自己在下拉挑，避免選錯排版公式
+        layoutProfileId: '',
         assignmentId: '',
         taskId: '', // 空＝儲存時新建 exam 任務
         sections: [
@@ -804,6 +899,9 @@ window.FeatureExamJob = (function () {
             const s = bySheet[sheet];
             s.pages.sort(function (a, b) { return a - b; });
             const pageSpan = s.pages.length || Math.max(1, s.end - s.start + 1);
+            // 💣 老師回報「每頁行數，算不出來嗎」：grading_units 本身就記著每頁真實題數
+            // （item_count／item_nos），算得出來就不要一律塞固定的 10，直接用真實平均值。
+            const realLpp = (pageSpan > 0 && s.avail > 0) ? Math.max(1, Math.round(s.avail / pageSpan)) : lpp;
             return {
                 sheet_id: s.sheet_id,
                 range_type: 'page',
@@ -811,7 +909,7 @@ window.FeatureExamJob = (function () {
                 end: s.end,
                 pages: s.pages.slice(),
                 count: s.avail > 0 ? s.avail : (pageSpan * lpp),
-                lines_per_page: lpp
+                lines_per_page: realLpp
             };
         });
     }
@@ -1298,9 +1396,8 @@ window.FeatureExamJob = (function () {
         const bankOpts = BANK_CATALOG.map(function (b) {
             return '<option value="' + esc(b.id) + '"' + (state.bankId === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>';
         }).join('');
-        const layoutOpts = LAYOUT_CATALOG.map(function (l) {
-            return '<option value="' + esc(l.id) + '"' + (state.layoutProfileId === l.id ? ' selected' : '') + '>' + esc(l.label) + '</option>';
-        }).join('');
+        const layoutOpts = '<option value=""' + (state.layoutProfileId ? '' : ' selected') + '>請選擇考卷範本</option>'
+            + buildExamTemplateSelectOptionsHtml(state.layoutProfileId, '');
 
         const assignOpts = (cachedContext.assignments || []).map(function (a) {
             return '<option value="' + esc(a.id) + '"' + (String(state.assignmentId) === String(a.id) ? ' selected' : '') + '>'
@@ -1579,7 +1676,7 @@ window.FeatureExamJob = (function () {
         state.jobId = newJobId();
         state.examTitle = '';
         state.bankId = BANK_CATALOG[0] ? BANK_CATALOG[0].id : '';
-        state.layoutProfileId = LAYOUT_CATALOG[0] ? LAYOUT_CATALOG[0].id : '';
+        state.layoutProfileId = '';
         state.assignmentId = '';
         state.taskId = '';
         state.sections = [
@@ -1644,15 +1741,16 @@ window.FeatureExamJob = (function () {
         // 💣 雷區：layoutId 從未明確選過時，不可偷偷預設成清單第一項（曾造成「明明沒選過
         // 整句翻譯，畫面卻顯示已選好」的誤導）。真正的預設值要等下面算出 suggestedLayoutIds
         // 後才決定（有登記建議 → 採建議；沒有 → 留空顯示「尚未選擇」，強制老師自己挑）。
-        // bank_id 不一樣：它只是原樣寫進匯出給 Python 排版系統的 spec_ref.bank_id 標籤，不影響
-        // 線上卷實際抽哪些題，且目前 BANK_CATALOG 只有一個選項——只有一個選項時沒有「選錯」的
-        // 可能，逼老師每次手動點一次沒有意義，直接預設成唯一選項（BANK_CATALOG 之後真的變成
-        // 多選項時，這裡會自動變回「尚未選擇」，不用再改這段）。
-        const bankId = job.bank_id || (BANK_CATALOG.length === 1 ? BANK_CATALOG[0].id : '');
+        // bank_id：老師反覆回報這個欄位沒用、看不懂放著幹嘛（只是原樣寫進匯出給 Python 排版
+        // 系統的 spec_ref.bank_id 標籤，不影響線上卷實際抽哪些題），已拿掉 UI，改成存檔時
+        // 固定寫入唯一值（見 syncInlineEditor），這裡不用再算。
         let sections = Array.isArray(job.sections) ? job.sections.slice() : [];
 
+        // 💣 老師按過「🔓 改成獨立教材來源」（exam_force_standalone）之後，就不能再自動從
+        // 同層錄音帶入區段了，否則清空的區段下一次重繪又會被這裡偷偷填回去，老師的覆蓋選擇形同沒用。
+        const _forcedStandaloneForFill = !!(task.raw_data && task.raw_data.exam_force_standalone);
         // 區段空白時，自動從同層錄音 meta（圖二）繼承 A/B/C…＋pp. 範圍
-        if (sectionsLookEmpty(sections) && window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
+        if (!_forcedStandaloneForFill && sectionsLookEmpty(sections) && window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
             const bState = window.BuilderStore.getState();
             const audio = findPreferredAudioTask((bState && bState.tasks) || [], pathStr);
             const autoSecs = sectionsFromAudioTask(audio, DEFAULT_LINES_PER_PAGE);
@@ -1677,11 +1775,6 @@ window.FeatureExamJob = (function () {
                 exclude_nums: ''
             }];
         }
-        // 未選過就顯示「尚未選擇」，不要用清單第一項偷偷頂替（見上方雷區說明）
-        const bankOpts = '<option value=""' + (bankId ? '' : ' selected') + '>（尚未選擇）</option>'
-            + BANK_CATALOG.map(function (b) {
-                return '<option value="' + esc(b.id) + '"' + (bankId === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>';
-            }).join('');
         const paperItemCount = (raw.quiz_paper && Array.isArray(raw.quiz_paper.items))
             ? raw.quiz_paper.items.length
             : 0;
@@ -1705,99 +1798,103 @@ window.FeatureExamJob = (function () {
             : (paperItemCount ? ('✅ 線上卷已是最新（' + paperItemCount + ' 題）') : '');
 
         let siblingAudio = null;
+        let siblingAudioCount = 0;
         let currentClassId = '';
         if (window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
             const bState = window.BuilderStore.getState();
-            siblingAudio = findPreferredAudioTask((bState && bState.tasks) || [], pathStr);
+            const allSiblingHits = findAllSiblingAudioHits((bState && bState.tasks) || [], pathStr);
+            siblingAudioCount = allSiblingHits.length;
+            siblingAudio = allSiblingHits[0] ? allSiblingHits[0].task : null;
             currentClassId = (bState && bState.classId) || '';
         }
         // 獨立考試（無同層錄音）：有沒有設定過自己的教材資料夾，決定「需讀取」提示要不要出現
         const examMaterialSelf = getExamMaterialSelf(task);
-        const isStandaloneExam = !siblingAudio;
+        // 💣 雷區（2026-08-14 老師回報「拿掉整棵樹亂配對後還是一模一樣，選不到 meta」）：
+        // 「同層」對一個一路平鋪、好幾個單元＋各自考試都放在同一層 tasks 陣列的作業來說，
+        // 範圍還是太大——同層只要「有任何一個」錄音任務，不管是不是這份考試真正要用的那個，
+        // 都會被抓來當 combo。這種情況光憑程式自動判斷分不出「老師是真的要配這個錄音」還是
+        // 「這份考試其實跟它無關」，所以加一個老師自己可切換的旗標，讓老師能明確覆蓋判斷。
+        const forcedStandalone = !!(task && task.raw_data && task.raw_data.exam_force_standalone);
+        const isStandaloneExam = !siblingAudio || forcedStandalone;
 
-        // layout_profile_id 下拉：若「🧩 教材/Layout 搭配」中央頁登記過這個教材資料夾／活頁的建議 layout，
-        // 排到最前面並標「⭐建議」，仍是純建議、老師可自由改選（見 feature-material-layout-pairing.js）
+        // layout_profile_id 下拉：改讀老師自己的「考卷範本」（material_exam_templates），不再
+        // 自動把擷取範本塞進來當選項（見 2026-08-14「分離擷取範本與考卷範本」）。⭐建議優先查
+        // 班級教材組合裡明確搭配過的考卷範本（material_combinations→material_combination_exam_templates，
+        // 老師在「🏫 班級教材組合」Step 2 勾選過的才算），查不到才退回舊的 material_layout_pairs 手動登記建議。
         const layoutMaterialFolder = isStandaloneExam
             ? examMaterialSelf.material_folder
             : ((siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs)
                 && siblingAudio.raw_data.material_refs[0] && siblingAudio.raw_data.material_refs[0].material_folder) || '');
+        const layoutComboFirstRef = (siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs))
+            ? siblingAudio.raw_data.material_refs[0] : null;
+        const layoutRootKind = isStandaloneExam
+            ? (examMaterialSelf.root_kind || 'teacher')
+            : ((layoutComboFirstRef && layoutComboFirstRef.materials_root_kind === 'class') ? 'class' : 'teacher');
         const layoutSectionSheetIds = sections.map(function (s) { return s.sheet_id; }).filter(Boolean);
         const mlp = window.FeatureMaterialLayoutPairing;
-        const suggestedLayoutIds = (mlp && typeof mlp.getSuggestedLayoutIds === 'function')
+        const fcmc = window.FeatureClassMaterialCombinations;
+        const suggestedExamTemplateId = (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function')
+            ? fcmc.getSuggestedExamTemplateId(layoutRootKind, currentClassId, layoutMaterialFolder, layoutSectionSheetIds)
+            : '';
+        const suggestedLayoutIds = (!suggestedExamTemplateId && mlp && typeof mlp.getSuggestedLayoutIds === 'function')
             ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, layoutSectionSheetIds)
             : [];
-        /**
-         * 💣 雷區（2026-08-10 老師指出圖二／圖三兩套 layout 沒串起來）：LAYOUT_CATALOG 是舊版
-         * GEPT／vocab 欄字母排版公式，對「套用到教材」產生的新版具名 meta 完全不合用。
-         * 這裡改成優先查 material_template_applications（這份 meta 實際是哪個 Template 套用
-         * 產生的，套用時系統就記下了，不用老師另外登記）；查不到才退回舊的手動登記建議。
-         */
-        const suggestedTemplateProfileId = (mlp && typeof mlp.getSuggestedTemplateProfileId === 'function')
-            ? mlp.getSuggestedTemplateProfileId(layoutMaterialFolder, layoutSectionSheetIds)
-            : '';
-        const templateProfiles = (mlp && typeof mlp.getTemplateDerivedProfiles === 'function')
-            ? mlp.getTemplateDerivedProfiles()
-            : [];
-        // 從未明確選過時：套用紀錄查得到就用那個 Template 換算的 profile；查不到才退回手動登記建議
-        // 第一項；兩者都沒有才留空，顯示「尚未選擇」逼老師自己挑，不可再偷偷退回 LAYOUT_CATALOG[0]。
-        const layoutId = job.layout_profile_id || suggestedTemplateProfileId || suggestedLayoutIds[0] || '';
+        // 從未明確選過時：班級教材組合的明確搭配優先；查不到才退回舊的手動登記建議第一項；
+        // 兩者都沒有才留空，顯示「尚未選擇」逼老師自己挑，不可再偷偷退回內建考卷範本第一項。
+        const layoutId = job.layout_profile_id || suggestedExamTemplateId || suggestedLayoutIds[0] || '';
         const fieldHint = layoutFieldHint(layoutId);
-        const orderedLayoutCatalog = suggestedLayoutIds.length
-            ? LAYOUT_CATALOG.slice().sort(function (a, b) {
-                const ai = suggestedLayoutIds.indexOf(a.id);
-                const bi = suggestedLayoutIds.indexOf(b.id);
-                if (ai === -1 && bi === -1) return 0;
-                if (ai === -1) return 1;
-                if (bi === -1) return -1;
-                return ai - bi;
-            })
-            : LAYOUT_CATALOG;
-        const builtinLayoutOptsHtml = orderedLayoutCatalog.map(function (l) {
-            const isSuggested = suggestedLayoutIds.indexOf(l.id) !== -1;
-            const label = (isSuggested ? '⭐ ' : '') + l.label;
-            return '<option value="' + esc(l.id) + '"' + (layoutId === l.id ? ' selected' : '') + '>' + esc(label) + '</option>';
-        }).join('');
-        // 我的 Layout Template（依「套用到教材」欄位設定自動換算 fields／fields_answer），跟內建 6 種
-        // 並列，不刪舊的——實際用哪個由老師自己選，套用過的那個會標「⭐這份 meta 實際用的」。
-        const templateLayoutOptsHtml = templateProfiles.length
-            ? ('<option disabled>── 我的 Layout Template（依套用到教材的欄位設定自動產生）──</option>'
-                + templateProfiles.map(function (p) {
-                    const isSuggested = p.profile_id === suggestedTemplateProfileId;
-                    const label = (isSuggested ? '⭐ ' : '') + p.label;
-                    return '<option value="' + esc(p.profile_id) + '"' + (layoutId === p.profile_id ? ' selected' : '') + '>' + esc(label) + '</option>';
-                }).join(''))
-            : '';
-        const layoutOpts = '<option value=""' + (layoutId ? '' : ' selected') + '>（尚未選擇，下面列出全部可選 Layout）</option>'
-            + templateLayoutOptsHtml
-            + '<option disabled>── 內建（舊版 GEPT／vocab 欄字母排版）──</option>'
-            + builtinLayoutOptsHtml;
+        const layoutOpts = '<option value=""' + (layoutId ? '' : ' selected') + '>（尚未選擇，下面列出全部可選考卷範本）</option>'
+            + '<option disabled>── 🧾 我的考卷範本 ──</option>'
+            + buildExamTemplateSelectOptionsHtml(layoutId, suggestedExamTemplateId || suggestedLayoutIds[0] || '');
+
+        // 💣 雷區（2026-08-14 老師強烈回報「活頁根本沒有可選 meta，只給一個手打格子」＋
+        // 「不會改成這個班級用過的教材 meta 嗎」）：這裡原本「教材資料夾」這個下拉只有獨立考試
+        // 才顯示，combo（有同層錄音）永遠鎖死成一個手打文字格，逼老師自己猜活頁檔名（猜錯也沒
+        // 驗證）。改成不管 combo／獨立，「教材資料夾」下拉一律顯示（列出這個老師／班級曾經
+        // 發布過、有 meta 的所有教材資料夾——也就是「這個班級用過的教材」），預設值猜同層錄音
+        // 用的那個資料夾（若抓得到），老師隨時可以自己改選；「活頁」欄位一律依這個選定的資料夾
+        // 查真正的 meta 檔名清單做下拉，不再讓老師手打。
+        const comboFirstRef = (siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs))
+            ? siblingAudio.raw_data.material_refs[0] : null;
+        // 💣 materials_root_kind 是存在每一筆 material_refs[i] 裡（不是 task.raw_data 底下直接一個欄位，
+        // 曾經因為讀錯位置永遠拿到 undefined 而整組判斷失效，見 feature-timeline.js 的存放方式）
+        const comboRootKind = (comboFirstRef && comboFirstRef.materials_root_kind === 'class') ? 'class' : 'teacher';
+        const comboMaterialFolder = layoutMaterialFolder;
+        // examMaterialSelf 是老師「明確選過」的值（存在 task.raw_data.exam_material）；沒選過時
+        // 才退回同層錄音猜的資料夾當預設顯示值（純顯示用的猜測，老師一改選就會變成明確值）。
+        const effectiveMaterialFolder = examMaterialSelf.material_folder || comboMaterialFolder;
+        const effectiveRootKind = examMaterialSelf.material_folder ? examMaterialSelf.root_kind : comboRootKind;
+        const effectiveMaterialSelf = { material_folder: effectiveMaterialFolder, root_kind: effectiveRootKind };
 
         // 教材資料夾下拉：優先吃 FeatureTimeline 已快取的清單（跟錄音 Material Snapshot 共用同一份快取，
         // 見 exam-standalone-material-invariant.mdc），沒快取才在渲染後非同步補抓，避免老師手打資料夾名稱
         let materialFolderTeacherEntry = null;
         let materialFolderClassEntry = null;
-        if (isStandaloneExam && window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function') {
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function') {
             materialFolderTeacherEntry = window.FeatureTimeline.getMetaCatalogEntry(currentClassId, 'teacher');
             materialFolderClassEntry = window.FeatureTimeline.getMetaCatalogEntry(currentClassId, 'class');
         }
         const materialFolderCatalogLoaded = !!(materialFolderTeacherEntry || materialFolderClassEntry);
-        const materialFolderOptsHtml = isStandaloneExam
-            ? buildExamMaterialFolderOptionsHtml(examMaterialSelf, materialFolderTeacherEntry, materialFolderClassEntry)
-            : '';
-        if (isStandaloneExam && !materialFolderCatalogLoaded) {
+        const materialFolderOptsHtml = buildExamMaterialFolderOptionsHtml(effectiveMaterialSelf, materialFolderTeacherEntry, materialFolderClassEntry);
+        if (!materialFolderCatalogLoaded) {
             // 渲染函式只回字串，DOM 還沒插入；下一輪事件圈再補抓＋補畫，避免抓到不存在的元素
             setTimeout(function () { ensureExamMaterialFolderCatalog(pathStr, currentClassId, false); }, 0);
         }
         // 選了教材資料夾才能推出「活頁」候選清單；還沒選或清單未載入時 examSheetStems 是空陣列，
         // 退回原本的文字輸入（見下方 rows 組裝），避免顯示一個永遠空的下拉
-        const examSheetStems = isStandaloneExam
-            ? examSheetStemsForFolder(currentClassId, examMaterialSelf.root_kind, examMaterialSelf.material_folder)
-            : [];
+        const examSheetStems = examSheetStemsForFolder(currentClassId, effectiveRootKind, effectiveMaterialFolder);
 
         let totalCountSum = 0;
         const rows = sections.map(function (s, idx) {
             let avail = countAvailableFromMeta(s, siblingAudio, task);
-            const expected = expectedSlotsForSection(s);
+            // 💣 老師回報「範本裡都有每頁行數，算不出來嗎」：這一列若沒手動改過「每頁行數」，
+            // 估算退回值要用「這一列實際套用的考卷範本」自己的 lines_per_page，不是寫死 10——
+            // 這一列沒指定就沿用上方的 job 層級 layoutId（跟下面 sectionlayout 下拉同語意）。
+            const rowLayoutId = String(s.layout_profile_id || layoutId || '').trim();
+            const rowProfileForLpp = rowLayoutId ? resolveExamTemplateProfile(rowLayoutId) : null;
+            const rowTemplateLpp = (rowProfileForLpp && Number(rowProfileForLpp.lines_per_page) > 0)
+                ? Number(rowProfileForLpp.lines_per_page) : DEFAULT_LINES_PER_PAGE;
+            const expected = expectedSlotsForSection(s, rowTemplateLpp);
             // 💣 雷區：已選 B.meta 但 Snapshot 只凍結到 A 時，不可用「~頁數×行數」粉飾成好像有題
             // （老師會以為 B 也 OK，顯示%卻是 —）。有點名該活頁 → 明示「需Snapshot」（獨立考試則是「需讀取」）。
             let availIsEstimate = false;
@@ -1819,9 +1916,11 @@ window.FeatureExamJob = (function () {
             const needActionLabel = isStandaloneExam ? '需讀取' : '需Snapshot';
             const countVal = Number(s.count);
             if (!isNaN(countVal)) totalCountSum += countVal;
+            // 2026-08-15 老師回報「~ 多此一舉」——拿掉波浪號，改純數字；估計值／真實值的區分
+            // 已經有 availColor（橘/青）＋ availTitle（滑鼠提示）負責，不需要再疊一個文字符號。
             const availStr = availNeedsSnap
                 ? needActionLabel
-                : (avail == null ? needActionLabel : (availIsEstimate ? ('~' + avail) : String(avail)));
+                : (avail == null ? needActionLabel : String(avail));
             const pctStr = formatDisplayPercent(
                 s.count,
                 (availIsEstimate || availNeedsSnap) ? null : avail
@@ -1888,33 +1987,20 @@ window.FeatureExamJob = (function () {
                         `}</td>
                     <td style="padding:4px;">
                         <select id="exam-inline-sectionlayout-${pathStr}-${idx}" class="form-control" style="width:130px; padding:4px;"
-                            title="同一活頁需要套用不只一個 layout 時，開兩個區段、各自選不同 layout 即可，不用複製 meta 檔">
+                            title="同一活頁需要套用不只一個考卷範本時，開兩個區段、各自選不同考卷範本即可，不用複製 meta 檔">
                             <option value="">（沿用上方預設）</option>
                             ${(function () {
-                                const rowSuggested = (mlp && typeof mlp.getSuggestedLayoutIds === 'function')
+                                const rowSuggestedExamTemplateId = (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function')
+                                    ? fcmc.getSuggestedExamTemplateId(layoutRootKind, currentClassId, layoutMaterialFolder, [s.sheet_id])
+                                    : '';
+                                const rowSuggested = (!rowSuggestedExamTemplateId && mlp && typeof mlp.getSuggestedLayoutIds === 'function')
                                     ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, [s.sheet_id])
                                     : [];
-                                const rowSuggestedTpl = (mlp && typeof mlp.getSuggestedTemplateProfileId === 'function')
-                                    ? mlp.getSuggestedTemplateProfileId(layoutMaterialFolder, [s.sheet_id])
-                                    : '';
-                                const tplOptsHtml = templateProfiles.length
-                                    ? ('<option disabled>── 我的 Layout Template ──</option>'
-                                        + templateProfiles.map(function (p) {
-                                            const isSuggested = p.profile_id === rowSuggestedTpl;
-                                            const label = (isSuggested ? '⭐ ' : '') + p.label;
-                                            return '<option value="' + esc(p.profile_id) + '"' + (String(s.layout_profile_id || '') === p.profile_id ? ' selected' : '') + '>' + esc(label) + '</option>';
-                                        }).join(''))
-                                    : '';
-                                const builtinOptsHtml = '<option disabled>── 內建 ──</option>' + LAYOUT_CATALOG.map(function (l) {
-                                    const isSuggested = rowSuggested.indexOf(l.id) !== -1;
-                                    const label = (isSuggested ? '⭐ ' : '') + l.label;
-                                    return '<option value="' + esc(l.id) + '"' + (String(s.layout_profile_id || '') === l.id ? ' selected' : '') + '>' + esc(label) + '</option>';
-                                }).join('');
-                                return tplOptsHtml + builtinOptsHtml;
+                                return buildExamTemplateSelectOptionsHtml(String(s.layout_profile_id || ''), rowSuggestedExamTemplateId || rowSuggested[0] || '');
                             })()}
                         </select>
                     </td>
-                    <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.lines_per_page || DEFAULT_LINES_PER_PAGE)}" style="width:56px; padding:4px;"${refreshAttr}></td>
+                    <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.lines_per_page || rowTemplateLpp)}" style="width:56px; padding:4px;" title="沒手動改過就沿用套用範本自己的每頁行數（目前＝${esc(rowTemplateLpp)}）"${refreshAttr}></td>
                     <td style="padding:4px; max-width:160px;" title="由 layout_profile 決定；可之後改為可編輯帶入">
                         <div style="font-size:0.7rem; color:#475569; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(fieldHint)}</div>
                     </td>
@@ -1931,9 +2017,9 @@ window.FeatureExamJob = (function () {
                     <td style="padding:4px;"><input id="exam-inline-inc-${pathStr}-${idx}" class="form-control" value="${esc(s.include_nums || '')}" style="${incStyle}" placeholder="—" title="${esc(incTitle)}"${refreshAttr}></td>
                     <td style="padding:4px;"><input id="exam-inline-exc-${pathStr}-${idx}" class="form-control" value="${esc(s.exclude_nums || '')}" style="width:64px; padding:4px;" placeholder="—" title="排除題號：範圍內這些題號一定不會出現"${refreshAttr}></td>
                     <td style="padding:4px;"><input id="exam-inline-count-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.count)}" style="${countStyle}" title="${esc(countTitle)}"${refreshAttr}></td>
-                    <td style="padding:4px; color:${availColor}; font-size:0.78rem; font-weight:800; text-align:center;" title="${esc(availTitle)}">${esc(availStr)}</td>
-                    <td style="padding:4px; color:#64748B; font-size:0.75rem; text-align:center;">${esc(pctStr)}</td>
-                    <td style="padding:4px; position:sticky; right:0; background:#F0FDFA;"><button type="button" class="btn" style="padding:2px 8px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; font-weight:800; background:white;" title="刪除這個區段" onclick="window.FeatureExamJob._inlineRemoveSection('${pathStr}', ${idx})">🗑 刪除區段</button></td>
+                    <td style="padding:4px; color:${availColor}; font-size:0.78rem; font-weight:800; text-align:center; white-space:nowrap;" title="${esc(availTitle)}">${esc(availStr)}</td>
+                    <td style="padding:4px; color:#64748B; font-size:0.75rem; text-align:center; white-space:nowrap;">${esc(pctStr)}</td>
+                    <td style="padding:4px; position:sticky; right:0; background:#F0FDFA; text-align:center;"><button type="button" class="btn" style="padding:4px 8px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; font-weight:800; background:white; line-height:1;" title="刪除這個區段" onclick="window.FeatureExamJob._inlineRemoveSection('${pathStr}', ${idx})">🗑</button></td>
                 </tr>
             `;
         }).join('');
@@ -1944,15 +2030,29 @@ window.FeatureExamJob = (function () {
                     <strong>📝 考試出題區段</strong>
                     <span style="font-size:0.75rem; color:#64748B;">job_id：<code id="exam-inline-jobid-${pathStr}">${esc(jobId || '（儲存作業時產生）')}</code></span>
                 </div>
-                ${isStandaloneExam ? `
+                ${(siblingAudio && !forcedStandalone) ? `
+                <div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:8px 10px; margin-bottom:10px; font-size:0.78rem; color:#1E40AF;">
+                    🔗 偵測到同層有錄音任務「${esc(stripHtml((siblingAudio.title || '')) || '（未命名）')}」，這份考試預設會沿用它的教材／活頁。
+                    如果這份考試其實跟它無關（例如另開的獨立小考）：
+                    <button type="button" class="btn" style="padding:2px 8px; font-size:0.72rem; background:#DBEAFE; border:1px solid #93C5FD; border-radius:4px; color:#1E40AF; margin-left:4px;"
+                        onclick="window.FeatureExamJob._inlineToggleForceStandalone('${pathStr}', true)">🔓 改成獨立教材來源</button>
+                </div>
+                ` : ''}
                 <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:8px 10px; margin-bottom:10px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-                        <strong style="color:#9A3412;">🗂 教材來源（獨立考試，此作業沒有配對的錄音任務）</strong>
+                        <strong style="color:#9A3412;">🗂 教材資料夾（${isStandaloneExam ? '獨立考試，此作業沒有配對的錄音任務' : '已依同層錄音猜一個，可自己改選'}）</strong>
                         <button type="button" class="btn" style="padding:2px 8px; font-size:0.72rem; background:#FFEDD5; border:1px solid #FDBA74; border-radius:4px; color:#9A3412;"
                             onclick="window.FeatureExamJob._inlineReloadMaterialFolders('${pathStr}')"
                             title="剛發布的教材沒看到就按這個重新整理清單">🔄 重新整理清單</button>
                     </div>
-                    <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">教材資料夾（來自已發布教材的 _Config.material_folder）
+                    ${(siblingAudio && forcedStandalone) ? `
+                    <div style="margin-top:6px; font-size:0.72rem; color:#9A3412;">
+                        （已忽略同層錄音任務「${esc(stripHtml((siblingAudio.title || '')) || '（未命名）')}」，改用下面自訂的教材來源。
+                        <button type="button" class="btn" style="padding:1px 6px; font-size:0.72rem; background:white; border:1px solid #FDBA74; border-radius:4px; color:#9A3412; margin-left:2px;"
+                            onclick="window.FeatureExamJob._inlineToggleForceStandalone('${pathStr}', false)">↩️ 改回沿用同層錄音</button>）
+                    </div>
+                    ` : ''}
+                    <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">教材資料夾（這個老師／班級曾發布過、有 meta 的教材）
                         <select id="exam-inline-materialfolder-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
                             onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange('${pathStr}')">${materialFolderOptsHtml}</select>
                     </label>
@@ -1962,14 +2062,10 @@ window.FeatureExamJob = (function () {
                             onchange="window.FeatureExamJob._inlineOnExamMaterialChange('${pathStr}')">
                     </div>
                     <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入資料夾清單…'}</div>
-                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">下面「活頁」直接填 meta 檔名（不含 .meta.json，例如 VOCAB_SET1），填好後按「🔄 讀取可用題數」。</div>
+                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">下面「活頁」會依這個資料夾的 meta 檔名自動列出下拉選項；選好後按「🔄 讀取可用題數」確認題數。</div>
                 </div>
-                ` : ''}
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
-                    <label style="font-weight:700;" title="題庫代號標籤，只會原樣寫進匯出給 Python 排版系統的 JSON（spec_ref.bank_id），不影響線上卷實際抽哪些題（那是靠下面每個活頁的 sheet_id／範圍決定）。目前僅一個選項可選。">bank_id
-                        <select id="exam-inline-bank-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;">${bankOpts}</select>
-                    </label>
-                    <label style="font-weight:700;">layout_profile_id
+                <div style="margin-bottom:8px;">
+                    <label style="font-weight:700; display:block;">layout_profile_id
                         <select id="exam-inline-layout-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
                             onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">${layoutOpts}</select>
                     </label>
@@ -1985,6 +2081,28 @@ window.FeatureExamJob = (function () {
                         🚩 允許申訴答案
                     </label>
                 </div>
+                <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center; background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:8px 10px;">
+                    <label title="整份考卷變成打字練習：答案直接顯示（紅字），學生照打，逐字比對，打錯無法往下一字，需連續打對指定次數才算完成該題（沒有另外的一般作答步驟）。">
+                        <input id="exam-inline-input-practice-${pathStr}" type="checkbox" ${raw.input_practice_enabled ? 'checked' : ''}
+                            onchange="window.FeatureExamJob._inlineToggleInputPracticeCount && window.FeatureExamJob._inlineToggleInputPracticeCount('${pathStr}')">
+                        ✍️ 輸入練習
+                    </label>
+                    <span id="exam-inline-input-practice-count-wrap-${pathStr}" style="${raw.input_practice_enabled ? '' : 'display:none;'}">
+                        次數：<input id="exam-inline-input-practice-count-${pathStr}" type="number" min="1" step="1"
+                            value="${Number(raw.input_practice_count) > 0 ? Number(raw.input_practice_count) : 1}"
+                            style="width:56px; padding:2px 4px;">
+                    </span>
+                    <label title="交卷後，針對答錯的題目做打字改正練習：答案顯示（紅字），學生逐字打對指定次數才算完成該題改正（與重考錯題／申訴答案互不影響）。">
+                        <input id="exam-inline-input-correction-${pathStr}" type="checkbox" ${raw.input_correction_enabled ? 'checked' : ''}
+                            onchange="window.FeatureExamJob._inlineToggleInputPracticeCount && window.FeatureExamJob._inlineToggleInputPracticeCount('${pathStr}')">
+                        🔧 輸入改正（錯題）
+                    </label>
+                    <span id="exam-inline-input-correction-count-wrap-${pathStr}" style="${raw.input_correction_enabled ? '' : 'display:none;'}">
+                        次數：<input id="exam-inline-input-correction-count-${pathStr}" type="number" min="1" step="1"
+                            value="${Number(raw.input_correction_count) > 0 ? Number(raw.input_correction_count) : 1}"
+                            style="width:56px; padding:2px 4px;">
+                    </span>
+                </div>
                 <div style="overflow-x:auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:980px;">
                         <thead>
@@ -1999,10 +2117,10 @@ window.FeatureExamJob = (function () {
                                 <th style="padding:4px;">難度</th>
                                 <th style="padding:4px;" title="必考題號：範圍內這些題號一定會出現，剩餘題數才隨機抽">必考#</th>
                                 <th style="padding:4px;" title="排除題號：範圍內這些題號一定不會出現">排除#</th>
-                                <th style="padding:4px;">題數</th>
-                                <th style="padding:4px;">可用題</th>
-                                <th style="padding:4px;">顯示%</th>
-                                <th style="padding:4px; position:sticky; right:0; background:#CCFBF1;">操作</th>
+                                <th style="padding:4px; white-space:nowrap;">題數</th>
+                                <th style="padding:4px; white-space:nowrap;">可用題</th>
+                                <th style="padding:4px; white-space:nowrap;">顯示%</th>
+                                <th style="padding:4px; position:sticky; right:0; background:#CCFBF1; white-space:nowrap;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="exam-inline-tbody-${pathStr}">${rows}</tbody>
@@ -2022,7 +2140,8 @@ window.FeatureExamJob = (function () {
                         onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
                     ` : `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
-                        onclick="window.FeatureExamJob._inlineImportFromSiblingAudio('${pathStr}')">↻ 從同作業錄音範圍帶入</button>
+                        title="${siblingAudioCount > 1 ? ('同層共 ' + siblingAudioCount + ' 個錄音任務，每按一次換下一個') : ''}"
+                        onclick="window.FeatureExamJob._inlineImportFromSiblingAudio('${pathStr}')">↻ 從同作業錄音範圍帶入${siblingAudioCount > 1 ? ('（共 ' + siblingAudioCount + ' 個，輪流）') : ''}</button>
                     `}
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
                         onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ JSON</button>
@@ -2095,9 +2214,8 @@ window.FeatureExamJob = (function () {
     function syncInlineEditor(pathStr, task) {
         if (!task) return;
         if (!task.raw_data) task.raw_data = {};
-        const bankEl = document.getElementById('exam-inline-bank-' + pathStr);
         const layoutEl = document.getElementById('exam-inline-layout-' + pathStr);
-        if (!bankEl && !layoutEl) return; // 非 exam 或尚未渲染
+        if (!layoutEl) return; // 非 exam 或尚未渲染
 
         const prevJob = task.raw_data.exam_job || {};
         let jobId = task.raw_data.exam_job_id || prevJob.job_id || '';
@@ -2111,9 +2229,11 @@ window.FeatureExamJob = (function () {
 
         const sections = readInlineSections(pathStr);
         const shuffle = !!(document.getElementById('exam-inline-shuffle-' + pathStr) || {}).checked;
+        // 💣 老師強烈要求拿掉 bank_id 這個 UI（只是原樣寫進匯出給 Python 排版系統的標籤，
+        // 不影響線上卷實際抽題，目前題庫清單也只有一個選項），不再讓老師選，固定寫入唯一值即可。
         const payload = {
             job_id: jobId,
-            bank_id: bankEl ? bankEl.value : '',
+            bank_id: prevJob.bank_id || (BANK_CATALOG[0] ? BANK_CATALOG[0].id : ''),
             layout_profile_id: layoutEl ? layoutEl.value : '',
             sections: sections,
             outputs: outputs,
@@ -2128,6 +2248,15 @@ window.FeatureExamJob = (function () {
         // 才要寫 false；沒讀到這個 checkbox（畫面還沒渲染）時完全不要動這個欄位。
         const allowAppealEl = document.getElementById('exam-inline-allow-appeal-' + pathStr);
         if (allowAppealEl) task.raw_data.allow_answer_appeal = !!allowAppealEl.checked;
+        // ✍️ 輸入練習／🔧 輸入改正：整份考卷設定，見 docs 對話紀錄「逐字要求完全一致」。
+        const inputPracticeEl = document.getElementById('exam-inline-input-practice-' + pathStr);
+        if (inputPracticeEl) task.raw_data.input_practice_enabled = !!inputPracticeEl.checked;
+        const inputPracticeCountEl = document.getElementById('exam-inline-input-practice-count-' + pathStr);
+        if (inputPracticeCountEl) task.raw_data.input_practice_count = Math.max(1, parseInt(inputPracticeCountEl.value, 10) || 1);
+        const inputCorrectionEl = document.getElementById('exam-inline-input-correction-' + pathStr);
+        if (inputCorrectionEl) task.raw_data.input_correction_enabled = !!inputCorrectionEl.checked;
+        const inputCorrectionCountEl = document.getElementById('exam-inline-input-correction-count-' + pathStr);
+        if (inputCorrectionCountEl) task.raw_data.input_correction_count = Math.max(1, parseInt(inputCorrectionCountEl.value, 10) || 1);
         const jobIdEl = document.getElementById('exam-inline-jobid-' + pathStr);
         if (jobIdEl) jobIdEl.textContent = jobId;
 
@@ -2168,19 +2297,26 @@ window.FeatureExamJob = (function () {
         return node;
     }
 
+    /**
+     * 考試繼承同層錄音要用的標題文字。💣 老師回報「考試標題應該繼承錄音『標題』，不應該是
+     * base 範圍」：原本這裡優先抓 material_range（例如「pp. 18, pp. 19, pp. 20」），錄音任務
+     * 自己取的標題（例如「單字：pp.18~20」）反而只是找不到範圍時的後備。改成錄音自己的標題
+     * 優先──那才是老師真正想看到的名字；只有錄音標題是空的或還是預設字樣（沒改過）時，才退回
+     * 用 base 範圍／material_refs 拼出來的範圍文字頂替，至少比完全沒有標題好。
+     */
     function getSiblingAudioRangeLabel(examPathStr) {
         const bState = window.BuilderStore && window.BuilderStore.getState();
         if (!bState) return '';
         const audio = findPreferredAudioTask((bState.tasks || []), examPathStr);
         if (!audio || !audio.raw_data) return '';
-        let label = String(audio.raw_data.material_range || '').trim();
-        if (!label && window.FeatureTimeline
-            && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
-            const refs = Array.isArray(audio.raw_data.material_refs) ? audio.raw_data.material_refs : [];
-            label = String(window.FeatureTimeline.buildMaterialRangeLabelFromRows(refs) || '').trim();
-        }
-        if (!label) {
-            label = String(audio.title || '').replace(/<[^>]*>?/gm, '').trim();
+        let label = String(audio.title || '').replace(/<[^>]*>?/gm, '').trim();
+        if (!label || label === '錄音' || label === '未命名任務') {
+            label = String(audio.raw_data.material_range || '').trim();
+            if (!label && window.FeatureTimeline
+                && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
+                const refs = Array.isArray(audio.raw_data.material_refs) ? audio.raw_data.material_refs : [];
+                label = String(window.FeatureTimeline.buildMaterialRangeLabelFromRows(refs) || '').trim();
+            }
         }
         if (label === '錄音' || label === '考試') return '';
         return label;
@@ -2288,7 +2424,19 @@ window.FeatureExamJob = (function () {
         if (!task || !bState) return;
         syncInlineEditor(pathStr, task);
 
-        const audioHit = findPreferredAudioHit(bState.tasks || [], pathStr);
+        // 💣 老師回報「同層有兩個錄音任務呢？你打算怎麼處理？」：原本永遠只抓同層第一個，
+        // 老師完全沒辦法選第二個。改成同層有不只一個時，每按一次「從同作業錄音範圍帶入」
+        // 就輪流換下一個（存在 task.raw_data._import_audio_cycle_idx，跨次渲染記得目前輪到哪個）。
+        const allHits = findAllSiblingAudioHits(bState.tasks || [], pathStr);
+        let audioHit = null;
+        if (allHits.length > 1) {
+            const prevIdx = Number(task.raw_data._import_audio_cycle_idx);
+            const nextIdx = (isNaN(prevIdx) ? -1 : prevIdx) + 1 >= allHits.length ? 0 : (isNaN(prevIdx) ? 0 : prevIdx + 1);
+            task.raw_data._import_audio_cycle_idx = nextIdx;
+            audioHit = allHits[nextIdx];
+        } else {
+            audioHit = allHits[0] || null;
+        }
         const audio = audioHit ? audioHit.task : null;
         const audioPath = audioHit ? audioHit.pathStr : '';
         const rootEl = audioPath ? document.getElementById('node-material-root-' + audioPath) : null;
@@ -2357,6 +2505,11 @@ window.FeatureExamJob = (function () {
             return countAvailableFromMeta(s, audio) == null;
         }).map(function (s) { return s.sheet_id; });
         let msg = '已帶入 ' + sections.length + ' 個區段；可用題已依 Snapshot／meta 重算';
+        if (allHits.length > 1) {
+            const idx1 = task.raw_data._import_audio_cycle_idx + 1;
+            msg = '（同層第 ' + idx1 + '/' + allHits.length + ' 個錄音「' + stripHtml(audio && audio.title || '') + '」）' + msg
+                + '；再按一次會換下一個同層錄音';
+        }
         if (missing.length) {
             msg += '（活頁 ' + missing.join('/') + ' 尚無 Snapshot，顯示為預估）';
         }
@@ -2618,8 +2771,20 @@ window.FeatureExamJob = (function () {
             }
             // 清單剛載入才第一次有資料：若目前「活頁」欄還是文字輸入（渲染時清單未就緒），
             // 且現在已經能推出候選 stem，整體重繪一次讓它升級成下拉，不用等老師手動換一次資料夾
-            if (self.material_folder) {
-                const stems = examSheetStemsForFolder(classId, self.root_kind, self.material_folder);
+            // combo（有同層錄音）情況老師通常沒有明確選過 exam_material，這裡的 self.material_folder
+            // 會是空的；改成同時看同層錄音猜的資料夾，兩種情況都能在清單載入完成後自動升級成下拉。
+            let guessFolder = self.material_folder;
+            let guessRootKind = self.root_kind;
+            if (!guessFolder && window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
+                const audio = findPreferredAudioTask((window.BuilderStore.getState().tasks) || [], pathStr);
+                const ref0 = (audio && audio.raw_data && Array.isArray(audio.raw_data.material_refs)) ? audio.raw_data.material_refs[0] : null;
+                if (ref0 && ref0.material_folder) {
+                    guessFolder = ref0.material_folder;
+                    guessRootKind = ref0.materials_root_kind === 'class' ? 'class' : 'teacher';
+                }
+            }
+            if (guessFolder) {
+                const stems = examSheetStemsForFolder(classId, guessRootKind, guessFolder);
                 const firstSheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-0');
                 if (stems.length && firstSheetEl && firstSheetEl.tagName !== 'SELECT') {
                     refreshExamBuilder();
@@ -2961,6 +3126,34 @@ window.FeatureExamJob = (function () {
     }
 
     /**
+     * 教材-Layout-班級-出題紀錄正規化重構：append-only 出題歷史，不 upsert，每次「產生線上卷」
+     * 都 insert 新一列（跟 task.raw_data.quiz_paper 每次覆寫不同，這張表是用來回答「這份考卷
+     * 上次是什麼時候、用什麼範圍產生的」）。純記錄用，失敗不影響已經產生好的線上卷，故意
+     * 不 await 呼叫端、只在背景記警告。
+     * @param {string} assignmentId
+     * @param {string} taskId
+     * @param {object} examJob
+     */
+    async function recordExamGenerationEvent(assignmentId, taskId, examJob) {
+        if (!assignmentId || !taskId || !window.supabaseClient) return;
+        try {
+            const { data: { user } } = await window.supabaseClient.auth.getUser();
+            const payload = {
+                assignment_id: assignmentId,
+                task_id: String(taskId),
+                bank_id: (examJob && examJob.bank_id) || null,
+                layout_profile_id: (examJob && examJob.layout_profile_id) || null,
+                sections_snapshot: (examJob && Array.isArray(examJob.sections)) ? examJob.sections : [],
+                generated_by: user ? user.id : null
+            };
+            const { error } = await window.supabaseClient.from('exam_generation_events').insert(payload);
+            if (error) console.warn('[FeatureExamJob] 記錄出題歷史失敗（不影響已產生的線上卷）', error);
+        } catch (err) {
+            console.warn('[FeatureExamJob] 記錄出題歷史失敗（不影響已產生的線上卷）', err);
+        }
+    }
+
+    /**
      * 💣 雷區（2026-08-11 老師回報「產生線上卷按鈕是廢物功能」）：拿掉手動「📝 產生線上卷」
      * 按鈕，改成「儲存作業」時自動偵測每個考試任務設定有沒有變（見 needsExamRegeneration），
      * 有變才自動重新產生＋排版。這個函式因此多了 opts 參數，讓 saveBlock 可以用「靜音批次」
@@ -3042,10 +3235,9 @@ window.FeatureExamJob = (function () {
                  * sectionlayout 下拉），不能只塞「job 層級預設」這一個 profile 進 layout.profiles，
                  * 否則區段覆蓋值在 pickProfile() 裡永遠找不到、被迫默默退回預設，覆蓋等於沒作用。
                  * 這裡把 job 預設＋所有區段用到的 id 去重後，各自換算一個 profile 塞進同一個
-                 * profiles 陣列。tpl:xxx（Layout Template 換算）跟舊版 LAYOUT_FIELD_HINTS 是兩條路：
-                 * Template 的 fields／fields_answer 已經是完整、可直接求值的公式（見
-                 * FeatureMaterialLayoutPairing.buildProfileFromTemplate），不能再套 layoutFieldHint
-                 * 那個「只認 3 個舊 id、其餘回退成純提示字串」的邏輯，否則會整份排版壞掉。
+                 * profiles 陣列。resolveExamTemplateProfile() 統一解析新格式（material_exam_templates
+                 * uuid）／舊字串（legacy_profile_id）／'tpl:xxx'（擷取範本唯讀相容層）三種來源，
+                 * 不要再各寫一次，否則之後改一邊漏一邊、排版又壞掉。
                  */
                 const idsNeeded = [examJob.layout_profile_id].concat(
                     (Array.isArray(examJob.sections) ? examJob.sections : []).map(function (sec) { return sec && sec.layout_profile_id; })
@@ -3055,11 +3247,8 @@ window.FeatureExamJob = (function () {
                 idsNeeded.forEach(function (pid) {
                     if (seenIds[pid]) return;
                     seenIds[pid] = true;
-                    const tplProfile = String(pid).indexOf('tpl:') === 0
-                        && window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.resolveTemplateProfile === 'function'
-                        ? window.FeatureMaterialLayoutPairing.resolveTemplateProfile(pid)
-                        : null;
-                    profiles.push(tplProfile || {
+                    const resolved = resolveExamTemplateProfile(pid);
+                    profiles.push(resolved || {
                         profile_id: pid,
                         label: pid,
                         fields: layoutFieldHint(pid),
@@ -3134,6 +3323,12 @@ window.FeatureExamJob = (function () {
                 audioHit.task.raw_data.material_refs = ctx.refs;
             }
 
+            // 教材-Layout-班級-出題紀錄正規化重構（append-only 出題歷史）：task.raw_data.quiz_paper
+            // 繼續是「目前這份考卷」給學生端讀取用，不動；這裡額外 insert 一筆 exam_generation_events
+            // 記錄「這次產生」的快照，取代以前完全沒有歷史、每次重產只能覆寫的問題。只有這個任務
+            // 節點已經存過（bState.editId 有值）才記，避免記到還沒真正落地的暫存任務 id。
+            recordExamGenerationEvent(bState.editId, task.id, examJob);
+
             // 產生成功＝這套設定至少是可用的，記下來讓老師之後在同班出題可以「套用上次設定」
             saveLastConfigForClass(bState.classId, {
                 material_folder: ctx.materialFolder || '',
@@ -3201,6 +3396,40 @@ window.FeatureExamJob = (function () {
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         syncInlineEditor(pathStr, task);
+    }
+
+    /**
+     * 老師手動覆蓋「同層有錄音任務＝combo」的自動判斷：這份考試明明跟同層那個錄音任務無關
+     * （例如作業裡多個單元平鋪在同一層，各自的錄音／考試混在一起），系統自動偵測的「同層」
+     * 抓不出「哪一個才是真的要配的」，只能由老師自己明確指定。force=true 時清空舊區段
+     * （沿用同層錄音帶入的區段對獨立教材沒有意義），讓老師從空白開始重新選教材資料夾／活頁；
+     * force=false（改回沿用）不清空，老師自己決定要不要「從同作業錄音範圍帶入」。
+     */
+    function inlineToggleForceStandalone(pathStr, force) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        syncInlineEditor(pathStr, task);
+        if (!task.raw_data) task.raw_data = {};
+        if (!task.raw_data.exam_job) task.raw_data.exam_job = {};
+        task.raw_data.exam_force_standalone = !!force;
+        if (force && Array.isArray(task.raw_data.exam_job.sections) && task.raw_data.exam_job.sections.length) {
+            task.raw_data.exam_job.sections = [];
+        }
+        refreshExamBuilder();
+    }
+
+    /**
+     * ✍️ 輸入練習／🔧 輸入改正勾選框只是切換「次數」輸入框的顯示與否，不需要整體重繪
+     * （重繪會打斷老師正在編輯的其他欄位），純 DOM 切換即可。
+     */
+    function inlineToggleInputPracticeCount(pathStr) {
+        const practiceEl = document.getElementById('exam-inline-input-practice-' + pathStr);
+        const practiceWrap = document.getElementById('exam-inline-input-practice-count-wrap-' + pathStr);
+        if (practiceWrap) practiceWrap.style.display = (practiceEl && practiceEl.checked) ? '' : 'none';
+        const correctionEl = document.getElementById('exam-inline-input-correction-' + pathStr);
+        const correctionWrap = document.getElementById('exam-inline-input-correction-count-wrap-' + pathStr);
+        if (correctionWrap) correctionWrap.style.display = (correctionEl && correctionEl.checked) ? '' : 'none';
     }
 
     /**
@@ -3320,6 +3549,8 @@ window.FeatureExamJob = (function () {
         },
         _inlineOnExamMaterialChange: inlineOnExamMaterialChange,
         _inlineOnExamMaterialFolderSelectChange: inlineOnExamMaterialFolderSelectChange,
+        _inlineToggleForceStandalone: inlineToggleForceStandalone,
+        _inlineToggleInputPracticeCount: inlineToggleInputPracticeCount,
         _inlineReloadMaterialFolders: inlineReloadMaterialFolders,
         _inlineRefreshStandaloneMeta: inlineRefreshStandaloneMeta,
         _inlineOnLayoutChange: function (pathStr) {
@@ -3340,8 +3571,17 @@ window.FeatureExamJob = (function () {
         generatePaperForSave: function (pathStr) {
             return inlineGeneratePaper(pathStr, { silent: true, skipAutoSave: true });
         },
-        /** 給「🧩 教材/Layout 搭配」central 頁用：目前可選的 layout_profile_id 清單 */
+        /** 給「🧩 教材/Layout 搭配」central 頁「教材／考試 Layout 搭配」舊區塊用：內建 6 種舊版排版（唯讀相容常數，不再是主要來源） */
         getLayoutCatalog: function () { return LAYOUT_CATALOG.slice(); },
+        // 2026-08-14（分離「擷取範本」與「考卷範本」）：考卷範本 CRUD／快取，給
+        // feature-exam-template-editor.js 的編輯器 UI 用；resolveExamTemplateProfile 給任何
+        // 需要「依 layout_profile_id 換算實際排版公式」的地方共用（新格式／舊字串／tpl: 都吃）。
+        fetchExamTemplates: fetchExamTemplates,
+        getExamTemplatesCachedSync: getExamTemplatesCachedSync,
+        createExamTemplate: createExamTemplate,
+        updateExamTemplate: updateExamTemplate,
+        deleteExamTemplate: deleteExamTemplate,
+        resolveExamTemplateProfile: resolveExamTemplateProfile,
         /** 給「🧩 教材/Layout 搭配」central 頁用：某根目錄下不重複的教材資料夾名稱清單（跟獨立考試教材資料夾下拉共用同一份快取） */
         getUniqueFolderNames: function (classId, rootKind) {
             const entry = window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function'

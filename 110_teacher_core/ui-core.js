@@ -159,6 +159,12 @@ window.TeacherUI = (() => {
             window.FeatureResource.renderGlobalResourceView();
         } else if (viewId === 'view-material-layout' && window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.render === 'function') {
             window.FeatureMaterialLayoutPairing.render();
+            if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
+                window.FeatureExamTemplateEditor.render();
+            }
+            if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.render === 'function') {
+                window.FeatureClassMaterialCombinations.render();
+            }
         } else if (viewId === 'view-script-collector' && window.FeatureScriptCollector && typeof window.FeatureScriptCollector.render === 'function') {
             window.FeatureScriptCollector.render();
         }
@@ -203,31 +209,72 @@ window.TeacherUI = (() => {
         } catch (_e) {}
     }
 
+    /**
+     * 💣 雷區（2026-08-14 老師回報「重整過程中，左邊會先變成沒選取的樣子，最後才跳到正確
+     * 那一班」）：以前 preRenderSidebarFromSession 只能用 session.enrollments（登入當下寫死
+     * 的快取，之後新增／改名的班級不會進去）畫「還沒等到 TeacherDB 載完」那一版側欄，而且
+     * 圖示一律用預設 📘（不管真正圖示是什麼）。這造成兩個問題：
+     *   1. 剛建立的新班級在 session.enrollments 裡根本還沒有，第一版側欄會直接看不到它、
+     *      更別說高亮／捲進可視範圍，等真正資料載完才「憑空冒出來＋跳一下」。
+     *   2. 就算班級沒變，圖示只要跟真正圖示不同，signature 就對不起來，之後 renderSidebar()
+     *      拿到真正資料時一定會判定「清單變了」，整個重繪一次——即使實際上什麼都沒變，
+     *      也會閃一下（先拿掉 active、清空、重新畫、重新高亮／捲動）。
+     * 修正：改用「上一次真正渲染時存的完整快取」（saveSidebarCache 寫入的 teacherSidebarCache，
+     * 含正確圖示／角色）取代 session.enrollments 來畫第一版，這樣多數情況下（班級清單沒變）
+     * 第一版畫出來的簽章會跟真正資料完全一致，renderSidebar() 之後只會走「快速同步高亮」
+     * 分支，不會整個重繪，也就不會閃。真正新班級（快取裡也沒有）沒辦法無中生有，屬於少數
+     * 例外，只有這種情況才會在資料載完後補畫一次。
+     */
+    function loadSidebarCache() {
+        try {
+            const raw = localStorage.getItem(SIDEBAR_CACHE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || !Array.isArray(parsed.classes) || !parsed.classes.length) return null;
+            return parsed.classes;
+        } catch (_e) {
+            return null;
+        }
+    }
+
     function preRenderSidebarFromSession(session, activeClassId) {
         if (!classListContainer) return;
         if (classListContainer.dataset.booted === '1') {
             bindClassListDelegation();
             return;
         }
-        if (!session.enrollments || session.enrollments.length === 0) return;
+
+        // 優先用上一次真正渲染時存下來的完整快取（圖示／角色都對），沒有才退回登入時的
+        // session.enrollments（圖示只能先用預設 📘 頂著，等真正資料載完再修正）。
+        const cachedClasses = loadSidebarCache();
+        const sourceList = cachedClasses || (session.enrollments || []).map(function (en) {
+            return {
+                id: en.id,
+                name: en.name,
+                icon: '📘',
+                staff_role: en.staff_role ? en.staff_role : 'ta_junior'
+            };
+        });
+        if (!sourceList.length) return;
 
         classListContainer.innerHTML = '';
         const globalView = localStorage.getItem(GLOBAL_VIEW_KEY);
-        session.enrollments.forEach(function(en) {
+        sourceList.forEach(function (cls) {
             const div = document.createElement('div');
-            div.className = 'class-item' + (!globalView && en.id === activeClassId ? ' active' : '');
-            div.setAttribute('data-class-id', en.id);
-            const staffRole = en.staff_role ? en.staff_role : 'ta_junior';
-            div.innerHTML = '<span style="width:20px; display:inline-block;">📘</span> <span style="flex-grow:1; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">' + en.name + '</span> ' + getRoleBadgeHtml(staffRole);
+            div.className = 'class-item' + (!globalView && cls.id === activeClassId ? ' active' : '');
+            div.setAttribute('data-class-id', cls.id);
+            div.innerHTML = '<span style="width:20px; display:inline-block;">' + (cls.icon || '📘') + '</span> <span style="flex-grow:1; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">' + cls.name + '</span> ' + getRoleBadgeHtml(cls.staff_role || 'ta_junior');
             div.style.display = 'flex';
             div.style.alignItems = 'center';
             classListContainer.appendChild(div);
         });
         bindClassListDelegation();
         classListContainer.dataset.booted = '1';
-        classListContainer.dataset.sidebarSig = getSidebarSignature(session.enrollments.map(function (en) {
-            return { id: en.id, name: en.name, icon: '📘', staff_role: en.staff_role };
-        }));
+        classListContainer.dataset.sidebarSig = getSidebarSignature(sourceList);
+        // 💣 這裡是重整當下「還沒等到 TeacherDB 載完」就先畫出來的那一版側欄——標題也是
+        // 這時候（bootstrapFromSession）就同步寫好的，如果目前選中的班級排在清單後面、
+        // 又沒捲進可視範圍，使用者會覺得「標題寫 A 班，左邊卻完全看不出哪一項被選中」。
+        scrollActiveClassItemIntoView();
     }
 
     function bootstrapFromSession() {
@@ -276,6 +323,22 @@ window.TeacherUI = (() => {
         }
     }
     
+    /**
+     * 💣 雷區（2026-08-14 老師回報「重整後標題寫 Jessie，左邊卻沒跟上」）：`.sidebar-classes`
+     * 自己有獨立捲軸（見 style.css 的捲動說明），目前選中的班級如果排在清單後面、捲軸位置又
+     * 停在最上面，畫面上完全看不到任何一項被亮起來（active 樣式其實已經套用，只是被捲到
+     * 看不到的地方），看起來就像「左邊沒有跟上」。這裡在每次重繪／同步高亮之後，把目前
+     * active 的班級項目捲進可視範圍內（block:'nearest'，已經看得到就不會多捲）。
+     */
+    function scrollActiveClassItemIntoView() {
+        if (!classListContainer) return;
+        const activeEl = classListContainer.querySelector('.class-item.active');
+        if (!activeEl || typeof activeEl.scrollIntoView !== 'function') return;
+        try {
+            activeEl.scrollIntoView({ block: 'nearest' });
+        } catch (_scrollErr) { /* 忽略舊瀏覽器不支援 options 的情況 */ }
+    }
+
     function renderSidebar() {
         if (!classListContainer) return;
         if (!window.TeacherDB || !window.TeacherDB.classes || window.TeacherDB.classes.length === 0) {
@@ -292,6 +355,7 @@ window.TeacherUI = (() => {
                 const isActive = headerVisible && el.getAttribute('data-class-id') === String(currentClassId || '');
                 el.classList.toggle('active', isActive);
             });
+            scrollActiveClassItemIntoView();
             return;
         }
 
@@ -320,6 +384,7 @@ window.TeacherUI = (() => {
         classListContainer.dataset.booted = '1';
         classListContainer.dataset.sidebarSig = nextSig;
         saveSidebarCache(window.TeacherDB.classes);
+        scrollActiveClassItemIntoView();
     }
 
     function activateClassView(classId) {
@@ -485,6 +550,12 @@ window.TeacherUI = (() => {
             activateGlobalView('view-material-layout', 'nav-material-layout');
             if (window.FeatureMaterialLayoutPairing && typeof window.FeatureMaterialLayoutPairing.render === 'function') {
                 window.FeatureMaterialLayoutPairing.render();
+            }
+            if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
+                window.FeatureExamTemplateEditor.render();
+            }
+            if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.render === 'function') {
+                window.FeatureClassMaterialCombinations.render();
             }
         });
     }

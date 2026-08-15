@@ -95,11 +95,11 @@ window.FeatureMaterialLayoutPairing = (function () {
             gridCollapsed: false,
             confirmed: false,
             /**
-             * 2026-08-12（老師明確要求：「產生 meta/script 時，可以直接套用現有的 layout，
-             * 不用再勾選欄位等；若需要產生新的 layout 才需要目前這套方法」）：
-             * quickApplyTemplateName＝上面「⚡ 已有現成 Layout」快速套用要用的 Template 名稱，
-             * 跟下面「設計新 Layout」要儲存用的 name 完全獨立，兩邊互不干擾。
-             * designExpanded＝「🆕 設計新 Layout」收合區塊目前是否手動展開（見 renderDesignToggleHtml：
+             * 2026-08-12（老師明確要求：「產生 meta/script 時，可以直接套用現有的擷取範本，
+             * 不用再勾選欄位等；若需要產生新的擷取範本才需要目前這套方法」）：
+             * quickApplyTemplateName＝上面「⚡ 已有現成擷取範本」快速套用要用的 Template 名稱，
+             * 跟下面「設計新擷取範本」要儲存用的 name 完全獨立，兩邊互不干擾。
+             * designExpanded＝「🆕 設計新擷取範本」收合區塊目前是否手動展開（見 renderDesignToggleHtml：
              * 已有現成 Template 時預設收起，一份 Template 都沒有時強制展開，不受這個值影響）。
              */
             quickApplyTemplateName: '',
@@ -130,7 +130,7 @@ window.FeatureMaterialLayoutPairing = (function () {
              * 不該被標成 question/answer=true，否則批改/算題數邏輯會誤把它們算成一道題目或一個答案。
              *
              * 2026-08-05 第十三輪雷區（架構修正）：這裡本來還有 rowStart/rowEnd——是錯的。
-             * Layout Template 是「規則」（欄位代號→資料項名稱＋題目/答案/訊息），跟任何一個
+             *擷取範本是「規則」（欄位代號→資料項名稱＋題目/答案/訊息），跟任何一個
              * 實際檔案脫鉤、可重複套用；行數起迄是「把 Template 套用到某個實際檔案」才有意義的
              * 產物（不同檔案資料筆數不同），屬於下面新增的「套用（Application）」區塊，
              * 不該寫死存在 Template 本身裡面。
@@ -171,17 +171,19 @@ window.FeatureMaterialLayoutPairing = (function () {
     /**
      * 「答案批改標準」＋「口說答案批改標準」共用設定區塊。cfg 需要有 answerMode／answerCombineNote／
      * speakMode／speakFormula 四個欄位（Excel 小工具的 seg 或 Template 編輯器的 _templateEditorState
-     * 都符合）。只有書寫答案欄數 > 1 才顯示——欄數 ≤1 沒有「多欄怎麼合併／分開比對」的問題。
+     * 都符合）。
+     * 2026-08-14（老師回報：每個範本都要有、老師都要能修改）：這個區塊本身不再整塊被書寫答案欄數
+     * 擋掉——🎤口說答案批改標準跟書寫答案欄數無關（它看的是 is_ai_ref 欄，不是 is_answer 欄），舊版
+     * 「欄數≤1 整塊不顯示」等於讓這種範本完全無法設定口說批改模式，是設計缺陷，不是刻意的規則。
+     * 只有📝書寫答案批改標準（分開比對／結合成一個答案）在欄數≤1 時沒有意義（沒有「多欄」可選），
+     * 才單獨收起來。
      */
     function renderAnswerGradingSettingsHtml(prefix, cfg, aCount) {
-        if (aCount <= 1) return '';
         const answerMode = cfg.answerMode === 'separate' ? 'separate' : 'combine';
         const speakMode = ['formula', 'complex', 'paste'].indexOf(cfg.speakMode) !== -1 ? cfg.speakMode : 'formula';
-        return `
-            <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:10px 12px; margin-top:10px;">
-                <div style="font-size:0.76rem; font-weight:800; color:#B45309; margin-bottom:8px;">⚖️ 書寫答案共 ${aCount} 欄，請指明批改標準</div>
+        const writtenGradingBlock = aCount > 1 ? `
                 <div style="margin-bottom:10px;">
-                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">📝 書寫答案批改標準</div>
+                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">📝 書寫答案批改標準（共 ${aCount} 欄）</div>
                     <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="separate" ${answerMode === 'separate' ? 'checked' : ''}>
                         分開比對（每欄各自獨立比對，例如 AN、AO 各一個空格分開判定）
@@ -190,8 +192,13 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}>
                         結合成一個答案（用公式組合多欄，例如 AN&amp;" "&amp;AO）
                     </label>
-                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='公式備註，例如 AN&amp;" "&amp;AO 或 pre&amp;" "&amp;script（僅供參考記錄，實際組合仍以 Layout Profile 的 quiz_answer 公式為準）' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
-                </div>
+                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='公式備註，例如 AN&amp;" "&amp;AO 或 pre&amp;" "&amp;script（僅供參考記錄，實際組合仍以考卷範本的 quiz_answer 公式為準）' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
+                </div>` : `
+                <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">📝 書寫答案批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
+        return `
+            <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:10px 12px; margin-top:10px;">
+                <div style="font-size:0.76rem; font-weight:800; color:#B45309; margin-bottom:8px;">⚖️ 批改標準</div>
+                ${writtenGradingBlock}
                 <div>
                     <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">🎤 口說答案批改標準</div>
                     <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
@@ -208,7 +215,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     </label>
                     <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};">
                 </div>
-                <div style="font-size:0.68rem; color:#92400E; margin-top:8px;">💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到下方「📎 套用到教材」→「產生預覽」後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。</div>
+                <div style="font-size:0.68rem; color:#92400E; margin-top:8px;">💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到「⚡ 快速套用」產生預覽後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。</div>
             </div>
         `;
     }
@@ -261,7 +268,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     let _fieldTemplatesLoadPromise = null;
 
     /**
-     * 2026-08-05 第十三輪（架構修正）：Layout Template 管理區塊自己的編輯狀態，跟 Excel 小工具的
+     * 2026-08-05 第十三輪（架構修正）：擷取範本管理區塊自己的編輯狀態，跟 Excel 小工具的
      * _excelSegments 完全獨立——Template 管理不需要任何 Excel 檔案就能新增/編輯/刪除。
      * null＝目前沒在編輯（只顯示清單）；有值＝正在新增或編輯某一筆：
      * { id: string|null（null＝新增，有值＝編輯既有那一筆）, isNew: boolean, name: string,
@@ -283,55 +290,56 @@ window.FeatureMaterialLayoutPairing = (function () {
      */
     let _appRowState = {};
 
+    /**
+     * 2026-08-14（正規化重構）：擷取範本／套用紀錄改存正規化表
+     * （material_extraction_templates／material_folders／material_sheets），不再整批覆寫
+     * profiles.raw_data 的 JSON 陣列。以下 fetch/save 系列函式是刻意保留的「相容層」——
+     * 對外回傳／接收的形狀跟舊版一模一樣（陣列、欄位名不變），是因為整份檔案下面幾千行
+     * render／collectFromDom／diff 邏輯全部是基於「陣列 record」在操作，逐一改寫風險極高
+     * 且非必要；只有「怎麼落地到資料庫」這一層被替換成單筆 CRUD＋差異比對，不再有
+     * 「一次寫整個陣列蓋掉別人剛存的紀錄」這類競態。
+     */
+
+    function isUuidLike(v) {
+        return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+    }
+
+    async function getCurrentUserId() {
+        const { data: { user } } = await window.supabaseClient.auth.getUser();
+        return user ? user.id : null;
+    }
+
+    /**
+     * 2026-08-14（範本庫合併）：擷取範本跟考卷範本現在是同一張表 material_templates
+     * （見 110_teacher_core/feature-template-library.js），用 is_extraction_role／is_exam_role
+     * 兩個角色勾選框取代「兩張表」。這裡改成向共用資料層要「有勾擷取角色」的那些，不再自己
+     * 直接查資料庫——避免這裡跟 feature-exam-job.js 各自維護一份取資料邏輯，之後改一邊漏一邊。
+     * 回傳形狀不變（仍含 id/legacy_id/name/columns/designed_from/answer_mode/...），另外多帶
+     * is_exam_role／fields／fields_answer／quiz_prompt／quiz_answer／lines_per_page，供範本清單
+     * 顯示「🧾 也當試卷範本」勾選框＋一次性預填用。
+     */
     async function fetchFieldTemplates(force) {
-        if (_fieldTemplatesCache && !force) return _fieldTemplatesCache;
-        if (_fieldTemplatesLoadPromise && !force) return _fieldTemplatesLoadPromise;
-        _fieldTemplatesLoadPromise = (async function () {
-            const { data: { user } } = await window.supabaseClient.auth.getUser();
-            if (!user) { _fieldTemplatesCache = []; return _fieldTemplatesCache; }
-            const { data: profile, error } = await window.supabaseClient
-                .from('profiles')
-                .select('raw_data')
-                .eq('id', user.id)
-                .maybeSingle();
-            if (error) {
-                console.warn('[FeatureMaterialLayoutPairing] 讀取欄位設定 Template 清單失敗', error);
-                _fieldTemplatesCache = _fieldTemplatesCache || [];
-                return _fieldTemplatesCache;
-            }
-            const raw = (profile && profile.raw_data) || {};
-            _fieldTemplatesCache = Array.isArray(raw.material_field_templates) ? raw.material_field_templates : [];
-            return _fieldTemplatesCache;
-        })().finally(function () { _fieldTemplatesLoadPromise = null; });
-        return _fieldTemplatesLoadPromise;
+        await window.FeatureTemplateLibrary.fetchTemplates(force);
+        _fieldTemplatesCache = window.FeatureTemplateLibrary.getExtractionTemplates();
+        return _fieldTemplatesCache;
     }
 
     /** 供渲染用（無法 await）：還沒載入過就背景觸發一次，先回目前已知的（可能是空陣列） */
     function getFieldTemplatesCachedSync() {
-        if (_fieldTemplatesCache === null && !_fieldTemplatesLoadPromise) fetchFieldTemplates(false).catch(function () {});
-        return _fieldTemplatesCache || [];
+        _fieldTemplatesCache = window.FeatureTemplateLibrary.getExtractionTemplates();
+        return _fieldTemplatesCache;
     }
 
-    async function saveFieldTemplates(list) {
-        const { data: { user } } = await window.supabaseClient.auth.getUser();
-        if (!user) throw new Error('尚未登入');
-        const { data: profile, error: readErr } = await window.supabaseClient
-            .from('profiles')
-            .select('raw_data')
-            .eq('id', user.id)
-            .maybeSingle();
-        if (readErr) throw readErr;
-        const mergedRawData = Object.assign({}, (profile && profile.raw_data) || {}, { material_field_templates: list });
-        const { error: updateErr } = await window.supabaseClient
-            .from('profiles')
-            .update({ raw_data: mergedRawData })
-            .eq('id', user.id);
-        if (updateErr) throw updateErr;
-        _fieldTemplatesCache = list;
-    }
+    // 💣 雷區（2026-08-15 老師回報「網頁延遲，範本意外被刪除」，已徹底移除舊的 saveFieldTemplates）：
+    // 舊版邏輯是「呼叫端抓一份自認完整的範本清單、局部改一筆，整份丟進來跟資料庫現有清單做差集，
+    // 清單裡沒出現的全部當成『老師刪掉了』」。前提是「呼叫端拿到的清單一定完整、一定最新」，但
+    // fetchFieldTemplates(true) 是一次網路請求，只要遇到延遲／race，拿到的清單可能是不完整的舊
+    // 快取，其他明明還存在的範本就會被誤判成要刪除、批次 removeRole 砍掉角色（兩個角色都關掉還會
+    // 真的軟刪除）。三個呼叫點（設計新擷取範本存檔／編輯器存檔／刪除）已改成只對「這一筆」直接
+    // update／create／removeRole，不比對、不動任何其他範本。不要再新增「整份清單做差集刪除」的函式。
 
     /**
-     * 「配對紀錄」的自然鍵：同一個範圍（老師個人／某班）＋同一個教材資料夾＋同一個 Layout Template，
+     * 「配對紀錄」的自然鍵：同一個範圍（老師個人／某班）＋同一個教材資料夾＋同一個擷取範本，
      * 邏輯上就是「同一組配對」，不該因為存檔路徑不同（⚡快速套用每次都會生成新的隨機 id）而被
      * 誤判成兩筆不同紀錄。template_id 有值就用 id 比對（改名不受影響），沒有 template_id
      * 的舊資料才退回用名稱比對。
@@ -385,37 +393,85 @@ window.FeatureMaterialLayoutPairing = (function () {
         return next;
     }
 
+    /**
+     * material_sheets 是「一筆＝一個活頁」，跟舊版「一筆＝一個 Template 套用（含 sheet_ids[] 陣列）」
+     * 形狀不同——這裡把同一個（教材資料夾＋擷取範本）的活頁重新群組回舊版的「application
+     * record」形狀，維持下面幾千行畫面邏輯不用改。group id 用「資料夾 id＋template id（或找不到
+     * template 時退回舊 template 名稱）」組成的穩定字串，同一組配對每次讀出來 id 都一樣
+     * ——不像舊版 Date.now()+隨機碼，這順便根治了 2026-08-13「重複套用長出兩筆」那類雷區。
+     */
+    function groupMaterialSheetsIntoApps(rows) {
+        const groups = {};
+        const order = [];
+        (rows || []).forEach(function (row) {
+            const folder = row.material_folders || {};
+            const tpl = row.material_templates || null;
+            const rootKind = folder.root_kind === 'class' ? 'class' : 'teacher';
+            const classId = rootKind === 'class' ? String(folder.class_id || '') : '';
+            const templateId = row.extraction_template_id || '';
+            const templateName = tpl ? (tpl.name || '') : (row.legacy_template_name || '');
+            const groupKey = 'grp|' + folder.id + '|' + (templateId || ('name:' + templateName.trim().toUpperCase()));
+            if (!groups[groupKey]) {
+                groups[groupKey] = {
+                    id: groupKey,
+                    template_id: templateId,
+                    template_name: templateName,
+                    root_kind: rootKind,
+                    class_id: classId,
+                    material_folder: folder.folder_name || '',
+                    sheet_ids: [],
+                    source_kind: row.source_kind || '',
+                    source_file_name: row.source_file_name || '',
+                    row_start: row.row_start || '',
+                    row_end: row.row_end || '',
+                    _latestUpdatedAt: ''
+                };
+                order.push(groupKey);
+            }
+            const g = groups[groupKey];
+            g.sheet_ids.push(row.sheet_stem);
+            // 同一組裡取「最近一次更新」的那個活頁決定要顯示的行數起迄／來源——這幾個欄位
+            // 舊版是整組共用一份，現在改成逐活頁存，用最新那筆當代表值最貼近老師目前的意圖
+            if (!g._latestUpdatedAt || (row.updated_at && row.updated_at > g._latestUpdatedAt)) {
+                g._latestUpdatedAt = row.updated_at || g._latestUpdatedAt;
+                g.source_kind = row.source_kind || '';
+                g.source_file_name = row.source_file_name || '';
+                g.row_start = row.row_start || '';
+                g.row_end = row.row_end || '';
+            }
+        });
+        return order.map(function (k) { return groups[k]; });
+    }
+
     async function fetchTemplateApplications(force) {
         if (_appCache && !force) return _appCache;
         if (_appLoadPromise && !force) return _appLoadPromise;
         _appLoadPromise = (async function () {
-            const { data: { user } } = await window.supabaseClient.auth.getUser();
-            if (!user) { _appCache = []; return _appCache; }
-            const { data: profile, error } = await window.supabaseClient
-                .from('profiles')
-                .select('raw_data')
-                .eq('id', user.id)
-                .maybeSingle();
+            const userId = await getCurrentUserId();
+            if (!userId) { _appCache = []; return _appCache; }
+            const { data, error } = await window.supabaseClient
+                .from('material_sheets')
+                .select(`
+                    id,
+                    sheet_stem,
+                    extraction_template_id,
+                    legacy_template_name,
+                    source_kind,
+                    source_file_name,
+                    row_start,
+                    row_end,
+                    updated_at,
+                    material_folders!inner ( id, root_kind, class_id, folder_name, teacher_id ),
+                    material_templates ( id, name )
+                `)
+                .eq('material_folders.teacher_id', userId)
+                .order('sheet_stem', { ascending: true });
             if (error) {
                 console.warn('[FeatureMaterialLayoutPairing] 讀取 Template 套用清單失敗', error);
                 _appCache = _appCache || [];
                 return _appCache;
             }
-            const raw = (profile && profile.raw_data) || {};
-            const list = Array.isArray(raw.material_template_applications) ? raw.material_template_applications : [];
-            // 相容舊資料：2026-08-05 第十三輪存的是單選 sheet_id（字串），2026-08-06 改成可複選
-            // sheet_ids（陣列）——讀取時把舊格式併成新格式的單元素陣列，不用寫遷移腳本
-            const normalized = list.map(function (a) {
-                return Object.assign({}, a, {
-                    sheet_ids: Array.isArray(a.sheet_ids) ? a.sheet_ids : (a.sheet_id ? [a.sheet_id] : [])
-                });
-            });
-            // 2026-08-13（老師回報「三個區塊連動有問題」，實際是同一組資料夾／Template 因為
-            // 「⚡快速套用」每次都用新的隨機 id 存，重複套用兩次就長出兩筆看起來一樣的配對）：
-            // 讀取當下先做一次去重合併（只影響記憶體快取的顯示，不會主動寫回 DB），同一個自然鍵
-            // （root_kind/class_id/material_folder/template_id 或名稱）只留一筆、sheet_ids 取聯集，
-            // 老師之後只要再存一次任何一筆，這次合併結果就會順勢寫回、不會一直長出新的重複項。
-            _appCache = normalized.reduce(function (acc, a) { return mergeAppRecordIntoList(acc, a); }, []);
+            _appCache = groupMaterialSheetsIntoApps(data);
             return _appCache;
         })().finally(function () { _appLoadPromise = null; });
         return _appLoadPromise;
@@ -426,22 +482,121 @@ window.FeatureMaterialLayoutPairing = (function () {
         return _appCache || [];
     }
 
+    async function ensureMaterialFolderId(userId, folderList, rootKind, classId, folderName) {
+        const upperName = String(folderName || '').trim().toUpperCase();
+        const existing = folderList.find(function (f) {
+            return f.root_kind === rootKind
+                && String(f.class_id || '') === String(classId || '')
+                && String(f.folder_name || '').trim().toUpperCase() === upperName;
+        });
+        if (existing) return existing.id;
+        const insertPayload = {
+            teacher_id: userId,
+            root_kind: rootKind,
+            class_id: rootKind === 'class' ? (classId || null) : null,
+            folder_name: String(folderName || '').trim(),
+            material_type: 'vocab_sentence'
+        };
+        const { data: inserted, error } = await window.supabaseClient
+            .from('material_folders').insert(insertPayload).select('id, root_kind, class_id, folder_name').single();
+        if (error) throw error;
+        folderList.push(inserted);
+        return inserted.id;
+    }
+
+    /**
+     * list＝這位老師「套用到教材」清單的完整期望狀態（跟舊版整批覆寫語意相同）。落地方式：
+     * 每一組（資料夾＋Template）逐活頁 upsert 進 material_sheets；這次存檔前就存在、但沒有
+     * 被任何一組「摸到」的活頁（代表被老師刪掉整組，或從 sheet_ids 裡拿掉勾選）才真的刪除
+     * ——用單筆 CRUD 取代整批陣列覆寫，不會有「一份存檔蓋掉別的分頁剛存好的紀錄」的競態。
+     */
     async function saveTemplateApplications(list) {
-        const { data: { user } } = await window.supabaseClient.auth.getUser();
-        if (!user) throw new Error('尚未登入');
-        const { data: profile, error: readErr } = await window.supabaseClient
-            .from('profiles')
-            .select('raw_data')
-            .eq('id', user.id)
-            .maybeSingle();
-        if (readErr) throw readErr;
-        const mergedRawData = Object.assign({}, (profile && profile.raw_data) || {}, { material_template_applications: list });
-        const { error: updateErr } = await window.supabaseClient
-            .from('profiles')
-            .update({ raw_data: mergedRawData })
-            .eq('id', user.id);
-        if (updateErr) throw updateErr;
-        _appCache = list;
+        const userId = await getCurrentUserId();
+        if (!userId) throw new Error('尚未登入');
+        const desired = Array.isArray(list) ? list : [];
+
+        const { data: allFolders, error: folderErr } = await window.supabaseClient
+            .from('material_folders')
+            .select('id, root_kind, class_id, folder_name')
+            .eq('teacher_id', userId);
+        if (folderErr) throw folderErr;
+        const folderList = allFolders || [];
+        const folderIds = folderList.map(function (f) { return f.id; });
+
+        let beforeSheets = [];
+        if (folderIds.length) {
+            const { data: beforeRows, error: beforeErr } = await window.supabaseClient
+                .from('material_sheets')
+                .select('id, material_folder_id, sheet_stem')
+                .in('material_folder_id', folderIds);
+            if (beforeErr) throw beforeErr;
+            beforeSheets = beforeRows || [];
+        }
+        const existingSheetsByFolder = {};
+        beforeSheets.forEach(function (s) {
+            if (!existingSheetsByFolder[s.material_folder_id]) existingSheetsByFolder[s.material_folder_id] = {};
+            existingSheetsByFolder[s.material_folder_id][String(s.sheet_stem || '').trim().toUpperCase()] = s.id;
+        });
+
+        const templates = await fetchFieldTemplates(false);
+        const touchedSheetIds = {};
+
+        for (const d of desired) {
+            const rootKind = d.root_kind === 'class' ? 'class' : 'teacher';
+            const classId = rootKind === 'class' ? String(d.class_id || '') : '';
+            const folderName = String(d.material_folder || '').trim();
+            const sheetStems = (Array.isArray(d.sheet_ids) ? d.sheet_ids : [])
+                .map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+            if (!folderName || !sheetStems.length) continue;
+
+            const materialFolderId = await ensureMaterialFolderId(userId, folderList, rootKind, classId, folderName);
+            if (!existingSheetsByFolder[materialFolderId]) existingSheetsByFolder[materialFolderId] = {};
+
+            let extractionTemplateId = isUuidLike(d.template_id) ? d.template_id : null;
+            if (!extractionTemplateId && d.template_name) {
+                const byName = templates.find(function (t) { return String(t.name || '').trim() === String(d.template_name).trim(); });
+                if (byName) extractionTemplateId = byName.id;
+            }
+            const legacyTemplateName = extractionTemplateId ? null : (String(d.template_name || '').trim() || null);
+
+            for (const stem of sheetStems) {
+                const upperStem = stem.toUpperCase();
+                const existingId = existingSheetsByFolder[materialFolderId][upperStem];
+                const payload = {
+                    material_folder_id: materialFolderId,
+                    extraction_template_id: extractionTemplateId,
+                    legacy_template_name: legacyTemplateName,
+                    sheet_stem: stem,
+                    source_kind: d.source_kind || null,
+                    source_file_name: d.source_file_name || null,
+                    row_start: d.row_start || null,
+                    row_end: d.row_end || null,
+                    updated_at: new Date().toISOString()
+                };
+                if (existingId) {
+                    const { error } = await window.supabaseClient.from('material_sheets').update(payload).eq('id', existingId);
+                    if (error) throw error;
+                    touchedSheetIds[String(existingId)] = true;
+                } else {
+                    const { data: inserted, error } = await window.supabaseClient
+                        .from('material_sheets').insert(payload).select('id').single();
+                    if (error) throw error;
+                    existingSheetsByFolder[materialFolderId][upperStem] = inserted.id;
+                    touchedSheetIds[String(inserted.id)] = true;
+                }
+            }
+        }
+
+        const toDelete = beforeSheets
+            .map(function (s) { return String(s.id); })
+            .filter(function (id) { return !touchedSheetIds[id]; });
+        if (toDelete.length) {
+            const { error } = await window.supabaseClient.from('material_sheets').delete().in('id', toDelete);
+            if (error) throw error;
+        }
+
+        _appCache = await fetchTemplateApplications(true);
+        return _appCache;
     }
 
     function getKnownSemanticKeys() {
@@ -546,12 +701,14 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 2026-08-10（老師指出圖二／圖三兩套 layout 沒串起來）：Layout Template（欄位對應範本）
-     * 跟出題畫面的 layout_profile_id（LAYOUT_CATALOG，決定 fields／fields_answer 排版公式）
-     * 原本是兩套完全獨立系統——LAYOUT_CATALOG 6 個選項全部是舊版 GEPT／vocab 欄字母公式
-     * （STACK(D,E,C) 等），對新版具名 semantic_key meta.json（display_zh／answer_en…）
-     * 完全不合用。這裡把每個已存 Template 換算成同形狀的 profile，讓兩份清單能合併，
-     * 不用刪掉舊的，也不用老師自己亂猜一個不相關的舊選項。
+     * 2026-08-14（分離「擷取範本」與「考卷範本」）：這個函式原本被 getTemplateDerivedProfiles()
+     * 呼叫，自動把「每一個」擷取範本無條件換算成考卷排版選項塞進出題下拉——沒有老師的明確同意，
+     * 系統就自作主張讓所有擷取範本都變成「雙用」，這是被老師明確要求拔掉的核心行為（見
+     * .cursor/plans 分離擷取範本與考卷範本）。getTemplateDerivedProfiles() 已刪除，這個函式現在
+     * 只服務兩處唯讀相容需求：① resolveTemplateProfile()／'tpl:' 前綴機制，只用來讓歷史上已經
+     * 存過 tpl:{uuid} 的舊 exam_job／quiz_paper 紀錄仍能重新產出；② 考卷範本編輯器「從擷取範本
+     * 開始」的一次性預填草稿（老師存檔後就是完全獨立的考卷範本，不再跟原擷取範本有任何連動）。
+     * 這兩種用法都不會出現在任何新的出題下拉選單裡。
      *
      * LayoutFieldsEval.lookupColumn 本來就會優先拿「識別字」當 row 自己的鍵去找（大小寫不拘），
      * 找不到才退回 Excel 欄字母 colMap；所以 fields 公式直接寫 semantic_key（如 display_zh）
@@ -561,69 +718,38 @@ window.FeatureMaterialLayoutPairing = (function () {
      */
     function buildProfileFromTemplate(template) {
         if (!template || !template.id) return null;
-        const cols = Array.isArray(template.columns) ? template.columns : [];
-        const infoKeys = cols.filter(function (c) { return c && c.is_info && c.semantic_key; }).map(function (c) { return c.semantic_key; });
-        const questionKeys = cols.filter(function (c) { return c && c.is_question && c.semantic_key; }).map(function (c) { return c.semantic_key; });
-        const answerKeys = cols.filter(function (c) { return c && c.is_answer && c.semantic_key; }).map(function (c) { return c.semantic_key; });
-
-        const segments = [];
-        if (infoKeys.length) segments.push('STACK(' + infoKeys.join(',') + ')');
-        questionKeys.forEach(function (k) { segments.push(k); });
-        if (!segments.length) segments.push('"（Template「' + String(template.name || '').replace(/"/g, '') + '」沒有勾選任何題目／訊息欄）"');
-        const fields = segments.join(', ');
-
-        const sep = template.answer_mode === 'separate' ? ' / ' : ' ';
-        const fieldsAnswer = answerKeys.length
-            ? 'TEXTJOIN("' + sep + '", ' + answerKeys.join(', ') + ')'
-            : '""';
-
+        const draft = window.FeatureTemplateLibrary.computeExamDraftFromColumns(template);
         return {
             profile_id: 'tpl:' + template.id,
             label: template.name,
-            fields: fields,
-            fields_answer: fieldsAnswer,
-            lines_per_page: 10
+            fields: draft.fields || ('"（Template「' + String(template.name || '').replace(/"/g, '') + '」沒有勾選任何題目／訊息欄）"'),
+            fields_answer: draft.fields_answer,
+            lines_per_page: draft.lines_per_page
         };
     }
 
-    /** 出題畫面 layout_profile_id 下拉合併用：把目前所有已存 Template 換算成排版 profile 清單 */
-    function getTemplateDerivedProfiles() {
-        return getFieldTemplatesCachedSync().map(buildProfileFromTemplate).filter(Boolean);
-    }
+    /**
+     * 2026-08-14（分離「擷取範本」與「考卷範本」，移除自動雙用行為）：這裡原本有一個
+     * getSuggestedTemplateProfileId()，依教材資料夾＋活頁「這份 meta 實際是用哪個擷取範本套用
+     * 產生的」自動換算成 'tpl:xxx' 考卷排版建議並塞回出題下拉——這正是老師明確指出的「系統
+     * 自作主張把擷取範本當考卷範本」問題根源之一，已整個刪除（不再有任何函式把擷取範本自動
+     * 換算成考卷排版建議）。出題畫面的建議鏈改讀 material_combinations →
+     * material_combination_exam_templates（見 feature-class-material-combinations.js 的
+     * getSuggestedExamTemplateId，老師在「🏫 班級教材組合」Step 2 明確勾選過的搭配才會被建議）。
+     * resolveTemplateProfile()／'tpl:' 前綴機制仍保留成唯讀相容層，只服務歷史上已經存過
+     * tpl:{uuid} 的舊 exam_job／quiz_paper 紀錄，跟這裡刪除的自動建議行為無關。
+     */
 
     /**
-     * 依教材資料夾＋活頁，找「這份 meta 實際是用哪個 Template 套用產生的」（material_template_applications）。
-     * 這比「🧩 教材／考試 Layout 搭配」手動登記的建議更準：套用到教材時系統就已經記下
-     * 「這個資料夾／活頁 用了哪個 Template」，不需要老師另外再登記一次。
-     * 活頁完全比對優先於資料夾內第一筆套用。
-     * @param {string} materialFolder
-     * @param {string[]} [sheetIds]
-     * @returns {string} 'tpl:xxx'，找不到回空字串
+     * 依 'tpl:xxx' 反查 Template，換算出排版 profile；不是 tpl: 開頭或找不到都回 null。
+     * 💣 雷區（2026-08-14 backfill-verify 抓到）：xxx 可能是新版 uuid，也可能是遷移前
+     * （JSON blob 時代）留下的舊字串 id（如 mft_1786028034473_4ew0，現存於老師實際考卷紀錄）
+     * ——只比對 t.id 會讓這些舊考卷全部解析失敗，必須同時比對 t.legacy_id。
      */
-    function getSuggestedTemplateProfileId(materialFolder, sheetIds) {
-        const folder = String(materialFolder || '').trim();
-        if (!folder) return '';
-        const sids = (sheetIds || []).map(function (s) { return String(s || '').trim().toUpperCase(); }).filter(Boolean);
-        const apps = getTemplateApplicationsCachedSync().filter(function (a) {
-            return a && String(a.material_folder || '').trim() === folder && a.template_id;
-        });
-        if (!apps.length) return '';
-        for (let i = 0; i < sids.length; i++) {
-            const hit = apps.find(function (a) {
-                return (a.sheet_ids || []).map(function (s) { return String(s).toUpperCase(); }).indexOf(sids[i]) !== -1;
-            });
-            if (hit) return 'tpl:' + hit.template_id;
-        }
-        return 'tpl:' + apps[0].template_id;
-    }
-
-    /** 依 'tpl:xxx' 反查 Template，換算出排版 profile；不是 tpl: 開頭或找不到都回 null */
     function resolveTemplateProfile(profileId) {
         const id = String(profileId || '').trim();
         if (id.indexOf('tpl:') !== 0) return null;
-        const templateId = id.slice(4);
-        const template = getFieldTemplatesCachedSync().find(function (t) { return t.id === templateId; });
-        return template ? buildProfileFromTemplate(template) : null;
+        return window.FeatureTemplateLibrary.resolveTemplateProfile(id);
     }
 
     async function savePairs(pairs) {
@@ -1035,7 +1161,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             const wb = window.XLSX.read(_excelRawData, { type: 'array', sheets: [sheetName] });
             const sheet = wb && wb.Sheets && wb.Sheets[sheetName];
             if (sheet) {
-                matrix = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+                matrix = sheetToMatrixFromColumnA(sheet);
             }
         } catch (_e) {
             matrix = null;
@@ -1294,7 +1420,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     每個欄位的資料項名稱／題目／答案／訊息設定好之後，按下面「儲存這個 Template」。
                     下方「行數起／行數末」只是用目前這個本機檔案立刻測試產生 meta 預覽（不會存進 Template、也不會上傳）；
                     Template 本身仍然跟任何一個實際檔案脫鉤，可重複套用到「欄位結構相同」的其他檔案——正式產生／上傳到
-                    Google Drive，請到「📎 套用到教材」區塊（同一份 Template 可以套用到多個檔案、各自登記不同的行數）。
+                    Google Drive，請用上面「⚡ 已有現成擷取範本」快速套用（同一份 Template 可以套用到多個檔案，各自登記不同的行數）。
                 </div>
                 <div style="display:grid; grid-template-columns:1fr; gap:8px;">
                     ${selectedCols.map(function (col) {
@@ -1585,7 +1711,7 @@ window.FeatureMaterialLayoutPairing = (function () {
      * __manual__ 逃生口模式（跟教材資料夾下拉同一套），不用另外發明一種「新增名稱」UI。
      * 2026-08-08：這裡原本標「Layout」，老師明確指出誤導——存的不只是欄位排版（layout），
      * 還包含題目/答案/訊息角色、書寫答案批改標準、口說答案批改標準與公式，統一正名為「Template」，
-     * 跟上方「🧩 Layout Template」管理區塊的名稱一致（同一份資料，只是進入點不同）。
+     * 跟上方「🧩擷取範本」管理區塊的名稱一致（同一份資料，只是進入點不同）。
      */
     function renderSegmentSaveAreaHtml(seg) {
         const templates = getFieldTemplatesCachedSync();
@@ -1638,7 +1764,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * ⚡「套用現成 Layout」：不碰任何 Template 的儲存（不會覆蓋、不會新增一筆）。
+     * ⚡「套用現成擷取範本」：不碰任何 Template 的儲存（不會覆蓋、不會新增一筆）。
      *
      * 2026-08-13（老師回報「不是產生套用，應該是產生 meta/script 吧」「流程分割不清楚、
      * 一直重複」）：改版前這裡會在下面「📎 套用到教材」（#mlp-app-rows）另外新增一整列，
@@ -1654,7 +1780,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const msgEl = cardEl.querySelector('.mlp-excel-quickapply-msg');
         const templateName = (seg.quickApplyTemplateName || '').trim();
         if (!templateName) {
-            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請先選一個要套用的現成 Layout'; }
+            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請先選一個要套用的現成擷取範本'; }
             return;
         }
         const sheetNames = Object.keys(seg.checkedSheets).filter(function (k) { return seg.checkedSheets[k]; }).sort();
@@ -1707,13 +1833,13 @@ window.FeatureMaterialLayoutPairing = (function () {
             if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = '✅ 已產生預覽（見下方），確認無誤後按「☁️ 確認上傳到 Drive」即可'; }
             window.showFlash && window.showFlash('已套用「' + templateName + '」，請確認下方預覽內容後上傳', 'success');
         } catch (err) {
-            console.error('[FeatureMaterialLayoutPairing] 套用現成 Template 失敗', err);
+            console.error('[FeatureMaterialLayoutPairing] 套用現成擷取範本失敗', err);
             window.showFlash && window.showFlash('❌ 套用失敗：' + (err.message || err), 'error');
         }
     }
 
     /**
-     * ⚡ 快速套用區塊：只需要「檔案已載入＋至少勾一個活頁」，跟下面設計新 Layout 用到的
+     * ⚡ 快速套用區塊：只需要「檔案已載入＋至少勾一個活頁」，跟下面設計新擷取範本用到的
      * seg.checks／seg.mapping／seg.confirmed 完全無關，所以獨立一個 quickApplyTemplateName
      * 欄位，不會跟「儲存 Template」那邊選的名稱互相干擾。
      */
@@ -1723,14 +1849,14 @@ window.FeatureMaterialLayoutPairing = (function () {
         const names = templates.map(function (t) { return String(t.name || '').trim(); }).filter(Boolean);
         const uniqueNames = names.filter(function (n, i) { return names.indexOf(n) === i; });
         if (!uniqueNames.length) {
-            return '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何 Layout Template，請先用下面「🆕 設計新 Layout」設計一份，之後同一份活頁結構就能在這裡直接套用，不用再重新設計。</div>';
+            return '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何擷取範本，請先用下面「🆕 設計新擷取範本」設計一份，之後同一份活頁結構就能在這裡直接套用，不用再重新設計。</div>';
         }
         return `
             <div style="margin-bottom:10px; padding:12px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px;">
-                <div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">⚡ 已有現成 Layout？直接套用產生 meta/script（不需要勾欄位／設定資料項名稱）</div>
+                <div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">⚡ 已有現成擷取範本？<u>先在上面勾選活頁</u>，就可以直接套用產生 meta/script（不用像設計新範本那樣逐格勾欄位、設定資料項名稱）</div>
                 <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
-                    <label style="font-size:0.78rem; font-weight:700; color:#334155;">選一個現成 Layout
-                        <select class="form-control mlp-excel-quickapply-select" style="width:220px; padding:6px; margin-top:2px;">${buildSelectOptionsHtml(uniqueNames, seg.quickApplyTemplateName || '', '— 選擇要套用的 Layout —')}</select>
+                    <label style="font-size:0.78rem; font-weight:700; color:#334155;">選一個現成擷取範本
+                        <select class="form-control mlp-excel-quickapply-select" style="width:220px; padding:6px; margin-top:2px;">${buildSelectOptionsHtml(uniqueNames, seg.quickApplyTemplateName || '', '— 選擇要套用的擷取範本—')}</select>
                     </label>
                     <label style="font-size:0.78rem; font-weight:700; color:#334155;">行數起
                         <input type="text" class="form-control mlp-excel-quickapply-rowstart" value="${esc(seg.quickApplyRowStart || '2')}" style="width:80px; padding:6px; margin-top:2px;">
@@ -1741,7 +1867,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     <button type="button" class="mlp-excel-quickapply-btn btn" style="padding:7px 16px; font-weight:800; background:#059669; color:white; border:1px solid #059669;" ${sheetNames.length ? '' : 'disabled'}>🚀 產生 meta/script</button>
                     <span class="mlp-excel-quickapply-msg" style="font-size:0.78rem; font-weight:800;"></span>
                 </div>
-                ${sheetNames.length ? '' : '<div style="font-size:0.74rem; color:#B45309; margin-top:4px;">⚠️ 請先在上面勾選至少一個活頁才能套用</div>'}
+                ${sheetNames.length ? '' : '<div style="font-size:0.78rem; color:#B45309; margin-top:4px; font-weight:800;">⚠️ 按鈕目前是灰色不能按——請先勾選上面「第 1 組（活頁選擇）」裡至少一個活頁（例如 H），勾完這顆按鈕才會變綠色可以按</div>'}
             </div>
         `;
     }
@@ -1758,14 +1884,14 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 🆕「設計新 Layout」的可收合外框：已經有現成 Template 可用時預設收起（大部分情況只需要上面
+     * 🆕「設計新擷取範本」的可收合外框：已經有現成 Template 可用時預設收起（大部分情況只需要上面
      * 的快速套用），完全沒有任何 Template 時強制展開（不然老師無從下手，畫面上什麼工具都沒有）。
      */
     function renderDesignToggleHtml(seg) {
         const hasTemplates = getFieldTemplatesCachedSync().length > 0;
         const expanded = seg.designExpanded || !hasTemplates;
         return '<button type="button" class="mlp-excel-design-toggle-btn" style="background:none; border:none; padding:4px 0; color:#0F766E; font-weight:800; font-size:0.8rem; cursor:pointer;">'
-            + (expanded ? '▾ ' : '▸ ') + '🆕 設計新 Layout（現有的 Layout 都不適用，需要重新勾欄位設定時才需要）'
+            + (expanded ? '▾ ' : '▸ ') + '🆕 設計新擷取範本（現有的擷取範本都不適用，需要重新勾欄位設定時才需要）'
             + '</button>';
     }
 
@@ -1785,11 +1911,11 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 不再是整個大區塊存一筆、不給名字）。教材資料夾／檔名所有組共用，活頁清單／欄位設定是這一組自己的。
      */
     /**
-     * 2026-08-05 第十三輪雷區（架構修正）：這裡存的是獨立於檔案的 Layout Template
+     * 2026-08-05 第十三輪雷區（架構修正）：這裡存的是獨立於檔案的 擷取範本
      * （見 newExcelSegment 的架構註解）。教材資料夾／活頁只是「設計參考」（designed_from，
      * 選填、純資訊性，不影響能不能存），不再是儲存的必要條件——因為 Template 本身就該能脫離
      * 任何檔案獨立存在（老師明確更正：「layout 是被套用的概念，既是套用，本就該獨立存在，
-     * 怎麼可以依附在某個檔案裡」）。存好之後會出現在上方「Layout Template」管理區塊，
+     * 怎麼可以依附在某個檔案裡」）。存好之後會出現在上方「擷取範本」管理區塊，
      * 那裡才是叫出來編輯／刪除的地方；實際套用到某個檔案的行數起迄記在「📎 套用到教材」區塊。
      */
     async function handleSaveSegment(seg, cardEl) {
@@ -1845,14 +1971,21 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (btn) btn.disabled = true;
         if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 儲存中…'; }
         try {
+            // 💣 雷區（2026-08-15 老師回報「網頁延遲，範本意外被刪除」）：這裡以前是「抓整份清單→
+            // 局部替換其中一筆→整份丟給 saveFieldTemplates 做差集刪除」，一旦 fetchFieldTemplates(true)
+            // 因網路延遲／race 拿到不完整的清單，saveFieldTemplates 會把「清單裡沒出現」的其他範本全部
+            // 當成「老師刪掉了」而砍掉角色（兩個角色都關掉還會真的軟刪除）。改成只針對「這一筆」直接
+            // update／create，完全不去動其他任何範本的資料，徹底消除這整類誤刪風險。
             const templates = await fetchFieldTemplates(true);
-            const existingIdx = templates.findIndex(function (t) { return String(t.name || '').trim() === name; });
-            record.id = existingIdx !== -1 ? templates[existingIdx].id : ('mft_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
-            record.updated_at = new Date().toISOString();
-            const nextList = templates.slice();
-            if (existingIdx !== -1) nextList[existingIdx] = record; else nextList.push(record);
-            await saveFieldTemplates(nextList);
-            if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = (existingIdx !== -1 ? '✅ 已覆蓋更新「' : '✅ 已新增「') + name + '」，可到上方「Layout Template」區塊查看'; }
+            const existing = templates.find(function (t) { return String(t.name || '').trim() === name; });
+            if (existing) {
+                await window.FeatureTemplateLibrary.updateTemplate(existing.id, record);
+                record.id = existing.id;
+            } else {
+                record.id = await window.FeatureTemplateLibrary.createTemplate(Object.assign({ is_extraction_role: true }, record));
+            }
+            await fetchFieldTemplates(true);
+            if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = (existing ? '✅ 已覆蓋更新「' : '✅ 已新增「') + name + '」，可到上方「擷取範本」區塊查看'; }
             window.showFlash && window.showFlash('已儲存 Template「' + name + '」');
             seg.savedOnce = true;
             refreshAddSegmentButtonVisibility();
@@ -1866,7 +1999,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     // ------------------------------------------------------------------
-    // 🧩 Layout Template 管理（獨立區塊，2026-08-05 第十三輪新增）
+    // 🧩擷取範本管理（獨立區塊，2026-08-05 第十三輪新增）
     //
     // 雷區（2026-08-05）：舊版「儲存好的 layout」只能透過 Excel 小工具的存檔動作間接看到，
     // 沒有選檔案／沒有活頁清單時整個清單是隱藏的，老師問「儲存好的 layout 如何叫出來，並修改」，
@@ -1875,7 +2008,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     // ------------------------------------------------------------------
 
     function openTemplateEditorForNew() {
-        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'formula', speakFormula: '' };
+        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'formula', speakFormula: '', linesPerPage: 10, fields: '' };
         renderTemplateEditor();
         renderTemplateList();
         const editorEl = document.getElementById('mlp-template-editor');
@@ -1901,7 +2034,17 @@ window.FeatureMaterialLayoutPairing = (function () {
             answerMode: (t && t.answer_mode === 'separate') ? 'separate' : 'combine',
             answerCombineNote: (t && t.answer_combine_note) || '',
             speakMode: (t && ['formula', 'complex', 'paste'].indexOf(t.speak_mode) !== -1) ? t.speak_mode : 'formula',
-            speakFormula: (t && t.speak_formula) || ''
+            speakFormula: (t && t.speak_formula) || '',
+            // 2026-08-14（老師回報）：每頁行數本質是「擷取範本」自己的排版設定（只在輸出紙本考卷時
+            // 才有意義，線上考試不受影響），不該只在勾了「考卷範本」角色時才看得到／改得到。若同一筆
+            // 也勾了試卷角色，試卷那邊的公式框直接沿用這裡的值（同一個欄位，不是各自存一份、不用同步）。
+            linesPerPage: (t && t.lines_per_page) || 10,
+            // 2026-08-14（老師四次強調）：題目排版也是每個擷取範本本來就該有、老師能直接改的值，不是
+            // 只有勾了考卷範本才算得出來的唯讀預覽——跟每頁行數一樣放在編輯表單裡，直接讀寫 fields 欄位。
+            fields: (t && t.fields) || '',
+            // 2026-08-15（老師回報意外刪除事件後要求）：角色勾選（擷取範本／考卷範本）只在編輯表單
+            // 裡才能改，不放在清單上，見 renderTemplateEditor() 的角色勾選那一行。
+            isExamRole: !!(t && t.is_exam_role)
         };
         renderTemplateEditor();
         renderTemplateList();
@@ -1914,17 +2057,38 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!wrap) return;
         if (!_templateEditorState) { wrap.innerHTML = ''; return; }
         const st = _templateEditorState;
-        const designed = st.designed_from;
-        const designedText = designed
-            ? ('設計參考：' + esc(designed.material_folder || '（未指定資料夾）') + (designed.file_name ? '｜' + esc(designed.file_name) : '') + (Array.isArray(designed.sheet_ids) && designed.sheet_ids.length ? '｜活頁：' + esc(designed.sheet_ids.join('、')) : ''))
-            : '';
+        // 2026-08-14（老師回報）：設計參考（designed_from）純資訊性備忘，老師確認不需要顯示，拿掉。
+        // 💣 雷區（2026-08-15 老師回報「網頁延遲，勾『考卷範本』結果把範本意外刪除了；這種勾選為什麼
+        // 不是放在編輯裡面才能改」）：角色勾選（擷取範本／考卷範本）只在這個編輯表單裡才能改，不再放在
+        // 上面清單那一列——編輯表單是老師主動點「✏️ 編輯」才會展開，不會在清單背景重繪時意外出現在
+        // 滑鼠底下被誤觸。新增中（isNew）還沒有 id，角色只能等存檔後才能加開，這裡先不顯示考卷角色
+        // 勾選；擷取角色對新範本必定是 true（存檔那一刻就會建立），不用讓老師選。
+        const roleRowHtml = st.isNew
+            ? '<div style="font-size:0.76rem; color:#64748B; margin-top:6px;">💡 新範本存檔後自動是「擷取範本」；要加開「考卷範本」角色，存檔後回到清單點「✏️ 編輯」即可。</div>'
+            : '<div style="display:flex; align-items:center; gap:14px; margin-top:8px; flex-wrap:wrap;">'
+                + '<label style="display:flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#94A3B8; white-space:nowrap;" title="擷取範本角色一律開啟；要移除請用下面「🗑️ 刪除這個 Template」">'
+                    + '<input type="checkbox" checked disabled>擷取範本'
+                + '</label>'
+                + '<label style="display:flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#1D4ED8; white-space:nowrap; cursor:pointer;" title="勾選後這筆範本同時可以在出題畫面／班級教材組合的試卷範本清單被選用">'
+                    + '<input type="checkbox" id="mlp-tpl-role-exam-cb" ' + (st.isExamRole ? 'checked' : '') + '>🧾 考卷範本'
+                + '</label>'
+                + '<span id="mlp-tpl-role-msg" style="font-size:0.76rem; font-weight:800;"></span>'
+            + '</div>';
         wrap.innerHTML = `
             <div style="background:#F8FAFC; border:2px solid #C7D2FE; border-radius:10px; padding:14px; margin-bottom:14px;">
-                <div style="font-size:0.85rem; font-weight:800; color:#4338CA; margin-bottom:8px;">${st.isNew ? '➕ 新增 Layout Template' : '✏️ 編輯 Layout Template'}</div>
-                <label style="font-size:0.78rem; font-weight:800; color:#475569;">Layout 名稱
-                    <input type="text" id="mlp-tpl-name" class="form-control" value="${esc(st.name)}" style="width:260px; padding:6px; margin-top:2px; display:block;" placeholder="幫這份 Template 取個名字">
+                <div style="font-size:0.85rem; font-weight:800; color:#4338CA; margin-bottom:8px;">${st.isNew ? '➕ 新增擷取範本' : '✏️ 編輯擷取範本'}</div>
+                <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                    <label style="font-size:0.78rem; font-weight:800; color:#475569;">範本名稱
+                        <input type="text" id="mlp-tpl-name" class="form-control" value="${esc(st.name)}" style="width:260px; padding:6px; margin-top:2px; display:block;" placeholder="幫這份 Template 取個名字">
+                    </label>
+                    <label style="font-size:0.78rem; font-weight:800; color:#475569;" title="只影響把這份範本輸出成紙本考卷時一頁排幾行；線上考試不受影響">每頁行數
+                        <input type="number" id="mlp-tpl-lines-per-page" class="form-control" min="1" value="${esc(st.linesPerPage || 10)}" style="width:80px; padding:6px; margin-top:2px; display:block;">
+                    </label>
+                </div>
+                ${roleRowHtml}
+                <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">題目排版（考題怎麼呈現的公式，例如 STACK(vBK_name,page), display_zh）
+                    <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="STACK(vBK_name,page), display_zh">${esc(st.fields)}</textarea>
                 </label>
-                ${designedText ? '<div style="font-size:0.72rem; color:#94A3B8; margin-top:6px;">' + designedText + '（純參考資訊，不影響套用）</div>' : ''}
                 <div style="margin-top:12px;">
                     <div style="font-size:0.78rem; font-weight:800; color:#475569; margin-bottom:6px;">欄位設定（欄位代號自己打，可自由新增／刪除列）</div>
                     <div id="mlp-tpl-cols"></div>
@@ -2022,6 +2186,10 @@ window.FeatureMaterialLayoutPairing = (function () {
     function bindTemplateEditorEvents() {
         const nameEl = document.getElementById('mlp-tpl-name');
         if (nameEl) nameEl.addEventListener('change', function () { _templateEditorState.name = this.value.trim(); });
+        const lppEl = document.getElementById('mlp-tpl-lines-per-page');
+        if (lppEl) lppEl.addEventListener('change', function () { _templateEditorState.linesPerPage = parseInt(this.value, 10) || 10; });
+        const fieldsEl = document.getElementById('mlp-tpl-fields');
+        if (fieldsEl) fieldsEl.addEventListener('change', function () { _templateEditorState.fields = this.value; });
         const addColBtn = document.getElementById('mlp-tpl-add-col');
         if (addColBtn) addColBtn.addEventListener('click', function () {
             _templateEditorState.columns.push({ letter: '', semantic_key: '', is_question: false, is_answer: false, is_info: false, is_ai_ref: false });
@@ -2048,6 +2216,54 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
         const answerGradingWrapEl = document.querySelector('.mlp-tpl-answer-grading-wrap');
         if (answerGradingWrapEl) bindAnswerGradingSettingsEvents(answerGradingWrapEl, 'mlp-tpl', _templateEditorState);
+        bindTemplateEditorExamRoleEvent();
+    }
+
+    /**
+     * 「考卷範本」角色勾選——2026-08-15（老師回報意外刪除事件後要求）搬進編輯表單，只有這裡能改。
+     * 勾選＝加開角色（安全，不會刪東西）；取消勾選＝關掉角色，先 confirm（公式會被清掉）。
+     * 這裡只處理這一筆（addRole／removeRole 都是單筆 update，不做整份清單差集），跟清單重繪徹底脫鉤，
+     * 不會因為清單背景重繪而被誤觸、也不會波及其他任何範本。
+     */
+    function bindTemplateEditorExamRoleEvent() {
+        const cb = document.getElementById('mlp-tpl-role-exam-cb');
+        if (!cb) return;
+        cb.addEventListener('change', async function () {
+            const st = _templateEditorState;
+            if (!st || !st.id) return;
+            cb.disabled = true;
+            let flashText = '';
+            try {
+                if (cb.checked) {
+                    await window.FeatureTemplateLibrary.addRole(st.id, 'exam');
+                    st.isExamRole = true;
+                    flashText = '✅ 已加開考卷範本角色';
+                } else {
+                    if (!window.confirm('確定要取消這筆範本的「試卷範本」角色嗎？若沒有其他地方在用，考題排版公式會一併清除。')) {
+                        cb.disabled = false;
+                        return;
+                    }
+                    await window.FeatureTemplateLibrary.removeRole(st.id, 'exam');
+                    st.isExamRole = false;
+                    flashText = '已取消考卷範本角色';
+                }
+                await fetchFieldTemplates(true);
+                // 加開考卷角色若原本 fields 是空的，addRole 會用欄位對應一次性預填（見
+                // FeatureTemplateLibrary.addRole）；重新整份渲染編輯表單（會重建 checkbox／
+                // msgEl，所以訊息文字要在 render 之後再設），讓老師立刻在「題目排版」框裡
+                // 看到剛剛被預填的公式，不用自己再去猜有沒有套上。
+                const fresh = getFieldTemplatesCachedSync().find(function (x) { return x.id === st.id; });
+                if (fresh) st.fields = fresh.fields || '';
+                renderTemplateEditor();
+                const freshMsgEl = document.getElementById('mlp-tpl-role-msg');
+                if (freshMsgEl) { freshMsgEl.style.color = '#0F766E'; freshMsgEl.textContent = flashText; }
+                renderTemplateList();
+                window.FeatureExamJob && window.FeatureExamJob.fetchExamTemplates && window.FeatureExamJob.fetchExamTemplates(true).catch(function () {});
+            } catch (err) {
+                cb.disabled = false;
+                window.alert('更新失敗：' + (err.message || err));
+            }
+        });
     }
 
     /**
@@ -2080,22 +2296,30 @@ window.FeatureMaterialLayoutPairing = (function () {
             answer_mode: st.answerMode === 'separate' ? 'separate' : 'combine',
             answer_combine_note: st.answerCombineNote || '',
             speak_mode: ['formula', 'complex', 'paste'].indexOf(st.speakMode) !== -1 ? st.speakMode : 'formula',
-            speak_formula: st.speakFormula || ''
+            speak_formula: st.speakFormula || '',
+            lines_per_page: parseInt(st.linesPerPage, 10) || 10,
+            fields: st.fields || ''
         };
         const saveBtn = document.getElementById('mlp-tpl-save');
         if (saveBtn) saveBtn.disabled = true;
         if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 儲存中…'; }
         try {
+            // 💣 雷區（2026-08-15 老師回報「網頁延遲，範本意外被刪除」）：以前這裡也是「抓整份清單→
+            // 局部替換→整份丟給 saveFieldTemplates 做差集刪除」，fetchFieldTemplates(true) 一旦因網路
+            // 延遲拿到不完整的清單，其他範本會被 saveFieldTemplates 誤判成「老師刪掉了」而砍角色／
+            // 軟刪除。改成只對「這一筆」直接 update／create，不去比對、不去動任何其他範本。
             const templates = await fetchFieldTemplates(true);
-            const existingIdx = st.id
-                ? templates.findIndex(function (t) { return t.id === st.id; })
-                : templates.findIndex(function (t) { return String(t.name || '').trim() === name; });
-            record.id = existingIdx !== -1 ? templates[existingIdx].id : ('mft_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
-            record.updated_at = new Date().toISOString();
-            const nextList = templates.slice();
-            if (existingIdx !== -1) nextList[existingIdx] = record; else nextList.push(record);
-            await saveFieldTemplates(nextList);
-            window.showFlash && window.showFlash((existingIdx !== -1 ? '已覆蓋更新' : '已新增') + ' Template「' + name + '」');
+            const existing = st.id
+                ? templates.find(function (t) { return t.id === st.id; })
+                : templates.find(function (t) { return String(t.name || '').trim() === name; });
+            if (existing) {
+                await window.FeatureTemplateLibrary.updateTemplate(existing.id, record);
+                record.id = existing.id;
+            } else {
+                record.id = await window.FeatureTemplateLibrary.createTemplate(Object.assign({ is_extraction_role: true }, record));
+            }
+            await fetchFieldTemplates(true);
+            window.showFlash && window.showFlash((existing ? '已覆蓋更新' : '已新增') + ' Template「' + name + '」');
             _templateEditorState = null;
             renderTemplateEditor();
             renderTemplateList();
@@ -2110,11 +2334,14 @@ window.FeatureMaterialLayoutPairing = (function () {
     async function handleDeleteTemplate(id) {
         const templates = getFieldTemplatesCachedSync();
         const t = templates.find(function (x) { return x.id === id; });
-        if (!window.confirm('確定要刪除 Layout Template「' + (t ? t.name : '') + '」嗎？此動作無法復原（已套用到教材的紀錄不會自動跟著刪除，請自行到「📎 套用到教材」區塊檢查）。')) return;
+        if (!window.confirm('確定要刪除擷取範本「' + (t ? t.name : '') + '」嗎？此動作無法復原（已套用到教材產生的 meta.json／script.txt 檔案不會自動跟著刪除）。')) return;
         try {
-            const latest = await fetchFieldTemplates(true);
-            const nextList = latest.filter(function (x) { return x.id !== id; });
-            await saveFieldTemplates(nextList);
+            // 💣 雷區（2026-08-15 老師回報「網頁延遲，範本意外被刪除」）：以前是「抓整份清單→濾掉這一筆
+            // →整份丟給 saveFieldTemplates 做差集刪除」，fetchFieldTemplates(true) 一旦因網路延遲拿到
+            // 不完整的清單，其他範本也會被一起判定成「不在清單裡」而遭砍。改成只針對這一筆呼叫角色感知
+            // 的 removeRole，不去比對、不去動任何其他範本的資料。
+            await window.FeatureTemplateLibrary.removeRole(id, 'extraction');
+            await fetchFieldTemplates(true);
             window.showFlash && window.showFlash('已刪除 Template「' + (t ? t.name : '') + '」');
             if (_templateEditorState && _templateEditorState.id === id) { _templateEditorState = null; renderTemplateEditor(); }
             renderTemplateList();
@@ -2130,7 +2357,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!wrap) return;
         const templates = getFieldTemplatesCachedSync();
         if (!templates.length) {
-            wrap.innerHTML = '<div style="font-size:0.8rem; color:#94A3B8; padding:8px 0;">尚未建立任何 Layout Template，按上面「＋ 新增 Template」開始，或用下面「從本機 Excel 讀取活頁／欄位」小工具設計。</div>';
+            wrap.innerHTML = '<div style="font-size:0.8rem; color:#94A3B8; padding:8px 0;">尚未建立任何擷取範本，按上面「＋ 新增 Template」開始，或用下面「從本機 Excel 讀取活頁／欄位」小工具設計。</div>';
             return;
         }
         wrap.innerHTML = '<ul style="margin:0; padding:0; list-style:none;">'
@@ -2141,33 +2368,76 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const iCount = cols.filter(function (c) { return c && c.is_info; }).length;
                 const airefCols = cols.filter(function (c) { return c && c.is_ai_ref; });
                 // 2026-08-06：口說答案（口語批改基準）跟書寫答案欄不一定相同，且現階段
-                // 允許整批留空——沒有指定這欄不再擋「產生 meta/script」，只是 script.txt 會整份留白，
-                // 這裡用顏色提醒但不是報錯。2026-08-08：改成可複選，這裡要列出全部被勾選的欄，不是只取第一個。
-                const airefText = airefCols.length
-                    ? ('｜🎤 口說答案：' + airefCols.map(function (c) { return esc(c.semantic_key || c.letter); }).join('、'))
-                    : '｜<span style="color:#D97706;">💡 尚未指定口說答案（script.txt 會整份留白，不影響 meta.json）</span>';
-                // 2026-08-07：書寫答案欄數>1才有批改標準這個概念，欄數≤1不顯示，避免無意義的雜訊
-                const gradingModeText = aCount > 1
-                    ? ('｜答案批改：' + (t.answer_mode === 'separate' ? '分開比對' : '結合') + '｜口說批改：' + ({ formula: '公式', complex: '複雜規則', paste: '貼上多筆' }[t.speak_mode] || '公式'))
-                    : '';
-                const designed = t.designed_from;
-                const designedText = designed ? ('｜設計參考：' + esc(designed.material_folder || '') + (designed.file_name ? '／' + esc(designed.file_name) : '')) : '';
+                // 允許整批留空——沒有指定這欄不再擋「產生 meta/script」，只是 script.txt 會整份留白。
+                // 2026-08-14（版面調整）：口說答案欄數併進「共 N 欄」那一行的統計裡，這裡只負責
+                // 口說批改模式那一行——有勾口說答案才談得上批改模式，沒有就顯示「尚無」。
+                const speakModeLabel = airefCols.length
+                    ? (({ formula: '公式', complex: '複雜規則', paste: '貼上多筆' }[t.speak_mode] || '公式') + '（取欄：' + airefCols.map(function (c) { return esc(c.semantic_key || c.letter); }).join('、') + '）')
+                    : '尚無';
+                // 2026-08-14（老師回報）：「設計參考」只是純資訊性備忘（見 designed_from 定義），
+                // 老師確認不需要在清單裡佔一行，拿掉，不用維護跟不影響套用的資訊。
                 // 2026-08-06 修正：正在被上方編輯器編輯的那一筆，下面清單不該「照常顯示」（看起來像
                 // 另一份獨立、可再點編輯/刪除的資料），要 highlight＋標「編輯中」，編輯/刪除按鈕停用，
                 // 避免老師誤以為清單那一筆跟編輯器裡是兩份不同的東西、或誤按導致跟編輯器內容打架
                 const isBeingEdited = !!(_templateEditorState && !_templateEditorState.isNew && _templateEditorState.id === t.id);
                 const liStyle = isBeingEdited
-                    ? 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:#FEF3C7; border:2px solid #F59E0B; border-radius:6px; padding:8px 10px; margin-bottom:6px;'
-                    : 'display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px; margin-bottom:6px;';
+                    ? 'background:#FEF3C7; border:2px solid #F59E0B; border-radius:6px; padding:8px 10px; margin-bottom:6px;'
+                    : 'background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px; margin-bottom:6px;';
                 const actionsHtml = isBeingEdited
                     ? '<span style="padding:3px 10px; font-size:0.74rem; font-weight:800; border-radius:4px; background:#F59E0B; color:white;">✏️ 編輯中…</span>'
                     : '<button type="button" class="mlp-tpl-edit-btn" data-id="' + esc(t.id) + '" style="padding:3px 10px; font-size:0.74rem; font-weight:800; border:1px solid #93C5FD; border-radius:4px; background:#EFF6FF; color:#1D4ED8; cursor:pointer;">✏️ 編輯</button>'
                         + '<button type="button" class="mlp-tpl-duplicate-btn" data-id="' + esc(t.id) + '" style="padding:3px 10px; font-size:0.74rem; font-weight:800; border:1px solid #C4B5FD; border-radius:4px; background:#F5F3FF; color:#6D28D9; cursor:pointer;">📋 複製</button>'
                         + '<button type="button" class="mlp-tpl-delete-btn" data-id="' + esc(t.id) + '" style="padding:3px 10px; font-size:0.74rem; font-weight:800; border:1px solid #FCA5A5; border-radius:4px; background:white; color:#B91C1C; cursor:pointer;">🗑️ 刪除</button>';
+                // 💣 雷區（2026-08-14 老師回報排版問題）：row1 用 flex-wrap:nowrap，左側名稱＋兩個
+                // 角色勾選框用 ellipsis 截斷、絕不換行；右側動作按鈕 flex-shrink:0，永遠固定在最右邊，
+                // 不會因為名稱太長被擠到下一行。欄位統計／批改模式都搬到 row1 下面各自獨立一行。
+                const idx = templates.indexOf(t);
+                const moveUpDisabled = (isBeingEdited || idx === 0) ? ' disabled' : '';
+                const moveDownDisabled = (isBeingEdited || idx === templates.length - 1) ? ' disabled' : '';
+                const moveBtnStyle = 'padding:0 5px; font-size:0.7rem; line-height:1.3; border:1px solid #CBD5E1; border-radius:3px; background:white; color:#475569; cursor:pointer;';
+                const moveBtnsHtml = '<div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;">'
+                    + '<button type="button" class="mlp-tpl-move-up-btn" data-id="' + esc(t.id) + '" style="' + moveBtnStyle + '"' + moveUpDisabled + ' title="往上移">▲</button>'
+                    + '<button type="button" class="mlp-tpl-move-down-btn" data-id="' + esc(t.id) + '" style="' + moveBtnStyle + '"' + moveDownDisabled + ' title="往下移">▼</button>'
+                    + '</div>';
+                // 💣 雷區（2026-08-15 老師回報「網頁延遲，勾『考卷範本』結果把範本意外刪除了；
+                // 這種勾選為什麼不是放在編輯裡面才能改」）：這兩個角色勾選框以前直接放在清單裡，
+                // 每次角色變動都會觸發整份清單重繪（renderTemplateList），清單重繪的同時老師手上
+                // 可能還在跟畫面互動（滑鼠位置、下一個點擊），遇到網路延遲時很容易在重繪過程中誤點
+                // 到旁邊的按鈕（例如剛好换到「🗑️ 刪除」底下）。改成純文字徽章（不可點擊、不會觸發任何
+                // 動作），角色只能到「✏️ 編輯」表單裡面改——編輯表單是老師主動點進去才會出現，不會在
+                // 清單重繪時意外出現在滑鼠底下，從根本上降低誤觸機率。
+                const extractionBadgeHtml = '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:800; color:#6D28D9; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:10px; white-space:nowrap; flex-shrink:0;">擷取範本</span>';
+                const examBadgeHtml = t.is_exam_role
+                    ? '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:800; color:#1D4ED8; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; white-space:nowrap; flex-shrink:0;">🧾 考卷範本</span>'
+                    : '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:700; color:#94A3B8; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; white-space:nowrap; flex-shrink:0;">未開放考卷範本</span>';
+                const row1 = '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap;">'
+                    + '<div style="display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow:hidden;">'
+                        + moveBtnsHtml
+                        + '<strong style="font-size:1.02rem; font-weight:900; color:#1E293B; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-shrink:1;" title="' + esc(t.name || '（未命名）') + '">' + esc(t.name || '（未命名）') + '</strong>'
+                        + extractionBadgeHtml
+                        + examBadgeHtml
+                    + '</div>'
+                    + '<div style="display:flex; gap:6px; flex-shrink:0; white-space:nowrap;">' + actionsHtml + '</div>'
+                    + '</div>';
+                // 2026-08-14（老師回報：圖二那一行「沒存在必要」，直接刪除）：正在編輯的這一筆，
+                // 上面編輯表單已經完整展開（名稱／角色勾選／欄位設定／書寫批改／口說批改都在那裡），
+                // 下面清單完全不再顯示這一筆的任何摘要（連 row1 都不留），避免同一份資料兩處重複、
+                // 老師誤以為清單那一筆跟編輯器是兩份不同東西。
+                if (isBeingEdited) {
+                    return '';
+                }
+                const row2 = '<div style="font-size:0.8rem; color:#334155; margin-top:4px;">共 ' + cols.length + ' 欄（題目 ' + qCount + '／書寫答案 ' + aCount + '／訊息 ' + iCount + '／口說答案 ' + airefCols.length + '）｜每頁 ' + esc(t.lines_per_page || 10) + ' 行（紙本用）' + '</div>';
+                // 2026-08-14（老師四次強調）：題目排版跟書寫批改／口說批改同階層、同一種列樣式，順序
+                // 排在書寫批改上面；每一筆擷取範本都要有這一行，且是真的存在 fields 欄位裡、老師到上面
+                // 「✏️ 編輯」表單就能直接改的值（跟每頁行數同一個位置），不是只有勾考卷範本才算得出來的
+                // 唯讀預覽——老師明確要求「不要有只能系統算、老師不能改」的內容。
+                const rowFields = '<div style="font-size:0.8rem; color:#334155; margin-top:2px;">題目排版：' + esc(t.fields || '尚無') + '</div>';
+                // 2026-08-14（老師四次強調：每個範本都要有）：書寫批改不再因為書寫答案欄數≤1 就整行藏起來
+                // ——欄數≤1 沒有「多欄合併／分開比對」的選擇，但這一行本身要一直在，用「—」表示目前不適用。
+                const row3 = '<div style="font-size:0.8rem; color:#334155; margin-top:2px;">書寫批改：' + (aCount > 1 ? (t.answer_mode === 'separate' ? '分開比對' : '結合') : '—（書寫答案欄數≤1）') + '</div>';
+                const row4 = '<div style="font-size:0.8rem; color:#334155; margin-top:2px;">口說批改：' + speakModeLabel + '</div>';
                 return '<li data-id="' + esc(t.id) + '" style="' + liStyle + '">'
-                    + '<span style="font-size:0.82rem; color:#334155;"><strong>' + esc(t.name || '（未命名）') + '</strong>｜共 ' + cols.length + ' 欄（題目 ' + qCount + '／書寫答案 ' + aCount + '／訊息 ' + iCount + '）' + airefText + gradingModeText + designedText + '</span>'
-                    + '<span style="flex:1;"></span>'
-                    + actionsHtml
+                    + row1 + row2 + rowFields + row3 + row4
                     + '</li>';
             }).join('')
             + '</ul>';
@@ -2186,6 +2456,21 @@ window.FeatureMaterialLayoutPairing = (function () {
         wrap.querySelectorAll('.mlp-tpl-delete-btn').forEach(function (btn) {
             btn.addEventListener('click', function () { handleDeleteTemplate(btn.getAttribute('data-id')); });
         });
+        wrap.querySelectorAll('.mlp-tpl-move-up-btn, .mlp-tpl-move-down-btn').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                const direction = btn.classList.contains('mlp-tpl-move-up-btn') ? 'up' : 'down';
+                btn.disabled = true;
+                try {
+                    await window.FeatureTemplateLibrary.moveTemplateInVisibleList(btn.getAttribute('data-id'), direction, templates);
+                    await fetchFieldTemplates(true);
+                    renderTemplateList();
+                    window.FeatureExamJob && window.FeatureExamJob.fetchExamTemplates && window.FeatureExamJob.fetchExamTemplates(true).catch(function () {});
+                } catch (err) {
+                    window.alert('調整順序失敗：' + (err.message || err));
+                    btn.disabled = false;
+                }
+            });
+        });
         // Template 清單本身有變動（新增／編輯／刪除／複製／背景重抓）都順手同步一次總覽卡片，
         // 不用在每個呼叫點各自補一行——renderTemplateList() 是所有變動路徑的共同終點。
         // 「已配對好的組合」卡片的 Template 名稱是即時用 template_id 查目前名字（見
@@ -2194,6 +2479,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         refreshOverviewTemplates();
         refreshOverviewApps();
     }
+
 
     /** 目前已知名稱都不重複的複本名稱：「原名（複製）」，若已存在就再加序號 (2)(3)... */
     function buildDuplicateTemplateName(originalName) {
@@ -2240,7 +2526,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     // ------------------------------------------------------------------
-    // 📎 套用到教材（Layout Template ↔ 實際檔案，2026-08-05 第十三輪新增）
+    // 📎 套用到教材（擷取範本↔ 實際檔案，2026-08-05 第十三輪新增）
     //
     // 跟「教材／考試 Layout 搭配」（material_layout_pairs，決定 layout_profile_id 建議）是兩件
     // 不同的事：這裡是「欄位對應範本」套用到某個實際檔案時的行數起迄，跟 layout_profile_id 無關。
@@ -2417,7 +2703,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     // ========================================================================
     // 🚀「產生 meta / script 並上傳」— 2026-08-06 新增
     // 這是取代 material_templates/publish_local.py 終端機工具的瀏覽器版本：直接讀本機 Excel
-    // 勾選的活頁，依 Layout Template 的欄位對應算出 meta.json（array of {semantic_key: value}，
+    // 勾選的活頁，依擷取範本的欄位對應算出 meta.json（array of {semantic_key: value}，
     // 略過空值／未快取公式，只要這列任何一格有值就算有效列——跟 AI對照稿有沒有填無關）跟
     // script.txt（逐列對應 AI對照稿欄的內容，沒填就是空行，保持跟 meta.json 列數一致）。
     // 2026-08-06 澄清（老師明確更正）：🎤 AI對照稿（口語批改基準）跟「答案」欄（書寫解答，
@@ -2447,6 +2733,34 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
+     * 💣 雷區（2026-08-15 老師回報「範本設定 D 欄，抓到的卻是 E 欄的值，整批欄位代號都對不上」）：
+     * XLSX.utils.sheet_to_json(sheet, {header:1}) 預設用 sheet['!ref']（活頁「使用範圍」）決定
+     * 回傳陣列的起點——如果活頁最左邊幾欄（例如 A 欄）整欄完全沒有任何資料，Excel／Google Sheets
+     * 匯出時記錄的使用範圍會直接從第一個「有資料」的欄開始（例如從 B 欄開始），這時
+     * matrix[r][0] 對應到的其實是 B 欄，不是 A 欄！但範本欄位代號（colLetterToIndex0）永遠假設
+     * A=index0，於是設 D 欄實際讀到 E 欄、設 E 讀到 F、設 C 讀到 D……全部欄位代號一致地錯位一格
+     * （或更多格，視留空幾欄），滲進 meta.json 變成完全錯誤的資料，而且不會報錯，因為每一欄依然
+     * 有讀到「某個值」，只是讀到隔壁欄。
+     * parseSheetColumns()（給老師勾選欄位用的清單）是用 encode_col(c) 算真實絕對欄位代號，不會有
+     * 這個問題；只有這裡「真的把整張表轉成陣列」時才會對不上。修法：拿到 sheet 後，強制把要轉換
+     * 的範圍起點釘回第 0 欄（A）、第 0 列，讓陣列 index 永遠跟老師畫面上看到的欄位代號一致。
+     */
+    function sheetToMatrixFromColumnA(sheet) {
+        if (!sheet) return null;
+        try {
+            let range = sheet['!ref'] ? window.XLSX.utils.decode_range(sheet['!ref']) : null;
+            if (range && (range.s.c > 0 || range.s.r > 0)) {
+                range.s.c = 0;
+                range.s.r = 0;
+                return window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true, range: range });
+            }
+            return window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+        } catch (_e) {
+            return null;
+        }
+    }
+
+    /**
      * 針對某個活頁取得完整逐列矩陣（array of arrays，含表頭列，row 1 = matrix[0]），
      * 每個 appId 各自快取（同一頁可能同時開多列套用，各自本機檔案不同，不能共用單一份快取）。
      * raw:true 保留數字型別、blankrows:true 保留空列——行號才對得上 Excel 真實列號，
@@ -2461,7 +2775,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             const wb = window.XLSX.read(state.localRawData, { type: 'array', sheets: [sheetName] });
             const sheet = wb && wb.Sheets && wb.Sheets[sheetName];
             if (sheet) {
-                matrix = window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+                matrix = sheetToMatrixFromColumnA(sheet);
             }
         } catch (_e) {
             matrix = null;
@@ -2722,10 +3036,18 @@ window.FeatureMaterialLayoutPairing = (function () {
 
             const override = overrideMap[r];
             const finalSpeak = (override !== null && override !== undefined) ? String(override) : candidate;
-            // 只有「剛好 1 欄」才覆寫回該欄自己的 semantic_key（維持舊行為：那欄本身就代表口說答案）；
-            // ≥2 欄時不覆寫任何一欄的原始值——同一欄可能同時兼任「書寫答案」等其他角色，
-            // 覆寫會把該欄原始內容洗掉，合併後的結果只會出現在 script.txt／scriptLines
-            if (airefCols.length === 1) rowObj[airefCols[0].semantic_key] = finalSpeak;
+            // 💣 雷區（2026-08-14 老師回報「打開 meta，answer_en 沒有內容」）：這裡的守門條件寫的是
+            // airefCols.length===1（口說答案欄「數量」剛好 1 欄），但上面這段註解真正要擋的是
+            // 「這欄同時兼任書寫答案（aCount>1 的其中一欄）」──兩者不是同一件事！本案例書寫答案有
+            // 3 欄（blank_1／blank_2／answer_en，aCount=3、_answer_mode='separate'），口說答案只勾了
+            // answer_en 這一欄（airefCols.length===1）。speakMode 是 complex／paste 時 candidate 故意
+            // 留白等老師逐列填，若老師還沒填該列的口說答案覆寫值，finalSpeak 就是空字串——舊條件仍然
+            // 成立，直接把這欄「書寫答案」的原始值（來源 Excel 的完整句子）覆寫成空字串，
+            // meta.json 打開來 answer_en 就變成 ""，跟原始 Excel 內容對不起來。
+            // 修法：只有這欄「不是」aCount>1 時的其中一個書寫答案欄，才允許覆寫回自己的 semantic_key；
+            // 兼任書寫答案時，口說答案的最終值只寫進 scriptLines／script.txt，不動 rowObj 裡的書寫答案原值。
+            const airefIsAlsoMultiAnswerCol = aCount > 1 && airefCols[0] && !!airefCols[0].is_answer;
+            if (airefCols.length === 1 && !airefIsAlsoMultiAnswerCol) rowObj[airefCols[0].semantic_key] = finalSpeak;
 
             rows.push(rowObj);
             rowNos.push(r);
@@ -2738,7 +3060,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         } else if (aCount > 1 && (speakMode === 'complex' || speakMode === 'paste')) {
             warnings.push('💡 這個 Template 書寫答案共 ' + aCount + ' 欄，口說答案批改標準為「' + (speakMode === 'paste' ? '直接貼上多筆' : '之後會寫複雜規則') + '」，請在下方逐列表格貼上／輸入口說答案內容（目前 ' + missingAiRefCount + '／' + rows.length + ' 列尚未填）。');
         } else if (!airefCols.length && aCount <= 1) {
-            warnings.push('💡 這個 Template 尚未指定「🎤 口說答案」欄位，script.txt 會整份留白（' + rows.length + ' 個空行）——之後在 Layout Template 補上該欄再重新產生即可，不影響 meta.json 這 ' + rows.length + ' 列。');
+            warnings.push('💡 這個 Template 尚未指定「🎤 口說答案」欄位，script.txt 會整份留白（' + rows.length + ' 個空行）——之後在擷取範本補上該欄再重新產生即可，不影響 meta.json 這 ' + rows.length + ' 列。');
         } else if (missingAiRefCount > 0) {
             warnings.push('💡 這 ' + rows.length + ' 列裡有 ' + missingAiRefCount + ' 列口說答案留白，script.txt 對應那幾行會是空行——不影響 meta.json，之後補上內容重新產生即可。');
         }
@@ -2765,14 +3087,14 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 2026-08-13（老師要求：預設檔名要包含 Layout 名稱，格式「活頁名.layout名」）：
-     * 原因是同一個活頁（sheet）常常需要套用不同的 Layout 各產生一份 meta（例如同一份單字表，
+     * 2026-08-13（老師要求：預設檔名要包含擷取範本名稱，格式「活頁名.範本名」）：
+     * 原因是同一個活頁（sheet）常常需要套用不同的擷取範本各產生一份 meta（例如同一份單字表，
      * 一種排版給「看圖選字」用、另一種給「填空」用），舊版預設檔名只有活頁名（sheetName.meta.json），
-     * 兩個 Layout 套在同一個活頁會撞名、後產生的直接覆蓋前一個，老師完全不會發現。
-     * 加上 Layout 名稱之後，「同一活頁套不同 Layout」與「同一檔案不同活頁」都會各自產生不重複的
-     * 檔名——順帶也解決了「從檔名看不出是套用哪個 Layout 產生的」這個可追溯性問題
-     * （檔名雖然還是不會記錄原始 Excel 檔案名稱，但至少能看出活頁＋Layout 的組合）。
-     * templateName 留空（例如還沒選 Layout 時）就退回舊行為，只用活頁名，不留多餘的句點。
+     * 兩個擷取範本套在同一個活頁會撞名、後產生的直接覆蓋前一個，老師完全不會發現。
+     * 加上擷取範本名稱之後，「同一活頁套不同擷取範本」與「同一檔案不同活頁」都會各自產生不重複的
+     * 檔名——順帶也解決了「從檔名看不出是套用哪個擷取範本產生的」這個可追溯性問題
+     * （檔名雖然還是不會記錄原始 Excel 檔案名稱，但至少能看出活頁＋擷取範本的組合）。
+     * templateName 留空（例如還沒選擷取範本時）就退回舊行為，只用活頁名，不留多餘的句點。
      */
     function defaultOutputNames(sheetName, templateName) {
         const sheetPart = String(sheetName || '').trim() || 'output';
@@ -2884,7 +3206,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         return `
             <div style="margin-top:8px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:6px; padding:8px;">
                 <div style="font-size:0.74rem; font-weight:800; color:#1D4ED8; margin-bottom:4px;">✍️ 書寫答案（結合）逐列確認／修正（共 ${g.rows.length} 列，修正後即為最終批改比對內容）</div>
-                ${g.answerCombineNote ? ('<div style="font-size:0.7rem; color:#3B82F6; margin-bottom:4px;">結合公式：<code>' + esc(g.answerCombineNote) + '</code></div>') : '<div style="font-size:0.7rem; color:#B45309; margin-bottom:4px;">⚠️ 尚未在 Layout Template 填結合公式，目前用「跳過空欄、空白接起來」安全值，可在下方逐列修正。</div>'}
+                ${g.answerCombineNote ? ('<div style="font-size:0.7rem; color:#3B82F6; margin-bottom:4px;">結合公式：<code>' + esc(g.answerCombineNote) + '</code></div>') : '<div style="font-size:0.7rem; color:#B45309; margin-bottom:4px;">⚠️ 尚未在擷取範本填結合公式，目前用「跳過空欄、空白接起來」安全值，可在下方逐列修正。</div>'}
                 <div style="max-height:260px; overflow-y:auto; margin-top:6px;">
                     <table style="width:100%; border-collapse:collapse;">
                         <thead><tr style="text-align:left; font-size:0.68rem; color:#78716C;"><th style="padding:3px 6px;">列號</th><th style="padding:3px 6px;">各欄書寫答案</th><th style="padding:3px 6px;">計算值</th><th style="padding:3px 6px;">最終結合答案（可修正）</th></tr></thead>
@@ -2942,23 +3264,82 @@ window.FeatureMaterialLayoutPairing = (function () {
         return '<div>'
             + rowsHtml
             + '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">'
-            + '<button type="button" class="mlp-app-gen-preview btn" style="padding:6px 14px; font-size:0.78rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:6px; cursor:pointer;">🔍 產生預覽</button>'
             /**
-             * 💣 雷區：這顆按鈕絕對不能再用 canConfirmUpload() 加 disabled——
-             * disabled 的 <button> 在瀏覽器裡完全不會發出 click 事件，`bindAppGenAreaEvents`
-             * 掛的 addEventListener('click', handleConfirmUpload) 永遠不會被呼叫到，
-             * handleConfirmUpload 內部「沒有預覽就自動補跑」的邏輯因此變成死碼——這正是
-             * 「沒有看預覽，按了儲存，沒有作用」的真正原因（2026-08-09 使用者回報兩次，
-             * 上一輪只修了函式內部邏輯，忘了拿掉這裡的 disabled，等於沒修到）。
-             * 一律可點，交給 handleConfirmUpload 自己判斷要不要先補跑預覽、或顯示錯誤訊息。
+             * 💣 雷區（2026-08-14 老師回報「你都強制預覽了，還在下面放一顆產生預覽的按鈕，
+             * 這不是廢物按鈕嗎」）：refreshAppGenArea 現在已經改成只要活頁／Template／行數起迄
+             * 任一有變動就自動重算一次預覽（見 autoGeneratePreviewIfReady），上面 rowsHtml 顯示的
+             * 內容永遠是「目前設定」算出來的最新結果，不需要老師自己再多按一次「產生預覽」——
+             * 那顆按鈕在這個新流程下已經是死功能，直接拿掉，只留「☁️ 確認上傳到 Drive」一顆
+             * 真正會動作（寫入 Drive）的按鈕。
+             *
+             * 這顆按鈕絕對不能再用 canConfirmUpload() 加 disabled——disabled 的 <button> 在瀏覽器裡
+             * 完全不會發出 click 事件，`bindAppGenAreaEvents` 掛的 addEventListener('click',
+             * handleConfirmUpload) 永遠不會被呼叫到，handleConfirmUpload 內部「沒有預覽就自動補跑」
+             * 的邏輯因此變成死碼——這正是「沒有看預覽，按了儲存，沒有作用」的真正原因
+             * （2026-08-09 使用者回報兩次，上一輪只修了函式內部邏輯，忘了拿掉這裡的 disabled，
+             * 等於沒修到）。一律可點，交給 handleConfirmUpload 自己判斷要不要先補跑預覽、
+             * 或顯示錯誤訊息。
              */
-            + '<button type="button" class="mlp-app-gen-upload btn btn-primary" style="padding:6px 14px; font-size:0.78rem; font-weight:800;">☁️ 確認上傳到 Drive</button>'
-            + '<span class="mlp-app-gen-msg" style="font-size:0.76rem; font-weight:800;"></span>'
+            + '<button type="button" class="mlp-app-gen-upload btn btn-primary" style="padding:6px 14px; font-size:0.78rem; font-weight:800; flex-shrink:0;">☁️ 確認上傳到 Drive</button>'
+            /**
+             * 💣 雷區（2026-08-14 老師先回報「上傳中的訊息被截住了，根本看不到」，上一輪改成
+             * flex-basis:100%／display:block 逼它永遠自己另起一行——結果老師又回報「不要佔額外
+             * 一行，訊息都放在橘色按鈕右邊」，那樣矯枉過正了。真正該修的是「父層 flex-wrap:wrap
+             * 已經會在真的放不下時自動換行」這件事本來就夠用，之前會被裁掉是因為這個 span 沒有
+             * flex-shrink/min-width，被旁邊按鈕擠爆版面寬度時內容溢出、又被更外層某個 overflow
+             * 裁掉。改成 flex:1 1 240px（跟按鈕同一行、佔滿按鈕右邊剩餘空間）＋
+             * white-space:normal／word-break 讓文字在這個彈性寬度裡自然換行；真的空間不夠時，
+             * 父層 flex-wrap:wrap 才讓它整段移到下一行，不會被裁切、也不會平白多佔一整行。
+             */
+            + '<span class="mlp-app-gen-msg" style="font-size:0.76rem; font-weight:800; flex:1 1 240px; min-width:0; white-space:normal; word-break:break-word;"></span>'
             + '</div>'
             + '</div>';
     }
 
+    /**
+     * 只要活頁／Template／行數起迄任一項已經足夠算出結果，就自動跑一次「產生預覽」的算列邏輯，
+     * 老師不用再手動按按鈕才看得到內容——見上面「🔍 產生預覽」按鈕移除處的雷區說明。
+     * 只是自動重算，不碰訊息文字／不觸發上傳，失敗（例如還沒選 Template）就靜默跳過，
+     * 讓 renderAppGenAreaHtml 走原本「請先…」的提示文案。
+     */
+    function autoGeneratePreviewIfReady(rowEl, appId) {
+        const state = ensureAppRowState(appId);
+        if (state.sourceKind !== 'local' || !state.localRawData) return;
+        const sheetNames = checkedSheetNames(state);
+        if (!sheetNames.length) return;
+        const template = getCurrentAppTemplate(rowEl);
+        if (!template) return;
+        try { generatePreviewForRow(rowEl, appId); } catch (_e) { /* 靜默略過，畫面走原本的錯誤提示 */ }
+    }
+
     function refreshAppGenArea(rowEl, appId) {
+        const areaEl = rowEl.querySelector('.mlp-app-gen-area');
+        if (!areaEl) return;
+        autoGeneratePreviewIfReady(rowEl, appId);
+        renderAppGenAreaOnly(rowEl, appId);
+    }
+
+    /**
+     * 💣 雷區（2026-08-14 老師回報「26 個活頁沒有一個有紅色錯誤訊息，但最後訊息說全部上傳失敗，
+     * Drive 裡明明有真的產生檔案」）：真正原因跟這個活頁有沒有真的上傳成功完全無關——
+     * handleConfirmUpload 的上傳迴圈裡，每上傳完一個活頁就呼叫 refreshAppGenArea() 想更新畫面
+     * 進度，但 refreshAppGenArea 內部的 autoGeneratePreviewIfReady() 會呼叫
+     * generatePreviewForRow()，這個函式對「目前勾選的每一個活頁」都無條件重算一次預覽，
+     * 並把 state.gen[name] 整個 Object.assign 換掉、**明確把 uploadStatus 設回 null**
+     * （見 generatePreviewForRow 裡的 uploadStatus: null）——也就是說，剛剛才幫某個活頁設好的
+     * g.uploadStatus（無論成功或失敗）,下一次（甚至同一次）refreshAppGenArea 呼叫就會被
+     * 「重新產生預覽」整批洗掉，包括它自己剛設定的那一筆。跑完 26 個活頁的迴圈後，
+     * 最後一次 refreshAppGenArea 會把全部 26 筆的 uploadStatus 都洗成 null，導致：
+     * (a) 畫面上永遠看不到任何一張活頁卡片的綠色✅或紅色❌（因為狀態永遠被洗掉，不是沒有錯誤，
+     *     是錯誤/成功訊息從來沒真的顯示出來過）
+     * (b) 迴圈結束後的 anyUploadSucceeded／failedCount 判斷永遠讀到 null，一律判定「全部失敗」，
+     *     即使 Drive 上傳其實全部成功。
+     * 修法：迴圈裡只需要「重畫目前 state.gen 已有的內容」，不需要也不應該「重新產生預覽」
+     * （活頁／Template／行數起迄這次都沒有變動）——改叫這顆不會動 state.gen 的
+     * renderAppGenAreaOnly()，只有畫面外的其他觸發點（活頁勾選改變、Template 改變、行數
+     * 起迄改變）才需要真的呼叫會重算的 refreshAppGenArea()。
+     */
+    function renderAppGenAreaOnly(rowEl, appId) {
         const areaEl = rowEl.querySelector('.mlp-app-gen-area');
         if (!areaEl) return;
         const templateSelectEl = rowEl.querySelector('.mlp-app-template');
@@ -2983,8 +3364,6 @@ window.FeatureMaterialLayoutPairing = (function () {
                 state.gen[name].outputScript = this.value.trim();
             });
         });
-        const previewBtn = rowEl.querySelector('.mlp-app-gen-preview');
-        if (previewBtn) previewBtn.addEventListener('click', function () { handleGeneratePreview(rowEl, appId); });
         const uploadBtn = rowEl.querySelector('.mlp-app-gen-upload');
         if (uploadBtn) uploadBtn.addEventListener('click', function () { handleConfirmUpload(rowEl, appId); });
 
@@ -3010,7 +3389,14 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const airefCols = (template && Array.isArray(template.columns))
                     ? template.columns.filter(function (c) { return c && c.is_ai_ref && c.semantic_key; })
                     : [];
-                if (airefCols.length === 1 && g.rows && g.rows[idx]) g.rows[idx][airefCols[0].semantic_key] = this.value;
+                // 💣 雷區：跟 buildGenerationFromMatrix 同一個坑——這欄若同時兼任「書寫答案」
+                // 多欄之一（aCount>1），逐列手動修正口說答案時也不能覆寫回 g.rows[idx] 的書寫答案
+                // 原始值，否則老師在這裡填的口說答案會把 answer_en 的書寫內容洗掉。
+                const answerColsCount = (template && Array.isArray(template.columns))
+                    ? template.columns.filter(function (c) { return c && c.is_answer && c.letter && c.semantic_key; }).length
+                    : 0;
+                const airefIsAlsoMultiAnswerCol = answerColsCount > 1 && airefCols[0] && !!airefCols[0].is_answer;
+                if (airefCols.length === 1 && !airefIsAlsoMultiAnswerCol && g.rows && g.rows[idx]) g.rows[idx][airefCols[0].semantic_key] = this.value;
             });
         });
         /**
@@ -3105,7 +3491,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     function generatePreviewForRow(rowEl, appId) {
         const state = ensureAppRowState(appId);
         const template = getCurrentAppTemplate(rowEl);
-        if (!template) return { ok: false, error: '請先在最上面選一個 Layout Template' };
+        if (!template) return { ok: false, error: '請先在最上面選一個擷取範本' };
         const sheetNames = checkedSheetNames(state);
         if (!sheetNames.length) return { ok: false, error: '請先勾選至少一個活頁' };
         const rowStartStr = rowEl.querySelector('.mlp-app-rowstart').value;
@@ -3233,7 +3619,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     // 真正落地的檔名（GAS 若因撞名自動改名，以它回報的 finalFileName 為準，不能只信
                     // 我們送出去的 finalMetaName）減去 .meta.json 尾巴，才是這個活頁「真正的 stem」——
                     // 從本機 Excel 來源自動記錄配對紀錄時，sheet_ids 必須存這個，不能存勾選時的原始
-                    // 活頁名稱（那是套 Layout 前的名字，跟 v51 之後「活頁名.layout名」的實際檔名不一樣，
+                    // 活頁名稱（那是套擷取範本前的名字，跟 v51 之後「活頁名.範本名」的實際檔名不一樣，
                     // 兩者對不上會讓「已配對好的組合」卡片永遠判斷成失效，見 2026-08-13 老師回報的
                     // 「靈異現象」根因）。
                     g.finalStem = stemFromMetaFileName(metaRes.finalFileName || finalMetaName);
@@ -3241,7 +3627,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                 } catch (sheetErr) {
                     g.uploadStatus = { ok: false, text: '❌ 上傳失敗：' + (sheetErr.message || sheetErr) };
                 }
-                refreshAppGenArea(rowEl, appId);
+                // 只重畫畫面、不重新產生預覽——見 renderAppGenAreaOnly 上面的雷區說明，這裡絕對不能
+                // 呼叫會重算 state.gen 的 refreshAppGenArea，否則剛設好的 uploadStatus 會被立刻洗掉。
+                renderAppGenAreaOnly(rowEl, appId);
             }
             // 上傳完成後，這個資料夾底下的 .meta.json 清單多了新檔案，逼 FeatureTimeline 的快取
             // 下次重新讀 Drive，其他下拉（獨立考試教材／活頁選單等）才看得到剛產生的新檔案
@@ -3262,6 +3650,9 @@ window.FeatureMaterialLayoutPairing = (function () {
             const anyUploadSucceeded = sheetNames.some(function (name) {
                 return state.gen[name] && state.gen[name].uploadStatus && state.gen[name].uploadStatus.ok;
             });
+            const failedCount = sheetNames.filter(function (name) {
+                return state.gen[name] && state.gen[name].uploadStatus && !state.gen[name].uploadStatus.ok;
+            }).length;
             if (anyUploadSucceeded) {
                 try {
                     const appRecord = collectAppFromRow(rowEl);
@@ -3278,10 +3669,26 @@ window.FeatureMaterialLayoutPairing = (function () {
                         .filter(function (name) { return state.gen[name] && state.gen[name].uploadStatus && state.gen[name].uploadStatus.ok; })
                         .map(function (name) { return state.gen[name].finalStem || name; });
                     if (realSheetIds.length) appRecord.sheet_ids = realSheetIds;
+                    // 💣 雷區（2026-08-14 老師回報「畫面老是卡在本機 Excel」）：上面只修正了 sheet_ids
+                    // 的字串內容，卻沒把 source_kind／source_file_name 一併改成 'drive'——這筆配對
+                    // 明明真的上傳到 Drive 了，卻永遠被存成「本機」來源，每次重新整理都被打回
+                    // 「🖥️ 改用本機 Excel」模式、卡著舊檔名（例如 GEPT-2.xlsx），老師手動切回
+                    // 「☁️ 用歸屬資料夾」也沒用，下次程式自己重存又會被打回 local。本機 Excel 只是
+                    // 「怎麼知道要套用哪些活頁」的一次性輔助手段（見本檔 2026-08-06 規劃備註），
+                    // 一旦真的上傳成功，這筆紀錄的來源就該視為 Drive，不該再記著本機檔名。
+                    appRecord.source_kind = 'drive';
+                    appRecord.source_file_name = '';
                     if (appRecord.template_name && appRecord.material_folder && appRecord.sheet_ids.length) {
                         const latest = await fetchTemplateApplications(true);
                         const merged = mergeAppRecordIntoList(latest, appRecord);
                         await saveTemplateApplications(merged);
+                        // 存檔成功後畫面也要立刻切回 Drive 模式，不能等下次整頁重新整理才對——
+                        // 否則老師會覺得「明明存了，畫面還是卡在本機」
+                        state.sourceKind = 'drive';
+                        state.localFileName = '';
+                        state.localSheetNames = [];
+                        realSheetIds.forEach(function (s) { state.checkedSheets[s] = true; });
+                        refreshAppSheetsArea(rowEl, appId);
                         refreshOverviewApps();
                         refreshOverviewFolders();
                     }
@@ -3292,7 +3699,24 @@ window.FeatureMaterialLayoutPairing = (function () {
             // 💣 雷區：這裡曾寫「請看下方」，但每個活頁的上傳結果（uploadHtml）其實 render 在
             // rowsHtml 裡，畫面位置在這顆按鈕列的「上方」，不是下方——方向寫反會讓老師往下找
             // 卻什麼都沒有（2026-08-09 使用者回報「什麼？？沒看到啊」）。
-            if (getMsgEl()) { getMsgEl().style.color = '#059669'; getMsgEl().textContent = '✅ 全部處理完畢，請看上方各活頁卡片內的上傳結果'; }
+            // 💣 雷區（2026-08-14 老師回報「圖二到底是成功還是沒成功」）：這裡之前無條件顯示綠色
+            // 「✅ 全部處理完畢」，即使每一個活頁都上傳失敗（例如 GAS 部署壞掉，全部 26 個活頁都
+            // 回「❌ 上傳失敗」）也一樣顯示成功字樣，跟上面每一張活頁卡片的紅字錯誤矛盾，老師完全
+            // 沒辦法從這句話判斷實際結果。改成依 failedCount／anyUploadSucceeded 分三種情況顯示，
+            // 顏色與文字都要跟實際結果一致，不能報喜不報憂。
+            const finalMsgEl = getMsgEl();
+            if (finalMsgEl) {
+                if (!anyUploadSucceeded) {
+                    finalMsgEl.style.color = '#DC2626';
+                    finalMsgEl.textContent = '❌ 全部 ' + sheetNames.length + ' 個活頁都上傳失敗，請看上方各活頁卡片內的錯誤訊息（常見原因：GAS Web App 需要重新部署）';
+                } else if (failedCount > 0) {
+                    finalMsgEl.style.color = '#B45309';
+                    finalMsgEl.textContent = '⚠️ 處理完畢，但有 ' + failedCount + '／' + sheetNames.length + ' 個活頁上傳失敗，請看上方各活頁卡片內的錯誤訊息';
+                } else {
+                    finalMsgEl.style.color = '#059669';
+                    finalMsgEl.textContent = '✅ 全部處理完畢，請看上方各活頁卡片內的上傳結果';
+                }
+            }
         } catch (err) {
             if (getMsgEl()) { getMsgEl().style.color = '#DC2626'; getMsgEl().textContent = '❌ ' + (err.message || err); }
         } finally {
@@ -3307,19 +3731,59 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 但 <summary> 摘要文字把 folder／sheet／行數的實際數值又原封不動印了一次，跟上面
      * 「⚡ 快速套用」區塊剛選的內容一字不差——收合了框架，卻沒有真的去掉重複資訊，等於白收合）：
      *
-     * 快速套用產生出來的這一列，Layout Template／歸屬檔案／活頁來源／行數起迄在上一步
+     * 快速套用產生出來的這一列，擷取範本／歸屬檔案／活頁來源／行數起迄在上一步
      * （快速套用卡片）已經決定過一次，這裡**不該再顯示任何一次這些數值**（不管是獨立的
-     * Layout Template 下拉框、還是收合摘要行）。true 時：
-     *   - 原本always顯示的「Layout Template」下拉框搬進 <details> 內（不再單獨佔一整行跟
+     *擷取範本下拉框、還是收合摘要行）。true 時：
+     *   - 原本always顯示的「擷取範本」下拉框搬進 <details> 內（不再單獨佔一整行跟
      *     快速套用的選擇並排重複），<summary> 只放一句不帶任何實際數值的通用提示，
      *     不會再看到跟上面一模一樣的資料夾／活頁/行數文字。
-     *   - 刪除鈕獨立成右上角一顆小按鈕（不用靠 Layout Template 那一行撐版面）。
+     *   - 刪除鈕獨立成右上角一顆小按鈕（不用靠擷取範本那一行撐版面）。
      *   - 歸屬檔案／活頁來源／行數起迄這三塊本身仍然是「真正的資料來源」（generatePreviewForRow／
      *     collectAppFromRow／handleConfirmUpload 都直接讀這些 DOM 欄位的值，不能整個拔掉，
      *     只是預設收合、不主動秀出目前值），要修改的話展開 <details> 就看得到目前值可以改。
      * false（手動「＋新增套用」那條路，從頭什麼都沒填，沒有「上面已經選過一次」的問題）
-     * 維持原本 Layout Template 下拉框＋三塊都展開顯示，不受影響。
+     * 維持原本擷取範本下拉框＋三塊都展開顯示，不受影響。
      */
+    /**
+     * 2026-08-14（老師回報「重新整理，畫面不是應該最乾淨嗎，怎麼套用到教材會卡在一半」）：
+     * 這一列不是「還在載入」也不是 GAS 問題——是資料庫裡真實存在的一筆舊套用紀錄
+     * （material_template_applications），它的 template_name 是舊流程留下來的字串
+     * （例如檔名推斷出來的 "sentance-meta"），現在系統裡已經沒有一個真正叫這個名字、
+     * 或 id 對得起來的擷取範本，所以每次重新整理，這筆「真實存在但失效」的紀錄
+     * 都會被畫出來、且擷取範本／教材資料夾下拉會一直顯示「找不到」——這是資料
+     * 本身壞了，不是重新整理沒載入完成，重整無限次都不會自己變好，必須手動清掉或改配。
+     */
+    function isAppTemplateOrphaned(app) {
+        const templates = getFieldTemplatesCachedSync();
+        if (app.template_id) {
+            return !templates.some(function (t) { return t.id === app.template_id; });
+        }
+        const name = String(app.template_name || '').trim();
+        if (!name) return false;
+        return !templates.some(function (t) { return String(t.name || '').trim() === name; });
+    }
+
+    /** 一鍵清掉失效套用紀錄：不只從畫面移除，直接打進資料庫真正刪除，不用再多按一次「儲存」 */
+    async function handleRemoveOrphanedAppRow(rowEl, appId) {
+        const ok = window.confirm('這筆套用紀錄指向的擷取範本已經找不到（可能是舊流程留下的資料，或 Template 已被刪除／改名），確定要直接刪除這筆紀錄嗎？\n\n（只刪這筆「套用紀錄」，不會動到 Drive 上已經上傳的 meta.json／script.txt 檔案本身）');
+        if (!ok) return;
+        try {
+            const latest = await fetchTemplateApplications(true);
+            const filtered = latest.filter(function (a) { return String(a.id) !== String(appId); });
+            await saveTemplateApplications(filtered);
+            rowEl.remove();
+            const appRowsEl = document.getElementById('mlp-app-rows');
+            if (appRowsEl && !appRowsEl.querySelector('.mlp-app-row')) {
+                appRowsEl.innerHTML = '<div class="mlp-app-empty-hint" style="color:#94A3B8; padding:12px;">尚未登記任何套用，按「＋ 新增套用」開始。</div>';
+            }
+            window.showFlash && window.showFlash('✅ 已刪除這筆失效的套用紀錄', 'success');
+            refreshOverviewApps();
+        } catch (err) {
+            console.error('[FeatureMaterialLayoutPairing] 刪除失效套用紀錄失敗', err);
+            window.showFlash && window.showFlash('❌ 刪除失敗：' + (err.message || err), 'error');
+        }
+    }
+
     function renderAppRow(app, opts) {
         const collapsedSummary = !!(opts && opts.collapsedSummary);
         const rootKind = app.root_kind === 'class' ? 'class' : 'teacher';
@@ -3329,12 +3793,19 @@ window.FeatureMaterialLayoutPairing = (function () {
         const folderSelectDisabled = rootKind === 'class' && !app.class_id;
         const templateOptions = getFieldTemplatesCachedSync().map(function (t) { return t.name; }).filter(Boolean);
         ensureAppRowState(app.id, app);
+        const orphaned = isAppTemplateOrphaned(app);
 
         const templateSelectHtml = `
-                <label style="font-size:0.78rem; font-weight:800; color:#475569; flex:1; min-width:200px;">Layout Template
+                <label style="font-size:0.78rem; font-weight:800; color:#475569; flex:1; min-width:200px;">擷取範本
                     <select class="form-control mlp-app-template" style="width:100%; padding:6px; margin-top:2px;">${buildSelectOptionsHtml(templateOptions, app.template_name, '— 選 Template —')}</select>
                 </label>
         `;
+        const orphanedBannerHtml = orphaned
+            ? ('<div style="background:#FEF2F2; border:1px solid #FCA5A5; border-radius:6px; padding:8px 10px; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">'
+                + '<span style="font-size:0.78rem; color:#B91C1C; font-weight:700;">⚠️ 這筆套用紀錄的擷取範本「' + esc(app.template_name || '（未命名）') + '」在目前的清單裡找不到（不是重新整理沒載入完成，重整無限次也不會自己變好）——請改選上面清單裡真正存在的 Template，或直接清除這筆舊紀錄。</span>'
+                + '<button type="button" class="btn mlp-app-clear-orphan" data-id="' + esc(app.id) + '" style="padding:4px 10px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; background:white; font-weight:800; white-space:nowrap;">🗑️ 清除這筆失效紀錄</button>'
+                + '</div>')
+            : '';
         const removeButtonHtml = '<button type="button" class="btn mlp-app-remove" style="padding:6px 10px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:6px; background:white; white-space:nowrap;">刪除</button>';
 
         const detailBlocksHtml = `
@@ -3386,11 +3857,12 @@ window.FeatureMaterialLayoutPairing = (function () {
 
         return `
             <div class="mlp-app-row" data-id="${esc(app.id)}" style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:12px; margin-bottom:10px;">
+                ${orphanedBannerHtml}
                 ${headerHtml}
 
                 <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:10px;">
                     <div style="font-size:0.76rem; font-weight:800; color:#15803D; margin-bottom:4px;">🚀 產生 meta / script 並上傳到 Drive</div>
-                    <div style="font-size:0.72rem; color:#4D7C0F; margin-bottom:6px;">直接讀本機 Excel 勾選的活頁，依上面的 Layout Template（欄位對應＋角色）＋行數起迄算出 meta.json／script.txt，確認無誤後上傳到「📁 歸屬檔案」的教材資料夾——取代舊的終端機 publish_local。</div>
+                    <div style="font-size:0.72rem; color:#4D7C0F; margin-bottom:6px;">直接讀本機 Excel 勾選的活頁，依上面的擷取範本（欄位對應＋角色）＋行數起迄算出 meta.json／script.txt，確認無誤後上傳到「📁 歸屬檔案」的教材資料夾——取代舊的終端機 publish_local。</div>
                     <div class="mlp-app-gen-area">${renderAppGenAreaHtml(app.id, app.template_name || '')}</div>
                 </div>
             </div>
@@ -3439,6 +3911,11 @@ window.FeatureMaterialLayoutPairing = (function () {
             rowEl.remove();
         });
 
+        const clearOrphanBtn = rowEl.querySelector('.mlp-app-clear-orphan');
+        if (clearOrphanBtn) {
+            clearOrphanBtn.addEventListener('click', function () { handleRemoveOrphanedAppRow(rowEl, appId); });
+        }
+
         rowEl.querySelector('.mlp-app-rootkind').addEventListener('change', function () {
             const isClass = this.value === 'class';
             rowEl.querySelector('.mlp-app-class-wrap').style.display = isClass ? '' : 'none';
@@ -3458,11 +3935,17 @@ window.FeatureMaterialLayoutPairing = (function () {
             refreshAppSheetHint(rowEl);
         });
 
-        // 換 Layout Template → 預設檔名（活頁名.layout名）要立刻跟著換，不用等按「產生預覽」才看到
+        // 換擷取範本→ 預設檔名（活頁名.layout名）要立刻跟著換，不用等按「產生預覽」才看到
         const templateSelectEl = rowEl.querySelector('.mlp-app-template');
         if (templateSelectEl) {
             templateSelectEl.addEventListener('change', function () { refreshAppGenArea(rowEl, appId); });
         }
+        // 行數起／末改變也要立刻重算預覽（拿掉手動「產生預覽」按鈕後，這是僅剩的兩個會影響
+        // 算列結果、但原本沒有掛任何 change 監聽的欄位——之前得靠老師自己按按鈕才會生效）
+        const rowStartEl = rowEl.querySelector('.mlp-app-rowstart');
+        const rowEndEl = rowEl.querySelector('.mlp-app-rowend');
+        if (rowStartEl) rowStartEl.addEventListener('change', function () { refreshAppGenArea(rowEl, appId); });
+        if (rowEndEl) rowEndEl.addEventListener('change', function () { refreshAppGenArea(rowEl, appId); });
 
         bindAppSheetsAreaEvents(rowEl, appId);
         bindAppGenAreaEvents(rowEl, appId);
@@ -3498,12 +3981,6 @@ window.FeatureMaterialLayoutPairing = (function () {
             row_start: rowStart,
             row_end: rowEnd
         };
-    }
-
-    /** 至少要勾一個活頁才存──套用的意義就是「這個 Template＋這段行數要用在哪些活頁」，一個都沒勾等於沒套用到任何東西 */
-    function collectAppsFromDom(container) {
-        return Array.from(container.querySelectorAll('.mlp-app-row')).map(collectAppFromRow)
-            .filter(function (a) { return a.template_name && a.material_folder && a.sheet_ids.length; });
     }
 
     /**
@@ -3562,14 +4039,18 @@ window.FeatureMaterialLayoutPairing = (function () {
                 refreshOverviewFolders();
                 refreshOverviewApps(); // meta catalog 剛載入完成，順便重新判斷「已配對好的組合」裡哪些活頁已經失效
             }).catch(function () {
-                // 背景刷新失敗不額外報錯——各列既有的「⚠️ 清單載入失敗＋重試」流程會處理，這裡靜默即可
+                // 2026-08-14（老師回報「meta 那邊總是無法出現」）：以前這裡完全靜默，畫面永遠停在
+                // 初次進頁那句通用「⏳ 尚未偵測到」，老師根本看不出背景其實已經抓失敗了。改成：
+                // 失敗也補畫一次「教材資料夾」卡片——renderOverviewFoldersEmptyStateHtml 會讀到
+                // getMetaCatalogEntry 這次存下來的 ok:false／error，直接顯示真正的錯誤原因。
+                if (document.body.contains(container)) refreshOverviewFolders();
             });
         });
     }
 
     // ------------------------------------------------------------------
     // 📊 頁面最上方總覽（2026-08-12 老師要求：一進頁面先看「目前已有哪些教材資料夾＋meta/script、
-    // 有哪些 Layout、已經配對好哪些組合」，不用往下捲一路找散落在各區塊裡的資訊）。
+    // 有哪些擷取範本、已經配對好哪些組合」，不用往下捲一路找散落在各區塊裡的資訊）。
     // 三張卡片都只讀既有快取／同步 helper，不主動打 GAS——資料還沒載入完成時先顯示「⏳ 載入中」，
     // 等 refreshMetaCatalogsInBackground／fetchFieldTemplates 等既有背景刷新完成後，
     // 呼叫 refreshOverview() 補畫，不用整頁重新 paint。
@@ -3596,6 +4077,50 @@ window.FeatureMaterialLayoutPairing = (function () {
         return keys;
     }
 
+    /**
+     * 「教材資料夾」卡片抓不到任何資料夾時，過去只丟一句通用「⏳ 尚未偵測到」，老師完全看不出
+     * 是「還在載入」「GAS 連線失敗」「老師個人資料夾還沒綁定」還是「Drive 裡真的是空的」——
+     * refreshMetaCatalogsInBackground 的 .catch 又把真正的錯誤靜默吃掉（見那裡的雷區說明）。
+     * 這裡改成直接讀 getMetaCatalogEntry 的真實狀態逐一列出：ok:false 就把 err.message／
+     * getMetaCatalogDebugText 印出來，讓老師下次回報時可以直接複製這段文字，不用再靠截圖猜。
+     */
+    function renderOverviewFoldersEmptyStateHtml(scopeKeys) {
+        const FT = window.FeatureTimeline;
+        if (!FT || typeof FT.getMetaCatalogEntry !== 'function') {
+            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">⏳ 尚未偵測到教材資料夾（可能還在載入，或 Drive 裡還沒有教材資料夾）</div>';
+        }
+        const lines = [];
+        let anyLoading = false;
+        Object.keys(scopeKeys).forEach(function (k) {
+            const info = scopeKeys[k];
+            const entry = FT.getMetaCatalogEntry(info.classId, info.rootKind);
+            if (!entry) { anyLoading = true; return; }
+            if (entry.ok === false) {
+                const msg = (entry.error && (entry.error.message || String(entry.error))) || '未知錯誤';
+                const debugText = (typeof FT.getMetaCatalogDebugText === 'function') ? FT.getMetaCatalogDebugText(info.classId, info.rootKind) : '';
+                lines.push(
+                    '<div style="margin-bottom:6px; padding:6px 8px; background:#FEF2F2; border:1px solid #FCA5A5; border-radius:6px;">'
+                    + '<div style="font-size:0.78rem; font-weight:800; color:#B91C1C;">❌ ' + esc(info.label) + '：讀取失敗</div>'
+                    + '<div style="font-size:0.74rem; color:#991B1B; margin-top:2px;">' + esc(msg) + '</div>'
+                    + (debugText ? '<div style="font-size:0.7rem; color:#B45309; margin-top:2px; font-family:monospace; white-space:pre-wrap;">' + esc(debugText) + '</div>' : '')
+                    + '</div>'
+                );
+            } else if (entry.ok === true) {
+                lines.push(
+                    '<div style="margin-bottom:4px; font-size:0.74rem; color:#94A3B8;">'
+                    + esc(info.label) + '：GAS 有回應，但目前偵測到 0 個教材資料夾'
+                    + '</div>'
+                );
+            } else {
+                anyLoading = true;
+            }
+        });
+        if (!lines.length) {
+            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">⏳ 尚未偵測到教材資料夾（' + (anyLoading ? '還在載入中…' : '可能還在載入，或 Drive 裡還沒有教材資料夾') + '）</div>';
+        }
+        return lines.join('') + (anyLoading ? '<div style="font-size:0.74rem; color:#94A3B8; margin-top:2px;">（其餘範圍仍在載入中…）</div>' : '');
+    }
+
     function renderOverviewFoldersHtml(pairs, apps) {
         const scopeKeys = collectOverviewScopeKeys(pairs, apps);
         const blocks = [];
@@ -3610,7 +4135,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             });
         });
         if (!blocks.length) {
-            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">⏳ 尚未偵測到教材資料夾（可能還在載入，或 Drive 裡還沒有教材資料夾）</div>';
+            return renderOverviewFoldersEmptyStateHtml(scopeKeys);
         }
         return blocks.map(function (b) {
             const stemsHtml = b.stems.length
@@ -3745,7 +4270,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     function renderOverviewTemplatesHtml() {
         const templates = getFieldTemplatesCachedSync();
         if (!templates.length) {
-            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">尚未建立任何 Layout Template</div>';
+            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">尚未建立任何擷取範本</div>';
         }
         return templates.map(function (t) {
             const colCount = Array.isArray(t.columns) ? t.columns.length : 0;
@@ -3759,7 +4284,7 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     /**
      * 2026-08-13（老師回報「靈異現象」：右邊組合寫著 vBK-2，左邊教材資料夾卡片裡卻找不到
-     * vBK-2 這個活頁，只有 vBK-2.xxx 這種帶 Layout 名稱的新檔名）：material_template_applications
+     * vBK-2 這個活頁，只有 vBK-2.xxx 這種帶擷取範本名稱的新檔名）：material_template_applications
      * 存的是「當初套用時」記錄下來的 sheet_ids 快照，跟 Drive 上實際還有哪些 meta 檔案是
      * **兩份獨立資料**——只要那個活頁的 meta 之後被刪除、改名（含這次改了預設檔名規則後老師
      * 重新產生成新檔名）、或搬到別的資料夾，這筆配對紀錄不會自動跟著變，畫面上就會出現
@@ -3770,10 +4295,10 @@ window.FeatureMaterialLayoutPairing = (function () {
      * （不用去猜是不是自己眼睛看錯，也不用等下一次刪除才被動清掉）。
      */
     /**
-     * 配對紀錄要顯示的 Template 名稱：template_id 有值就一律用它去 Layout Template 目前的清單
+     * 配對紀錄要顯示的 Template 名稱：template_id 有值就一律用它去擷取範本目前的清單
      * 「即時查」現在的名字，不要相信配對紀錄裡存的 template_name 字串快照——那只是建立當下的
-     * 名稱，老師事後改了 Template 名字，這裡不即時更新就會跟「Layouts」卡片顯示的名字不一致
-     * （2026-08-13 老師回報「改了 layout 名字，這裡沒跟著變，要手動 reload」的根因之一）。
+     * 名稱，老師事後改了 Template 名字，這裡不即時更新就會跟「擷取範本」卡片顯示的名字不一致
+     * （2026-08-13 老師回報「改了範本名字，這裡沒跟著變，要手動 reload」的根因之一）。
      * 找不到（id 對不到任何現存 Template，通常是被刪除了）才退回顯示存檔時的舊名稱，並標記 missing。
      */
     function resolveTemplateDisplayInfo(a) {
@@ -3785,11 +4310,103 @@ window.FeatureMaterialLayoutPairing = (function () {
         return { name: (a && a.template_name) || '（未選 Template）', missing: false };
     }
 
+    /**
+     * 🔍 補畫「apps（material_template_applications）沒有明確紀錄，但檔名本身已經看得出來」的配對：
+     * 左欄「教材資料夾」清單到的 meta 檔名，本來就照 sheetName.layoutName 慣例命名（見
+     * defaultOutputNames）；只要是走「Excel 工具快速套用」而不是「📎 套用到教材」那條路產生的
+     * meta/script，從來沒有被寫進 material_template_applications，右欄就會空著或漏掉這幾個，
+     * 老師會覺得「左邊看得到、右邊卻沒有，兩邊對不起來」。這裡把「apps 沒覆蓋到、但檔名帶
+     * 擷取範本名稱」的活頁，依（root_kind, class_id, material_folder, layoutName）分組，補成
+     * 一筆一筆「（依檔名推斷）」的顯示列——只用來畫面呈現，不寫回 material_template_applications，
+     * 避免把「猜的」當成「明確設定過的」存進真正的紀錄裡。
+     */
+    function inferredAppsFromMetaCatalog(apps) {
+        const scopeKeys = collectOverviewScopeKeys(null, apps);
+        const templates = getFieldTemplatesCachedSync();
+        const covered = {};
+        (apps || []).forEach(function (a) {
+            const folderKey = [a.root_kind || 'teacher', a.class_id || '', String(a.material_folder || '').trim()].join('|');
+            (Array.isArray(a.sheet_ids) ? a.sheet_ids : []).forEach(function (s) {
+                covered[folderKey + '|' + String(s || '').trim().toUpperCase()] = true;
+            });
+        });
+
+        const groups = {};
+        Object.keys(scopeKeys).forEach(function (k) {
+            const info = scopeKeys[k];
+            const folders = uniqueFolderNames(info.classId, info.rootKind);
+            folders.forEach(function (folder) {
+                const stems = sheetStemsForFolder(info.classId, info.rootKind, folder);
+                const folderKey = [info.rootKind, info.classId || '', String(folder || '').trim()].join('|');
+                stems.forEach(function (stem) {
+                    const dotIdx = String(stem || '').indexOf('.');
+                    if (dotIdx <= 0) return; // 檔名沒有內建擷取範本名稱，無從推斷
+                    const layoutPart = stem.slice(dotIdx + 1);
+                    if (!layoutPart) return;
+                    if (covered[folderKey + '|' + String(stem || '').trim().toUpperCase()]) return; // 已有明確紀錄，不用猜
+                    const gKey = folderKey + '|' + layoutPart.toLowerCase();
+                    if (!groups[gKey]) {
+                        groups[gKey] = {
+                            root_kind: info.rootKind, class_id: info.classId, material_folder: folder,
+                            sheet_ids: [], inferred: true
+                        };
+                        const matchedTpl = templates.find(function (t) {
+                            return sanitizeForFileNamePart(t.name || '') === layoutPart;
+                        });
+                        if (matchedTpl) {
+                            groups[gKey].template_id = matchedTpl.id;
+                        } else {
+                            groups[gKey].template_name = layoutPart;
+                        }
+                    }
+                    groups[gKey].sheet_ids.push(stem);
+                });
+            });
+        });
+        return Object.keys(groups).map(function (k) { return groups[k]; });
+    }
+
+    /**
+     * 💣 雷區（2026-08-14 老師回報「第一跟第二？是怎麼回事，被拆成兩個顯示區塊了」）：
+     * 舊版把 inferredAppsFromMetaCatalog() 的結果直接 concat 到 apps 後面，結果同一個資料夾、
+     * 同一個擷取範本（例如 GEPT-2／sentance-meta），因為 A~Y 這 23 個活頁有明確
+     * app 紀錄、Z/W/U 這 3 個沒有，就活生生拆成「真實紀錄卡片」＋「🔍依檔名推斷卡片」兩張，
+     * 老師完全看不出這其實是同一組。這裡改成：inferred 分組如果能對到「同資料夾＋同 Template」
+     * 的既有 apps 紀錄，就直接把那幾個活頁併進那張真實卡片（畫面顯示用，不寫回
+     * material_template_applications），只有真的找不到對得上的既有紀錄（例如 vBK-2 那兩個
+     * 擷取範本，資料夾裡完全沒有明確套用過的紀錄）才維持獨立的「🔍依檔名推斷」卡片。
+     */
+    function mergeInferredIntoRealApps(apps, inferred) {
+        const realApps = (apps || []).map(function (a) {
+            return Object.assign({}, a, { sheet_ids: (Array.isArray(a.sheet_ids) ? a.sheet_ids : []).slice(), _inferredSheetIds: [] });
+        });
+        const extraBlocks = [];
+        inferred.forEach(function (inf) {
+            const target = realApps.find(function (a) {
+                if ((a.root_kind || 'teacher') !== (inf.root_kind || 'teacher')) return false;
+                if (String(a.class_id || '') !== String(inf.class_id || '')) return false;
+                if (String(a.material_folder || '').trim() !== String(inf.material_folder || '').trim()) return false;
+                if (inf.template_id) return a.template_id === inf.template_id;
+                // inf 沒對到現存 Template（罕見：檔名裡的 layout 字串現在找不到同名 Template）時，
+                // 退回比對「這張真實卡片即時查出來的顯示名稱」是否跟推斷出來的原始字串一樣
+                return resolveTemplateDisplayInfo(a).name === inf.template_name;
+            });
+            if (target) {
+                target.sheet_ids = target.sheet_ids.concat(inf.sheet_ids);
+                target._inferredSheetIds = target._inferredSheetIds.concat(inf.sheet_ids);
+            } else {
+                extraBlocks.push(inf);
+            }
+        });
+        return realApps.concat(extraBlocks);
+    }
+
     function renderOverviewAppsHtml(apps) {
-        if (!apps || !apps.length) {
-            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">尚未套用任何 Layout Template 到教材，請在下面「📎 套用到教材」新增</div>';
+        const merged = mergeInferredIntoRealApps(apps, inferredAppsFromMetaCatalog(apps));
+        if (!merged.length) {
+            return '<div style="color:#94A3B8; padding:4px 0; font-size:0.8rem;">尚未套用任何擷取範本到教材，請在下面「🧾 從本機 Excel 讀取活頁／欄位」用「⚡ 快速套用」新增</div>';
         }
-        return apps.map(function (a, idx) {
+        return merged.map(function (a, idx) {
             const scopeLabel = a.root_kind === 'class'
                 ? ('🏫 ' + (function () {
                     const cls = allClasses().find(function (c) { return String(c.id) === String(a.class_id); });
@@ -3797,28 +4414,43 @@ window.FeatureMaterialLayoutPairing = (function () {
                 })())
                 : '👤 老師個人';
             const sheetIds = Array.isArray(a.sheet_ids) ? a.sheet_ids : [];
+            const inferredSheetIdsUpper = (Array.isArray(a._inferredSheetIds) ? a._inferredSheetIds : [])
+                .map(function (s) { return String(s || '').trim().toUpperCase(); });
             const currentStems = sheetStemsForFolder(a.class_id, a.root_kind, a.material_folder || '');
             const currentStemsUpper = currentStems.map(function (s) { return String(s || '').trim().toUpperCase(); });
             const stemsKnown = currentStems.length > 0; // 目錄還沒載入完成時全部算未知，避免載入中被誤標成失效
             const staleIds = [];
             const sheetsHtml = sheetIds.length ? sheetIds.map(function (s) {
-                const isStale = stemsKnown && currentStemsUpper.indexOf(String(s || '').trim().toUpperCase()) === -1;
+                const sUpper = String(s || '').trim().toUpperCase();
+                const isStale = stemsKnown && currentStemsUpper.indexOf(sUpper) === -1;
                 if (isStale) staleIds.push(s);
-                return isStale
-                    ? ('<span style="color:#B91C1C; font-weight:800;" title="這個資料夾目前找不到叫這個名字的 meta.json，可能已被刪除／改名／搬移">⚠️ ' + esc(s) + '</span>')
-                    : esc(s);
+                // 併入的活頁不是明確紀錄裡本來就有的，標個小圖示提醒來源（不算失效，只是來源不同）
+                const isInferred = !isStale && inferredSheetIdsUpper.indexOf(sUpper) !== -1;
+                if (isStale) {
+                    return '<span style="color:#B91C1C; font-weight:800;" title="這個資料夾目前找不到叫這個名字的 meta.json，可能已被刪除／改名／搬移">⚠️ ' + esc(s) + '</span>';
+                }
+                if (isInferred) {
+                    return '<span style="color:#0F766E;" title="這個活頁沒有明確的套用紀錄，是從檔名（活頁名.範本名）反推併入這組的">🔍 ' + esc(s) + '</span>';
+                }
+                return esc(s);
             }).join('、') : '（未選活頁）';
             const rangeTxt = (a.row_start || a.row_end) ? ('｜第 ' + esc(a.row_start || '?') + '～' + esc(a.row_end || '?') + ' 行') : '';
             const tplInfo = resolveTemplateDisplayInfo(a);
             const tplHtml = tplInfo.missing
-                ? ('<span style="color:#B91C1C; font-weight:800;" title="這個 Layout Template 已經被刪除，配對紀錄可能需要重新指定">⚠️ ' + esc(tplInfo.name) + '</span>')
+                ? ('<span style="color:#B91C1C; font-weight:800;" title="這個擷取範本已經被刪除，配對紀錄可能需要重新指定">⚠️ ' + esc(tplInfo.name) + '</span>')
                 : esc(tplInfo.name);
-            const warnHtml = staleIds.length
+            // 依檔名推斷出來的列（apps 沒有明確紀錄，是從 meta 檔名 sheetName.layoutName 反推的，
+            // 且找不到同資料夾＋同 Template 的既有紀錄可以併入），不是老師自己在「📎 套用到教材」
+            // 設定過的，標個灰色小字提醒來源，避免跟明確紀錄混淆
+            const inferredTag = a.inferred
+                ? '<span style="color:#94A3B8; font-weight:600; font-size:0.7rem;" title="這筆是從 meta 檔名（活頁名.範本名）反推出來的，不是明確設定過的套用紀錄">🔍依檔名推斷</span> '
+                : '';
+            const warnHtml = (!a.inferred && staleIds.length)
                 ? ('<div style="margin-top:4px; font-size:0.72rem; color:#B91C1C;">⚠️ 上面標紅的活頁目前在「' + esc(a.material_folder || '') + '」資料夾裡找不到對應 meta.json（可能已被刪除或改名），這筆配對紀錄已經過期。'
                     + '<button type="button" class="mlp-overview-app-clean" data-idx="' + idx + '" style="margin-left:6px; border:1px solid #B91C1C; background:white; color:#B91C1C; border-radius:5px; padding:1px 6px; font-size:0.72rem; cursor:pointer;">🧹 清除失效活頁</button></div>')
                 : '';
-            return '<div style="background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px; margin-bottom:6px;">'
-                + '<div style="font-size:0.8rem; font-weight:800; color:#334155;">' + esc(scopeLabel) + ' ／ 📁 ' + esc(a.material_folder || '（未選資料夾）') + '</div>'
+            return '<div style="background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px; margin-bottom:6px;' + (a.inferred ? ' border-style:dashed;' : '') + '">'
+                + '<div style="font-size:0.8rem; font-weight:800; color:#334155;">' + inferredTag + esc(scopeLabel) + ' ／ 📁 ' + esc(a.material_folder || '（未選資料夾）') + '</div>'
                 + '<div style="margin-top:2px; font-size:0.78rem; color:#475569;">📄 ' + sheetsHtml + '　→　🧩 ' + tplHtml + rangeTxt + '</div>'
                 + warnHtml
                 + '</div>';
@@ -3838,7 +4470,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!target.id) {
             // 極舊資料（早於這筆配對紀錄加上穩定 id 之前）沒有 id 可比對，用 id 比對可能誤傷其他
             // 同樣沒有 id 的舊紀錄——安全起見直接請老師改用「＋新增套用」重建這筆配對再刪掉舊的。
-            window.showFlash && window.showFlash('⚠️ 這是一筆很舊的配對紀錄（沒有可靠的識別碼），請改用下面「📎 套用到教材」重新設定一次，再手動刪除這筆舊紀錄', 'error');
+            window.showFlash && window.showFlash('⚠️ 這是一筆很舊的配對紀錄（沒有可靠的識別碼），請改用「⚡ 快速套用」重新設定一次，再手動刪除這筆舊紀錄', 'error');
             return;
         }
         try {
@@ -3889,19 +4521,19 @@ window.FeatureMaterialLayoutPairing = (function () {
     function renderOverviewHtml(pairs, apps) {
         return `
             <div style="background:#F8FAFC; padding:20px; border-radius:12px; border:2px solid #CBD5E1; margin-bottom:16px;">
-                <h3 style="margin:0 0 4px 0; color:var(--primary-dark);">📊 總覽：目前已有的教材與 Layout</h3>
-                <p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">點 Layout 卡片可直接跳去編輯；其他兩張卡片是現況清單，實際操作在下面各區塊。</p>
+                <h3 style="margin:0 0 4px 0; color:var(--primary-dark);">📊 總覽：目前已有的教材與擷取範本</h3>
+                <p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">點擷取範本卡片可直接跳去編輯；其他兩張卡片是現況清單，實際操作在下面各區塊。</p>
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:14px;">
                     <div>
                         <div style="font-size:0.85rem; font-weight:800; color:#1D4ED8; margin-bottom:6px;">📁 教材資料夾（既有 meta／script）</div>
                         <div id="mlp-overview-folders">${renderOverviewFoldersHtml(pairs, apps)}</div>
                     </div>
                     <div>
-                        <div style="font-size:0.85rem; font-weight:800; color:#7C3AED; margin-bottom:6px;">🧩 Layouts（Layout Template）</div>
+                        <div style="font-size:0.85rem; font-weight:800; color:#7C3AED; margin-bottom:6px;">🧩 擷取範本</div>
                         <div id="mlp-overview-templates">${renderOverviewTemplatesHtml()}</div>
                     </div>
                     <div>
-                        <div style="font-size:0.85rem; font-weight:800; color:#15803D; margin-bottom:6px;">🔗 已配對好的 meta ＋ layout 組合</div>
+                        <div style="font-size:0.85rem; font-weight:800; color:#15803D; margin-bottom:6px;">🔗 已配對好的 meta ＋ 擷取範本組合</div>
                         <div id="mlp-overview-apps">${renderOverviewAppsHtml(apps)}</div>
                     </div>
                 </div>
@@ -3926,7 +4558,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         bindOverviewFolderDeleteClicks();
     }
 
-    /** 局部補畫「Layouts」卡片（Template 清單新增／編輯／刪除／複製後呼叫） */
+    /** 局部補畫「擷取範本」卡片（Template 清單新增／編輯／刪除／複製後呼叫） */
     function refreshOverviewTemplates() {
         const wrap = document.getElementById('mlp-overview-templates');
         if (!wrap) return;
@@ -3970,12 +4602,14 @@ window.FeatureMaterialLayoutPairing = (function () {
             ${renderOverviewHtml(pairs, apps)}
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
-                    <h3 style="margin:0; color:var(--primary-dark);">🧩 Layout Template（欄位對應範本，可重複套用）</h3>
+                    <h3 style="margin:0; color:var(--primary-dark);">📚 範本庫 — 擷取範本（欄位對應範本，可重複套用）</h3>
                     <button type="button" id="mlp-tpl-add-new" class="btn btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE;">＋ 新增 Template</button>
                 </div>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0;">
                     Template 是獨立於任何檔案的「規則」：名稱＋一組欄位設定（欄位代號、資料項名稱、題目／答案／訊息）。
-                    設計好之後可以重複套用到「欄位結構相同」的任何教材檔案——實際套用時的行數起迄記在下面「📎 套用到教材」區塊，不記在這裡。
+                    設計好之後可以重複套用到「欄位結構相同」的任何教材檔案——實際套用時的行數起迄記在下面「⚡ 快速套用」各自登記，不記在這裡。
+                    每一筆範本下方可勾選「🧾 也當試卷範本」，讓同一筆範本同時出現在下方「🧾 試卷範本」清單、出題下拉、班級教材組合裡（雙用）——
+                    不勾就只當純擷取範本用，兩者是同一份資料的兩個角色勾選框，不是自動綁定。
                 </p>
                 <div id="mlp-template-editor"></div>
                 <div id="mlp-template-list"></div>
@@ -3984,9 +4618,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">🧾 從本機 Excel 讀取活頁／欄位</h3>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0;">
                     選擇本機 Excel 檔案（不會上傳，只在瀏覽器裡讀取）→ 勾選要處理的活頁（可多選，欄位結構一樣的活頁可以一次勾好幾個）。
-                    接下來分兩條路：<b>⚡ 已有現成 Layout</b>——直接選一個既有 Template 套用，跳到下面「📎 套用到教材」產生 meta/script，
-                    完全不用碰欄位設定；<b>🆕 設計新 Layout</b>——現有 Layout 都不適用時才需要，走「勾欄位 → 確定選取 → 設定資料項名稱／
-                    題目／答案／訊息 → 取個名字儲存」，存好後出現在上面「Layout Template」清單，之後就能重複用「⚡ 已有現成 Layout」套用。
+                    接下來分兩條路：<b>⚡ 已有現成擷取範本</b>——直接選一個既有 Template 套用，立刻產生 meta/script，
+                    完全不用碰欄位設定；<b>🆕 設計新擷取範本</b>——現有擷取範本都不適用時才需要，走「勾欄位 → 確定選取 → 設定資料項名稱／
+                    題目／答案／訊息 → 取個名字儲存」，存好後出現在上面「擷取範本」清單，之後就能重複用「⚡ 已有現成擷取範本」套用。
                 </p>
                 <div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap;">
                     <div style="flex:1; min-width:240px; display:flex; flex-direction:column; background:#FAFAFA; border:2px solid #E2E8F0; border-radius:10px; padding:14px; box-sizing:border-box; justify-content:center;">
@@ -3999,22 +4633,6 @@ window.FeatureMaterialLayoutPairing = (function () {
                 </div>
                 <div id="mlp-excel-block" style="margin-top:10px;"></div>
             </div>
-            <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <h3 style="margin:0; color:var(--primary-dark);">📎 套用到教材（Layout Template ↔ 實際檔案）</h3>
-                    <div style="display:flex; gap:8px;">
-                        <button type="button" id="mlp-app-add-row" class="btn btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE;">＋ 新增套用</button>
-                        <button type="button" id="mlp-app-save" class="btn btn-primary" style="padding:8px 18px; font-weight:800;">💾 儲存</button>
-                    </div>
-                </div>
-                <p style="color:#64748B; font-size:0.85rem; margin-top:0;">
-                    每一列＝一次套用，分三塊填：📁「歸屬檔案」一定是 Google Drive（實際指向哪個教材資料夾，考試／批改系統只認這裡）；
-                    📄「活頁來源」用來挑出這次要套用的活頁，可以直接勾歸屬資料夾裡偵測到的活頁，也可以改選一個本機 Excel 檔案掃描活頁名稱，活頁一律可複選；
-                    最後選 Layout Template＋填行數起迄（不同檔案資料筆數不同，起迄列可能不一樣，同一份 Template 可以套用到多筆）。
-                </p>
-                <div id="mlp-app-rows">${apps.map(function (a) { return renderAppRow(a); }).join('') || '<div class="mlp-app-empty-hint" style="color:#94A3B8; padding:12px;">尚未登記任何套用，按「＋ 新增套用」開始。</div>'}</div>
-                <div id="mlp-app-save-msg" style="margin-top:8px; font-weight:800;"></div>
-            </div>
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                     <h3 style="margin:0; color:var(--primary-dark);">🧩 教材／考試 Layout 搭配（只給「內建 6 種舊版排版」用）</h3>
@@ -4024,7 +4642,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     </div>
                 </div>
                 <p style="color:#64748B; font-size:0.85rem; margin-top:0;">
-                    ⚠️ 如果這個資料夾／活頁是用上面「📎 套用到教材」套過 Layout Template 產生的，<b>不需要在這裡另外登記</b>——
+                    ⚠️ 如果這個資料夾／活頁是用上面「⚡ 快速套用」套過擷取範本產生的，<b>不需要在這裡另外登記</b>——
                     出題畫面會自動偵測「這份 meta 實際是哪個 Template 套用產生的」，直接標「⭐」帶出對應的 Template 排版，不會用到下面這份清單。
                     這裡登記的「建議」只影響出題畫面下拉裡<b>內建 6 種舊版 GEPT／vocab 排版</b>要不要標星號排到最前面（給沒有用新版 Template 的舊教材用）：
                     出題畫面選好教材資料夾／活頁後，符合的 layout 會標「⭐建議」排到最前面，但仍可自由改選其他 layout。
@@ -4088,67 +4706,6 @@ window.FeatureMaterialLayoutPairing = (function () {
             }
         };
 
-        const appRowsEl = container.querySelector('#mlp-app-rows');
-        appRowsEl.querySelectorAll('.mlp-app-row').forEach(function (rowEl) {
-            bindAppRowEvents(rowEl);
-            refreshAppFolderSelect(rowEl);
-        });
-
-        document.getElementById('mlp-app-add-row').onclick = function () {
-            try {
-                const empty = appRowsEl.querySelector('.mlp-app-empty-hint');
-                if (empty) empty.remove();
-                const div = document.createElement('div');
-                div.innerHTML = renderAppRow({ id: 'mta_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), template_name: '', root_kind: 'teacher', class_id: '', material_folder: '', sheet_ids: [], row_start: '', row_end: '' });
-                const newRow = div.firstElementChild;
-                appRowsEl.appendChild(newRow);
-                bindAppRowEvents(newRow);
-                refreshAppFolderSelect(newRow);
-                highlightNewRow(newRow);
-            } catch (err) {
-                console.error('[FeatureMaterialLayoutPairing] 新增套用列失敗', err);
-                window.showFlash && window.showFlash('❌ 新增套用列失敗：' + (err.message || err), 'error');
-            }
-        };
-
-        // 這個區塊的列在畫面剛畫出來時就是「apps」這份初始清單——記住這些 id，存檔時才知道
-        // 老師是不是刻意刪掉了某一列（不在目前 DOM 裡＝要真的從資料庫移除，不能只是沒被合併到）
-        const initialAppIds = apps.map(function (a) { return String(a.id); });
-        document.getElementById('mlp-app-save').onclick = async function () {
-            const btn = this;
-            const msgEl = document.getElementById('mlp-app-save-msg');
-            const collected = collectAppsFromDom(appRowsEl);
-            btn.disabled = true;
-            const original = btn.innerHTML;
-            btn.innerHTML = '⏳ 儲存中…';
-            try {
-                // 💣 雷區：這顆按鈕收集的是「📎 套用到教材」這個區塊目前畫面上的列，是頁面載入當下
-                // 就存在的快照——若在同一次瀏覽中，老師先用「⚡ 快速套用」上傳成功（會自動記一筆，
-                // 見 handleConfirmUpload），此按鈕收集到的 DOM 並不包含那一筆，若直接整批覆寫存檔，
-                // 會把剛才快速套用自動記的那筆整筆蓋掉。改成先抓資料庫「最新」清單，
-                // 只丟掉「畫面載入時就有、但現在被老師手動刪除那一列」的紀錄（initialAppIds 有、
-                // 目前 DOM 卻沒有），其餘（包含快速套用後來新增的）先保留，再用自然鍵把 DOM
-                // 收集到的每一列逐一合併進去（同一組配對合併、不同組才新增）。
-                const latest = await fetchTemplateApplications(true);
-                const presentIds = collected.map(function (r) { return String(r.id); });
-                const keptFromLatest = latest.filter(function (a) {
-                    return initialAppIds.indexOf(String(a.id)) === -1 || presentIds.indexOf(String(a.id)) !== -1;
-                });
-                const merged = collected.reduce(function (acc, rec) { return mergeAppRecordIntoList(acc, rec); }, keptFromLatest);
-                await saveTemplateApplications(merged);
-                msgEl.style.color = '#059669';
-                msgEl.textContent = '✅ 已儲存 ' + collected.length + ' 筆套用紀錄';
-                window.showFlash && window.showFlash('已儲存 Layout Template 套用紀錄');
-                refreshOverviewApps();
-                refreshOverviewFolders();
-            } catch (err) {
-                msgEl.style.color = '#EF4444';
-                msgEl.textContent = '❌ 儲存失敗：' + (err.message || err);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = original;
-            }
-        };
     }
 
     /** Template 清單背景補齊後，套用區塊每一列的 Template 下拉也要跟著補上新選項（不用整段重畫） */
@@ -4164,8 +4721,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         render: render,
         getSuggestedLayoutIds: getSuggestedLayoutIds,
         getCachedSync: getCachedSync,
-        getTemplateDerivedProfiles: getTemplateDerivedProfiles,
-        getSuggestedTemplateProfileId: getSuggestedTemplateProfileId,
-        resolveTemplateProfile: resolveTemplateProfile
+        // 2026-08-14：getTemplateDerivedProfiles()／getSuggestedTemplateProfileId() 已刪除
+        // （見上方「移除自動雙用行為」說明），不再對外提供——出題下拉／建議鏈請改用
+        // material_exam_templates（FeatureExamJob）與 material_combination_exam_templates
+        // （FeatureClassMaterialCombinations），不要重新接回擷取範本自動換算考卷排版的機制。
+        resolveTemplateProfile: resolveTemplateProfile,
+        getFieldTemplatesCachedSync: getFieldTemplatesCachedSync,
+        buildProfileFromTemplate: buildProfileFromTemplate
     };
 })();

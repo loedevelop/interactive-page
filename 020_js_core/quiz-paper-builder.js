@@ -1019,6 +1019,78 @@ window.QuizPaperBuilder = (function () {
         };
     }
 
+    /**
+     * ✍️ 輸入練習／🔧 輸入改正共用：逐字元比對輸入框，附加在既有 <input> 上。
+     *
+     * 老師確認的規則（2026-08-14）：
+     * - 逐字要求完全一致（大小寫、空格、標點都算）；打錯字當下就要擋掉，不能繼續往下打。
+     * - 中文注音／拼音輸入法是「打完一整個字才確定」，所以打字中（IME 組字階段）完全不比對，
+     *   只在 compositionend（該字確定送出）才驗證剛剛送出的那一段是否吃得下去；不對的話
+     *   直接把那一段吐回去（回復到上一個仍相符的字首）。
+     * - 允許刪除（往回打）：任何比 expectedText 短的合法字首都算合法，不會被擋。
+     * - 打對「完整」expectedText 的那一刻算完成一次，呼叫 onComplete()，由外部決定要清空
+     *   繼續下一次還是鎖住輸入框（達到次數）。
+     *
+     * @param {HTMLInputElement} inputEl
+     * @param {string} expectedText 這次要逐字比對的目標字串（已經是最終呈現字串，不重新正規化）
+     * @param {function} onComplete 每次「完整打對一次」都會呼叫；由呼叫端負責清空/鎖定
+     * @returns {{ detach: function }} 可呼叫 detach() 移除監聽（例如切換題目、關閉視窗時）
+     */
+    function attachStrictRetypeInput(inputEl, expectedText, onComplete) {
+        const expected = String(expectedText == null ? '' : expectedText);
+
+        function longestValidPrefix(val) {
+            let i = 0;
+            while (i < val.length && i < expected.length && val[i] === expected[i]) i++;
+            return val.slice(0, i);
+        }
+
+        function validate() {
+            const val = inputEl.value;
+            if (!expected.startsWith(val)) {
+                const fixed = longestValidPrefix(val);
+                if (fixed !== val) {
+                    inputEl.value = fixed;
+                    // 短暫閃紅色邊框，提示「這個字錯了、被擋掉」
+                    inputEl.style.borderColor = '#DC2626';
+                    inputEl.style.boxShadow = '0 0 0 2px rgba(220,38,38,0.25)';
+                    clearTimeout(inputEl._retypeFlashTimer);
+                    inputEl._retypeFlashTimer = setTimeout(function () {
+                        inputEl.style.borderColor = '';
+                        inputEl.style.boxShadow = '';
+                    }, 350);
+                }
+            }
+            if (expected && inputEl.value === expected) {
+                if (typeof onComplete === 'function') onComplete();
+            }
+        }
+
+        function onInput(e) {
+            // 組字中（例如注音／拼音選字階段）不比對，等 compositionend 再驗證整段結果
+            if (e && (e.isComposing || inputEl.dataset.retypeComposing === '1')) return;
+            validate();
+        }
+        function onCompositionStart() { inputEl.dataset.retypeComposing = '1'; }
+        function onCompositionEnd() {
+            inputEl.dataset.retypeComposing = '0';
+            validate();
+        }
+
+        inputEl.addEventListener('input', onInput);
+        inputEl.addEventListener('compositionstart', onCompositionStart);
+        inputEl.addEventListener('compositionend', onCompositionEnd);
+
+        return {
+            detach: function () {
+                inputEl.removeEventListener('input', onInput);
+                inputEl.removeEventListener('compositionstart', onCompositionStart);
+                inputEl.removeEventListener('compositionend', onCompositionEnd);
+                clearTimeout(inputEl._retypeFlashTimer);
+            }
+        };
+    }
+
     return {
         buildQuizPaper: buildQuizPaper,
         gradeAnswers: gradeAnswers,
@@ -1042,6 +1114,7 @@ window.QuizPaperBuilder = (function () {
         isAcceptableAnswer: isAcceptableAnswer,
         equivalentAcceptedSeed: equivalentAcceptedSeed,
         mergeAcceptedAnswers: mergeAcceptedAnswers,
-        shuffleInPlace: shuffleInPlace
+        shuffleInPlace: shuffleInPlace,
+        attachStrictRetypeInput: attachStrictRetypeInput
     };
 })();
