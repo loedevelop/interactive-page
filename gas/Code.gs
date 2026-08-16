@@ -479,32 +479,39 @@ function readMaterialFiles(rootFolderId, items, rootKind) {
     try {
       var one;
       if (byId) {
-        one = readDriveTextFileById(byId);
-        out.push({
-          ok: true,
-          fileName: one.fileName || fileName,
-          fileId: one.fileId,
-          content: one.content,
-          mimeType: one.mimeType,
-          materialFolder: materialFolder,
-          rootKind: kind
-        });
-      } else {
-        if (!fileName) {
-          out.push({ ok: false, fileName: '', message: '缺少 fileName' });
+        try {
+          one = readDriveTextFileById(byId);
+          out.push({
+            ok: true,
+            fileName: one.fileName || fileName,
+            fileId: one.fileId,
+            content: one.content,
+            mimeType: one.mimeType,
+            materialFolder: materialFolder,
+            rootKind: kind
+          });
           continue;
+        } catch (_byIdErr) {
+          // 老師重新上傳後舊 fileId 會失效；有檔名就改走資料夾＋檔名，不要整批讀不到。
+          if (!fileName) {
+            throw _byIdErr;
+          }
         }
-        one = readMaterialFile(rootFolderId, materialFolder, fileName, kind);
-        out.push({
-          ok: true,
-          fileName: one.fileName,
-          fileId: one.fileId,
-          content: one.content,
-          mimeType: one.mimeType,
-          materialFolder: one.materialFolder,
-          rootKind: one.rootKind
-        });
       }
+      if (!fileName) {
+        out.push({ ok: false, fileName: '', message: '缺少 fileName' });
+        continue;
+      }
+      one = readMaterialFile(rootFolderId, materialFolder, fileName, kind);
+      out.push({
+        ok: true,
+        fileName: one.fileName,
+        fileId: one.fileId,
+        content: one.content,
+        mimeType: one.mimeType,
+        materialFolder: one.materialFolder,
+        rootKind: one.rootKind
+      });
     } catch (err) {
       out.push({
         ok: false,

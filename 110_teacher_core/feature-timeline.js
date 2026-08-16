@@ -146,8 +146,21 @@ window.FeatureTimeline = (() => {
     /** 各錄音節點目前下拉用的 options（由 catalog 灌入） */
     const _materialMetaOptionsCache = {};
 
+    /**
+     * 💣 雷區（2026-08-16 老師回報「教材資料夾下拉『其他可用』亂說沒有」）：resolveMaterialsRootFolderId
+     * 對 rootKind='teacher' 完全不看 classId（永遠是老師個人 Drive 根，跟哪個班級無關），但這裡
+     * 以前無論 teacher／class 都把 classId 併進 key，導致同一份「老師個人教材」清單依呼叫時的
+     * classId 被快取成好幾份互不相通的副本——例如「設計新擷取範本」卡片上傳成功後用 classId=''
+     * 強制重抓一次，只更新了 ''::teacher 那一份，某個實際班級頁面（key 是 該班classId::teacher）
+     * 讀到的還是更早、可能不含新資料夾的舊快取，老師剛上傳好的教材資料夾在那個班的「其他可用」
+     * 下拉完全看不到，變成「亂說沒有」。修法：rootKind='teacher' 一律收斂成同一個 key，
+     * 不管從哪個 classId 觸發的重新整理都會更新到同一份、大家都讀得到最新結果；
+     * rootKind='class' 資料真的依 classId 不同（00_Class_Materials 是各班獨立資料夾），維持原樣。
+     */
     function metaCatalogKey(classId, rootKind) {
-        return String(classId || '') + '::' + normalizeMaterialsRootKind(rootKind);
+        const kind = normalizeMaterialsRootKind(rootKind);
+        if (kind === 'teacher') return '__teacher__::teacher';
+        return String(classId || '') + '::' + kind;
     }
 
     function getMetaCatalogEntry(classId, rootKind) {

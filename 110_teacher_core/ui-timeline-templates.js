@@ -133,8 +133,13 @@ window.TimelineTemplates = (() => {
             extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}${grammarBadge}`;
         } else if (t.type === 'exam') {
             const jobId = (t.raw_data && (t.raw_data.exam_job_id || (t.raw_data.exam_job && t.raw_data.exam_job.job_id))) || '';
+            const paperN = (t.raw_data && t.raw_data.quiz_paper && Array.isArray(t.raw_data.quiz_paper.items))
+                ? t.raw_data.quiz_paper.items.length : 0;
             extraTag = '<span style="font-size:0.9rem; color:#0F766E; margin-left:8px; font-weight:bold;">(考試出題單)</span>'
-                + (jobId ? `<span style="font-size:0.8rem; background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">job: ${jobId}</span>` : '');
+                + (jobId ? `<span style="font-size:0.8rem; background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">job: ${jobId}</span>` : '')
+                + (paperN
+                    ? `<span style="font-size:0.8rem; background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">線上卷 ${paperN} 題</span>`
+                    : `<span style="font-size:0.8rem; background:#FFFBEB; color:#92400E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">尚未產生線上卷</span>`);
         }
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 

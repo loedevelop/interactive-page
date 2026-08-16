@@ -38,6 +38,8 @@ window.FeatureExamJob = (function () {
 
     const SHEET_SUGGESTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
     const DEFAULT_LINES_PER_PAGE = 10;
+    const _availAutoFetchKey = {};
+    const _availAutoFetchBusy = {};
 
     /**
      * 📋「同一班級記住上次出題設定」（2026-08-11 老師要求）：老師出題很雜，每次都要重新設定
@@ -149,8 +151,18 @@ window.FeatureExamJob = (function () {
     }
 
     /** 同步讀「目前已知」的考卷範本清單，第一次呼叫順便觸發背景載入（跟其他 CachedSync helper 同精神） */
+    let _examTplRefreshPending = false;
     function getExamTemplatesCachedSync() {
-        return window.FeatureTemplateLibrary.getExamTemplates();
+        const list = window.FeatureTemplateLibrary.getExamTemplates();
+        if (!list.length && !_examTplRefreshPending && window.FeatureTemplateLibrary
+            && typeof window.FeatureTemplateLibrary.fetchTemplates === 'function') {
+            _examTplRefreshPending = true;
+            window.FeatureTemplateLibrary.fetchTemplates(false).then(function () {
+                _examTplRefreshPending = false;
+                if (window.FeatureTemplateLibrary.getExamTemplates().length) refreshExamBuilder();
+            }).catch(function () { _examTplRefreshPending = false; });
+        }
+        return list;
     }
 
     /** 新增純考卷範本（不勾擷取角色）；若要讓既有擷取範本「加開」試卷角色，改用
@@ -222,6 +234,13 @@ window.FeatureExamJob = (function () {
         const m = name.match(/^(.+?)\.meta\.json$/i);
         if (m) return m[1];
         return name.replace(/\.[^.]+$/, '') || '';
+    }
+
+    /** 活頁顯示名：去掉 .meta.json 與範本後綴（A.vocab-word → A），不要把檔名整串寫進 sheet_id */
+    function displayStemFromMetaFile(fileName) {
+        const stem = metaStemFromFileName(fileName);
+        const m = String(stem || '').match(/^(.+)\.([A-Za-z][A-Za-z0-9_-]*)$/);
+        return m ? m[1] : stem;
     }
 
     /** 去掉誤黏在範圍前的活頁字母（例：A pp. 1~2 → pp. 1~2） */
@@ -307,13 +326,13 @@ window.FeatureExamJob = (function () {
         const seen = {};
         refs.forEach(function (r) {
             if (!r) return;
+            const published = String(r.published_file || r.metaFile || '').trim();
             let sheet = '';
             const label = String(r.label || r.stem || '').trim();
             if (/^[A-Za-z0-9]{1,4}$/i.test(label)) {
                 sheet = label.toUpperCase();
             } else {
-                const fromFile = metaStemFromFileName(r.published_file || r.metaFile || '');
-                sheet = String(fromFile || label || '').trim().toUpperCase();
+                sheet = displayStemFromMetaFile(published || label);
             }
             const parsed = parseSectionRangeFromSpec(r.range_spec || r.range || '', sheet);
             if (!sheet || !parsed) return;
@@ -327,6 +346,8 @@ window.FeatureExamJob = (function () {
                 : (parsed.items && parsed.items.length ? parsed.items.length : Math.max(1, parsed.end - parsed.start + 1));
             sections.push({
                 sheet_id: sheet,
+                meta_file_name: published || '',
+                meta_file_id: r.fileId || r.file_id || '',
                 range_type: parsed.range_type,
                 start: parsed.start,
                 end: parsed.end,
@@ -351,7 +372,7 @@ window.FeatureExamJob = (function () {
             ? raw.material_refs
             : (raw.material_ref && (raw.material_ref.published_file || raw.material_ref.range_spec)
                 ? [raw.material_ref] : []);
-        let sections = sectionsFromMaterialRefs(refs, linesPerPage);
+        let sections = rejectBogusPagePrefixSections(sectionsFromMaterialRefs(refs, linesPerPage));
         if (sections.length) return sections;
 
         let rangeText = String(raw.material_range || '').trim();
@@ -359,11 +380,11 @@ window.FeatureExamJob = (function () {
             rangeText = window.FeatureTimeline.buildMaterialRangeLabelFromRows(refs) || '';
         }
         if (!rangeText) rangeText = stripHtml(audioTask.title || '');
-        sections = parseMaterialRangeToSections(rangeText, linesPerPage);
+        sections = rejectBogusPagePrefixSections(parseMaterialRangeToSections(rangeText, linesPerPage));
         if (sections.length) return sections;
 
         if (Array.isArray(raw.grading_units) && raw.grading_units.length) {
-            return sectionsFromGradingUnits(raw.grading_units, linesPerPage);
+            return rejectBogusPagePrefixSections(sectionsFromGradingUnits(raw.grading_units, linesPerPage));
         }
         return [];
     }
@@ -467,32 +488,9 @@ window.FeatureExamJob = (function () {
     }
 
     /**
-     * 可用題數（與產生線上卷同一套篩選語意）：
-     * 1) 優先 meta_rows_by_stem（完整 meta 列數＝真正可抽題數）
-     * 2) 題號：meta_items / grading_units.item_nos
-     * 3) 頁碼：grading_units.item_count（僅 Snapshot 過的頁）
+     * 可用題只從考試任務自己讀進來的 meta 檔列數算（範圍內實際列，最後一頁可不滿行）。
+     * 禁止用錄音 Snapshot／grading_units／頁數×每頁行數。
      */
-    function collectMetaItemsFromAudio(audioTask) {
-        if (!audioTask || !audioTask.raw_data) return [];
-        const raw = audioTask.raw_data;
-        if (Array.isArray(raw.meta_items) && raw.meta_items.length) {
-            return raw.meta_items;
-        }
-        const units = Array.isArray(raw.grading_units) ? raw.grading_units : [];
-        const out = [];
-        units.forEach(function (u) {
-            if (!u) return;
-            const stem = String(u.stem || '').trim();
-            const page = u.page;
-            const nos = Array.isArray(u.item_nos) ? u.item_nos : [];
-            nos.forEach(function (n) {
-                const itemNo = Number(n);
-                if (isNaN(itemNo)) return;
-                out.push({ stem: stem, page: page, item_no: itemNo });
-            });
-        });
-        return out;
-    }
 
     function buildPageSetForSection(section) {
         if (Array.isArray(section.pages) && section.pages.length) {
@@ -595,6 +593,7 @@ window.FeatureExamJob = (function () {
         if (!section || !Array.isArray(rows) || !rows.length) return null;
         const rtype = section.range_type || 'page';
         const excludeSet = parseNumListLocal(section.exclude_nums);
+        const pageKey = resolveMetaPageKey(rows);
 
         let pageSet = null;
         let itemSet = null;
@@ -605,12 +604,8 @@ window.FeatureExamJob = (function () {
         let sum = 0;
         rows.forEach(function (row) {
             if (!row) return;
-            // 與抽題一致：空 script 仍可能有 display；以「有 script 或 display」算一題
-            const hasBody = String(row.script || '').trim()
-                || String(row.display_zh || row.display || '').trim();
-            if (!hasBody) return;
-            const itemNo = Number(row.item_no != null ? row.item_no : row.itemNo);
-            const page = Number(row.page != null ? row.page : row.Page);
+            const itemNo = toMetaNum(row.item_no != null ? row.item_no : row.itemNo);
+            const pages = rowPageNums(row, pageKey);
             if (excludeSet && !isNaN(itemNo) && excludeSet[itemNo]) return;
             if (rtype === 'qnum') {
                 if (!itemSet || isNaN(itemNo) || !itemSet[itemNo]) return;
@@ -618,11 +613,10 @@ window.FeatureExamJob = (function () {
                 return;
             }
             if (rtype === 'page') {
-                if (!pageSet || isNaN(page) || !pageSet[page]) return;
+                if (!pageSet || !pages.some(function (p) { return pageSet[p]; })) return;
                 sum += 1;
                 return;
             }
-            // row
             sum += 1;
         });
         return sum;
@@ -639,6 +633,7 @@ window.FeatureExamJob = (function () {
         if (!wantNos.length) return [];
         if (!Array.isArray(rows) || !rows.length) return wantNos;
         const rtype = (section.range_type || 'page');
+        const pageKey = resolveMetaPageKey(rows);
         let pageSet = null;
         let itemSet = null;
         if (rtype === 'qnum') itemSet = buildItemSetForSection(section);
@@ -647,106 +642,189 @@ window.FeatureExamJob = (function () {
         rows.forEach(function (row) {
             if (!row) return;
             const itemNo = Number(row.item_no != null ? row.item_no : row.itemNo);
-            const page = Number(row.page != null ? row.page : row.Page);
+            const pages = rowPageNums(row, pageKey);
             if (isNaN(itemNo) || !includeSet[itemNo]) return;
             if (rtype === 'qnum' && (!itemSet || !itemSet[itemNo])) return;
-            if (rtype === 'page' && (!pageSet || isNaN(page) || !pageSet[page])) return;
+            if (rtype === 'page' && (!pageSet || !pages.some(function (p) { return pageSet[p]; }))) return;
             found[itemNo] = true;
         });
         return wantNos.filter(function (n) { return !found[n]; });
     }
 
-    /** 錄音 material_refs／range 是否已點名該活頁（有點名但無快取＝需再 Snapshot） */
-    function sectionSheetMentionedInAudio(section, audioTask) {
-        const sheet = String((section && section.sheet_id) || '').trim().toUpperCase();
-        if (!sheet || !audioTask || !audioTask.raw_data) return false;
-        const raw = audioTask.raw_data;
-        const refs = Array.isArray(raw.material_refs) ? raw.material_refs : [];
-        for (let i = 0; i < refs.length; i++) {
-            const r = refs[i] || {};
-            const stem = String(r.label || '').trim().toUpperCase()
-                || String(r.published_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
-            if (stem === sheet) return true;
+    /**
+     * 可用題：只讀考試任務自己的 raw_data.meta_rows_by_stem（來自「讀取可用題數」讀進的 .meta.json）。
+     * 不要傳錄音任務、不要看 grading_units。
+     */
+    function pageNumsFromCell(val) {
+        const MS = window.MaterialSnapshot;
+        if (MS && typeof MS.pageNumsFromCell === 'function') return MS.pageNumsFromCell(val);
+        if (val == null || val === '') return [];
+        const n = toMetaNum(val);
+        return isNaN(n) ? [] : [n];
+    }
+
+    function rowPageNum(row, pageKey) {
+        const MS = window.MaterialSnapshot;
+        if (MS && typeof MS.rowPageNum === 'function') return MS.rowPageNum(row, pageKey);
+        if (!row) return NaN;
+        if (pageKey && row[pageKey] != null && row[pageKey] !== '') {
+            const n = toMetaNum(row[pageKey]);
+            if (!isNaN(n)) return n;
         }
-        const range = String(raw.material_range || '').toUpperCase();
-        if (range) {
-            // 「A PP. 1~2；B PP.…」或開頭即該活頁
-            const re = new RegExp('(?:^|[;；,，\\s])' + sheet + '\\s*PP?\\.?\\s*\\d', 'i');
-            if (re.test(range)) return true;
+        const preferred = ['page', 'Page', 'pg', '頁碼', 'page_no', 'E'];
+        for (let i = 0; i < preferred.length; i++) {
+            if (row[preferred[i]] == null || row[preferred[i]] === '') continue;
+            const n = toMetaNum(row[preferred[i]]);
+            if (!isNaN(n)) return n;
         }
+        return NaN;
+    }
+
+    function rowPageNums(row, pageKey) {
+        if (!row) return [];
+        if (pageKey && row[pageKey] != null && row[pageKey] !== '') {
+            const nums = pageNumsFromCell(row[pageKey]);
+            if (nums.length) return nums;
+        }
+        const n = rowPageNum(row, pageKey);
+        return isNaN(n) ? [] : [n];
+    }
+
+    /** 找出 meta 列真正記課本頁的欄（不一定叫 page）。不要把 item_no 1～20 誤當成頁碼。 */
+    function resolveMetaPageKey(rows) {
+        const MS = window.MaterialSnapshot;
+        if (MS && typeof MS.resolveMetaPageKey === 'function') return MS.resolveMetaPageKey(rows);
+        const list = rows || [];
+        const first = list.find(Boolean);
+        if (!first) return '';
+        const named = Object.keys(first).filter(function (k) {
+            return k && k.charAt(0) !== '_' && (/^(page|Page|pg|頁碼|page_no|E)$/.test(k) || /page|頁碼/.test(k));
+        });
+        for (let i = 0; i < named.length; i++) {
+            if (pageNumsFromCell(first[named[i]]).length) return named[i];
+        }
+        return '';
+    }
+
+    function describeMetaRowKeys(rows) {
+        const MS = window.MaterialSnapshot;
+        if (MS && typeof MS.describeMetaRowKeys === 'function') return MS.describeMetaRowKeys(rows);
+        const row = (rows || []).find(Boolean);
+        if (!row) return '';
+        return Object.keys(row).filter(function (k) { return k && k.charAt(0) !== '_'; }).join(', ');
+    }
+
+    function canonicalizeFetchedRows(rows, layout) {
+        const MS = window.MaterialSnapshot;
+        if (MS && typeof MS.canonicalizeMetaRows === 'function') {
+            return MS.canonicalizeMetaRows(rows, layout);
+        }
+        return rows || [];
+    }
+
+    function lookupSectionMetaRows(byStem, section) {
+        if (!section) return null;
+        return lookupRowsBySheetId(byStem, section.sheet_id)
+            || lookupRowsBySheetId(byStem, section.meta_file_name)
+            || lookupRowsBySheetId(byStem, displayStemFromMetaFile(section.meta_file_name || section.sheet_id || ''))
+            || lookupRowsBySheetId(byStem, metaStemFromFileName(section.meta_file_name || ''));
+    }
+
+    function rememberMetaRows(byStem, section, rows) {
+        if (!byStem || !Array.isArray(rows) || !rows.length) return;
+        [section && section.sheet_id, section && section.meta_file_name,
+            displayStemFromMetaFile((section && (section.meta_file_name || section.sheet_id)) || ''),
+            metaStemFromFileName((section && section.meta_file_name) || '')
+        ].forEach(function (k) {
+            const key = String(k || '').trim();
+            if (key) byStem[key] = rows;
+        });
+    }
+
+    function summarizeMetaPages(rows) {
+        const MS = window.MaterialSnapshot;
+        if (MS && typeof MS.summarizeMetaPages === 'function') return MS.summarizeMetaPages(rows);
+        const pageKey = resolveMetaPageKey(rows);
+        const pages = [];
+        (rows || []).forEach(function (row) {
+            rowPageNums(row, pageKey).forEach(function (p) {
+                if (!isNaN(p) && pages.indexOf(p) === -1) pages.push(p);
+            });
+        });
+        pages.sort(function (a, b) { return a - b; });
+        if (!pages.length) return '';
+        return pages[0] + '～' + pages[pages.length - 1] + '（' + pages.length + ' 頁）';
+    }
+
+    function metaCannotFilterByPage(section, rows) {
+        if ((section && section.range_type && section.range_type !== 'page')) return false;
+        if (!Array.isArray(rows) || !rows.length) return false;
+        return !resolveMetaPageKey(rows);
+    }
+
+    function countAvailableFromMeta(section, examTask) {
+        if (!section || !examTask) return null;
+        if (section.meta_missing_page) return null;
+        if (section.available_count != null && section.available_count !== '' && !isNaN(Number(section.available_count))) {
+            return Number(section.available_count);
+        }
+        const byStem = (examTask.raw_data && examTask.raw_data.meta_rows_by_stem) || {};
+        const keyed = lookupSectionMetaRows(byStem, section);
+        if (Array.isArray(keyed) && keyed.length) {
+            const n = countAvailableFromMetaRows(section, keyed);
+            return n == null ? 0 : n;
+        }
+        const n = countAvailableFromAnyStemRows(byStem, section);
+        if (n > 0) return n;
+        return null;
+    }
+
+    function sectionHasRealMeta(s) {
+        if (!s) return false;
+        if (s.meta_file_id) return true;
+        if (s.meta_file_name && /\.meta\.json$/i.test(String(s.meta_file_name))) return true;
         return false;
     }
 
-    /**
-     * @param {object} section
-     * @param {object} audioTask 同層錄音任務（combo 用）
-     * @param {object} [selfTask] 考試任務自己（獨立考試：無錄音時退回自己快取的 meta_rows_by_stem）
-     */
-    function countAvailableFromMeta(section, audioTask, selfTask) {
-        const v = countAvailableFromMetaSource(section, audioTask);
-        if (v != null) return v;
-        if (selfTask && selfTask !== audioTask) return countAvailableFromMetaSource(section, selfTask);
-        return v;
+    function maybeAutoFetchAvail(pathStr, task, sections) {
+        if (!task || !Array.isArray(sections) || !sections.length) return;
+        const missing = sections.some(function (s) {
+            if (!sectionHasRealMeta(s)) return false;
+            if (isNaN(Number(s.start)) || isNaN(Number(s.end))) return false;
+            return countAvailableFromMeta(s, task) == null;
+        });
+        if (!missing) return;
+        const key = sections.map(function (s) {
+            return [s.meta_file_id || '', s.meta_file_name || '', s.sheet_id || '', s.start, s.end, s.range_type || 'page'].join(':');
+        }).join('|');
+        if (_availAutoFetchKey[pathStr] === key || _availAutoFetchBusy[pathStr]) return;
+        _availAutoFetchKey[pathStr] = key;
+        _availAutoFetchBusy[pathStr] = true;
+        setTimeout(function () {
+            Promise.resolve(inlineRefreshStandaloneMeta(pathStr, { silent: true })).then(function () {
+                _availAutoFetchBusy[pathStr] = false;
+            }, function () {
+                _availAutoFetchBusy[pathStr] = false;
+            });
+        }, 0);
     }
 
-    function countAvailableFromMetaSource(section, audioTask) {
-        if (!section || !audioTask) return null;
-        const sheet = String(section.sheet_id || '').trim().toUpperCase();
-        if (!sheet) return null;
-        const raw = audioTask.raw_data || {};
-
-        // 1) 完整 meta 快取（與產生線上卷同源）
-        const byStem = raw.meta_rows_by_stem || {};
-        const rows = byStem[sheet] || byStem[String(section.sheet_id || '').trim()];
-        if (Array.isArray(rows) && rows.length) {
-            return countAvailableFromMetaRows(section, rows);
+    /** 範圍內每一頁的實際 meta 列數加總。最後一頁常不滿行，禁止用「頁數 × 每頁行數」。 */
+    function countAvailableFromAnyStemRows(byStem, section) {
+        const map = byStem || {};
+        const keyed = lookupSectionMetaRows(map, section);
+        if (Array.isArray(keyed) && keyed.length) {
+            const n = countAvailableFromMetaRows(section, keyed);
+            if (n > 0) return n;
         }
-
-        const start = Number(section.start);
-        const end = Number(section.end);
-        if (isNaN(start) || isNaN(end)) return null;
-        const rtype = section.range_type || 'page';
-
-        // 2) 題號：meta_items
-        if (rtype === 'qnum') {
-            const itemSet = buildItemSetForSection(section);
-            const items = collectMetaItemsFromAudio(audioTask);
-            if (!items.length || !itemSet) return null;
-            let sum = 0;
-            items.forEach(function (it) {
-                const stem = String((it && it.stem) || '').trim().toUpperCase();
-                if (stem !== sheet) return;
-                const itemNo = Number(it.item_no);
-                if (isNaN(itemNo) || !itemSet[itemNo]) return;
-                sum += 1;
-            });
-            return sum;
-        }
-
-        // 3) 頁碼：grading_units（僅 Snapshot 切過的頁）
-        const units = Array.isArray(raw.grading_units) ? raw.grading_units : [];
-        if (!units.length) return null;
-        const pageSet = buildPageSetForSection(section);
-        if (!pageSet) return null;
-
-        let sum = 0;
-        let hit = false;
-        units.forEach(function (u) {
-            if (!u) return;
-            const stem = String(u.stem || '').trim().toUpperCase();
-            if (stem !== sheet) return;
-            const page = Number(u.page);
-            if (isNaN(page) || !pageSet[page]) return;
-            hit = true;
-            let itemCount = (u.item_count != null && u.item_count !== '')
-                ? Number(u.item_count)
-                : NaN;
-            if (isNaN(itemCount) && Array.isArray(u.item_nos)) itemCount = u.item_nos.length;
-            if (isNaN(itemCount)) itemCount = 0;
-            sum += itemCount;
+        let best = 0;
+        Object.keys(map).forEach(function (k) {
+            const rows = map[k];
+            if (!Array.isArray(rows) || !rows.length) return;
+            const n = countAvailableFromMetaRows(section, rows);
+            if (n > best) best = n;
         });
-
-        return hit ? sum : null;
+        return best > 0 ? best : 0;
     }
 
     function formatDisplayPercent(count, avail) {
@@ -764,13 +842,31 @@ window.FeatureExamJob = (function () {
      * lines_per_page（呼叫端傳入 resolveExamTemplateProfile(...).lines_per_page），只有連範本都
      * 解析不到時才退回全站預設 DEFAULT_LINES_PER_PAGE，不可一律用寫死的 10 蓋過範本設定的值。
      */
+    function resolveSectionLpp(section, templateLpp) {
+        const stored = Number(section && section.lines_per_page);
+        const fromTpl = Number(templateLpp);
+        if (stored > 0 && stored !== DEFAULT_LINES_PER_PAGE) return stored;
+        if (fromTpl > 0) return fromTpl;
+        if (stored > 0) return stored;
+        return DEFAULT_LINES_PER_PAGE;
+    }
+
+    function examJobTemplateLpp(task) {
+        const job = task && task.raw_data && task.raw_data.exam_job;
+        const id = String((job && job.layout_profile_id) || '').trim();
+        const profile = id ? resolveExamTemplateProfile(id) : null;
+        const n = profile && Number(profile.lines_per_page);
+        return (n > 0) ? n : DEFAULT_LINES_PER_PAGE;
+    }
+
     function expectedSlotsForSection(section, fallbackLpp) {
         const start = Number(section && section.start);
         const end = Number(section && section.end);
-        const lpp = Number(section && section.lines_per_page) || Number(fallbackLpp) || DEFAULT_LINES_PER_PAGE;
         if (isNaN(start) || isNaN(end)) return null;
-        if ((section.range_type || 'page') !== 'page') return null;
-        return Math.max(1, end - start + 1) * lpp;
+        const span = Math.max(1, Math.abs(end - start) + 1);
+        const rtype = (section && section.range_type) || 'page';
+        if (rtype === 'qnum' || rtype === 'row') return span;
+        return span * resolveSectionLpp(section, fallbackLpp);
     }
 
     let cachedContext = null; // { classId, className, assignments }
@@ -820,8 +916,80 @@ window.FeatureExamJob = (function () {
         return BANK_CATALOG[0] ? BANK_CATALOG[0].id : '';
     }
 
+    /** 「pp. 238」的 p 不是活頁。舊 regex 會把頁碼前綴拆成 sheet_id = P。 */
+    function isPagePrefixMisreadAsSheet(sheet) {
+        return /^pp?$/i.test(String(sheet || '').trim());
+    }
+
+    function rejectBogusPagePrefixSections(sections) {
+        return (sections || []).filter(function (s) {
+            return s && !isPagePrefixMisreadAsSheet(s.sheet_id);
+        });
+    }
+
+    /** 假活頁 P 清掉；這個資料夾若只有一個 meta，直接帶入。 */
+    function healExamSectionSheet(section, metaOpts) {
+        if (!section) return;
+        if (isPagePrefixMisreadAsSheet(section.sheet_id)) {
+            section.sheet_id = '';
+            if (!section.meta_file_name || /^pp?(\.meta\.json)?$/i.test(String(section.meta_file_name))) {
+                delete section.meta_file_name;
+                delete section.meta_file_id;
+            }
+        }
+        if (section.meta_file_name || section.sheet_id) return;
+        const opts = (metaOpts || []).filter(function (o) { return o && o.fileName; });
+        if (opts.length === 1) {
+            section.meta_file_name = opts[0].fileName;
+            section.meta_file_id = opts[0].fileId || '';
+            section.sheet_id = displayStemFromMetaFile(opts[0].fileName);
+        }
+    }
+
+    /** 只取頁碼，不把 pp. 當成活頁。 */
+    function parsePageRangeOnly(rangeText) {
+        const m = String(rangeText || '').match(/pp?\.?\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/i);
+        if (!m) return null;
+        const start = Number(m[1]);
+        const end = m[2] ? Number(m[2]) : start;
+        if (isNaN(start) || isNaN(end)) return null;
+        return { start: start, end: end };
+    }
+
+    function seedSectionsAfterFolderReady(sections, audioTask, metaOpts, assignedTemplateId) {
+        const cleaned = rejectBogusPagePrefixSections(sections || []).filter(function (s) {
+            return s && (s.sheet_id || s.meta_file_name || s.meta_file_id
+                || Number(s.start) > 1 || Number(s.end) > 1);
+        });
+        if (cleaned.length) return cleaned;
+        let start = 1;
+        let end = 1;
+        const audioRaw = (audioTask && audioTask.raw_data) || {};
+        const rangeOnly = parsePageRangeOnly(audioRaw.material_range || '')
+            || parsePageRangeOnly(stripHtml((audioTask && audioTask.title) || ''));
+        if (rangeOnly) {
+            start = rangeOnly.start;
+            end = rangeOnly.end;
+        }
+        const sec = {
+            sheet_id: '',
+            range_type: 'page',
+            start: start,
+            end: end,
+            count: 10,
+            lines_per_page: DEFAULT_LINES_PER_PAGE,
+            difficulty: '',
+            include_nums: '',
+            exclude_nums: ''
+        };
+        if (assignedTemplateId) sec.layout_profile_id = assignedTemplateId;
+        healExamSectionSheet(sec, metaOpts);
+        return [sec];
+    }
+
     /**
      * 解析「A pp. 1~2 ; B pp. 1~2」→ sections（尚未分配 count）
+     * 活頁與 pp. 之間必須有空白；禁止把「pp. 238」誤讀成活頁 P。
      */
     function parseMaterialRangeToSections(rangeText, linesPerPage) {
         const lpp = linesPerPage > 0 ? linesPerPage : DEFAULT_LINES_PER_PAGE;
@@ -830,11 +998,12 @@ window.FeatureExamJob = (function () {
         const parts = text.split(/[;；]/);
         const sections = [];
         const seen = {};
-        const re = /^\s*([A-Za-z]+)\s*pp?\.?\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/i;
+        const re = /^\s*([A-Za-z][A-Za-z0-9._-]{0,60})\s+pp?\.?\s*(\d+)\s*(?:[~～\-–—]\s*(\d+))?/i;
         for (let i = 0; i < parts.length; i++) {
             const m = String(parts[i]).trim().match(re);
             if (!m) continue;
             const sheet = m[1].toUpperCase();
+            if (isPagePrefixMisreadAsSheet(sheet)) continue;
             const start = Number(m[2]);
             const end = m[3] ? Number(m[3]) : start;
             if (!sheet || isNaN(start) || isNaN(end)) continue;
@@ -869,12 +1038,12 @@ window.FeatureExamJob = (function () {
             let page = Number(u.page);
             if (!sheet || isNaN(page)) {
                 const label = String(u.label || u.unit_key || '').trim();
-                const m = label.match(/^([A-Za-z0-9]+)\s*p(?:p)?\.?\s*(\d+)/i);
+                const m = label.match(/^([A-Za-z][A-Za-z0-9._-]{0,60})\s+p(?:p)?\.?\s*(\d+)/i);
                 if (!m) return;
                 sheet = m[1].toUpperCase();
                 page = Number(m[2]);
             }
-            if (!sheet || isNaN(page)) return;
+            if (!sheet || isNaN(page) || isPagePrefixMisreadAsSheet(sheet)) return;
             let itemCount = (u.item_count != null && u.item_count !== '') ? Number(u.item_count) : NaN;
             if (isNaN(itemCount) && Array.isArray(u.item_nos)) itemCount = u.item_nos.length;
             if (isNaN(itemCount)) itemCount = 0;
@@ -1749,19 +1918,6 @@ window.FeatureExamJob = (function () {
         // 💣 老師按過「🔓 改成獨立教材來源」（exam_force_standalone）之後，就不能再自動從
         // 同層錄音帶入區段了，否則清空的區段下一次重繪又會被這裡偷偷填回去，老師的覆蓋選擇形同沒用。
         const _forcedStandaloneForFill = !!(task.raw_data && task.raw_data.exam_force_standalone);
-        // 區段空白時，自動從同層錄音 meta（圖二）繼承 A/B/C…＋pp. 範圍
-        if (!_forcedStandaloneForFill && sectionsLookEmpty(sections) && window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
-            const bState = window.BuilderStore.getState();
-            const audio = findPreferredAudioTask((bState && bState.tasks) || [], pathStr);
-            const autoSecs = sectionsFromAudioTask(audio, DEFAULT_LINES_PER_PAGE);
-            if (autoSecs.length) {
-                sections = autoSecs;
-                // 寫回 state，避免每次重繪都以為是空的又重算蓋掉老師微調
-                if (!task.raw_data) task.raw_data = {};
-                if (!task.raw_data.exam_job) task.raw_data.exam_job = {};
-                task.raw_data.exam_job.sections = sections;
-            }
-        }
         if (!sections.length) {
             sections = [{
                 sheet_id: '',
@@ -1839,13 +1995,20 @@ window.FeatureExamJob = (function () {
         const suggestedLayoutIds = (!suggestedExamTemplateId && mlp && typeof mlp.getSuggestedLayoutIds === 'function')
             ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, layoutSectionSheetIds)
             : [];
-        // 從未明確選過時：班級教材組合的明確搭配優先；查不到才退回舊的手動登記建議第一項；
-        // 兩者都沒有才留空，顯示「尚未選擇」逼老師自己挑，不可再偷偷退回內建考卷範本第一項。
-        const layoutId = job.layout_profile_id || suggestedExamTemplateId || suggestedLayoutIds[0] || '';
-        const fieldHint = layoutFieldHint(layoutId);
-        const layoutOpts = '<option value=""' + (layoutId ? '' : ' selected') + '>（尚未選擇，下面列出全部可選考卷範本）</option>'
-            + '<option disabled>── 🧾 我的考卷範本 ──</option>'
-            + buildExamTemplateSelectOptionsHtml(layoutId, suggestedExamTemplateId || suggestedLayoutIds[0] || '');
+        const previewFolderForAssign = examMaterialSelf.material_folder || layoutMaterialFolder;
+        const folderIsAssigned = !!(previewFolderForAssign && isExamFolderAssignedToClass(currentClassId, previewFolderForAssign));
+        // 第一區塊（已指派）：自動帶入班級教材組合已配好的考卷範本。
+        // 第二區塊（其他可用）：不出現上方下拉，老師在表格「考卷範本」欄直接選。
+        const assignedTemplateId = suggestedExamTemplateId || suggestedLayoutIds[0] || '';
+        if (folderIsAssigned && assignedTemplateId) {
+            if (!job.layout_profile_id) job.layout_profile_id = assignedTemplateId;
+            sections.forEach(function (sec) {
+                if (sec && !sec.layout_profile_id) sec.layout_profile_id = assignedTemplateId;
+            });
+        }
+        const layoutId = folderIsAssigned
+            ? (job.layout_profile_id || assignedTemplateId)
+            : (job.layout_profile_id || '');
 
         // 💣 雷區（2026-08-14 老師強烈回報「活頁根本沒有可選 meta，只給一個手打格子」＋
         // 「不會改成這個班級用過的教材 meta 嗎」）：這裡原本「教材資料夾」這個下拉只有獨立考試
@@ -1875,67 +2038,59 @@ window.FeatureExamJob = (function () {
             materialFolderClassEntry = window.FeatureTimeline.getMetaCatalogEntry(currentClassId, 'class');
         }
         const materialFolderCatalogLoaded = !!(materialFolderTeacherEntry || materialFolderClassEntry);
-        const materialFolderOptsHtml = buildExamMaterialFolderOptionsHtml(effectiveMaterialSelf, materialFolderTeacherEntry, materialFolderClassEntry);
+        const materialFolderOptsHtml = buildExamMaterialFolderOptionsHtml(effectiveMaterialSelf, materialFolderTeacherEntry, materialFolderClassEntry, currentClassId);
         if (!materialFolderCatalogLoaded) {
             // 渲染函式只回字串，DOM 還沒插入；下一輪事件圈再補抓＋補畫，避免抓到不存在的元素
             setTimeout(function () { ensureExamMaterialFolderCatalog(pathStr, currentClassId, false); }, 0);
         }
         // 選了教材資料夾才能推出「活頁」候選清單；還沒選或清單未載入時 examSheetStems 是空陣列，
         // 退回原本的文字輸入（見下方 rows 組裝），避免顯示一個永遠空的下拉
-        const examSheetStems = examSheetStemsForFolder(currentClassId, effectiveRootKind, effectiveMaterialFolder);
+        const examSheetMetaOpts = examSheetMetaOptionsForFolder(currentClassId, effectiveRootKind, effectiveMaterialFolder);
+        const folderStageReady = !!(effectiveMaterialFolder && materialFolderCatalogLoaded);
+        if (folderStageReady) {
+            sections = seedSectionsAfterFolderReady(
+                sections,
+                _forcedStandaloneForFill ? null : siblingAudio,
+                examSheetMetaOpts,
+                assignedTemplateId
+            );
+        }
+        sections.forEach(function (s) {
+            healExamSectionSheet(s, examSheetMetaOpts);
+            attachCatalogMetaToSection(currentClassId, effectiveRootKind, effectiveMaterialFolder, s);
+        });
+        if (folderStageReady && task.raw_data && task.raw_data.exam_job) {
+            task.raw_data.exam_job.sections = sections;
+        }
 
         let totalCountSum = 0;
         const rows = sections.map(function (s, idx) {
-            let avail = countAvailableFromMeta(s, siblingAudio, task);
-            // 💣 老師回報「範本裡都有每頁行數，算不出來嗎」：這一列若沒手動改過「每頁行數」，
-            // 估算退回值要用「這一列實際套用的考卷範本」自己的 lines_per_page，不是寫死 10——
-            // 這一列沒指定就沿用上方的 job 層級 layoutId（跟下面 sectionlayout 下拉同語意）。
-            const rowLayoutId = String(s.layout_profile_id || layoutId || '').trim();
+            const rowLayoutId = String(s.layout_profile_id || (folderIsAssigned ? layoutId : '') || '').trim();
             const rowProfileForLpp = rowLayoutId ? resolveExamTemplateProfile(rowLayoutId) : null;
             const rowTemplateLpp = (rowProfileForLpp && Number(rowProfileForLpp.lines_per_page) > 0)
                 ? Number(rowProfileForLpp.lines_per_page) : DEFAULT_LINES_PER_PAGE;
+            const displayLpp = resolveSectionLpp(s, rowTemplateLpp);
             const expected = expectedSlotsForSection(s, rowTemplateLpp);
-            // 💣 雷區：已選 B.meta 但 Snapshot 只凍結到 A 時，不可用「~頁數×行數」粉飾成好像有題
-            // （老師會以為 B 也 OK，顯示%卻是 —）。有點名該活頁 → 明示「需Snapshot」（獨立考試則是「需讀取」）。
-            let availIsEstimate = false;
-            let availNeedsSnap = false;
-            if (avail == null) {
-                if (sectionSheetMentionedInAudio(s, siblingAudio)) {
-                    availNeedsSnap = true;
-                } else if (isStandaloneExam && examMaterialSelf.material_folder) {
-                    // 獨立考試已設定教材資料夾，只是還沒按「讀取可用題數」→ 不可用估算粉飾
-                    availNeedsSnap = true;
-                } else if (expected != null) {
-                    // 手加空區段、尚未對到錄音 meta：才用預計格位
-                    avail = expected;
-                    availIsEstimate = true;
-                } else {
-                    availNeedsSnap = true;
-                }
-            }
-            const needActionLabel = isStandaloneExam ? '需讀取' : '需Snapshot';
+            let avail = countAvailableFromMeta(s, task);
+            // 可用題＝範圍內每一頁的實際題數加總（最後一頁常不滿行）。
+            // 禁止用「頁數 × 每頁行數」充當可用題。
+            const availIsEstimate = false;
             const countVal = Number(s.count);
             if (!isNaN(countVal)) totalCountSum += countVal;
-            // 2026-08-15 老師回報「~ 多此一舉」——拿掉波浪號，改純數字；估計值／真實值的區分
-            // 已經有 availColor（橘/青）＋ availTitle（滑鼠提示）負責，不需要再疊一個文字符號。
-            const availStr = availNeedsSnap
-                ? needActionLabel
-                : (avail == null ? needActionLabel : String(avail));
-            const pctStr = formatDisplayPercent(
-                s.count,
-                (availIsEstimate || availNeedsSnap) ? null : avail
-            );
-            const overAvail = (!availIsEstimate && !availNeedsSnap && avail != null && avail >= 0
-                && !isNaN(countVal) && countVal > avail);
+            const cachedRowsEarly = lookupSectionMetaRows((task && task.raw_data && task.raw_data.meta_rows_by_stem) || {}, s);
+            const missingPage = !!(s.meta_missing_page) || metaCannotFilterByPage(s, cachedRowsEarly);
+            if (missingPage) avail = null;
+            const availStr = missingPage ? '無page欄' : ((avail != null && avail >= 0) ? String(avail) : '需讀取');
+            const pctStr = missingPage ? '—' : formatDisplayPercent(s.count, avail);
+            const overAvail = !missingPage && (avail != null && avail >= 0 && !isNaN(countVal) && countVal > avail);
 
             // 必考#（include_nums）：範圍內找不到的題號要標紅，避免老師以為已生效
             let missingInc = [];
-            if (!availIsEstimate && !availNeedsSnap && String(s.include_nums || '').trim()) {
-                const sheetKey = String(s.sheet_id || '').trim().toUpperCase();
-                const metaByStem = (siblingAudio && siblingAudio.raw_data && siblingAudio.raw_data.meta_rows_by_stem)
-                    || (task && task.raw_data && task.raw_data.meta_rows_by_stem)
-                    || null;
-                const rowsForSheet = metaByStem ? (metaByStem[sheetKey] || metaByStem[s.sheet_id]) : null;
+            if (!availIsEstimate && String(s.include_nums || '').trim()) {
+                const metaByStem = (task && task.raw_data && task.raw_data.meta_rows_by_stem) || null;
+                const rowsForSheet = metaByStem
+                    ? (lookupRowsBySheetId(metaByStem, s.sheet_id) || lookupRowsBySheetId(metaByStem, s.meta_file_name))
+                    : null;
                 if (Array.isArray(rowsForSheet) && rowsForSheet.length) {
                     missingInc = missingIncludeNums(s, rowsForSheet);
                 }
@@ -1963,32 +2118,33 @@ window.FeatureExamJob = (function () {
             const rtypeHint = s.range_type || 'page';
             const loHint = Math.min(Number(s.start) || 0, Number(s.end) || 0);
             const hiHint = Math.max(Number(s.start) || 0, Number(s.end) || 0);
-            const availTitle = availNeedsSnap
-                ? (isStandaloneExam
-                    ? ('活頁 ' + (s.sheet_id || '') + ' 尚未讀取 meta；請按下方「🔄 讀取可用題數」')
-                    : ('活頁 ' + (s.sheet_id || '') + ' 已在錄音 meta／範圍中，但尚未進入 Snapshot 快取；請等自動套用完成或按「套用 Snapshot」'))
-                : (availIsEstimate
-                    ? ('尚未對到錄音 meta；暫以頁數×每頁行數＝' + expected)
-                    : ((rtypeHint === 'qnum')
-                        ? ('題號 ' + loHint + '~' + hiHint + ' 內的 meta 筆數' + (avail != null ? ('＝' + avail) : '（請先 Snapshot）'))
-                        : ((avail != null && expected != null)
-                            ? ('meta 筆數 ' + avail + '；預計格位 ' + expected)
-                            : '範圍內 meta 實際筆數')));
-            const availColor = (availIsEstimate || availNeedsSnap) ? '#D97706' : '#0F766E';
+            const cachedRows = cachedRowsEarly;
+            const filePages = summarizeMetaPages(cachedRows);
+            const fileKeys = describeMetaRowKeys(cachedRows);
+            const availTitle = missingPage
+                ? ('這份 meta 發布時沒有帶入 page（現有欄位：' + (fileKeys || '—') + '；共 ' + ((cachedRows && cachedRows.length) || 0) + ' 列）。請到教材發布把 Excel 的頁碼欄對成 page 後重新上傳，才能用 238～242 這種頁碼篩題。')
+                : ((avail != null && avail >= 0)
+                    ? ((avail === 0 && filePages)
+                        ? ('範圍 ' + loHint + '～' + hiHint + ' 沒有列。這個 meta 檔內的頁碼是 ' + filePages)
+                        : ((rtypeHint === 'qnum')
+                            ? ('題號 ' + loHint + '~' + hiHint + ' 內的實際題數＝' + avail)
+                            : ('範圍內每一頁實際題數加總＝' + avail + '（最後一頁可能不滿 ' + displayLpp + ' 行）')))
+                    : '還沒讀到各頁實際題數；選好活頁後會自動讀，或按「🔄 讀取可用題數」');
+            const availColor = missingPage ? '#B45309' : ((avail == null) ? '#D97706' : (avail === 0 ? '#B91C1C' : '#0F766E'));
             const refreshAttr = ' onchange="window.FeatureExamJob._inlineRefreshAvail(\'' + pathStr + '\')"';
             return `
                 <tr data-exam-inline-row="${idx}">
-                    <td style="padding:4px;">${examSheetStems.length ? `
-                        <select id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" style="width:100px; padding:4px;"
-                            onchange="window.FeatureExamJob._inlineOnSheetSelectChange('${pathStr}', ${idx})">${buildExamSheetOptionsHtml(examSheetStems, s.sheet_id)}</select>
-                        <input id="exam-inline-sheet-manual-${pathStr}-${idx}" class="form-control" value="${esc(s.sheet_id || '')}" placeholder="活頁檔名" style="width:100px; padding:4px; margin-top:2px; display:none;"${refreshAttr}>
-                        ` : `
-                        <input id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" value="${esc(s.sheet_id || '')}" style="width:70px; padding:4px;" placeholder="C"${refreshAttr}>
-                        `}</td>
+                    <td style="padding:4px;">
+                        <select id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" style="min-width:180px; max-width:260px; padding:4px;"
+                            title="選這個教材資料夾裡的 meta"
+                            onchange="window.FeatureExamJob._inlineOnSheetSelectChange('${pathStr}', ${idx})">${buildExamSheetOptionsHtml(examSheetMetaOpts, s, { folderSelected: !!effectiveMaterialFolder, catalogLoaded: materialFolderCatalogLoaded })}</select>
+                        <input id="exam-inline-sheet-manual-${pathStr}-${idx}" class="form-control" value="${esc(s.meta_file_name || s.sheet_id || '')}" placeholder="完整 meta 檔名" style="width:180px; padding:4px; margin-top:2px; display:none;"${refreshAttr}>
+                    </td>
                     <td style="padding:4px;">
                         <select id="exam-inline-sectionlayout-${pathStr}-${idx}" class="form-control" style="width:130px; padding:4px;"
-                            title="同一活頁需要套用不只一個考卷範本時，開兩個區段、各自選不同考卷範本即可，不用複製 meta 檔">
-                            <option value="">（沿用上方預設）</option>
+                            title="${folderIsAssigned ? '已依班級教材組合帶入；若要改可再選' : '請選這一列要套用的考卷範本'}"
+                            onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">
+                            <option value=""${rowLayoutId ? '' : ' selected'}>${folderIsAssigned ? '（尚未讀到已配對範本）' : '— 請選擇考卷範本 —'}</option>
                             ${(function () {
                                 const rowSuggestedExamTemplateId = (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function')
                                     ? fcmc.getSuggestedExamTemplateId(layoutRootKind, currentClassId, layoutMaterialFolder, [s.sheet_id])
@@ -1996,14 +2152,11 @@ window.FeatureExamJob = (function () {
                                 const rowSuggested = (!rowSuggestedExamTemplateId && mlp && typeof mlp.getSuggestedLayoutIds === 'function')
                                     ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, [s.sheet_id])
                                     : [];
-                                return buildExamTemplateSelectOptionsHtml(String(s.layout_profile_id || ''), rowSuggestedExamTemplateId || rowSuggested[0] || '');
+                                return buildExamTemplateSelectOptionsHtml(rowLayoutId, rowSuggestedExamTemplateId || rowSuggested[0] || assignedTemplateId);
                             })()}
                         </select>
                     </td>
-                    <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.lines_per_page || rowTemplateLpp)}" style="width:56px; padding:4px;" title="沒手動改過就沿用套用範本自己的每頁行數（目前＝${esc(rowTemplateLpp)}）"${refreshAttr}></td>
-                    <td style="padding:4px; max-width:160px;" title="由 layout_profile 決定；可之後改為可編輯帶入">
-                        <div style="font-size:0.7rem; color:#475569; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(fieldHint)}</div>
-                    </td>
+                    <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(displayLpp)}" style="width:56px; padding:4px;" title="沿用這一列考卷範本的每頁行數（目前＝${esc(displayLpp)}）"${refreshAttr}></td>
                     <td style="padding:4px;">
                         <select id="exam-inline-rtype-${pathStr}-${idx}" class="form-control" style="padding:4px; min-width:72px;"${refreshAttr}>
                             <option value="page" ${(s.range_type || 'page') === 'page' ? 'selected' : ''}>頁碼</option>
@@ -2024,7 +2177,7 @@ window.FeatureExamJob = (function () {
             `;
         }).join('');
 
-        return `
+        const html = `
             <div id="exam-inline-wrap-${pathStr}" style="margin-top:8px; padding:12px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#0F766E;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
                     <strong>📝 考試出題區段</strong>
@@ -2052,26 +2205,25 @@ window.FeatureExamJob = (function () {
                             onclick="window.FeatureExamJob._inlineToggleForceStandalone('${pathStr}', false)">↩️ 改回沿用同層錄音</button>）
                     </div>
                     ` : ''}
-                    <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">教材資料夾（這個老師／班級曾發布過、有 meta 的教材）
+                    <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">教材資料夾
                         <select id="exam-inline-materialfolder-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
                             onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange('${pathStr}')">${materialFolderOptsHtml}</select>
                     </label>
                     <div id="exam-inline-materialfolder-manual-wrap-${pathStr}" style="display:none; margin-top:6px;">
                         <input id="exam-inline-materialfolder-manual-${pathStr}" class="form-control" value=""
-                            placeholder="手動輸入教材資料夾名稱（例如 MasonLiu_SeanCheng）" style="width:100%; padding:6px;"
+                            placeholder="手動輸入教材資料夾名稱" style="width:100%; padding:6px;"
                             onchange="window.FeatureExamJob._inlineOnExamMaterialChange('${pathStr}')">
                     </div>
-                    <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入資料夾清單…'}</div>
-                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">下面「活頁」會依這個資料夾的 meta 檔名自動列出下拉選項；選好後按「🔄 讀取可用題數」確認題數。</div>
+                    <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入教材資料夾清單…'}</div>
+                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">請先選教材資料夾。清單載入並選定後，才會出現活頁與可用題；已指派給本班的會自動帶入已配好的考卷範本。</div>
                 </div>
-                <div style="margin-bottom:8px;">
-                    <label style="font-weight:700; display:block;">layout_profile_id
-                        <select id="exam-inline-layout-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
-                            onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">${layoutOpts}</select>
-                    </label>
-                </div>
+                <input type="hidden" id="exam-inline-layout-${pathStr}" value="${esc(layoutId)}">
+                ${!folderStageReady ? `
+                <div style="margin-top:8px; color:#9A3412; font-size:0.8rem; font-weight:700;">請先選好上方教材資料夾（或等清單載入完成），活頁區段會接著出現。</div>
+                ` : ''}
+                ${folderStageReady ? `
                 <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center;">
-                    <label><input id="exam-inline-shuffle-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle === false) ? '' : 'checked'}> shuffle</label>
+                    <label><input id="exam-inline-shuffle-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle === false) ? '' : 'checked'}> 題目洗牌</label>
                     <label title="學生交卷後，若有錯題，可自己選擇要不要當下或之後重考一次錯的題目（原題原答案，只能重考一次），交卷後會產生合併正確率的整體報告。">
                         <input id="exam-inline-allow-retake-${pathStr}" type="checkbox" ${raw.allow_wrong_retake ? 'checked' : ''}>
                         🔁 允許重考錯題（僅一次）
@@ -2108,9 +2260,8 @@ window.FeatureExamJob = (function () {
                         <thead>
                             <tr style="background:#CCFBF1; color:#134E4A; text-align:left;">
                                 <th style="padding:4px;">活頁</th>
-                                <th style="padding:4px;" title="同一活頁可以在不同區段套用不同 layout（例如同一份單字表同時要「整句翻譯」＋「單字無圖」）；留空＝沿用上方 layout_profile_id">layout（可覆蓋）</th>
+                                <th style="padding:4px;" title="已指派資料夾會自動帶入已配對範本；其他可用請在這一欄選">考卷範本</th>
                                 <th style="padding:4px;">每頁行數</th>
-                                <th style="padding:4px;">欄位</th>
                                 <th style="padding:4px;">基準</th>
                                 <th style="padding:4px;">起始</th>
                                 <th style="padding:4px;">結束</th>
@@ -2135,25 +2286,25 @@ window.FeatureExamJob = (function () {
                         onclick="window.FeatureExamJob._inlineApplyLastConfig('${pathStr}')"
                         title="套用這個班級上次成功產生線上卷時的教材／layout／區段設定，套用後請自行確認再按「儲存作業」（會自動產生線上卷）。">📋 套用上次設定（本班）</button>
                     ` : ''}
-                    ${isStandaloneExam ? `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
-                    ` : `
-                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
+                    ${!isStandaloneExam ? `
+                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#E0F2FE; color:#075985; border:1px solid #7DD3FC;"
                         title="${siblingAudioCount > 1 ? ('同層共 ' + siblingAudioCount + ' 個錄音任務，每按一次換下一個') : ''}"
                         onclick="window.FeatureExamJob._inlineImportFromSiblingAudio('${pathStr}')">↻ 從同作業錄音範圍帶入${siblingAudioCount > 1 ? ('（共 ' + siblingAudioCount + ' 個，輪流）') : ''}</button>
-                    `}
+                    ` : ''}
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
                         onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ JSON</button>
                     <span style="margin-left:auto; font-weight:800; color:#134E4A; font-size:0.85rem;">總計考題 ${totalCountSum}${paperCountHint}</span>
                 </div>
                 <div id="exam-inline-gen-status-${pathStr}" style="margin-top:8px; min-height:1.2em; font-size:0.8rem; font-weight:800; color:${pendingRegen ? '#B45309' : '#0F766E'};">${genStatusInitialHtml}</div>
                 <div id="exam-inline-standalone-status-${pathStr}" style="margin-top:4px; min-height:1.2em; font-size:0.78rem; font-weight:700;"></div>
-                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">${isStandaloneExam
-                    ? '請先填「教材資料夾」、活頁（sheet_id）與範圍，再按「🔄 讀取可用題數」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。線上卷已拿掉獨立產生按鈕，改成按「儲存作業」時自動偵測設定變更並重新產生。'
-                    : '請先「從錄音範圍帶入」。加區段＝再拆一列（例如同活頁另一頁碼範圍）。線上卷已拿掉獨立產生按鈕，改成按「儲存作業」時自動偵測設定變更並重新產生。'}</div>
+                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">選好活頁與範圍後會自動讀取可用題（該 meta 檔在範圍內的實際列數）。線上卷在按「儲存作業」時自動產生。</div>
+                ` : ''}
             </div>
         `;
+        if (folderStageReady) maybeAutoFetchAvail(pathStr, task, sections);
+        return html;
     }
 
     function readInlineSections(pathStr) {
@@ -2181,22 +2332,64 @@ window.FeatureExamJob = (function () {
             const include_nums = String((document.getElementById('exam-inline-inc-' + pathStr + '-' + idx) || {}).value || '').trim();
             const exclude_nums = String((document.getElementById('exam-inline-exc-' + pathStr + '-' + idx) || {}).value || '').trim();
             const sectionLayoutId = String((document.getElementById('exam-inline-sectionlayout-' + pathStr + '-' + idx) || {}).value || '').trim();
+            const prev = prevSecs[Number(idx)];
+            const bStateForMeta = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+            const classIdForMeta = (bStateForMeta && bStateForMeta.classId) || '';
+            const examMat = (task && task.raw_data && task.raw_data.exam_material) || {};
+            let folderForMeta = String(examMat.material_folder || '').trim();
+            let kindForMeta = examMat.root_kind || 'teacher';
+            if (!folderForMeta && bStateForMeta) {
+                const audioForMeta = findPreferredAudioTask(bStateForMeta.tasks || [], pathStr);
+                const ref0 = (audioForMeta && audioForMeta.raw_data && Array.isArray(audioForMeta.raw_data.material_refs))
+                    ? audioForMeta.raw_data.material_refs[0] : null;
+                if (ref0 && ref0.material_folder) {
+                    folderForMeta = String(ref0.material_folder || '').trim();
+                    kindForMeta = ref0.materials_root_kind === 'class' ? 'class' : 'teacher';
+                }
+            }
+            const pickedOpt = resolvePickedMetaOption(classIdForMeta, kindForMeta, folderForMeta, sheet, prev);
+            let sheetId = String(sheet).trim();
+            if (pickedOpt) {
+                const sameFile = prev && (
+                    String(prev.meta_file_name || '') === String(pickedOpt.fileName || '')
+                    || String(prev.sheet_id || '').trim() === sheetId
+                );
+                if (sameFile && prev.sheet_id) {
+                    sheetId = String(prev.sheet_id).trim();
+                } else if (/\.meta\.json$/i.test(sheetId) || sheetId === pickedOpt.fileName) {
+                    sheetId = displayStemFromMetaFile(pickedOpt.fileName);
+                }
+            } else if (/\.meta\.json$/i.test(sheetId)) {
+                sheetId = displayStemFromMetaFile(sheetId);
+            }
             const sec = {
-                sheet_id: String(sheet).trim(),
+                sheet_id: sheetId,
                 range_type: rtype,
                 start: start,
                 end: end,
                 count: count,
                 lines_per_page: isNaN(lpp) || lpp <= 0 ? DEFAULT_LINES_PER_PAGE : lpp
             };
+            if (pickedOpt) {
+                sec.meta_file_name = pickedOpt.fileName || '';
+                sec.meta_file_id = pickedOpt.fileId || '';
+            } else if (prev && (prev.meta_file_name || prev.meta_file_id)
+                && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()) {
+                if (prev.meta_file_name) sec.meta_file_name = prev.meta_file_name;
+                if (prev.meta_file_id) sec.meta_file_id = prev.meta_file_id;
+            }
             if (difficulty) sec.difficulty = difficulty;
             if (include_nums) sec.include_nums = include_nums;
             if (exclude_nums) sec.exclude_nums = exclude_nums;
             // 同一活頁可以在不同區段套用不同 layout（例如同一份 meta 同時要「整句翻譯」＋「單字無圖」）；
             // 空字串＝沿用 exam_job.layout_profile_id 這個上層預設，不寫進 sec（保持既有匯出格式最小變動）
             if (sectionLayoutId) sec.layout_profile_id = sectionLayoutId;
+            if (prev && prev.available_count != null
+                && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
+                && Number(prev.start) === start && Number(prev.end) === end) {
+                sec.available_count = prev.available_count;
+            }
             // 起迄未改時保留不連續 pages/items（來自 range_spec）
-            const prev = prevSecs[Number(idx)];
             if (prev
                 && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
                 && (prev.range_type || 'page') === rtype
@@ -2227,8 +2420,12 @@ window.FeatureExamJob = (function () {
             : ['online'];
         if (outputs.indexOf('online') === -1) outputs.unshift('online');
 
-        const sections = readInlineSections(pathStr);
-        const shuffle = !!(document.getElementById('exam-inline-shuffle-' + pathStr) || {}).checked;
+        const tbody = document.getElementById('exam-inline-tbody-' + pathStr);
+        const sections = tbody
+            ? readInlineSections(pathStr)
+            : (Array.isArray(prevJob.sections) ? prevJob.sections : []);
+        const shuffleEl = document.getElementById('exam-inline-shuffle-' + pathStr);
+        const shuffle = shuffleEl ? !!shuffleEl.checked : !(prevJob.options && prevJob.options.shuffle === false);
         // 💣 老師強烈要求拿掉 bank_id 這個 UI（只是原樣寫進匯出給 Python 排版系統的標籤，
         // 不影響線上卷實際抽題，目前題庫清單也只有一個選項），不再讓老師選，固定寫入唯一值即可。
         const payload = {
@@ -2239,6 +2436,10 @@ window.FeatureExamJob = (function () {
             outputs: outputs,
             options: { shuffle: shuffle, force_qnum: true, separate_pages: false }
         };
+        if (!payload.layout_profile_id) {
+            const firstSecLayout = sections.find(function (s) { return s && s.layout_profile_id; });
+            if (firstSecLayout) payload.layout_profile_id = firstSecLayout.layout_profile_id;
+        }
         task.raw_data.exam_job_id = jobId;
         task.raw_data.exam_title = String(task.title || '').replace(/<[^>]*>?/gm, '').trim() || task.raw_data.exam_title || '';
         task.raw_data.exam_job = payload;
@@ -2338,7 +2539,8 @@ window.FeatureExamJob = (function () {
             start: last ? Number(last.end) + 1 || 1 : 1,
             end: last ? Number(last.end) + 1 || 1 : 1,
             count: 10,
-            lines_per_page: (last && last.lines_per_page) || DEFAULT_LINES_PER_PAGE,
+            lines_per_page: (last && last.lines_per_page) || examJobTemplateLpp(task),
+            layout_profile_id: last ? String(last.layout_profile_id || '') : '',
             difficulty: '',
             include_nums: '',
             exclude_nums: ''
@@ -2347,7 +2549,7 @@ window.FeatureExamJob = (function () {
         refreshExamBuilder();
         window.showFlash(
             last && last.sheet_id
-                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數；若這列要套用不同 layout，請在「layout（可覆蓋）」下拉另選）')
+                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數；若這列要套用不同考卷範本，請在「考卷範本」欄另選）')
                 : '已加空白區段：請先「從錄音範圍帶入」，或自行填活頁字母',
             last && last.sheet_id ? 'success' : 'warning'
         );
@@ -2452,44 +2654,41 @@ window.FeatureExamJob = (function () {
             ? mergeMaterialRefsPreserveMeta(domRefs, existingRefs)
             : existingRefs;
 
+        const importLpp = examJobTemplateLpp(task);
         let sections = [];
         if (sourceRefs.length) {
-            sections = sectionsFromMaterialRefs(sourceRefs, DEFAULT_LINES_PER_PAGE);
+            sections = sectionsFromMaterialRefs(sourceRefs, importLpp);
         }
         if (!sections.length) {
-            sections = sectionsFromAudioTask(audio, DEFAULT_LINES_PER_PAGE);
+            sections = sectionsFromAudioTask(audio, importLpp);
         }
         if (!sections.length && audio && Array.isArray(audio.raw_data && audio.raw_data.grading_units)) {
-            sections = sectionsFromGradingUnits(audio.raw_data.grading_units, DEFAULT_LINES_PER_PAGE);
+            sections = sectionsFromGradingUnits(audio.raw_data.grading_units, importLpp);
         }
         if (!sections.length) {
             const fakeAssignment = { tasks: bState.tasks || [], title: bState.title || '' };
             const hints = extractHintsFromAssignment(fakeAssignment);
-            sections = sectionsFromAudioTask(hints.audioTask, DEFAULT_LINES_PER_PAGE);
-            if (!sections.length) sections = parseMaterialRangeToSections(hints.rangeText, DEFAULT_LINES_PER_PAGE);
+            sections = sectionsFromAudioTask(hints.audioTask, importLpp);
+            if (!sections.length) sections = parseMaterialRangeToSections(hints.rangeText, importLpp);
             if (!sections.length && hints.materialRefs) {
-                sections = sectionsFromMaterialRefs(hints.materialRefs, DEFAULT_LINES_PER_PAGE);
+                sections = sectionsFromMaterialRefs(hints.materialRefs, importLpp);
             }
             if (!sections.length && hints.gradingUnits) {
-                sections = sectionsFromGradingUnits(hints.gradingUnits, DEFAULT_LINES_PER_PAGE);
+                sections = sectionsFromGradingUnits(hints.gradingUnits, importLpp);
             }
         }
 
+        sections = rejectBogusPagePrefixSections(sections);
         if (!sections.length) {
-            window.showFlash('同作業找不到錄音 meta／範圍可帶入（請先在錄音任務設好 meta 列）', 'warning');
+            window.showFlash('錄音範圍只有頁碼、沒有活頁。請在「活頁」選這個資料夾裡的 .meta.json，不要按帶入去猜活頁', 'warning');
             return;
         }
 
-        // 題數預設＝實際可用題
+        // 只帶範圍。可用題必須等老師按「讀取可用題數」從選中的 meta 檔算，禁止用錄音 Snapshot。
         sections = sections.map(function (sec) {
             const next = Object.assign({}, sec);
-            const avail = countAvailableFromMeta(next, audio);
-            if (avail != null && avail >= 0) {
-                next.count = avail;
-            } else if (!(Number(next.count) > 0)) {
-                const expected = expectedSlotsForSection(next);
-                if (expected != null) next.count = expected;
-            }
+            const avail = countAvailableFromMeta(next, task);
+            if (avail != null && avail >= 0) next.count = avail;
             return next;
         });
 
@@ -2502,16 +2701,16 @@ window.FeatureExamJob = (function () {
         // 不可一般 refreshBuilder：會 sync 舊 DOM 把剛寫入的區段蓋掉
         refreshExamBuilder();
         const missing = sections.filter(function (s) {
-            return countAvailableFromMeta(s, audio) == null;
+            return countAvailableFromMeta(s, task) == null;
         }).map(function (s) { return s.sheet_id; });
-        let msg = '已帶入 ' + sections.length + ' 個區段；可用題已依 Snapshot／meta 重算';
+        let msg = '已帶入 ' + sections.length + ' 個區段的範圍';
         if (allHits.length > 1) {
             const idx1 = task.raw_data._import_audio_cycle_idx + 1;
             msg = '（同層第 ' + idx1 + '/' + allHits.length + ' 個錄音「' + stripHtml(audio && audio.title || '') + '」）' + msg
                 + '；再按一次會換下一個同層錄音';
         }
         if (missing.length) {
-            msg += '（活頁 ' + missing.join('/') + ' 尚無 Snapshot，顯示為預估）';
+            msg += '。請按「🔄 讀取可用題數」從選中的 meta 檔算實際題數';
         }
         window.showFlash(msg, missing.length ? 'warning' : 'success');
     }
@@ -2531,9 +2730,10 @@ window.FeatureExamJob = (function () {
         if (manualEl) manualEl.style.display = (selectEl && selectEl.value === '__manual__') ? 'block' : 'none';
         if (selectEl && selectEl.value === '__manual__') return; // 手動輸入還沒填完，先不重算可用題
         inlineRefreshAvail(pathStr);
+        if (selectEl && selectEl.value) inlineRefreshStandaloneMeta(pathStr);
     }
 
-    /** 錄音 Snapshot 後：重算同層考試可用題；標題若為自動繼承則同步 */
+    /** 錄音 Snapshot 後：標題若為自動繼承則同步。可用題不從 Snapshot 重算。 */
     function refreshAfterAudioSnapshot(audioPathStr) {
         const bState = window.BuilderStore && window.BuilderStore.getState();
         if (!bState || !Array.isArray(bState.tasks)) return;
@@ -2582,18 +2782,6 @@ window.FeatureExamJob = (function () {
                     }
                 }
             }
-            if (!t.raw_data) t.raw_data = {};
-            if (!t.raw_data.exam_job || !Array.isArray(t.raw_data.exam_job.sections)) continue;
-            const audio = findPreferredAudioTask(bState.tasks, examPath);
-            t.raw_data.exam_job.sections = t.raw_data.exam_job.sections.map(function (sec) {
-                const next = Object.assign({}, sec);
-                const avail = countAvailableFromMeta(next, audio);
-                if (avail != null && avail >= 0) {
-                    const c = Number(next.count);
-                    if (isNaN(c) || c > avail || !(c > 0)) next.count = avail;
-                }
-                return next;
-            });
         }
         refreshExamBuilder();
     }
@@ -2646,33 +2834,85 @@ window.FeatureExamJob = (function () {
         return out;
     }
 
+    function listAssignedExamFolders(classId) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (fcmc && typeof fcmc.listAssignedFoldersForClass === 'function') {
+            return fcmc.listAssignedFoldersForClass(classId) || [];
+        }
+        return [];
+    }
+
+    function isExamFolderAssignedToClass(classId, folderName) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (fcmc && typeof fcmc.isFolderAssignedToClass === 'function') {
+            return !!fcmc.isFolderAssignedToClass(classId, folderName);
+        }
+        return false;
+    }
+
     /**
-     * 獨立考試「教材資料夾」下拉選項：老師個人／班級資源分組，
-     * 目前值若不在清單中仍保留（避免因清單還沒載入或漏收而讓已存的值憑空消失）。
+     * 教材資料夾下拉：上面「已指派給本班」（已知考卷範本），下面「其他可用」。
      * value 格式固定 "teacher::資料夾名" 或 "class::資料夾名"；"__manual__" 為手動輸入的特殊值。
      */
-    function buildExamMaterialFolderOptionsHtml(examMaterialSelf, teacherEntry, classEntry) {
+    function buildExamMaterialFolderOptionsHtml(examMaterialSelf, teacherEntry, classEntry, classId) {
         const teacherFolders = uniqueFolderNamesFromEntry(teacherEntry);
         const classFolders = uniqueFolderNamesFromEntry(classEntry);
+        const assigned = listAssignedExamFolders(classId);
+        const assignedNames = {};
+        assigned.forEach(function (a) {
+            const n = String((a && a.folderName) || '').trim();
+            if (n) assignedNames[n.toUpperCase()] = a;
+        });
         const currentValue = examMaterialSelf.material_folder
             ? (examMaterialSelf.root_kind + '::' + examMaterialSelf.material_folder)
             : '';
         let matchedCurrent = !currentValue;
+
+        function optionHtml(kind, folderName) {
+            const v = kind + '::' + folderName;
+            if (v === currentValue) matchedCurrent = true;
+            return '<option value="' + esc(v) + '"' + (v === currentValue ? ' selected' : '') + '>' + esc(folderName) + '</option>';
+        }
+
+        const assignedOpts = [];
+        const seenAssigned = {};
+        assigned.forEach(function (a) {
+            const name = String((a && a.folderName) || '').trim();
+            if (!name || seenAssigned[name.toUpperCase()]) return;
+            seenAssigned[name.toUpperCase()] = true;
+            const kind = (a.rootKind === 'class') ? 'class' : 'teacher';
+            assignedOpts.push(optionHtml(kind, name));
+        });
+        teacherFolders.forEach(function (f) {
+            if (assignedNames[String(f).toUpperCase()] && !seenAssigned[String(f).toUpperCase()]) {
+                seenAssigned[String(f).toUpperCase()] = true;
+                assignedOpts.push(optionHtml('teacher', f));
+            }
+        });
+        classFolders.forEach(function (f) {
+            if (assignedNames[String(f).toUpperCase()] && !seenAssigned[String(f).toUpperCase()]) {
+                seenAssigned[String(f).toUpperCase()] = true;
+                assignedOpts.push(optionHtml('class', f));
+            }
+        });
+
+        const otherOpts = [];
+        teacherFolders.forEach(function (f) {
+            if (seenAssigned[String(f).toUpperCase()]) return;
+            otherOpts.push(optionHtml('teacher', f));
+        });
+        classFolders.forEach(function (f) {
+            if (seenAssigned[String(f).toUpperCase()]) return;
+            otherOpts.push(optionHtml('class', f));
+        });
+
         let html = '<option value="">— 請選擇教材資料夾 —</option>';
-        if (teacherFolders.length) {
-            html += '<optgroup label="👤 老師個人">' + teacherFolders.map(function (f) {
-                const v = 'teacher::' + f;
-                if (v === currentValue) matchedCurrent = true;
-                return '<option value="' + esc(v) + '"' + (v === currentValue ? ' selected' : '') + '>' + esc(f) + '</option>';
-            }).join('') + '</optgroup>';
-        }
-        if (classFolders.length) {
-            html += '<optgroup label="🏫 班級資源">' + classFolders.map(function (f) {
-                const v = 'class::' + f;
-                if (v === currentValue) matchedCurrent = true;
-                return '<option value="' + esc(v) + '"' + (v === currentValue ? ' selected' : '') + '>' + esc(f) + '</option>';
-            }).join('') + '</optgroup>';
-        }
+        html += '<optgroup label="已指派給本班">'
+            + (assignedOpts.length ? assignedOpts.join('') : '<option value="" disabled>（尚未指派教材給這個班級）</option>')
+            + '</optgroup>';
+        html += '<optgroup label="其他可用">'
+            + (otherOpts.length ? otherOpts.join('') : '<option value="" disabled>（沒有其他教材資料夾）</option>')
+            + '</optgroup>';
         if (currentValue && !matchedCurrent) {
             html += '<option value="' + esc(currentValue) + '" selected>⚠️ ' + esc(examMaterialSelf.material_folder)
                 + '（清單中找不到，可按「重新整理清單」）</option>';
@@ -2681,36 +2921,202 @@ window.FeatureExamJob = (function () {
         return html;
     }
 
-    /** 從已快取的 meta 清單中，取出某資料夾底下不重複的「活頁」stem（去掉 .meta.json） */
-    function examSheetStemsForFolder(classId, rootKind, materialFolder) {
+    function catalogMetaOptionsForFolder(classId, rootKind, materialFolder) {
         if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return [];
         const folder = String(materialFolder || '').trim();
         if (!folder) return [];
-        const entry = window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind);
-        const seen = {};
+        const folderU = folder.toUpperCase();
+        const kinds = rootKind === 'class' ? ['class', 'teacher'] : ['teacher', 'class'];
         const out = [];
-        ((entry && entry.options) || []).forEach(function (o) {
-            if (String((o && o.folderName) || '').trim() !== folder) return;
-            const stem = metaStemFromFileName((o && o.fileName) || '');
-            if (!stem || seen[stem]) return;
-            seen[stem] = true;
-            out.push(stem);
+        const seen = {};
+        kinds.forEach(function (k) {
+            const entry = window.FeatureTimeline.getMetaCatalogEntry(classId, k);
+            ((entry && entry.options) || []).forEach(function (o) {
+                if (String((o && o.folderName) || '').trim().toUpperCase() !== folderU) return;
+                const name = o && o.fileName;
+                if (!name || seen[name]) return;
+                seen[name] = true;
+                out.push(o);
+            });
         });
         return out;
     }
 
-    /** 獨立考試「活頁」下拉選項：目前值找不到也保留（避免清單還沒載入就把已存值洗掉） */
-    function buildExamSheetOptionsHtml(stems, currentSheetId) {
-        const cur = String(currentSheetId || '').trim();
-        let matched = !cur;
-        let html = '<option value="">— 選活頁 —</option>';
-        html += (stems || []).map(function (stem) {
-            const isCur = stem.toUpperCase() === cur.toUpperCase();
-            if (isCur) matched = true;
-            return '<option value="' + esc(stem) + '"' + (isCur ? ' selected' : '') + '>' + esc(stem) + '</option>';
+    function rawMetaFileNamesForFolder(classId, rootKind, materialFolder) {
+        return catalogMetaOptionsForFolder(classId, rootKind, materialFolder).map(function (o) { return o.fileName; });
+    }
+
+    function catalogMetaOptionForSheet(classId, rootKind, materialFolder, sheetId) {
+        const sid = String(sheetId || '').trim();
+        if (!sid) return null;
+        const opts = catalogMetaOptionsForFolder(classId, rootKind, materialFolder);
+        if (!opts.length) return null;
+        const wantFile = /\.meta\.json$/i.test(sid) ? sid : (sid.replace(/\.meta\.json$/i, '') + '.meta.json');
+        const exactFile = opts.find(function (o) { return String(o.fileName).toUpperCase() === wantFile.toUpperCase(); });
+        if (exactFile) return exactFile;
+        const coreHits = opts.filter(function (o) { return stemsLooselyMatch(o.fileName, sid); });
+        if (coreHits.length === 1) return coreHits[0];
+        if (coreHits.length > 1) {
+            coreHits.sort(function (a, b) { return String(a.fileName).length - String(b.fileName).length; });
+            return coreHits[0];
+        }
+        return null;
+    }
+
+    /** 下拉選到的是真實 .meta.json 檔名時，直接對回清單那一筆（含 fileId）。 */
+    function resolvePickedMetaOption(classId, rootKind, materialFolder, pickedValue, prevSec) {
+        const raw = String(pickedValue || '').trim();
+        if (!raw) return null;
+        const opts = catalogMetaOptionsForFolder(classId, rootKind, materialFolder);
+        const byName = opts.find(function (o) { return String(o.fileName) === raw; });
+        if (byName) return byName;
+        if (prevSec && prevSec.meta_file_name) {
+            const byPrev = opts.find(function (o) { return String(o.fileName) === String(prevSec.meta_file_name); });
+            if (byPrev && (normMetaStem(byPrev.fileName) === normMetaStem(raw)
+                || String(prevSec.sheet_id || '').toUpperCase() === raw.toUpperCase())) {
+                return byPrev;
+            }
+        }
+        return catalogMetaOptionForSheet(classId, rootKind, materialFolder, raw);
+    }
+
+    function attachCatalogMetaToSection(classId, rootKind, materialFolder, sec) {
+        if (!sec) return sec;
+        const opt = catalogMetaOptionForSheet(classId, rootKind, materialFolder, sec.meta_file_name || sec.sheet_id);
+        if (opt) {
+            sec.meta_file_name = opt.fileName || sec.meta_file_name || '';
+            if (opt.fileId) sec.meta_file_id = opt.fileId;
+        }
+        return sec;
+    }
+
+    function normMetaStem(s) {
+        return stemCore(s);
+    }
+
+    /** 去掉 .meta.json 與最後一段範本後綴，再忽略連字號。A ≠ AvaLiu-vBK-2 */
+    function stemCore(s) {
+        let t = String(s || '').trim().replace(/\.meta\.json$/i, '');
+        const m = t.match(/^(.+)\.([A-Za-z][A-Za-z0-9_-]*)$/);
+        if (m) t = m[1];
+        return t.replace(/-/g, '').toUpperCase();
+    }
+
+    function stemsLooselyMatch(a, b) {
+        const na = stemCore(a);
+        const nb = stemCore(b);
+        return !!(na && nb && na === nb);
+    }
+
+    function toMetaNum(v) {
+        if (v == null || v === '') return NaN;
+        const n = Number(String(v).replace(/[^\d.-]/g, ''));
+        return isNaN(n) ? NaN : n;
+    }
+
+    /**
+     * 活頁欄可能是字母 C，實際檔卻是 C.vocab-word.meta.json。
+     * 只找 C.meta.json、或把檔名改成全大寫，Drive 都找不到，學生端就變成「老師尚未產生線上卷」。
+     * 一律回傳清單裡的真實檔名（含大小寫／範本後綴）。
+     */
+    function resolveMetaFileNameForSheet(classId, rootKind, materialFolder, sheetId) {
+        const sid = String(sheetId || '').trim();
+        if (!sid) return '';
+        const opt = catalogMetaOptionForSheet(classId, rootKind, materialFolder, sid);
+        if (opt && opt.fileName) return opt.fileName;
+        return sid.replace(/\.meta\.json$/i, '') + '.meta.json';
+    }
+
+    function lookupRowsBySheetId(rowsByStem, sheetId) {
+        const map = rowsByStem || {};
+        const sid = String(sheetId || '').trim();
+        if (!sid) return null;
+        if (Array.isArray(map[sid]) && map[sid].length) return map[sid];
+        const upper = sid.toUpperCase();
+        if (Array.isArray(map[upper]) && map[upper].length) return map[upper];
+        const keys = Object.keys(map);
+        for (let i = 0; i < keys.length; i++) {
+            const k = keys[i];
+            if (k.toUpperCase() === upper && Array.isArray(map[k]) && map[k].length) return map[k];
+        }
+        const prefixHits = keys.filter(function (k) {
+            const u = k.toUpperCase();
+            return (u === upper || u.indexOf(upper + '.') === 0) && Array.isArray(map[k]) && map[k].length;
+        });
+        if (prefixHits.length === 1) return map[prefixHits[0]];
+        const coreHits = keys.filter(function (k) {
+            return Array.isArray(map[k]) && map[k].length && stemsLooselyMatch(k, sid);
+        });
+        if (coreHits.length === 1) return map[coreHits[0]];
+        if (coreHits.length > 1) {
+            coreHits.sort(function (a, b) { return String(a).length - String(b).length; });
+            return map[coreHits[0]];
+        }
+        return null;
+    }
+
+    /** 從已快取的 meta 清單中，取出某資料夾底下不重複的「活頁」stem（去掉 .meta.json） */
+    function examSheetStemsForFolder(classId, rootKind, materialFolder) {
+        return examSheetMetaOptionsForFolder(classId, rootKind, materialFolder).map(function (o) {
+            return metaStemFromFileName(o.fileName);
+        }).filter(Boolean);
+    }
+
+    /** 某資料夾底下真實存在的 .meta.json（含 fileId），不是只推活頁字母。 */
+    function examSheetMetaOptionsForFolder(classId, rootKind, materialFolder) {
+        return catalogMetaOptionsForFolder(classId, rootKind, materialFolder);
+    }
+
+    function optionMatchesExamSection(opt, section) {
+        if (!opt || !opt.fileName) return false;
+        const fileName = String(opt.fileName);
+        const fileU = fileName.toUpperCase();
+        const wantFile = String((section && section.meta_file_name) || '').trim();
+        if (wantFile) {
+            const wantU = wantFile.toUpperCase();
+            if (fileName === wantFile || fileU === wantU) return true;
+            if (fileU === (wantFile.replace(/\.meta\.json$/i, '') + '.META.JSON')) return true;
+            if (stemsLooselyMatch(fileName, wantFile)) return true;
+        }
+        const sheet = String((section && section.sheet_id) || '').trim();
+        if (!sheet) return false;
+        if (fileU === sheet.toUpperCase()) return true;
+        if (fileU === (sheet.replace(/\.meta\.json$/i, '') + '.META.JSON')) return true;
+        return stemsLooselyMatch(fileName, sheet);
+    }
+
+    /** 活頁下拉：value＝這個教材資料夾裡真實的 .meta.json 檔名。 */
+    function buildExamSheetOptionsHtml(metaOpts, section, flags) {
+        flags = flags || {};
+        if (!flags.folderSelected) {
+            return '<option value="">— 請先選教材資料夾 —</option>';
+        }
+        if (!flags.catalogLoaded && !(metaOpts || []).length) {
+            return '<option value="">⏳ 載入活頁清單…</option>';
+        }
+        const sec = section || {};
+        const curFile = String(sec.meta_file_name || '').trim();
+        const curSheet = String(sec.sheet_id || '').trim();
+        const curLabel = curFile || curSheet;
+        const hits = (metaOpts || []).filter(function (opt) { return optionMatchesExamSection(opt, sec); });
+        hits.sort(function (a, b) { return String(a.fileName).length - String(b.fileName).length; });
+        const chosenName = hits.length ? hits[0].fileName : '';
+        let html = '<option value="">— 選活頁（meta）—</option>';
+        html += (metaOpts || []).map(function (opt) {
+            const name = opt && opt.fileName;
+            if (!name) return '';
+            const isCur = !!chosenName && name === chosenName;
+            return '<option value="' + esc(name) + '"' + (isCur ? ' selected' : '') + '>' + esc(name) + '</option>';
         }).join('');
-        if (cur && !matched) {
-            html += '<option value="' + esc(cur) + '" selected>⚠️ ' + esc(cur) + '（清單中找不到）</option>';
+        if (!(metaOpts || []).length) {
+            html += '<option value="" disabled>（這個教材資料夾還沒有 meta）</option>';
+        }
+        if (curLabel && !chosenName) {
+            const why = (metaOpts || []).length
+                ? '（清單中找不到對應 meta，請重選）'
+                : '（這個資料夾還沒載入到 meta，請按「重新整理清單」）';
+            html += '<option value="' + esc(curFile || curSheet) + '" selected>⚠️ ' + esc(curLabel)
+                + why + '</option>';
         }
         html += '<option value="__manual__">✏️ 其他（手動輸入）</option>';
         return html;
@@ -2736,7 +3142,7 @@ window.FeatureExamJob = (function () {
             const teacherEntry = window.FeatureTimeline.getMetaCatalogEntry(classId, 'teacher');
             const classEntry = window.FeatureTimeline.getMetaCatalogEntry(classId, 'class');
             const prevValue = selectEl.value;
-            selectEl.innerHTML = buildExamMaterialFolderOptionsHtml(self, teacherEntry, classEntry);
+            selectEl.innerHTML = buildExamMaterialFolderOptionsHtml(self, teacherEntry, classEntry, classId);
             // 使用者若正在手動輸入模式，重新整理清單不應打斷他
             if (prevValue === '__manual__') selectEl.value = '__manual__';
             const teacherCount = (teacherEntry && teacherEntry.options) ? uniqueFolderNamesFromEntry(teacherEntry).length : 0;
@@ -2784,11 +3190,15 @@ window.FeatureExamJob = (function () {
                 }
             }
             if (guessFolder) {
-                const stems = examSheetStemsForFolder(classId, guessRootKind, guessFolder);
                 const firstSheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-0');
-                if (stems.length && firstSheetEl && firstSheetEl.tagName !== 'SELECT') {
-                    refreshExamBuilder();
-                }
+                const html = firstSheetEl ? String(firstSheetEl.innerHTML || '') : '';
+                const needsUpgrade = !firstSheetEl
+                    || html.indexOf('載入活頁清單') !== -1
+                    || html.indexOf('清單中找不到') !== -1
+                    || html.indexOf('還沒載入到 meta') !== -1
+                    || html.indexOf('請先選教材資料夾') !== -1
+                    || (firstSheetEl && firstSheetEl.options.length <= 2);
+                if (needsUpgrade) refreshExamBuilder();
             }
         });
     }
@@ -2913,13 +3323,29 @@ window.FeatureExamJob = (function () {
         try { folderIdClass = await resolveRootFolderId(classId, 'class'); } catch (_e) {}
 
         const needRemote = [];
+        const fileNameBySid = {};
+        const sectionHint = {};
+        (ctx.sections || []).forEach(function (sec) {
+            const key = String((sec && sec.sheet_id) || '').trim();
+            if (key) sectionHint[key] = sec;
+        });
         sheetIds.forEach(function (sid) {
-            const local = localByStem[sid];
-            if (!(Array.isArray(local) && local.length)) {
+            const local = lookupRowsBySheetId(localByStem, sid);
+            const hint = sectionHint[sid] || {};
+            const opt = catalogMetaOptionForSheet(classId, ctx.rootKind, ctx.materialFolder, hint.meta_file_name || sid);
+            const fileName = hint.meta_file_name || (opt && opt.fileName) || '';
+            const fileId = hint.meta_file_id || (opt && opt.fileId) || '';
+            const resolvedName = fileName
+                || (sid && /\.meta\.json$/i.test(sid) ? sid : (String(sid || '').replace(/\.meta\.json$/i, '') + '.meta.json'));
+            fileNameBySid[sid] = resolvedName;
+            if (!(Array.isArray(local) && local.length) || !resolveMetaPageKey(local)) {
+                const stemKey = metaStemFromFileName(resolvedName || sid).toUpperCase();
+                const resolvedId = fileId || fileIdByStem[sid] || fileIdByStem[stemKey] || '';
+                if (!resolvedName && !resolvedId) return;
                 needRemote.push({
                     materialFolder: ctx.materialFolder,
-                    fileName: sid + '.meta.json',
-                    fileId: fileIdByStem[sid] || '',
+                    fileName: resolvedName,
+                    fileId: resolvedId,
                     sheetId: sid
                 });
             }
@@ -2932,6 +3358,16 @@ window.FeatureExamJob = (function () {
         });
 
         const remoteByName = {};
+        const remoteBySid = {};
+        function rememberRemote(it, f) {
+            if (!f || !f.ok) return;
+            const name = (it && it.fileName) || (f && f.fileName) || '';
+            if (name) remoteByName[name] = f;
+            if (it && it.sheetId && it.sheetId !== '__LAYOUT__') remoteBySid[it.sheetId] = f;
+        }
+        function hasRemoteForSid(sid) {
+            return !!(remoteBySid[sid] || remoteByName[fileNameBySid[sid] || '']);
+        }
         let rootKindUsed = ctx.rootKind;
         let lastBatchErr = null;
         const order = ctx.rootKind === 'class'
@@ -2946,8 +3382,7 @@ window.FeatureExamJob = (function () {
                     try {
                         const files = await window.GasService.readMaterialFiles(root.id, needRemote, root.kind);
                         (files || []).forEach(function (f, idx) {
-                            const key = needRemote[idx] ? needRemote[idx].fileName : (f && f.fileName);
-                            if (f && f.ok && key) remoteByName[key] = f;
+                            rememberRemote(needRemote[idx], f);
                         });
                         usedBatch = true;
                     } catch (batchUnsupported) {
@@ -2957,44 +3392,77 @@ window.FeatureExamJob = (function () {
                 if (!usedBatch) {
                     for (let ri = 0; ri < needRemote.length; ri++) {
                         const it = needRemote[ri];
-                        if (remoteByName[it.fileName]) continue;
+                        if ((it.fileName && remoteByName[it.fileName]) || (it.sheetId && remoteBySid[it.sheetId])) continue;
+                        if (!it.fileName && !it.fileId) continue;
                         try {
                             const one = await window.GasService.readMaterialFile(
                                 root.id, it.materialFolder, it.fileName, root.kind,
                                 it.fileId ? { fileId: it.fileId } : undefined
                             );
-                            remoteByName[it.fileName] = Object.assign({ ok: true }, one);
-                        } catch (_oneErr) {}
+                            rememberRemote(it, Object.assign({ ok: true }, one));
+                        } catch (_oneErr) {
+                            if (it.fileId && it.fileName) {
+                                try {
+                                    const byName = await window.GasService.readMaterialFile(
+                                        root.id, it.materialFolder, it.fileName, root.kind
+                                    );
+                                    rememberRemote(it, Object.assign({ ok: true }, byName));
+                                } catch (_nameErr) {}
+                            }
+                        }
                     }
                 }
+                const retryByName = needRemote.filter(function (it) {
+                    if (!it || it.sheetId === '__LAYOUT__' || !it.fileName) return false;
+                    if (it.sheetId && remoteBySid[it.sheetId]) return false;
+                    if (remoteByName[it.fileName]) return false;
+                    return true;
+                });
+                for (let rbi = 0; rbi < retryByName.length; rbi++) {
+                    const it = retryByName[rbi];
+                    try {
+                        const byName = await window.GasService.readMaterialFile(
+                            root.id, it.materialFolder, it.fileName, root.kind
+                        );
+                        rememberRemote(it, Object.assign({ ok: true }, byName));
+                    } catch (_nameErr) {}
+                }
                 const stillMissing = sheetIds.filter(function (sid) {
-                    return !(Array.isArray(localByStem[sid]) && localByStem[sid].length)
-                        && !remoteByName[sid + '.meta.json'];
+                    return !lookupRowsBySheetId(localByStem, sid) && !hasRemoteForSid(sid);
                 });
                 if (!stillMissing.length) {
                     rootKindUsed = root.kind;
                     break;
                 }
-                lastBatchErr = new Error('缺 meta：' + stillMissing.join(', '));
+                lastBatchErr = new Error('缺 meta：' + stillMissing.join(', ')
+                    + '（請重選該活頁的 .meta.json，不要只選資料夾）');
             } catch (batchErr) {
                 lastBatchErr = batchErr;
             }
         }
 
         const missingMeta = sheetIds.filter(function (sid) {
-            return !(Array.isArray(localByStem[sid]) && localByStem[sid].length)
-                && !remoteByName[sid + '.meta.json'];
+            return !lookupRowsBySheetId(localByStem, sid) && !hasRemoteForSid(sid);
         });
 
         const rowsByStem = Object.assign({}, localByStem);
         sheetIds.forEach(function (sid) {
-            if (Array.isArray(rowsByStem[sid]) && rowsByStem[sid].length) return;
-            const f = remoteByName[sid + '.meta.json'];
+            const existing = lookupRowsBySheetId(rowsByStem, sid);
+            if (existing && resolveMetaPageKey(existing)) return;
+            const f = remoteBySid[sid] || remoteByName[fileNameBySid[sid] || ''];
             if (f && f.content) {
                 try {
-                    rowsByStem[sid] = window.MaterialSnapshot
+                    const parsed = window.MaterialSnapshot
                         ? window.MaterialSnapshot.parseMetaContent(f.content)
                         : JSON.parse(f.content);
+                    const rows = Array.isArray(parsed) ? parsed : [];
+                    rowsByStem[sid] = rows;
+                    const fname = fileNameBySid[sid] || (f && f.fileName) || '';
+                    if (fname) rowsByStem[fname] = rows;
+                    const stem = metaStemFromFileName(fname || sid);
+                    if (stem) rowsByStem[stem] = rows;
+                    const display = displayStemFromMetaFile(fname || sid);
+                    if (display) rowsByStem[display] = rows;
                 } catch (_e) {}
             }
         });
@@ -3005,6 +3473,12 @@ window.FeatureExamJob = (function () {
             try { layout = JSON.parse(layoutFile.content); } catch (_pe) { layout = null; }
         }
 
+        Object.keys(rowsByStem).forEach(function (k) {
+            if (Array.isArray(rowsByStem[k]) && rowsByStem[k].length) {
+                rowsByStem[k] = canonicalizeFetchedRows(rowsByStem[k], layout);
+            }
+        });
+
         return {
             rowsByStem: rowsByStem,
             layout: layout,
@@ -3013,8 +3487,8 @@ window.FeatureExamJob = (function () {
             missingMeta: missingMeta,
             error: missingMeta.length
                 ? (lastBatchErr || new Error('無法讀取 meta：' + missingMeta.join(', ')
-                    + '（請確認 Drive 有 ' + ctx.materialFolder
-                    + '，或先對錄音套用含該活頁的 Snapshot）'))
+                    + '（資料夾 ' + ctx.materialFolder
+                    + ' 裡找不到對應的 .meta.json，請重選活頁的 meta 檔，不要只選資料夾）'))
                 : null
         };
     }
@@ -3202,31 +3676,38 @@ window.FeatureExamJob = (function () {
             return fail(err.message || String(err));
         }
 
-        setGenerateStatus(pathStr, '⏳ 正在產生線上卷…（優先用 Snapshot 快取）', 'busy');
+        setGenerateStatus(pathStr, '⏳ 正在產生線上卷…（讀取已選的 meta 檔）', 'busy');
         if (!silent) window.showFlash('正在產生線上卷…', 'info');
         try {
-            const audioRaw = (audioHit && audioHit.task && audioHit.task.raw_data) || {};
-            // 獨立考試已用「讀取可用題數」自快取到考試任務自己的 raw_data，一併當本地快取用，避免重抓
-            const localRowsByStem = Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {}, audioRaw.meta_rows_by_stem || {});
+            const localRowsByStem = Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {});
 
             const sheetIds = [];
             (examJob.sections || []).forEach(function (sec) {
-                const sid = String(sec.sheet_id || '').trim().toUpperCase();
+                const sid = String(sec.sheet_id || '').trim();
                 if (sid && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
             });
 
+            if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
+                setGenerateStatus(pathStr, '⏳ 載入教材 meta 清單…', 'busy');
+                try {
+                    await window.FeatureTimeline.ensureMetaCatalog(bState.classId, ctx.rootKind || 'teacher', { force: true });
+                    await window.FeatureTimeline.ensureMetaCatalog(bState.classId, (ctx.rootKind === 'class') ? 'teacher' : 'class', { force: true });
+                } catch (_catErr) {}
+            }
+            (examJob.sections || []).forEach(function (sec) {
+                attachCatalogMetaToSection(bState.classId, ctx.rootKind, ctx.materialFolder, sec);
+            });
+            if (task.raw_data && task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
+
             setGenerateStatus(pathStr, '⏳ 讀取 Drive meta…', 'busy');
+            ctx.sections = examJob.sections || [];
             const fetched = await fetchLayoutAndMetaForSheets(bState.classId, ctx, sheetIds, localRowsByStem);
             if (fetched.error) throw fetched.error;
             ctx.rootKind = fetched.rootKindUsed;
             Object.assign(localRowsByStem, fetched.rowsByStem);
             const remoteByName = fetched.remoteByName || {};
-            // 寫回快取（combo 寫錄音任務、獨立考試寫自己），之後可用題／必考# 才不用每次都重抓
-            const cacheOwner = (audioHit && audioHit.task) || task;
-            if (cacheOwner) {
-                if (!cacheOwner.raw_data) cacheOwner.raw_data = {};
-                cacheOwner.raw_data.meta_rows_by_stem = Object.assign({}, cacheOwner.raw_data.meta_rows_by_stem, fetched.rowsByStem);
-            }
+            if (!task.raw_data) task.raw_data = {};
+            task.raw_data.meta_rows_by_stem = Object.assign({}, task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
 
             let layout = fetched.layout;
             if (!layout) {
@@ -3287,27 +3768,28 @@ window.FeatureExamJob = (function () {
                 examJob: examJob,
                 layout: layout,
                 loadSheetMeta: async function (sheetId) {
-                    const sid = String(sheetId || '').trim().toUpperCase();
-                    let rows = localRowsByStem[sid];
+                    const sid = String(sheetId || '').trim();
+                    let rows = lookupRowsBySheetId(localRowsByStem, sid);
                     if (!(Array.isArray(rows) && rows.length)) {
-                        const remote = remoteByName[sid + '.meta.json'];
+                        const secHit = (examJob.sections || []).find(function (s) {
+                            return String((s && s.sheet_id) || '').toUpperCase() === sid.toUpperCase();
+                        });
+                        const remoteName = (secHit && secHit.meta_file_name)
+                            || resolveMetaFileNameForSheet(bState.classId, ctx.rootKind, ctx.materialFolder, sid);
+                        const remote = remoteByName[remoteName] || remoteByName[sid + '.meta.json'];
                         if (!remote || !remote.content) {
-                            throw new Error('沒有活頁 ' + sid + ' 的 meta（請先 Snapshot 或確認 Drive 檔案）');
+                            throw new Error('沒有活頁 ' + sid + ' 的 meta（請重選該列的 .meta.json，不要只選資料夾）');
                         }
                         rows = window.MaterialSnapshot
                             ? window.MaterialSnapshot.parseMetaContent(remote.content)
                             : JSON.parse(remote.content);
-                        if (audioHit && audioHit.task) {
-                            if (!audioHit.task.raw_data) audioHit.task.raw_data = {};
-                            if (!audioHit.task.raw_data.meta_rows_by_stem) {
-                                audioHit.task.raw_data.meta_rows_by_stem = {};
-                            }
-                            audioHit.task.raw_data.meta_rows_by_stem[sid] = rows;
-                        }
+                        if (!task.raw_data) task.raw_data = {};
+                        if (!task.raw_data.meta_rows_by_stem) task.raw_data.meta_rows_by_stem = {};
+                        task.raw_data.meta_rows_by_stem[sid] = rows;
                     }
                     return {
                         rows: rows,
-                        schemaId: schemaBySheet[sid] || ctx.schemaId || '',
+                        schemaId: schemaBySheet[sid.toUpperCase()] || schemaBySheet[sid] || ctx.schemaId || '',
                         materialFolder: ctx.materialFolder
                     };
                 }
@@ -3446,7 +3928,19 @@ window.FeatureExamJob = (function () {
             inlineOnExamMaterialChange(pathStr);
             return;
         }
-        inlineRefreshAvail(pathStr);
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        if (task) {
+            syncInlineEditor(pathStr, task);
+            if (task.raw_data && task.raw_data.exam_job) {
+                task.raw_data.exam_job.layout_profile_id = '';
+                (task.raw_data.exam_job.sections || []).forEach(function (sec) {
+                    if (sec) delete sec.layout_profile_id;
+                });
+            }
+        }
+        delete _availAutoFetchKey[pathStr];
+        refreshExamBuilder();
     }
 
     /** 「🔄 重新整理清單」：強制重打 GAS 抓最新的老師個人／班級資源資料夾清單 */
@@ -3457,24 +3951,29 @@ window.FeatureExamJob = (function () {
     }
 
     /**
-     * 獨立考試（無配對錄音）：依目前填的教材資料夾＋各區段 sheet_id，向 Drive 讀取 meta 並快取到
-     * 考試任務自己的 raw_data.meta_rows_by_stem，讓「可用題／顯示%」變成真數字（不必等 Snapshot）。
+     * 依目前選的教材資料夾＋各列 meta 檔，向 Drive 讀取 .meta.json，快取到考試任務自己的
+     * raw_data.meta_rows_by_stem。可用題只看這個快取，不看錄音 Snapshot。
      */
-    async function inlineRefreshStandaloneMeta(pathStr) {
+    async function inlineRefreshStandaloneMeta(pathStr, opts) {
+        opts = opts || {};
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
         const bState = window.BuilderStore && window.BuilderStore.getState();
         if (!task || !bState) return;
         const examJob = syncInlineEditor(pathStr, task);
         if (!examJob || !examJob.sections || !examJob.sections.length) {
+            if (opts.silent) return;
             return window.showFlash('請至少填一個區段（活頁）', 'error');
         }
         const sheetIds = [];
         examJob.sections.forEach(function (sec) {
-            const sid = String(sec.sheet_id || '').trim().toUpperCase();
-            if (sid && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
+            const sid = String(sec.sheet_id || '').trim();
+            if (sid && !isPagePrefixMisreadAsSheet(sid) && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
         });
-        if (!sheetIds.length) return window.showFlash('區段缺少活頁（sheet_id）', 'error');
+        if (!sheetIds.length) {
+            if (opts.silent) return;
+            return window.showFlash('請先在「活頁」選這個資料夾裡的 .meta.json', 'error');
+        }
 
         const audioHit = findPreferredAudioHit(bState.tasks || [], pathStr);
         let ctx;
@@ -3487,18 +3986,76 @@ window.FeatureExamJob = (function () {
         const statusEl = document.getElementById('exam-inline-standalone-status-' + pathStr);
         if (statusEl) { statusEl.textContent = '⏳ 讀取中…'; statusEl.style.color = '#3B82F6'; }
         try {
+            if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
+                try {
+                    await window.FeatureTimeline.ensureMetaCatalog(bState.classId, ctx.rootKind || 'teacher', { force: !opts.silent });
+                    await window.FeatureTimeline.ensureMetaCatalog(bState.classId, (ctx.rootKind === 'class') ? 'teacher' : 'class', { force: !opts.silent });
+                } catch (_catErr) {}
+            }
+            (examJob.sections || []).forEach(function (sec) {
+                attachCatalogMetaToSection(bState.classId, ctx.rootKind, ctx.materialFolder, sec);
+            });
+            if (task.raw_data && task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
             const localRowsByStem = (task.raw_data && task.raw_data.meta_rows_by_stem) || {};
+            ctx.sections = examJob.sections || [];
             const fetched = await fetchLayoutAndMetaForSheets(bState.classId, ctx, sheetIds, localRowsByStem);
             if (!task.raw_data) task.raw_data = {};
             task.raw_data.meta_rows_by_stem = Object.assign({}, task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
+            const availNotes = [];
+            let anyInRange = false;
+            let anyMissingPage = false;
+            (examJob.sections || []).forEach(function (sec) {
+                const rowsForSec = lookupSectionMetaRows(task.raw_data.meta_rows_by_stem, sec)
+                    || lookupRowsBySheetId(fetched.rowsByStem, sec.sheet_id)
+                    || lookupRowsBySheetId(fetched.rowsByStem, sec.meta_file_name);
+                if (Array.isArray(rowsForSec) && rowsForSec.length) {
+                    rememberMetaRows(task.raw_data.meta_rows_by_stem, sec, rowsForSec);
+                    if (metaCannotFilterByPage(sec, rowsForSec)) {
+                        delete sec.available_count;
+                        sec.meta_missing_page = true;
+                        anyMissingPage = true;
+                        const keys = describeMetaRowKeys(rowsForSec);
+                        availNotes.push(
+                            (sec.meta_file_name || sec.sheet_id || '活頁')
+                            + ' 有 ' + rowsForSec.length + ' 列，但沒有 page 欄（現有：'
+                            + (keys || '—')
+                            + '）。請到教材發布把 Excel 頁碼欄對成 page 後重新上傳'
+                        );
+                    } else {
+                        delete sec.meta_missing_page;
+                        const n = countAvailableFromMetaRows(sec, rowsForSec);
+                        sec.available_count = (n == null ? 0 : n);
+                        if (sec.available_count > 0) anyInRange = true;
+                        const pages = summarizeMetaPages(rowsForSec);
+                        availNotes.push(
+                            (sec.meta_file_name || sec.sheet_id || '活頁')
+                            + ' 範圍內 ' + sec.available_count + ' 題'
+                            + (pages ? '（檔內頁碼 ' + pages + '）' : '')
+                        );
+                    }
+                } else {
+                    delete sec.available_count;
+                    delete sec.meta_missing_page;
+                    availNotes.push((sec.meta_file_name || sec.sheet_id || '活頁') + ' 讀到的檔沒有列');
+                }
+            });
+            if (task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
             refreshExamBuilder();
             if (fetched.missingMeta && fetched.missingMeta.length) {
-                const msg = '部分活頁讀不到 meta：' + fetched.missingMeta.join('/') + '（請確認活頁名稱／教材資料夾是否正確）';
+                const msg = '部分活頁讀不到 meta：' + fetched.missingMeta.join('/') + '（請重選該列的 .meta.json，不要只選資料夾）';
+                if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#D97706'; }
+                window.showFlash(msg, 'warning');
+            } else if (anyMissingPage) {
+                const msg = availNotes.join('；');
+                if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#B45309'; }
+                window.showFlash(msg, 'warning');
+            } else if (!anyInRange) {
+                const msg = '檔有讀到，但這個範圍沒有題：' + availNotes.join('；');
                 if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#D97706'; }
                 window.showFlash(msg, 'warning');
             } else {
-                const msg = '✅ 已讀取 ' + sheetIds.length + ' 個活頁的可用題數';
-                if (statusEl) { statusEl.textContent = msg; statusEl.style.color = '#059669'; }
+                const msg = '可用題：' + availNotes.join('；');
+                if (statusEl) { statusEl.textContent = '✅ ' + msg; statusEl.style.color = '#059669'; }
                 window.showFlash(msg, 'success');
             }
         } catch (err) {
@@ -3560,6 +4117,7 @@ window.FeatureExamJob = (function () {
             syncInlineEditor(pathStr, task);
             refreshExamBuilder();
         },
+        refreshExamBuilder: refreshExamBuilder,
         _inlineApplyLastConfig: applyLastConfigForClass,
         getCachedLastConfigForClass: getCachedLastConfigForClass,
         /** 給「儲存作業」批次流程用：這個考試任務的設定是否需要（重新）產生線上卷 */
@@ -3597,14 +4155,7 @@ window.FeatureExamJob = (function () {
          * 供老師自行核對「活頁清單是不是真的抓對檔案」，不用猜系統怎麼推導出 stem。
          */
         getRawFileNamesForFolder: function (classId, rootKind, materialFolder) {
-            if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return [];
-            const folder = String(materialFolder || '').trim();
-            if (!folder) return [];
-            const entry = window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind);
-            return ((entry && entry.options) || [])
-                .filter(function (o) { return String((o && o.folderName) || '').trim() === folder; })
-                .map(function (o) { return o.fileName; })
-                .filter(Boolean);
+            return rawMetaFileNamesForFolder(classId, rootKind, materialFolder);
         },
         /**
          * 給「教材/Layout 搭配」的「產生並上傳」功能用：某資料夾名稱對應的實際 Drive folderId

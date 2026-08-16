@@ -6,64 +6,77 @@ alwaysApply: false
 
 # 考試可用題／顯示% 鐵律（雷區）
 
-> 右欄：**可用題**、**顯示%**。常與「第二冊 meta 沒進 Snapshot」連動。  
-> 動 `feature-exam-job.js`／錄音 Snapshot／`meta_rows_by_stem` 時必讀。
+> 右欄：**可用題**、**顯示%**。  
+> 2026-08-15：老師明確否決「用錄音 Snapshot／`grading_units` 算可用題」。  
+> 動 `feature-exam-job.js` 的可用題／產卷時必讀。
 
 ## 症狀
 
 | 活頁 | 題數 | 可用題 | 顯示% | 意義 |
 |------|------|--------|-------|------|
-| A | 20 | **20**（綠） | 100% | 已從 Snapshot／meta 快取算到真題數 |
-| B | 20 | **~20**（橘）或空白 | **—** | 沒有真快取，被預計格位粉飾／無法算% |
+| A | 20 | **20**（綠） | 100% | 已按「讀取可用題數」，從該列選中的 `.meta.json` 算到範圍內實際列數 |
+| B | 20 | **需讀取**（橘） | **—** | 考試任務自己還沒讀進這本 meta；不要用 Snapshot 或 `~20` 粉飾 |
 
-老師以為 A、B 都設好了，其實 B 還沒進 `meta_rows_by_stem`／`grading_units`。
+## 可用題怎麼算（唯一來源）
 
-## 可用題怎麼算（優先序）
+```
+考試任務 raw_data.meta_rows_by_stem
+  ← 「🔄 讀取可用題數」用該列 meta_file_id／真實檔名從 Drive 讀 .meta.json
+可用題 = 範圍內每一頁的實際 meta 列數加總（最後一頁常不滿行）
+頁碼欄不一定叫 page：讀檔後要用 col_map／E 欄／課本頁數字欄寫回 page
+對不上時必須告訴老師「檔內頁碼」或「現有欄位」，禁止只顯示 0
+```
 
-1. `audio.raw_data.meta_rows_by_stem[SHEET]` 完整列 → 與「產生線上卷」同語意  
-2. 題號：`meta_items`／`grading_units.item_nos`  
-3. 頁碼：`grading_units` 的 `item_count`（僅 Snapshot 切過的頁）  
-4. **都沒有** 才談預估
+每頁行數必須帶入這一列考卷範本的 `lines_per_page`，不可用預設 10 蓋過範本。  
+「從同作業錄音範圍帶入」**只帶範圍**，不算可用題。
 
-## 禁止粉飾
+## 禁止
 
 ```javascript
-// ❌ 錄音已點名 B.meta，但快取沒有 B 時，仍用 頁數×每頁行數 顯示 ~20
-if (avail == null) avail = expected; // 讓老師以為有題
+// ❌ 用錄音 Snapshot／grading_units／meta_items 算可用題
+countAvailableFromMeta(section, siblingAudio)
+countAvailableFromGradingUnits(audio.raw_data.grading_units, ...)
 
-// ❌ sync 時丢掉 meta_rows_by_stem，或用只有 A 的 snap JSON 整包覆寫
-rd.meta_rows_by_stem = snap.meta_rows_by_stem; // snap 若只有 A 會砍 B
+// ❌ 頁數 × 每頁行數 充當可用題（最後一頁不滿行）
+avail = (end - start + 1) * lines_per_page;
+
+// ❌ 寫死 10，不理考卷範本自己的每頁行數
+section.lines_per_page = 10
+
+// ❌ 錄音 Snapshot 後用 audio 快取覆寫考試區段 count
+refreshAfterAudioSnapshot → countAvailableFromMeta(sec, audio)
 ```
 
 ## 正確顯示
 
 ```
-countAvailableFromMeta == null
-  + 錄音 material_refs／material_range 已含該活頁
-  → 可用題顯示「需Snapshot」，顯示% 為 —（逼老師等自動套用或按套用）
-  + 完全對不到錄音 meta（手加空列）
-  → 才允許 ~預計格位
+可用題 = 考試任務自己的 meta 檔、範圍內各頁實際列數加總（綠字）
+還沒按「讀取可用題數」→ 「需讀取」（橘字），顯示% 為 —
+不要寫「需Snapshot」，不要用滿行估算粉飾
+每頁行數 = 考卷範本.lines_per_page（區段沒手動改過時）
 ```
 
 ## 不變量
 
 ```
-綠字可用題 ⇔ meta_rows_by_stem 或 grading_units 真有該 stem
-產生線上卷優先讀 meta_rows_by_stem，缺冊才打 GAS
-Snapshot 後必須 refreshAfterAudioSnapshot 重算各區段 count／可用題
-BuilderStore.sync 對 meta_rows_by_stem 只能 merge，不可縮冊覆寫
+綠字可用題 ⇔ 考試任務 raw_data.meta_rows_by_stem 真有該活頁／檔名的列
+countAvailableFromMeta(section, examTask) 只吃考試任務，不吃錄音任務
+產生線上卷讀同一個 meta 檔（fileId／真實檔名），快取只寫回考試任務
+錄音 Snapshot 後禁止重算／覆寫考試可用題與題數
+BuilderStore.sync 對錄音的 meta_rows_by_stem 只能 merge（錄音存檔用，與考試可用題無關）
 ```
 
-## 連動雷區
+## 連動
 
-第二冊不進 snap → 見 `material-snapshot-refs-invariant.mdc`（busy/pending、async 重繪縮水）。  
-修好自動 Snapshot 後，B 應變綠字實數且顯示% 有值；在那之前 UI 必須寫「需Snapshot」而不是 `~20`。
+錄音 Snapshot 縮水問題仍見 `material-snapshot-refs-invariant.mdc`（那是錄音存檔，不是考試可用題）。  
+考試缺 meta → 顯示「需讀取」，逼老師按「讀取可用題數」。
 
 ## 實測
 
-1. 錄音只凍結 A → 考試 B 列＝「需Snapshot」／顯示%＝—  
-2. 再套用含 A+B 的 Snapshot → B 變綠字實數、顯示% 有值、總計仍合理  
-3. 產生線上卷不應因 B 缺快取而靜默少題（缺則打 GAS 或明確報錯）
+1. 還沒按「讀取可用題數」→ 可用題＝「需讀取」、顯示%＝—（不是綠字、不是 ~20、不是需Snapshot）  
+2. 選好活頁 meta＋範圍 → 按「讀取可用題數」→ 綠字＝範圍內實際列數（最後一頁不滿行也加進去）  
+3. 同層錄音已 Snapshot 也不准讓可用題自己變綠；仍要讀考試選中的 meta 檔  
+4. 產生線上卷不應因錄音缺快取而靜默少題（缺則打 GAS 或明確報錯）
 
 ## `include_nums`（必考#）語意（2026-08-02 修正，曾反覆搞混）
 

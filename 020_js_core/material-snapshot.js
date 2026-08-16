@@ -10,13 +10,194 @@ window.MaterialSnapshot = (function () {
 
     function parseMetaContent(raw) {
         if (!raw) return [];
-        if (Array.isArray(raw)) return raw;
-        if (typeof raw === 'string') {
-            var parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
+        var data = raw;
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (_e) { return []; }
         }
-        if (typeof raw === 'object') return Array.isArray(raw.rows) ? raw.rows : [];
+        if (Array.isArray(data)) return data;
+        if (data && typeof data === 'object') {
+            if (Array.isArray(data.rows)) return data.rows;
+            if (Array.isArray(data.items)) return data.items;
+            if (Array.isArray(data.data)) return data.data;
+            if (data.sheets && typeof data.sheets === 'object') {
+                var acc = [];
+                Object.keys(data.sheets).forEach(function (k) {
+                    if (Array.isArray(data.sheets[k])) acc = acc.concat(data.sheets[k]);
+                });
+                if (acc.length) return acc;
+            }
+        }
         return [];
+    }
+
+    function collectMetaRowKeys(rows) {
+        var seen = {};
+        var out = [];
+        var list = rows || [];
+        var idxs = [];
+        var i;
+        var head = list.length > 40 ? 40 : list.length;
+        for (i = 0; i < head; i++) idxs.push(i);
+        if (list.length > 40) {
+            idxs.push(Math.floor(list.length / 2));
+            idxs.push(list.length - 1);
+        }
+        idxs.forEach(function (idx) {
+            var row = list[idx];
+            if (!row || typeof row !== 'object') return;
+            Object.keys(row).forEach(function (k) {
+                if (!k || String(k).charAt(0) === '_') return;
+                if (seen[k]) return;
+                seen[k] = true;
+                out.push(k);
+            });
+        });
+        return out;
+    }
+
+    function describeMetaRowKeys(rows) {
+        return collectMetaRowKeys(rows).join(', ');
+    }
+
+    function pageNumsFromCell(val) {
+        if (val == null || val === '') return [];
+        var s = String(val).trim();
+        var m = s.match(/(\d+)\s*[-~～至到\/]\s*(\d+)/);
+        if (m) {
+            var lo = Number(m[1]);
+            var hi = Number(m[2]);
+            if (isNaN(lo) || isNaN(hi)) return [];
+            if (lo > hi) { var tmp = lo; lo = hi; hi = tmp; }
+            if (hi - lo > 200) return [lo, hi];
+            var span = [];
+            for (var i = lo; i <= hi; i++) span.push(i);
+            return span;
+        }
+        var n = toNumber(val);
+        return isNaN(n) ? [] : [n];
+    }
+
+    function rowPageNum(row, pageKey) {
+        if (!row) return NaN;
+        if (pageKey && row[pageKey] != null && row[pageKey] !== '') {
+            var fromKey = pageNumsFromCell(row[pageKey]);
+            if (fromKey.length) return fromKey[0];
+        }
+        var preferred = ['page', 'Page', 'pg', '頁碼', 'page_no', 'E'];
+        for (var i = 0; i < preferred.length; i++) {
+            if (row[preferred[i]] == null || row[preferred[i]] === '') continue;
+            var nums = pageNumsFromCell(row[preferred[i]]);
+            if (nums.length) return nums[0];
+        }
+        var keys = Object.keys(row);
+        for (var j = 0; j < keys.length; j++) {
+            var k = keys[j];
+            if (!k || k.charAt(0) === '_') continue;
+            if (!/page|頁/i.test(k)) continue;
+            var found = pageNumsFromCell(row[k]);
+            if (found.length) return found[0];
+        }
+        return NaN;
+    }
+
+    /** 找出 meta 列真正記課本頁的欄。不要只看第一列（開頭常是文法定義、沒有 page）。不要把 item_no 1～20 誤當成頁碼。 */
+    function resolveMetaPageKey(rows) {
+        var list = rows || [];
+        if (!list.length) return '';
+        var keys = collectMetaRowKeys(list);
+        var named = keys.filter(function (k) {
+            return /^(page|Page|pg|頁碼|page_no|E)$/.test(k) || /page|頁碼/.test(k);
+        });
+        var take = list.length > 400 ? 400 : list.length;
+        var step = list.length > 400 ? Math.ceil(list.length / 400) : 1;
+        var ni, i;
+        for (ni = 0; ni < named.length; ni++) {
+            for (i = 0; i < list.length; i += step) {
+                if (pageNumsFromCell(list[i] && list[i][named[ni]]).length) return named[ni];
+            }
+            if (step > 1) {
+                for (i = Math.max(0, list.length - 20); i < list.length; i++) {
+                    if (pageNumsFromCell(list[i] && list[i][named[ni]]).length) return named[ni];
+                }
+            }
+        }
+        var best = '';
+        var bestHits = 0;
+        keys.forEach(function (k) {
+            if (/item_no|itemNo|題號/i.test(k)) return;
+            var hits = 0;
+            var sample = take;
+            for (i = 0; i < list.length && i < sample * step; i += step) {
+                var nums = pageNumsFromCell(list[i] && list[i][k]);
+                if (nums.some(function (n) { return n >= 50 && n <= 900; })) hits += 1;
+            }
+            if (hits > bestHits && hits >= 3) {
+                best = k;
+                bestHits = hits;
+            }
+        });
+        return best;
+    }
+
+    function normalizeMetaRows(rows, layout) {
+        var colMap = {};
+        if (window.QuizPaperBuilder && window.QuizPaperBuilder.FALLBACK_COL_MAP) {
+            Object.keys(window.QuizPaperBuilder.FALLBACK_COL_MAP).forEach(function (letter) {
+                colMap[letter] = window.QuizPaperBuilder.FALLBACK_COL_MAP[letter];
+            });
+        } else {
+            colMap.E = 'page';
+            colMap.C = 'item_no';
+        }
+        if (layout && layout.col_map && typeof layout.col_map === 'object') {
+            Object.keys(layout.col_map).forEach(function (letter) {
+                if (layout.col_map[letter]) colMap[letter] = layout.col_map[letter];
+            });
+        }
+        return (rows || []).map(function (row) {
+            if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+            var out = Object.assign({}, row);
+            Object.keys(colMap).forEach(function (letter) {
+                var sem = colMap[letter];
+                if (!sem) return;
+                if ((out[sem] == null || out[sem] === '') && out[letter] != null && out[letter] !== '') {
+                    out[sem] = out[letter];
+                }
+            });
+            return out;
+        });
+    }
+
+    function canonicalizeMetaRows(rows, layout) {
+        var list = normalizeMetaRows(rows, layout);
+        var key = resolveMetaPageKey(list);
+        if (key && key !== 'page') {
+            list = list.map(function (row) {
+                if (!row) return row;
+                if (row.page != null && row.page !== '') return row;
+                if (row[key] == null || row[key] === '') return row;
+                var out = Object.assign({}, row);
+                out.page = row[key];
+                return out;
+            });
+        }
+        return list;
+    }
+
+    function summarizeMetaPages(rows) {
+        var pageKey = resolveMetaPageKey(rows);
+        var pages = [];
+        (rows || []).forEach(function (row) {
+            var nums = pageKey
+                ? pageNumsFromCell(row && row[pageKey])
+                : (isNaN(rowPageNum(row)) ? [] : [rowPageNum(row)]);
+            nums.forEach(function (p) {
+                if (!isNaN(p) && pages.indexOf(p) === -1) pages.push(p);
+            });
+        });
+        pages.sort(function (a, b) { return a - b; });
+        if (!pages.length) return '';
+        return pages[0] + '～' + pages[pages.length - 1] + '（' + pages.length + ' 頁）';
     }
 
     function toNumber(val) {
@@ -469,6 +650,14 @@ window.MaterialSnapshot = (function () {
         buildGradingUnits: buildGradingUnits,
         formatStudentDisplayBlock: formatStudentDisplayBlock,
         sliceAndBuild: sliceAndBuild,
+        collectMetaRowKeys: collectMetaRowKeys,
+        describeMetaRowKeys: describeMetaRowKeys,
+        pageNumsFromCell: pageNumsFromCell,
+        rowPageNum: rowPageNum,
+        resolveMetaPageKey: resolveMetaPageKey,
+        normalizeMetaRows: normalizeMetaRows,
+        canonicalizeMetaRows: canonicalizeMetaRows,
+        summarizeMetaPages: summarizeMetaPages,
         RECORDING_UNIT: RECORDING_UNIT,
         RECORDING_UNIT_HINT: RECORDING_UNIT_HINT
     };

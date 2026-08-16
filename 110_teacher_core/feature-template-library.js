@@ -47,7 +47,7 @@ window.FeatureTemplateLibrary = (function () {
             designed_from: row.designed_from || null,
             answer_mode: row.answer_mode || 'combine',
             answer_combine_note: row.answer_combine_note || '',
-            speak_mode: row.speak_mode || 'formula',
+            speak_mode: row.speak_mode || 'direct',
             speak_formula: row.speak_formula || '',
             legacy_id: row.legacy_id || '',
             // 試卷角色欄位
@@ -115,7 +115,7 @@ window.FeatureTemplateLibrary = (function () {
         if (f.designed_from !== undefined) out.designed_from = f.designed_from || null;
         if (f.answer_mode !== undefined) out.answer_mode = f.answer_mode === 'separate' ? 'separate' : 'combine';
         if (f.answer_combine_note !== undefined) out.answer_combine_note = f.answer_combine_note || '';
-        if (f.speak_mode !== undefined) out.speak_mode = ['formula', 'complex', 'paste'].indexOf(f.speak_mode) !== -1 ? f.speak_mode : 'formula';
+        if (f.speak_mode !== undefined) out.speak_mode = ['direct', 'formula', 'complex', 'paste'].indexOf(f.speak_mode) !== -1 ? f.speak_mode : 'direct';
         if (f.speak_formula !== undefined) out.speak_formula = f.speak_formula || '';
         if (f.fields !== undefined) out.fields = f.fields || '';
         if (f.fields_answer !== undefined) out.fields_answer = f.fields_answer || '';

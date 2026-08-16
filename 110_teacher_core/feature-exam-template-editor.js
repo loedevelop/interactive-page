@@ -31,6 +31,14 @@ window.FeatureExamTemplateEditor = (function () {
 
     function fej() { return window.FeatureExamJob; }
 
+    function templateUsageHtml(t) {
+        if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.renderTemplateUsageHtml === 'function') {
+            return window.FeatureClassMaterialCombinations.renderTemplateUsageHtml(t && t.id, { lead: 'exam' });
+        }
+        return '<div style="font-size:0.74rem; color:#047857; font-weight:700; margin-top:2px;">實際使用：</div>'
+            + '<div style="font-size:0.74rem; color:#047857; font-weight:700;">尚未套用到任何教材／班級</div>';
+    }
+
     function blankDraft() {
         return { id: null, name: '', fields: '', fields_answer: '', quiz_prompt: '', quiz_answer: '', lines_per_page: DEFAULT_LINES_PER_PAGE, isExtractionRole: false };
     }
@@ -158,6 +166,7 @@ window.FeatureExamTemplateEditor = (function () {
                     <div style="min-width:0; flex:1;">
                         <div style="font-weight:800; color:#334155; font-size:0.86rem;">🧾 ${esc(t.name)}${dualBadge}${t.is_builtin_seed ? ' <span style="color:#94A3B8; font-size:0.72rem; font-weight:600;">（原內建範本，可自由編輯）</span>' : ''}</div>
                         <div style="font-size:0.74rem; color:#64748B; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(fieldsPreview)}｜每頁${esc(t.lines_per_page || DEFAULT_LINES_PER_PAGE)}行</div>
+                        ${templateUsageHtml(t)}
                     </div>
                 </div>
                 <div style="display:flex; gap:6px; flex-shrink:0;">
@@ -169,6 +178,9 @@ window.FeatureExamTemplateEditor = (function () {
     }
 
     function bindEvents(wrap, templates) {
+        if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.bindUsageSheetToggles === 'function') {
+            window.FeatureClassMaterialCombinations.bindUsageSheetToggles(wrap);
+        }
         const addBtn = wrap.querySelector('#exam-tpl-add-btn');
         if (addBtn) addBtn.addEventListener('click', openNewForm);
 

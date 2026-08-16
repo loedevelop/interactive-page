@@ -318,6 +318,19 @@ window.QuizPaperBuilder = (function () {
         return profiles[0];
     }
 
+    function sheetStemsLooselyMatch(a, b) {
+        function core(s) {
+            let t = String(s || '').trim().replace(/\.meta\.json$/i, '');
+            const m = t.match(/^(.+)\.([A-Za-z][A-Za-z0-9_-]*)$/);
+            if (m) t = m[1];
+            return t.replace(/-/g, '').toUpperCase();
+        }
+        const na = core(a);
+        const nb = core(b);
+        if (!na || !nb) return true;
+        return na === nb;
+    }
+
     /**
      * 範圍（pool）只由 start／end（或 pages／items／range_spec）決定。
      * 💣 雷區：include_nums（必考#）不可再拿來「縮小範圍」──它的語意是
@@ -349,14 +362,22 @@ window.QuizPaperBuilder = (function () {
             });
         }
 
+        const MS = window.MaterialSnapshot;
+        const pageKey = (MS && typeof MS.resolveMetaPageKey === 'function')
+            ? MS.resolveMetaPageKey(rows)
+            : 'page';
+
         return (rows || []).filter(function (row) {
             if (!row) return false;
-            // 若列上有 sheet_id，與區段不一致則略過
-            const rowSheet = String(row.sheet_id || row.stem || '').trim().toUpperCase();
-            if (rowSheet && sheet && rowSheet !== sheet) return false;
+            // 列上的 stem／sheet_id 可能是 A、AvaLiu-vBK-2，區段卻被寫成 AvaLiu-vBK-2.vocab-word
+            // 或連字號不同。這批 rows 已是該 meta 檔讀出來的，只在「明顯是另一本活頁」時才略過。
+            const rowSheet = String(row.sheet_id || row.stem || '').trim();
+            if (rowSheet && sheet && !sheetStemsLooselyMatch(rowSheet, sheet)) return false;
 
-            const itemNo = toNum(row.item_no);
-            const page = toNum(row.page);
+            const itemNo = toNum(row.item_no != null ? row.item_no : row.itemNo);
+            const pageNums = (MS && typeof MS.pageNumsFromCell === 'function')
+                ? MS.pageNumsFromCell(pageKey && row[pageKey] != null ? row[pageKey] : row.page)
+                : (isNaN(toNum(row.page)) ? [] : [toNum(row.page)]);
 
             if (exclude && !isNaN(itemNo) && exclude[itemNo]) return false;
 
@@ -370,9 +391,9 @@ window.QuizPaperBuilder = (function () {
                 return true;
             }
             // page
-            if (isNaN(page)) return false;
-            if (pageSet) return !!pageSet[page];
-            return page >= lo && page <= hi;
+            if (!pageNums.length) return false;
+            if (pageSet) return pageNums.some(function (p) { return !!pageSet[p]; });
+            return pageNums.some(function (p) { return p >= lo && p <= hi; });
         });
     }
 

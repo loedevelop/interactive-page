@@ -14,9 +14,8 @@ alwaysApply: false
 
 1. `resolveExamMaterialContext` 原本**只**看同層 `audio_record` 任務的 `material_refs`，
    沒有錄音任務就直接 `throw`，考試任務完全無法自己指定教材資料夾。
-2. `countAvailableFromMeta` 只吃 `audioTask.raw_data.meta_rows_by_stem`；沒有錄音任務時
-   永遠 `null`，UI 只能落到「~預計格位」估算或「需Snapshot」，但獨立考試根本沒有
-   Snapshot 這個步驟可以按，老師看到提示也做不了任何動作。
+2. `countAvailableFromMeta` 若去吃錄音 Snapshot／`grading_units`，獨立考試永遠算不到，
+   combo 則會用錯來源（老師 2026-08-15 否決：可用題不准用 Snapshot 算）。
 3. combo（配對錄音）與獨立考試若各寫一套「讀 Drive meta.json + _layout.json」的邏輯，
    兩邊很容易行為分岔（見 `material_templates` 系列雷區的教訓）。
 
@@ -24,16 +23,16 @@ alwaysApply: false
 
 ```
 考試任務本身可以有 raw_data.exam_material = { material_folder, root_kind }
-  （只有「同層沒有 audio_record 任務」時才顯示這個輸入框、才會被採用）
 resolveExamMaterialContext 優先序：
-  1. 同層錄音 material_refs（combo，既有邏輯，不可變動）
-  2. 考試任務自己的 exam_material.material_folder（獨立考試）
+  1. 考試任務自己選的教材資料夾／活頁 meta（獨立或強制獨立）
+  2. 同層錄音 material_refs 只當「帶入範圍」的來源，不算可用題
   3. 都沒有 → 明確報錯，不可靜默假設
-countAvailableFromMeta(section, audioTask, selfTask)：
-  audioTask 沒有真數字時，才退回 selfTask（考試任務自己快取的 meta_rows_by_stem）
+countAvailableFromMeta(section, examTask)：
+  只讀考試任務 raw_data.meta_rows_by_stem（「讀取可用題數」灌入）
+  禁止傳錄音任務、禁止看 grading_units
 combo／獨立考試共用同一個 fetchLayoutAndMetaForSheets()，不可各寫一份
-獨立考試「可用題」在按過「🔄 讀取可用題數」前必須顯示「需讀取」，
-  不可用「~頁數×行數」估算粉飾（跟 exam-available-count-invariant.mdc 同精神）
+所有考試「可用題」在按過「🔄 讀取可用題數」前必須顯示「需讀取」，
+  不可用 Snapshot、也不可用「~頁數×行數」粉飾
 ```
 
 ## 禁止
@@ -42,8 +41,8 @@ combo／獨立考試共用同一個 fetchLayoutAndMetaForSheets()，不可各寫
 // ❌ 沒有同層錄音就直接 throw，考試任務完全無法獨立存在
 if (!refs.length) throw new Error('同層錄音尚未設定 material meta');
 
-// ❌ countAvailableFromMeta 只認 audioTask，沒有就永遠 null（獨立考試永遠估算/需Snapshot）
-function countAvailableFromMeta(section, audioTask) { ... return null; }
+// ❌ countAvailableFromMeta 去讀錄音 Snapshot／grading_units
+function countAvailableFromMeta(section, audioTask) { /* 用 audio.raw_data */ }
 
 // ❌ 獨立考試另外複製一份 Drive 讀檔邏輯（跟 inlineGeneratePaper 內的批次/單檔 fallback、
 //    root 順序、missing 判斷各寫一次，日後改一邊忘了改另一邊）
@@ -59,12 +58,10 @@ const self = getExamMaterialSelf(getBuilderTaskByPath(pathStr));
 if (self.material_folder) return { refs: [], materialFolder: self.material_folder, rootKind: self.root_kind, schemaId: '' };
 throw new Error('尚未設定教材來源：...');
 
-// ✅ countAvailableFromMeta 多一個 selfTask fallback（combo 不受影響，因為 audioTask 有值時直接回傳）
-function countAvailableFromMeta(section, audioTask, selfTask) {
-    const v = countAvailableFromMetaSource(section, audioTask);
-    if (v != null) return v;
-    if (selfTask && selfTask !== audioTask) return countAvailableFromMetaSource(section, selfTask);
-    return v;
+// ✅ 可用題只吃考試任務自己的 meta 快取
+function countAvailableFromMeta(section, examTask) {
+    const byStem = (examTask.raw_data && examTask.raw_data.meta_rows_by_stem) || {};
+    return countAvailableFromAnyStemRows(byStem, section) || null;
 }
 
 // ✅ 兩條路徑共用 fetchLayoutAndMetaForSheets(classId, ctx, sheetIds, localRowsByStem)
@@ -105,16 +102,19 @@ function countAvailableFromMeta(section, audioTask, selfTask) {
 ensureMetaCatalog: ensureMetaCatalog,
 getMetaCatalogEntry: getMetaCatalogEntry,
 
-// ✅ 下拉選單值固定 "teacher::資料夾名" / "class::資料夾名"，"__manual__" 是逃生口
-buildExamMaterialFolderOptionsHtml(examMaterialSelf, teacherEntry, classEntry)
+// ✅ 教材資料夾下拉分兩區塊：已指派給本班／其他可用
+//    兩邊都不出現上方「考卷範本」下拉
+//    已指派＝表格「考卷範本」欄自動帶入班級教材組合已配好的範本
+//    其他可用＝老師在表格「考卷範本」欄直接選
+buildExamMaterialFolderOptionsHtml(examMaterialSelf, teacherEntry, classEntry, classId)
 
 // ✅ 渲染函式只回字串，DOM 還沒插入；用 setTimeout(fn, 0) 在下一輪事件圈才去補抓/補畫
 if (!materialFolderCatalogLoaded) setTimeout(function () { ensureExamMaterialFolderCatalog(...); }, 0);
 
-// ✅ 選好教材資料夾後，「活頁」欄跟著換成該資料夾底下真實存在的 stem 下拉
-//    （examSheetStemsForFolder 從同一份 meta 快取推導，找不到清單才退回文字輸入）
-examSheetStemsForFolder(classId, rootKind, materialFolder)
-buildExamSheetOptionsHtml(stems, currentSheetId) // 含 "__manual__" 逃生口
+// ✅ 選好教材資料夾後，「活頁」欄跟著換成該資料夾底下真實存在的 .meta.json 下拉
+//    （value＝檔名，並寫入 section.meta_file_name / meta_file_id；禁止只連資料夾再拼檔名）
+examSheetMetaOptionsForFolder(classId, rootKind, materialFolder)
+buildExamSheetOptionsHtml(metaOpts, section) // 含 "__manual__" 逃生口
 
 // ✅ 換教材資料夾＝活頁清單整個換了，必須整體重繪（refreshExamBuilder），
 //    不能只 sync 狀態，否則各區段的活頁下拉還停在舊資料夾的清單
@@ -129,8 +129,10 @@ inlineOnExamMaterialFolderSelectChange → inlineRefreshAvail(pathStr) → refre
 3. 選好教材資料夾＋活頁（sheet_id）＋範圍 → 按「🔄 讀取可用題數」→ 可用題應變綠字真數字，
    顯示% 應有值（不是 `~估算` 或 `—`）
 4. 按「📝 產生線上卷」→ 應成功產出題目，不因為沒有配對錄音任務而報錯
-5. 已有配對錄音任務的既有 combo 作業 → 行為必須完全不變（不出現教材資料夾下拉，
-   avail／產生線上卷都走原本的 Snapshot／material_refs 路徑）
+5. 已有配對錄音任務的 combo 作業 → 仍可「從同作業錄音範圍帶入」（只帶範圍）；
+   可用題仍要按「讀取可用題數」，不可因錄音已 Snapshot 就變綠字
 6. 下拉選「✏️ 其他（手動輸入）」→ 出現文字輸入框；切回真實資料夾選項 → 文字輸入框應收起
-7. 選好教材資料夾後，各區段「活頁」欄應變成該資料夾底下真實 stem 的下拉（不是空白文字框）；
-   換一個資料夾 → 活頁下拉的選項應跟著換成新資料夾底下的 stem，不是殘留舊資料夾的清單
+7. 選好教材資料夾後，各區段「活頁」欄應變成該資料夾底下真實 .meta.json 的下拉（不是空白文字框、也不是只記資料夾名再拼檔名）；
+   換一個資料夾 → 活頁下拉的選項應跟著換成新資料夾底下的 meta 檔，不是殘留舊資料夾的清單
+8. 儲存後產生線上卷必須用 section.meta_file_id（或清單對到的真實檔名）讀 Drive；
+   不可再拼出 JAYCHENG-VBK5-SENIOR-YEAR.meta.json 這種大小寫／缺範本後綴的假檔名
