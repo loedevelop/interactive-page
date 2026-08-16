@@ -180,7 +180,7 @@ window.FeaturePdfExamJob = (function () {
                 var idx = bank.indexOf(bk);
                 return (
                     '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid #E0F2FE;">' +
-                        '<span style="width:56px; font-size:0.78rem; color:#0369A1; font-weight:800;">' + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + '</span>' +
+                        '<span style="width:56px; font-size:0.78rem; color:#0369A1; font-weight:800;" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + (bk.blank_index ? ('-' + esc(bk.blank_index)) : '') + '</span>' +
                         '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:4px 6px; font-size:0.82rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'answer_text\', this.value)">' +
                         '<input type="text" value="' + esc((bk.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案（逗號分隔）" style="flex:1; min-width:130px; padding:4px 6px; font-size:0.82rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
@@ -214,14 +214,33 @@ window.FeaturePdfExamJob = (function () {
         if (el) el.innerHTML = renderStatusLineHtml(job);
     }
 
-    function parseAnswerTextAction(pathStr) {
+    /**
+     * 解析解答文字（混合式拆格判斷）：逗號分隔、沒寫 OR 的答案，預設當「依序多格」拆開；
+     * 若已經上傳考卷 PDF，會另外去比對這一題在 PDF 上實際偵測到幾條空格線，只有「剛好偵測到
+     * 1 個」才會改判定逗號其實是同一格的替代寫法（見 PdfExamPaper._splitFragmentIntoBlanks 說明）。
+     * PDF 沒上傳、下載/偵測失敗都不擋這個動作，直接退回純文字判斷。
+     */
+    async function parseAnswerTextAction(pathStr) {
         var task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         var job = ensureJob(task);
         var ta = document.getElementById('pdf-exam-answertext-' + pathStr);
         var raw = ta ? ta.value : job.answer_text_raw;
         job.answer_text_raw = raw;
-        var parsed = window.PdfExamPaper.parseAnswerText(raw);
+
+        var blankCountHints = null;
+        if (job.pdf_file_id) {
+            window.showFlash('⏳ 解析中…（比對考卷 PDF 上的空格線）', 'info');
+            try {
+                var pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(job.pdf_file_id);
+                blankCountHints = await window.PdfExamPaper.detectBlankCountsByLabel(pdfDoc);
+            } catch (err) {
+                console.warn('[FeaturePdfExamJob] detectBlankCountsByLabel 失敗，退回純文字判斷', err);
+                blankCountHints = null;
+            }
+        }
+
+        var parsed = window.PdfExamPaper.parseAnswerText(raw, blankCountHints);
         if (!parsed.length) {
             window.showFlash('沒有解析出任何題目，請確認貼的文字裡有「數字.」開頭的題號', 'warning');
         }
@@ -233,7 +252,7 @@ window.FeaturePdfExamJob = (function () {
         var merged = parsed.map(function (b) {
             var prev = prevByKey[b.key];
             if (prev && prev._manuallyEdited) {
-                return { key: b.key, section: b.section, item_no: b.item_no, part: b.part, answer_text: prev.answer_text, accepted_answers: prev.accepted_answers, _manuallyEdited: true };
+                return { key: b.key, section: b.section, item_no: b.item_no, part: b.part, blank_index: b.blank_index, answer_text: prev.answer_text, accepted_answers: prev.accepted_answers, _manuallyEdited: true };
             }
             return b;
         });
@@ -775,15 +794,22 @@ window.FeaturePdfExamJob = (function () {
             var skippedInProgress = 0;
             st.completions.forEach(function (c) {
                 var raw = c.raw_data || {};
-                if (!raw.pdf_quiz_answers) return;
+                if (!raw.pdf_quiz_answers && !raw.pdf_quiz_boxes_by_section) return;
                 // 學生端改成「每大題提交就批改」，考卷有可能只寫到一半——這種還在作答中的
-                // 不能拿目前殘缺的 pdf_quiz_answers 當「全卷已交」重批，否則會把還沒寫的
+                // 不能拿目前殘缺的答案當「全卷已交」重批，否則會把還沒寫的
                 // 大題全部判錯，蓋掉正確的「部分完成」狀態。只重批已經整份交完的學生。
                 if (raw.pdf_quiz_result && raw.pdf_quiz_result.all_submitted === false) {
                     skippedInProgress++;
                     return;
                 }
-                var gradeResult = window.QuizPaperBuilder.gradeAnswers(paper, raw.pdf_quiz_answers);
+                // 💣 重新批改一定要用「學生原始作答框」＋「現在的答案清單」即時重新配對，不能直接吃
+                // raw.pdf_quiz_answers——那是繳交當時用舊答案清單 key 存下來的，答案清單一旦被改過
+                // （拆格／合併／增刪）key 就會變，舊表對不到新 key，學生填過的內容會被判定成沒作答。
+                // pdf_quiz_boxes_by_section 才是真正的原始資料，永遠都在，不管答案清單怎麼改都還能重配對。
+                var answers = raw.pdf_quiz_boxes_by_section
+                    ? window.PdfExamPaper.buildAnswersFromBoxesBySection(st.job.parsed_bank, raw.pdf_quiz_boxes_by_section)
+                    : raw.pdf_quiz_answers;
+                var gradeResult = window.QuizPaperBuilder.gradeAnswers(paper, answers);
                 var nextRaw = Object.assign({}, raw, {
                     pdf_quiz_result: {
                         score: gradeResult.score,

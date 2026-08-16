@@ -386,6 +386,25 @@ window.PdfExamPaper = (function () {
     }
 
     /**
+     * 💣 逗號拆格判斷用：不是要畫框，只是要「數」考卷上某一題（題號＋A/B子項）到底印了幾條空格線，
+     * 用來判斷解答文字裡的逗號是「同一格的替代寫法」還是「依序的多個空格」（見 parseAnswerText）。
+     * 只統計「有找到題號」的空格（`_labelBeforeBlank` 判斷得到），完全比對不到題號的空格不列入，
+     * 避免污染統計、也避免這個「數空格」的用途跟「畫框」用途一樣被 OCR 誤差牽著走太多。
+     * 回傳 { "itemNo::part" -> 空格數量 }（part 可能是空字串）。
+     */
+    function detectBlankCountsByLabel(pdfDoc) {
+        return _detectLabeledBlanks(pdfDoc).then(function (blanks) {
+            var counts = {};
+            blanks.forEach(function (bl) {
+                if (bl.itemNo == null) return;
+                var loose = String(bl.itemNo) + '::' + (bl.part || '');
+                counts[loose] = (counts[loose] || 0) + 1;
+            });
+            return counts;
+        });
+    }
+
+    /**
      * 自動定位主流程，三層比對（信心程度由高到低）：
      * ① 空格前面的題號文字 + 大題完全對上解答清單的 key → 直接配對（多欄／跳頁都適用）
      * ② 題號對上，但大題文字沒對上（老師答案沒抄大題標頭）——只要整份解答清單裡這個題號
@@ -494,6 +513,50 @@ window.PdfExamPaper = (function () {
      * 留在 accepted_answers 當無害的殘留（老師確認清單時可以刪掉）。上一行若以 OR 結尾，代表下一行
      * 是「同一個答案的另一種說法」，直接併入，不要再套用這個問句判斷。
      */
+    /**
+     * 💣 逗號拆格判斷（混合式）：一行答案裡沒寫 OR、但有逗號分隔多段，到底是「同一格的替代答案」
+     * 還是「依序的多個空格」？純文字看不出來，所以：
+     * ① 預設（文字啟發式）：逗號＝依序多個空格，直接拆。這跟老師實測的 Quiz 2 全部答案一致
+     *    （例如 "B: have, have been"，真正的考卷上那一行印了 2 條底線）。
+     * ② 只有當這一題（同題號＋子項）在考卷 PDF 上明確偵測到「剛好 1 個空格」時，才否決①，
+     *    改判定逗號是同一格的替代寫法。PDF 偵測不到（沒上傳／載入失敗／這題比對不到／偵測到
+     *    ≥2個）都維持①的預設——PDF 偵測只用來「降級」，不會讓拆更多格，避免掃描品質不穩時
+     *    把答案拆爆。
+     */
+    function _splitFragmentIntoBlanks(text, hintCount) {
+        if (!text || text.indexOf(',') === -1) return { mode: 'single', pieces: [text] };
+        var pieces = text.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+        if (pieces.length < 2) return { mode: 'single', pieces: [text] };
+        if (hintCount === 1) return { mode: 'alternatives', pieces: pieces };
+        return { mode: 'sequential', pieces: pieces };
+    }
+
+    /**
+     * 依「拆格判斷」結果，把一段（題號行或 A:/B: 行）的文字轉成 1 個或多個 item 物件。
+     * `sequential` 模式會把逗號分段各自變成一個新 item（帶 blankIndex 1..N，各自成一格）；
+     * 其他模式維持原本「單一 item、fragments 陣列」的行為（fragments[0]＝答案，其餘＝其他可接受答案）。
+     */
+    function _buildFragmentItems(section, itemNo, part, strippedFirst, blankCountHints) {
+        var loose = String(itemNo || '') + '::' + (part || '');
+        var hintCount = blankCountHints ? blankCountHints[loose] : undefined;
+        var split = _splitFragmentIntoBlanks(strippedFirst.text, hintCount);
+        if (split.mode === 'sequential' && split.pieces.length > 1) {
+            return split.pieces.map(function (piece, i) {
+                var isLast = i === split.pieces.length - 1;
+                return {
+                    section: section, itemNo: itemNo, part: part, blankIndex: i + 1,
+                    fragments: [piece], _pendingOr: isLast ? strippedFirst.endsWithOr : false
+                };
+            });
+        }
+        var fragments = split.pieces.filter(Boolean);
+        if (!fragments.length && strippedFirst.text) fragments = [strippedFirst.text];
+        return [{
+            section: section, itemNo: itemNo, part: part,
+            fragments: fragments, _pendingOr: strippedFirst.endsWithOr
+        }];
+    }
+
     function addContinuationFragment(item, rawText) {
         var stripped = stripTrailingOr(String(rawText || '').trim());
         var text = stripped.text;
@@ -510,10 +573,12 @@ window.PdfExamPaper = (function () {
 
     /**
      * 寬鬆解析老師貼的解答原始文字，回傳扁平陣列：
-     * [{ key, section, item_no, part, answer_text, accepted_answers[] }]
-     * key = "section::item_no::part"（part 可為 null），用來跟畫框時選的題目一一對應。
+     * [{ key, section, item_no, part, blank_index, answer_text, accepted_answers[] }]
+     * key = "section::item_no::part::blankIndex"（part、blankIndex 可為 null），用來跟畫框時選的題目一一對應。
+     * `blankCountHints`（可選）＝ detectBlankCountsByLabel() 算出的 { "itemNo::part" -> 考卷上偵測到的空格數 }，
+     * 用來判斷逗號分隔的答案要不要拆成多格（見 _splitFragmentIntoBlanks）；不傳就完全走純文字啟發式。
      */
-    function parseAnswerText(raw) {
+    function parseAnswerText(raw, blankCountHints) {
         var lines = String(raw || '').split(/\r?\n/);
         var items = [];
         var currentSection = '(未分類)';
@@ -546,15 +611,8 @@ window.PdfExamPaper = (function () {
                     var abMatch = text.match(AB_LINE_RE);
                     if (abMatch) { part = abMatch[1].toUpperCase(); text = abMatch[2]; }
                     var strippedFirst = stripTrailingOr(text);
-                    var item = {
-                        section: currentSection,
-                        itemNo: seg.no,
-                        part: part,
-                        fragments: strippedFirst.text ? [strippedFirst.text] : [],
-                        _pendingOr: strippedFirst.endsWithOr
-                    };
-                    items.push(item);
-                    last = item;
+                    var newItems = _buildFragmentItems(currentSection, seg.no, part, strippedFirst, blankCountHints);
+                    newItems.forEach(function (it) { items.push(it); last = it; });
                 }
                 return;
             }
@@ -562,15 +620,8 @@ window.PdfExamPaper = (function () {
             var abOnly = line.match(AB_LINE_RE);
             if (abOnly && last) {
                 var strippedAb = stripTrailingOr(abOnly[2].trim());
-                var newItem = {
-                    section: last.section,
-                    itemNo: last.itemNo,
-                    part: abOnly[1].toUpperCase(),
-                    fragments: strippedAb.text ? [strippedAb.text] : [],
-                    _pendingOr: strippedAb.endsWithOr
-                };
-                items.push(newItem);
-                last = newItem;
+                var newItems2 = _buildFragmentItems(last.section, last.itemNo, abOnly[1].toUpperCase(), strippedAb, blankCountHints);
+                newItems2.forEach(function (it) { items.push(it); last = it; });
                 return;
             }
 
@@ -587,10 +638,11 @@ window.PdfExamPaper = (function () {
         var flat = items.map(function (it) {
             var fragments = it.fragments.length ? it.fragments : [''];
             return {
-                key: makeKey(it.section, it.itemNo, it.part),
+                key: makeKey(it.section, it.itemNo, it.part, it.blankIndex),
                 section: it.section,
                 item_no: it.itemNo,
                 part: it.part,
+                blank_index: it.blankIndex || null,
                 answer_text: fragments[0],
                 accepted_answers: fragments.slice(1).filter(function (f) { return f && f !== fragments[0]; })
             };
@@ -609,17 +661,20 @@ window.PdfExamPaper = (function () {
             var na = parseInt(a.item_no, 10), nb = parseInt(b.item_no, 10);
             if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
             if (a.item_no !== b.item_no) return String(a.item_no).localeCompare(String(b.item_no));
-            return String(a.part || '').localeCompare(String(b.part || ''));
+            var pa = String(a.part || ''), pb = String(b.part || '');
+            if (pa !== pb) return pa.localeCompare(pb);
+            return (a.blank_index || 0) - (b.blank_index || 0); // 同題號同子項被拆成多格時，依拆出順序排列
         });
         return flat;
     }
 
-    function makeKey(section, itemNo, part) {
-        return String(section || '') + '::' + String(itemNo || '') + (part ? ('::' + part) : '');
+    function makeKey(section, itemNo, part, blankIndex) {
+        return String(section || '') + '::' + String(itemNo || '') + (part ? ('::' + part) : '') + (blankIndex ? ('::' + blankIndex) : '');
     }
 
     function itemLabel(it) {
-        return String((it && it.section) || '') + ' 第' + String((it && it.item_no) || '') + '題' + ((it && it.part) ? ('-' + it.part) : '');
+        return String((it && it.section) || '') + ' 第' + String((it && it.item_no) || '') + '題' + ((it && it.part) ? ('-' + it.part) : '')
+            + ((it && it.blank_index) ? ('（第' + it.blank_index + '格）') : '');
     }
 
     /** 供批改重用：把 pdf_exam_job.parsed_bank[]（老師確認過的答案清單）轉成
@@ -650,6 +705,40 @@ window.PdfExamPaper = (function () {
             map[sec].push(it);
         });
         return order.map(function (sec) { return { section: sec, items: map[sec] }; });
+    }
+
+    /**
+     * 把「這一大題」的作答框（依建立順序）跟「這一大題」的答案清單（已依題號排好序）一一對齊，
+     * 組成 { bankKey: 學生輸入文字 } 給 QuizPaperBuilder.gradeAnswers。順序才是配對依據，座標只是
+     * 畫面參考用。框數跟題數不一定相等（程式判斷格數可能算錯，或學生自己點的數量不同）——用
+     * Math.min 截斷，多出來的框先忽略（原始內容還在 pdf_quiz_boxes_by_section 不會不見）、
+     * 少掉的格視為沒作答。學生第一次送出、老師之後重新批改都呼叫這個共用函式，不要各寫一份。
+     */
+    function buildSectionAnswersFromBoxes(sectionItems, boxes) {
+        var answers = {};
+        var items = sectionItems || [];
+        var list = boxes || [];
+        var n = Math.min(list.length, items.length);
+        for (var i = 0; i < n; i++) answers[items[i].key] = list[i].text || '';
+        return answers;
+    }
+
+    /**
+     * 把整份 pdf_quiz_boxes_by_section（學生原始作答框，永久保留、不管答案清單後來怎麼改都還在）
+     * 依「目前」的答案清單（bank）重新配對成完整的 { key: 文字 }。特別重要的是：**不要**去讀舊的
+     * `pdf_quiz_answers`（那是繳交當時、用舊答案清單 key 存下來的），因為老師後來修正答案清單
+     * （拆格／合併／增刪）會讓 key 變掉，舊表就對不到新 key、把學生填過的內容判定成沒作答。
+     * 這個函式永遠用「現在」的 bank 分組 + 學生原始作答框位置重新配對，才不會因為答案清單改版
+     * 而遺失已經填過的內容——老師重新批改一定要走這裡，不能直接吃 pdf_quiz_answers。
+     */
+    function buildAnswersFromBoxesBySection(bank, boxesBySection) {
+        var sections = groupItemsBySection(bank);
+        var list = boxesBySection || [];
+        var answers = {};
+        sections.forEach(function (sec, idx) {
+            Object.assign(answers, buildSectionAnswersFromBoxes(sec.items, list[idx] || []));
+        });
+        return answers;
     }
 
     /**
@@ -753,6 +842,7 @@ window.PdfExamPaper = (function () {
         downloadDriveFileAsArrayBuffer: downloadDriveFileAsArrayBuffer,
         loadPdfDocumentFromDrive: loadPdfDocumentFromDrive,
         detectBlankCandidates: detectBlankCandidates,
+        detectBlankCountsByLabel: detectBlankCountsByLabel,
         autoAssignBoxesInOrder: autoAssignBoxesInOrder,
         detectSectionPageRanges: detectSectionPageRanges,
         parseAnswerText: parseAnswerText,
@@ -760,6 +850,8 @@ window.PdfExamPaper = (function () {
         itemLabel: itemLabel,
         buildGradingPaper: buildGradingPaper,
         groupItemsBySection: groupItemsBySection,
-        computeSectionStats: computeSectionStats
+        computeSectionStats: computeSectionStats,
+        buildSectionAnswersFromBoxes: buildSectionAnswersFromBoxes,
+        buildAnswersFromBoxesBySection: buildAnswersFromBoxesBySection
     };
 })();

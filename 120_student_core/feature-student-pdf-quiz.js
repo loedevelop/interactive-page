@@ -275,18 +275,14 @@ window.FeatureStudentPdfQuiz = (function () {
                 btn.textContent = '✅ 已批改 ' + r.correct + ' / ' + r.total;
                 btn.onclick = null;
             }
-        } else if (_isSectionComplete(idx)) {
+        } else {
+            // 💣 不強制學生點出的作答框數量一定要等於程式判斷的格數（程式判斷可能算錯）——
+            // 隨時都能提交這一大題，送出後就依學生當時實際點的作答框批改。
             btn.disabled = false;
             btn.style.opacity = '1';
             btn.style.cursor = 'pointer';
             btn.textContent = '提交這一大題並批改';
             btn.onclick = submitSection;
-        } else {
-            btn.disabled = true;
-            btn.style.opacity = '0.65';
-            btn.style.cursor = 'not-allowed';
-            btn.textContent = '先點出每一格再提交';
-            btn.onclick = null;
         }
     }
 
@@ -302,9 +298,11 @@ window.FeatureStudentPdfQuiz = (function () {
             if (_isSectionSubmitted(idx)) {
                 el.innerHTML = '';
             } else {
+                // 💣 這只是提示，不是強制門檻——程式判斷的格數可能算錯，數量不符仍然可以直接提交，
+                // 送出後會依你實際點出的作答框批改。
                 var ok = got === need;
                 el.innerHTML = '目前這大題：<b style="color:' + (ok ? '#047857' : '#B45309') + ';">已建立 ' + got + ' / ' + need + ' 個作答框</b>'
-                    + (ok ? ' ✅ 可以提交這一大題' : ' ⚠ 請照題目順序，把每一題（不會寫也留空）都點出作答框');
+                    + (ok ? ' ✅' : '（提示：請照題目順序把每一題都點出來，不會寫也留空；數量不符也可以直接提交）');
             }
         }
         _updateActionButton();
@@ -331,6 +329,7 @@ window.FeatureStudentPdfQuiz = (function () {
         var locked = _isSectionSubmitted(idx);
         var indicatorEl = document.getElementById('pdf-quiz-section-indicator');
         if (indicatorEl) indicatorEl.textContent = '大題 ' + (idx + 1) + ' / ' + st.sections.length + '：' + sec.section + (locked ? '（已批改）' : '');
+        _renderSectionTabs();
         var body = document.getElementById(MODAL_ID + '-body');
         if (!body) return;
         body.innerHTML = '<div style="padding:30px; text-align:center; color:#94A3B8;">⏳ 載入頁面…</div>';
@@ -384,17 +383,45 @@ window.FeatureStudentPdfQuiz = (function () {
         if (nextBtn) nextBtn.style.visibility = st.currentIdx === st.sections.length - 1 ? 'hidden' : 'visible';
     }
 
+    /**
+     * 直接跳到任一大題，不用依序完成。各大題的作答框各自存在 boxesBySection[idx]，跟目前顯示
+     * 哪一大題無關，所以自由跳題不會遺失任何已填的內容；已批改的大題跳進去就是鎖定唯讀畫面
+     * （沿用 _renderSection 既有的 locked 邏輯）。
+     */
+    function _jumpToSection(idx) {
+        var st = _quizState;
+        if (!st) return;
+        if (idx < 0 || idx >= st.sections.length || idx === st.currentIdx) return;
+        st.currentIdx = idx;
+        _renderSection();
+    }
+
     function _goToSection(delta) {
         var st = _quizState;
         if (!st) return;
-        if (delta > 0 && !_isSectionSubmitted(st.currentIdx)) {
-            window.showFlash('請先提交這一大題並完成批改，才能換下一大題', 'warning');
-            return;
-        }
-        var next = st.currentIdx + delta;
-        if (next < 0 || next >= st.sections.length) return;
-        st.currentIdx = next;
-        _renderSection();
+        _jumpToSection(st.currentIdx + delta);
+    }
+
+    function _renderSectionTabsHtml() {
+        var st = _quizState;
+        if (!st) return '';
+        return st.sections.map(function (sec, idx) {
+            var submitted = _isSectionSubmitted(idx);
+            var isCurrent = idx === st.currentIdx;
+            var bg = submitted ? '#ECFDF5' : (isCurrent ? '#E0F2FE' : '#F8FAFC');
+            var border = submitted ? '#6EE7B7' : (isCurrent ? '#7DD3FC' : '#E2E8F0');
+            var color = submitted ? '#047857' : (isCurrent ? '#0369A1' : '#64748B');
+            var label = String(idx + 1) + (submitted ? ' ✓' : '');
+            return '<button type="button" class="pdf-quiz-section-tab" data-idx="' + idx + '" title="' + esc(sec.section) + '" ' +
+                'style="border:2px solid ' + border + '; background:' + bg + '; color:' + color + '; font-weight:800; font-size:0.75rem; padding:3px 10px; border-radius:999px; cursor:pointer; flex-shrink:0;' +
+                (isCurrent ? ' box-shadow:0 0 0 2px rgba(3,105,161,0.25);' : '') + '" ' +
+                'onclick="window.FeatureStudentPdfQuiz._jumpToSection(' + idx + ')">' + esc(label) + '</button>';
+        }).join('');
+    }
+
+    function _renderSectionTabs() {
+        var el = document.getElementById('pdf-quiz-section-tabs');
+        if (el) el.innerHTML = _renderSectionTabsHtml();
     }
 
     function requestClose() {
@@ -674,6 +701,7 @@ window.FeatureStudentPdfQuiz = (function () {
                     '</div>' +
                     prevScoreHtml +
                     '<div id="pdf-quiz-section-indicator" style="font-size:0.85rem; font-weight:800; color:#0369A1; margin-bottom:4px;"></div>' +
+                    '<div id="pdf-quiz-section-tabs" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;"></div>' +
                     '<div id="pdf-quiz-counter" style="font-size:0.8rem; margin-bottom:6px;"></div>' +
                     '<div id="' + MODAL_ID + '-body" style="flex:1; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; padding:10px;"></div>' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">' +
@@ -752,10 +780,7 @@ window.FeatureStudentPdfQuiz = (function () {
         var answers = {};
         st.sections.forEach(function (sec, idx) {
             var boxes = st.boxesBySection[idx] || [];
-            var n = Math.min(boxes.length, sec.items.length);
-            for (var i = 0; i < n; i++) {
-                answers[sec.items[i].key] = boxes[i].text || '';
-            }
+            Object.assign(answers, window.PdfExamPaper.buildSectionAnswersFromBoxes(sec.items, boxes));
         });
         return answers;
     }
@@ -765,12 +790,7 @@ window.FeatureStudentPdfQuiz = (function () {
         var st = _quizState;
         var sec = st.sections[idx];
         var boxes = st.boxesBySection[idx] || [];
-        var answers = {};
-        var n = Math.min(boxes.length, sec.items.length);
-        for (var i = 0; i < n; i++) {
-            answers[sec.items[i].key] = boxes[i].text || '';
-        }
-        return answers;
+        return window.PdfExamPaper.buildSectionAnswersFromBoxes(sec.items, boxes);
     }
 
     /**
@@ -783,10 +803,8 @@ window.FeatureStudentPdfQuiz = (function () {
         if (!st) return;
         var idx = st.currentIdx;
         if (_isSectionSubmitted(idx)) return;
-        if (!_isSectionComplete(idx)) {
-            window.showFlash('這一大題還沒把每一題的作答框都點出來（不會寫也要點一下留空），才能提交批改', 'warning');
-            return;
-        }
+        // 💣 不強制作答框數量一定要等於程式判斷的格數（程式判斷可能算錯）——數量不符也能直接送出，
+        // 送出後就依學生當時實際點的作答框批改；不會作答的題也不會擋在這裡，是學生自己的選擇。
         var sec = st.sections[idx];
         if (!window.confirm('確定要提交「' + sec.section + '」嗎？提交後會立刻批改，這一大題就不能再修改了。')) return;
 
@@ -839,6 +857,7 @@ window.FeatureStudentPdfQuiz = (function () {
         requestClose: requestClose,
         submitSection: submitSection,
         _goToSection: _goToSection,
+        _jumpToSection: _jumpToSection,
         closeResult: closeResult,
         openPastResult: openPastResult,
         changeFontSize: changeFontSize
