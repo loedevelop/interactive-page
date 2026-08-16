@@ -473,6 +473,12 @@ window.BuilderStore = (() => {
                         window.FeatureExamJob.syncInlineEditor(pathStr, t);
                     }
                 }
+
+                // 🆕 PDF 考卷：只把畫面上的解答文字 textarea 同步回 raw_data，其餘（上傳的 PDF、
+                // 答案清單、已畫的框）都是直接 mutate task.raw_data.pdf_exam_job，不靠這裡同步。
+                if (t.type === 'pdf_exam' && window.FeaturePdfExamJob && typeof window.FeaturePdfExamJob.syncInlineEditor === 'function') {
+                    window.FeaturePdfExamJob.syncInlineEditor(pathStr, t);
+                }
             }
         });
     }
@@ -582,6 +588,13 @@ window.BuilderStore = (() => {
             exam_job: null
         }),
 
+        // 🆕 PDF 考卷（全新、獨立的考試模式，見 feature-pdf-exam-job.js）：真正的資料結構
+        // （pdf_exam_job：pdf_file_id／parsed_bank／items 等）由 FeaturePdfExamJob.ensureJob 在
+        // 第一次編輯時補建，這裡只放 null 佔位，避免這個檔案跟 PDF 考卷的實作細節綁死。
+        _defaultPdfExamRaw: () => ({
+            pdf_exam_job: null
+        }),
+
         _makeLeafNode: (type, title, rawData) => ({
             id: `task_${Date.now()}_${Math.random()}`,
             type,
@@ -615,6 +628,7 @@ window.BuilderStore = (() => {
             let raw = {};
             if (type === 'audio_record') raw = window.BuilderStore._defaultAudioRaw();
             else if (type === 'exam') raw = window.BuilderStore._defaultExamRaw();
+            else if (type === 'pdf_exam') raw = window.BuilderStore._defaultPdfExamRaw();
             else if (type === 'group') raw = {};
 
             // 掛在範圍層下的錄音：若尚未填 material_range，帶入父層標題當提示（舊作業無 group_role 不受影響）
@@ -738,6 +752,10 @@ window.BuilderStore = (() => {
                 if (task.raw_data.exam_job_id === undefined) task.raw_data.exam_job_id = '';
                 if (task.raw_data.exam_title === undefined) task.raw_data.exam_title = '';
                 if (task.raw_data.exam_job === undefined) task.raw_data.exam_job = null;
+            }
+            if (newType === 'pdf_exam') {
+                if (!task.raw_data) task.raw_data = {};
+                if (task.raw_data.pdf_exam_job === undefined) task.raw_data.pdf_exam_job = null;
             }
         },
         updateNodeUrl: (pathStr, val) => {

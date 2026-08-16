@@ -1224,6 +1224,7 @@ window.UIStudentTimelineTemplates = (() => {
                     if (task.type === 'link') iconStr = '🔗';
                     if (task.type === 'audio_record') iconStr = '🎙️';
                     if (task.type === 'exam') iconStr = '📝';
+                    if (task.type === 'pdf_exam') iconStr = '📄';
                     
                     let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.15rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
                     const safeCourseId = escapeJsSingleQuoted(course.id);
@@ -1439,6 +1440,45 @@ window.UIStudentTimelineTemplates = (() => {
                                     ${retakeBtn}
                                     ${correctionBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${itemN} 題</span>
+                                </div>
+                            `;
+                        }
+                    } else if (task.type === 'pdf_exam') {
+                        // 🆕 PDF 考卷：獨立於上面的 exam（meta 出題）分支，直接用 pdf_exam_job.parsed_bank 判斷是否已設定完成
+                        // （改版後老師端不再畫框，作答位置由學生自己點，見 feature-student-pdf-quiz.js）
+                        let displayTitle = stripHtml(task.title ? task.title : 'PDF 考卷');
+                        taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
+                        const pdfJob = task.raw_data && task.raw_data.pdf_exam_job;
+                        const pdfItemN = (pdfJob && Array.isArray(pdfJob.parsed_bank)) ? pdfJob.parsed_bank.filter(it => it.key).length : 0;
+                        const pdfComp = (window._studentTaskCompletions || []).find(function (c) {
+                            return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
+                        });
+                        const pdfResult = (pdfComp && pdfComp.raw_data) ? pdfComp.raw_data.pdf_quiz_result : null;
+                        if (!pdfJob || !pdfJob.pdf_file_id || !pdfItemN) {
+                            checkboxHtml = '';
+                            btn = `<div style="color:#92400E; font-size:0.85rem; font-weight:800; background:#FFFBEB; padding:4px 10px; border-radius:6px; border:1px solid #FDE68A;">老師尚未設定完成</div>`;
+                        } else {
+                            checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
+                            // 學生端改成「每大題提交就批改」，pdfResult.all_submitted===false 代表還在作答中
+                            // （只批改了部分大題），跟整份都交完要分開顯示，避免看起來像已經考完。
+                            const pdfInProgress = !!(pdfResult && pdfResult.all_submitted === false);
+                            const pdfScoreHtml = pdfResult
+                                ? (pdfInProgress
+                                    ? `<span style="font-size:0.8rem; font-weight:800; color:#B45309; background:#FFFBEB; border:1px solid #FDE68A; padding:2px 8px; border-radius:6px;">作答中 ${escapeAttr(pdfResult.submitted_sections)}/${escapeAttr(pdfResult.total_sections)} 大題</span>`
+                                    : `<span style="font-size:0.8rem; font-weight:800; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:2px 8px; border-radius:6px;">${escapeAttr(pdfResult.correct)}/${escapeAttr(pdfResult.total)}（${escapeAttr(pdfResult.score)}%）</span>`)
+                                : '';
+                            const pdfBtnLabel = pdfInProgress ? '繼續作答' : (pdfResult ? '再作一次' : '📝 開始作答');
+                            const pdfReviewBtn = (pdfResult && !pdfInProgress)
+                                ? `<button type="button" class="btn-action" style="background:white; color:#0369A1; border:1px solid #BAE6FD; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openPastResult('${safeCourseId}', '${safeTaskId}')">上次成績</button>`
+                                : '';
+                            btn = `
+                                <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    ${pdfScoreHtml}
+                                    <button type="button" class="btn-action" style="background:#0369A1; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
+                                        onclick="window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${pdfBtnLabel}</button>
+                                    ${pdfReviewBtn}
+                                    <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pdfItemN} 題</span>
                                 </div>
                             `;
                         }

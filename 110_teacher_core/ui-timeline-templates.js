@@ -120,7 +120,8 @@ window.TimelineTemplates = (() => {
             : (t.type === 'check' ? '📌'
                 : (t.type === 'link' ? '🔗'
                 : (t.type === 'audio_record' ? '🎙️'
-                : (t.type === 'exam' ? '📝' : '📁'))));
+                : (t.type === 'exam' ? '📝'
+                : (t.type === 'pdf_exam' ? '📄' : '📁')))));
         let iconHtml = `<span style="display:inline-block; width:1.5rem; text-align:center; font-size:1.1rem; margin-right:4px; line-height:1;">${iconStr}</span>`;
         
         let extraTag = '';
@@ -140,6 +141,19 @@ window.TimelineTemplates = (() => {
                 + (paperN
                     ? `<span style="font-size:0.8rem; background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">線上卷 ${paperN} 題</span>`
                     : `<span style="font-size:0.8rem; background:#FFFBEB; color:#92400E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">尚未產生線上卷</span>`);
+        } else if (t.type === 'pdf_exam') {
+            const pdfJob = (t.raw_data && t.raw_data.pdf_exam_job) || null;
+            const bankN = (pdfJob && Array.isArray(pdfJob.parsed_bank)) ? pdfJob.parsed_bank.length : 0;
+            const hasPdf = !!(pdfJob && pdfJob.pdf_file_id);
+            // 答案改過還沒重新批改：即使收合看列表也要看得到，不用展開才發現分數是舊的
+            const regradeBadge = (pdfJob && pdfJob.needs_regrade)
+                ? `<span style="font-size:0.8rem; background:#FEF2F2; color:#B91C1C; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">⚠ 答案有更新，待重新批改</span>`
+                : '';
+            extraTag = '<span style="font-size:0.9rem; color:#0369A1; margin-left:8px; font-weight:bold;">(PDF 考卷)</span>'
+                + (hasPdf && bankN
+                    ? `<span style="font-size:0.8rem; background:#E0F2FE; color:#0369A1; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">已確認答案 ${bankN} 題</span>`
+                    : `<span style="font-size:0.8rem; background:#FFFBEB; color:#92400E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">尚未設定完成</span>`)
+                + regradeBadge;
         }
         else extraTag = '<span style="font-size:0.9rem; color:#94A3B8; margin-left:8px;">(自行打勾)</span>';
 
@@ -435,6 +449,7 @@ window.TimelineTemplates = (() => {
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'link')">+ 🔗 連結</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'audio_record')">+ 🎙️ 錄音</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #0F766E; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'exam')">+ 📝 考試</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #0369A1; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'pdf_exam')">+ 📄 PDF 考試</button>
                                 
                                 <div style="display:inline-flex; align-items:center; gap:4px;">
                                     <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'drive')">+ 📁 Drive</button>
@@ -457,6 +472,7 @@ window.TimelineTemplates = (() => {
                         <option value="drive" ${t.type === 'drive' ? 'selected' : ''}>📁 Drive</option>
                         <option value="audio_record" ${t.type === 'audio_record' ? 'selected' : ''}>🎙️ 錄音</option>
                         <option value="exam" ${t.type === 'exam' ? 'selected' : ''}>📝 考試</option>
+                        <option value="pdf_exam" ${t.type === 'pdf_exam' ? 'selected' : ''}>📄 PDF 考試</option>
                     </select>
                 `;
 
@@ -807,6 +823,14 @@ window.TimelineTemplates = (() => {
                         : '<div style="margin-top:8px; color:#B91C1C;">FeatureExamJob 未載入</div>';
                 }
 
+                // 🆕 PDF 考卷：全新、獨立分支，跟上面的 exam（meta 出題）互不干涉
+                let pdfExamInputHtml = '';
+                if (t.type === 'pdf_exam') {
+                    pdfExamInputHtml = (window.FeaturePdfExamJob && typeof window.FeaturePdfExamJob.renderInlineEditorHtml === 'function')
+                        ? window.FeaturePdfExamJob.renderInlineEditorHtml(pathStr, t)
+                        : '<div style="margin-top:8px; color:#B91C1C;">FeaturePdfExamJob 未載入</div>';
+                }
+
                 // 錄音／考試標題：空白時繼承同層錄音 base 範圍
                 let leafTitleHtml = String(t.title || '');
                 let leafTitleAuto = '0';
@@ -884,6 +908,7 @@ window.TimelineTemplates = (() => {
                         ${urlInputHtml}
                         ${audioInputHtml}
                         ${examInputHtml}
+                        ${pdfExamInputHtml}
                         <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
                             <div id="node-desc-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
                         </div>
@@ -987,6 +1012,7 @@ window.TimelineTemplates = (() => {
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #64748B; color: white;" onclick="window.FeatureTimeline.addNode(null, 'link')">+ 🔗 連結</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #EF4444; color: white;" onclick="window.FeatureTimeline.addNode(null, 'audio_record')">+ 🎙️ 錄音</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #0F766E; color: white;" onclick="window.FeatureTimeline.addNode(null, 'exam')">+ 📝 考試</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #0369A1; color: white;" onclick="window.FeatureTimeline.addNode(null, 'pdf_exam')">+ 📄 PDF 考試</button>
                     <div style="display:inline-flex; align-items:center; gap:4px;">
                         <button type="button" class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                     </div>

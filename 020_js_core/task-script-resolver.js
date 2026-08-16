@@ -123,6 +123,7 @@ window.TaskScriptResolver = (function () {
         link: '🔗',
         audio_record: '🎙️',
         exam: '📝',
+        pdf_exam: '📄',
         drive: '📁'
     };
 

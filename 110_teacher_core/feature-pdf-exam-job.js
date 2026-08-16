@@ -1,0 +1,825 @@
+/**
+ * 📂 110_teacher_core/feature-pdf-exam-job.js
+ * 🆕 PDF 考卷（task.type === 'pdf_exam'）老師端：全新、獨立的考試模式，跟現有 meta.json→quiz_paper
+ * 出題管線（feature-exam-job.js／feature-material-layout-pairing.js／quiz-paper-builder.js）完全
+ * 不共用邏輯層，只是「呼叫」QuizPaperBuilder.gradeAnswers 做批改，不修改任何既有檔案的行為。
+ *
+ * 流程（老師只做①②③，不用畫框、不用管空格在哪個座標）：
+ * ① 上傳考卷 PDF（題目卷，不上傳解答 PDF）
+ * ② 老師直接貼解答原始文字（老師已 OCR 好，不整理格式）→ PdfExamPaper.parseAnswerText 寬鬆解析
+ *    → 老師在畫面上逐項確認/修正文字（最後一道防線，解析不保證 100% 準）
+ * ③ 存進 task.raw_data.pdf_exam_job.parsed_bank[]：{ key, section, item_no, part, answer_text, accepted_answers }
+ *
+ * 💣 空格在 PDF 上的精確位置，本來想用電腦視覺（讀題號文字／掃底線像素）自動偵測，實測對掃描稿
+ * 常常誤判（例如把標題粗體字、色塊當成底線，見討論記錄），而且老師事後也很難一眼看出哪裡配錯。
+ * 改成：**由學生作答時自己依「答案清單的順序」逐一點出作答位置**（見 120_student_core/
+ * feature-student-pdf-quiz.js），順序＝文字匡建立的順序（不用時間戳記，陣列 push 順序即等價），
+ * 不是座標——完全不用猜多欄位版面怎麼分群，也不會被 OCR 誤判害到。老師端因此不再需要畫框／
+ * 自動定位這一關。
+ *
+ * 資料只塞新的 raw_data key（pdf_exam_job／學生端 pdf_quiz_answers／pdf_quiz_result），跟既有
+ * quiz_paper／quiz_answers／quiz_result 並存、互不覆寫。
+ */
+window.FeaturePdfExamJob = (function () {
+    'use strict';
+
+    var REVIEW_MODAL_ID = 'pdf-exam-review';
+
+    var _reviewState = null;
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function truncate(s, n) {
+        s = String(s == null ? '' : s);
+        return s.length > n ? (s.slice(0, n) + '…') : s;
+    }
+
+    function getBuilderTaskByPath(pathStr) {
+        if (!window.BuilderStore || typeof window.BuilderStore.getState !== 'function') return null;
+        var bState = window.BuilderStore.getState();
+        if (!bState || !Array.isArray(bState.tasks)) return null;
+        var arr = String(pathStr).split('-').map(Number);
+        var list = bState.tasks;
+        var node = null;
+        for (var i = 0; i < arr.length; i++) {
+            node = list[arr[i]];
+            if (!node) return null;
+            if (i < arr.length - 1) list = node.subTasks || [];
+        }
+        return node;
+    }
+
+    function defaultJob() {
+        return {
+            pdf_file_id: '',
+            pdf_file_url: '',
+            pdf_file_name: '',
+            answer_text_raw: '',
+            parsed_bank: [],
+            updated_at: '',
+            needs_regrade: false
+        };
+    }
+
+    function ensureJob(task) {
+        if (!task.raw_data) task.raw_data = {};
+        if (!task.raw_data.pdf_exam_job || typeof task.raw_data.pdf_exam_job !== 'object') {
+            task.raw_data.pdf_exam_job = defaultJob();
+        }
+        var job = task.raw_data.pdf_exam_job;
+        if (!Array.isArray(job.parsed_bank)) job.parsed_bank = [];
+        if (typeof job.answer_text_raw !== 'string') job.answer_text_raw = '';
+        if (typeof job.needs_regrade !== 'boolean') job.needs_regrade = false;
+        return job;
+    }
+
+    /** 答案清單有任何變動（改字、加題、刪題、重新解析）都要標記「需要重新批改」，
+     * 直到老師在複核頁按下「儲存並重新批改全班」才清掉——不然已批改的學生分數會悄悄跟新答案脫鉤。 */
+    function markNeedsRegrade(pathStr, job) {
+        job.needs_regrade = true;
+        refreshStatusLine(pathStr, job);
+    }
+
+    // ------------------------------------------------------------------
+    // ① 上傳考卷 PDF
+    // ------------------------------------------------------------------
+
+    function renderFileStatusHtml(job) {
+        if (!job.pdf_file_id) return '<span style="color:#94A3B8;">尚未上傳考卷 PDF</span>';
+        var link = job.pdf_file_url
+            ? ('<a href="' + esc(job.pdf_file_url) + '" target="_blank" rel="noopener">' + esc(job.pdf_file_name || '查看檔案') + '</a>')
+            : esc(job.pdf_file_name || '');
+        return '<span style="color:#047857; font-weight:800;">✅ ' + link + '</span>';
+    }
+
+    function handlePdfFileChange(inputEl, pathStr) {
+        var file = inputEl.files && inputEl.files[0];
+        if (!file) return;
+        if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+            window.showFlash('請選擇 PDF 檔案', 'error');
+            inputEl.value = '';
+            return;
+        }
+        if (file.size > 30 * 1024 * 1024) {
+            // 💣 上傳走 GAS，要先轉 base64 再送出，體積會再膨脹約 33%；30MB 已經是留了緩衝的上限，
+            // 真正該做的是請老師壓縮掃描檔（灰階/黑白＋200dpi 上下即可），不是把這個上限繼續往上調——
+            // 調太大只會讓上傳更容易在 Apps Script 端逾時失敗，體驗更差。
+            window.showFlash('檔案過大（超過 30MB），掃描稿通常可以壓縮到幾 MB 內畫質也不會變差，請先用 PDF 壓縮工具處理後再上傳', 'error');
+            inputEl.value = '';
+            return;
+        }
+        if (window.BuilderStore) window.BuilderStore.sync();
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        var statusEl = document.getElementById('pdf-exam-file-status-' + pathStr);
+        if (statusEl) statusEl.innerHTML = '⏳ 上傳中…';
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            var base64 = String(e.target.result).split(',')[1];
+            uploadPdfToDrive(base64, file.name, file.type || 'application/pdf', pathStr, job).catch(function (err) {
+                console.error('[FeaturePdfExamJob] upload', err);
+                window.showFlash('PDF 上傳失敗：' + (err.message || err), 'error');
+                if (statusEl) statusEl.innerHTML = renderFileStatusHtml(job);
+            });
+        };
+        reader.onerror = function () { window.showFlash('讀取檔案失敗', 'error'); };
+        reader.readAsDataURL(file);
+        inputEl.value = '';
+    }
+
+    async function uploadPdfToDrive(base64, fileName, mimeType, pathStr, job) {
+        if (!window.GasService || typeof window.GasService.uploadMaterialFile !== 'function') {
+            throw new Error('GasService 尚未載入');
+        }
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.resolveMaterialsRootFolderId !== 'function') {
+            throw new Error('FeatureTimeline 尚未載入');
+        }
+        if (typeof window.GasService.ensureMaterialFolder !== 'function') {
+            throw new Error('GasService.ensureMaterialFolder 尚未載入');
+        }
+        var bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        var classId = bState ? bState.classId : '';
+        var rootKind = classId ? 'class' : 'teacher';
+        var rootFolderId = await window.FeatureTimeline.resolveMaterialsRootFolderId(classId, rootKind);
+        // 沿用「跟現有教材同一套 Drive 資料夾」的約定（見 feature-material-layout-pairing.js 同樣呼叫
+        // GasService.ensureMaterialFolder 的用法）：班級層是 00_Class_Materials、老師個人層是
+        // 01_My_Materials，不另開獨立資料夾樹，只在該套底下多一個「PDF考卷」子資料夾收納考卷檔。
+        var materialsRootName = rootKind === 'teacher' ? '01_My_Materials' : '00_Class_Materials';
+        var folderResult = await window.GasService.ensureMaterialFolder(rootFolderId, materialsRootName, 'PDF考卷');
+        var folderId = folderResult && folderResult.folderId;
+        if (!folderId) throw new Error('無法建立/取得 PDF 考卷資料夾');
+        var uploadResult = await window.GasService.uploadMaterialFile(base64, fileName, mimeType, folderId);
+        job.pdf_file_id = uploadResult.fileId;
+        job.pdf_file_url = uploadResult.fileUrl || '';
+        job.pdf_file_name = uploadResult.finalFileName || fileName;
+        job.updated_at = new Date().toISOString();
+        var statusEl = document.getElementById('pdf-exam-file-status-' + pathStr);
+        if (statusEl) statusEl.innerHTML = renderFileStatusHtml(job);
+        window.showFlash('✅ PDF 上傳成功：' + job.pdf_file_name, 'success');
+    }
+
+    // ------------------------------------------------------------------
+    // ② 解答文字解析與確認清單
+    // ------------------------------------------------------------------
+
+    function renderBankTableHtml(pathStr, job) {
+        var bank = job.parsed_bank || [];
+        if (!bank.length) {
+            return '<div style="color:#94A3B8; font-size:0.85rem; padding:8px;">尚未解析出任何答案，請貼上文字後按「解析成答案清單」</div>';
+        }
+        var groups = window.PdfExamPaper.groupItemsBySection(bank);
+        return groups.map(function (g) {
+            var rowsHtml = g.items.map(function (bk) {
+                var idx = bank.indexOf(bk);
+                return (
+                    '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid #E0F2FE;">' +
+                        '<span style="width:56px; font-size:0.78rem; color:#0369A1; font-weight:800;">' + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + '</span>' +
+                        '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:4px 6px; font-size:0.82rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
+                            'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'answer_text\', this.value)">' +
+                        '<input type="text" value="' + esc((bk.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案（逗號分隔）" style="flex:1; min-width:130px; padding:4px 6px; font-size:0.82rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
+                            'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'accepted_answers\', this.value)">' +
+                        '<button type="button" class="btn-icon" style="font-size:0.8rem; padding:2px 6px;" onclick="window.FeaturePdfExamJob.removeBankRow(\'' + pathStr + '\', ' + idx + ')">🗑️</button>' +
+                    '</div>'
+                );
+            }).join('');
+            return '<div style="margin-bottom:8px;"><div style="font-weight:800; color:#0369A1; font-size:0.82rem; margin:6px 0 2px;">📘 ' + esc(g.section) + '</div>' + rowsHtml + '</div>';
+        }).join('');
+    }
+
+    function renderStatusLineHtml(job) {
+        var bankN = (job.parsed_bank || []).length;
+        var regradeWarning = job.needs_regrade
+            ? ' · <span style="color:#B91C1C; font-weight:900;">⚠ 答案有更新，尚未替已作答的學生重新批改——請到下面「查看/複核學生作答」按重新批改</span>'
+            : '';
+        return '已確認答案 ' + bankN + ' 題'
+            + (job.pdf_file_id ? '' : ' · ⚠ 尚未上傳 PDF')
+            + (bankN ? ' · 學生作答時會自己在 PDF 上點出每一題的作答位置，這裡不用畫框' : '')
+            + regradeWarning;
+    }
+
+    function refreshBankTable(pathStr, job) {
+        var el = document.getElementById('pdf-exam-bank-' + pathStr);
+        if (el) el.innerHTML = renderBankTableHtml(pathStr, job);
+    }
+
+    function refreshStatusLine(pathStr, job) {
+        var el = document.getElementById('pdf-exam-status-' + pathStr);
+        if (el) el.innerHTML = renderStatusLineHtml(job);
+    }
+
+    function parseAnswerTextAction(pathStr) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        var ta = document.getElementById('pdf-exam-answertext-' + pathStr);
+        var raw = ta ? ta.value : job.answer_text_raw;
+        job.answer_text_raw = raw;
+        var parsed = window.PdfExamPaper.parseAnswerText(raw);
+        if (!parsed.length) {
+            window.showFlash('沒有解析出任何題目，請確認貼的文字裡有「數字.」開頭的題號', 'warning');
+        }
+        var freshKeys = {};
+        parsed.forEach(function (b) { freshKeys[b.key] = true; });
+        var prevByKey = {};
+        (job.parsed_bank || []).forEach(function (b) { prevByKey[b.key] = b; });
+        // 老師手動編輯過的答案文字不要被重新解析結果覆蓋掉；手動新增的列（不在這次解析結果內）保留下來。
+        var merged = parsed.map(function (b) {
+            var prev = prevByKey[b.key];
+            if (prev && prev._manuallyEdited) {
+                return { key: b.key, section: b.section, item_no: b.item_no, part: b.part, answer_text: prev.answer_text, accepted_answers: prev.accepted_answers, _manuallyEdited: true };
+            }
+            return b;
+        });
+        var preservedManual = (job.parsed_bank || []).filter(function (b) { return !freshKeys[b.key] && b._manual; });
+        job.parsed_bank = merged.concat(preservedManual);
+        markNeedsRegrade(pathStr, job);
+        refreshBankTable(pathStr, job);
+        window.showFlash('✅ 已解析出 ' + parsed.length + ' 題，請逐項確認答案文字再開始畫框', 'success');
+    }
+
+    function updateBankField(pathStr, idx, field, value) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        var bk = job.parsed_bank[idx];
+        if (!bk) return;
+        if (field === 'answer_text') {
+            bk.answer_text = value;
+        } else if (field === 'accepted_answers') {
+            bk.accepted_answers = String(value || '').split(/[,;、]/).map(function (s) { return s.trim(); }).filter(Boolean);
+        }
+        bk._manuallyEdited = true;
+        markNeedsRegrade(pathStr, job);
+    }
+
+    function removeBankRow(pathStr, idx) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        if (!window.confirm('刪除這一題答案？若已經在 PDF 上畫框對應這一題，那個框不會自動刪除，會變成「未指定題目」。')) return;
+        job.parsed_bank.splice(idx, 1);
+        markNeedsRegrade(pathStr, job);
+        refreshBankTable(pathStr, job);
+    }
+
+    function addBankRow(pathStr) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        var section = window.prompt('這一題屬於哪個大題？（例如 Quiz 1；留空＝未分類）', '');
+        section = String(section || '(未分類)').replace(/\s+/g, ' ').trim() || '(未分類)';
+        var itemNo = window.prompt('題號？（例如 12）', '');
+        if (itemNo == null || !String(itemNo).trim()) return;
+        var part = window.prompt('子項（若這題有 A/B 兩格才填，否則留空）', '') || '';
+        part = String(part).trim().toUpperCase() || null;
+        var key = window.PdfExamPaper.makeKey(section, String(itemNo).trim(), part);
+        if ((job.parsed_bank || []).some(function (b) { return b.key === key; })) {
+            window.showFlash('這個題號已經存在，請改用清單裡的欄位直接修改', 'warning');
+            return;
+        }
+        job.parsed_bank.push({ key: key, section: section, item_no: String(itemNo).trim(), part: part, answer_text: '', accepted_answers: [], _manual: true });
+        markNeedsRegrade(pathStr, job);
+        refreshBankTable(pathStr, job);
+    }
+
+    // ------------------------------------------------------------------
+    // 內嵌編輯器 HTML（掛在時間軸卡片內，由 ui-timeline-templates.js 呼叫）
+    // ------------------------------------------------------------------
+
+    function renderInlineEditorHtml(pathStr, task) {
+        var job = ensureJob(task);
+        var bankHtml = renderBankTableHtml(pathStr, job);
+        var statusHtml = renderStatusLineHtml(job);
+        var bState = window.BuilderStore ? window.BuilderStore.getState() : null;
+        var canReview = !!(bState && bState.editId) && job.parsed_bank.length > 0;
+        var reviewBtnHtml = canReview
+            ? ('<button type="button" class="btn btn-action" style="background:#7C3AED; color:white; border:none; padding:6px 12px; font-weight:800;" '
+                + 'onclick="window.FeaturePdfExamJob.openReview(\'' + esc(String(bState.editId)) + '\',\'' + esc(String(task.id)) + '\')">📊 查看/複核學生作答</button>')
+            : '<span style="font-size:0.78rem; color:#94A3B8;">（先儲存作業，之後才能查看學生作答）</span>';
+
+        return (
+            '<div style="margin-top:10px; padding:12px; background:#F0F9FF; border:1px solid #BAE6FD; border-radius:8px;">' +
+                '<div style="font-weight:900; color:#0369A1; margin-bottom:8px;">📄 PDF 考卷設定</div>' +
+                '<div style="margin-bottom:10px;">' +
+                    '<label style="font-size:0.85rem; font-weight:800; color:#334155; display:block; margin-bottom:4px;">① 考卷 PDF（題目卷）</label>' +
+                    '<input type="file" accept="application/pdf,.pdf" onchange="window.FeaturePdfExamJob.handlePdfFileChange(this, \'' + pathStr + '\')">' +
+                    '<div id="pdf-exam-file-status-' + pathStr + '" style="margin-top:4px; font-size:0.85rem;">' + renderFileStatusHtml(job) + '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:10px;">' +
+                    '<label style="font-size:0.85rem; font-weight:800; color:#334155; display:block; margin-bottom:4px;">② 貼上解答文字（原始格式即可，不用先整理成一行一題）</label>' +
+                    '<textarea id="pdf-exam-answertext-' + pathStr + '" rows="6" placeholder="直接貼上課本解答原文，例如：&#10;Quiz 1, p. 50&#10;2. been 10. stopped&#10;..." ' +
+                        'style="width:100%; font-family:monospace; font-size:0.82rem; padding:8px; border:1px solid #CBD5E1; border-radius:6px; box-sizing:border-box;">' + esc(job.answer_text_raw || '') + '</textarea>' +
+                    '<div style="margin-top:6px;">' +
+                        '<button type="button" class="btn btn-action" style="background:#0369A1; color:white; border:none; padding:6px 12px; font-weight:800;" ' +
+                            'onclick="window.FeaturePdfExamJob.parseAnswerTextAction(\'' + pathStr + '\')">🔍 解析成答案清單</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="margin-bottom:10px;">' +
+                    '<label style="font-size:0.85rem; font-weight:800; color:#334155; display:block; margin-bottom:4px;">③ 答案清單（請逐項確認/修正——這是最後一道防線，自動解析不保證 100% 準）</label>' +
+                    '<div id="pdf-exam-bank-' + pathStr + '" style="max-height:220px; overflow:auto; border:1px solid #E0F2FE; border-radius:6px; padding:6px;">' + bankHtml + '</div>' +
+                    '<button type="button" class="btn" style="font-size:0.8rem; padding:4px 10px; margin-top:6px;" onclick="window.FeaturePdfExamJob.addBankRow(\'' + pathStr + '\')">＋ 手動新增一題</button>' +
+                '</div>' +
+                '<div style="margin-bottom:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">' +
+                    '<div id="pdf-exam-status-' + pathStr + '" style="font-size:0.82rem; color:#334155; font-weight:700;">' + statusHtml + '</div>' +
+                '</div>' +
+                '<div>' + reviewBtnHtml + '</div>' +
+            '</div>'
+        );
+    }
+
+    function syncInlineEditor(pathStr, task) {
+        if (!task) return;
+        var job = ensureJob(task);
+        var ta = document.getElementById('pdf-exam-answertext-' + pathStr);
+        if (ta) job.answer_text_raw = ta.value;
+    }
+
+    // ------------------------------------------------------------------
+    // 💣 以下這段「畫框編輯器」已經不用了——空格位置改由學生作答時自己點出來（見檔頭說明），
+    // 老師端不需要再管座標。保留舊函式但整段標記成 REMOVED_UNUSED，之後如果沒有其他地方
+    // 引用可以直接砍掉；先保留避免有舊資料/舊呼叫路徑還在用到。
+    // ------------------------------------------------------------------
+    /* REMOVED_UNUSED_BOX_EDITOR_START
+    async function openBoxEditor(pathStr) {
+        if (window.BuilderStore) window.BuilderStore.sync();
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return window.showFlash('找不到任務，請重新整理再試', 'error');
+        var job = ensureJob(task);
+        if (!job.pdf_file_id) return window.showFlash('請先上傳考卷 PDF', 'warning');
+        if (!job.parsed_bank || !job.parsed_bank.length) return window.showFlash('請先貼上解答文字並按「解析成答案清單」', 'warning');
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return window.showFlash('ModalOverlay 未載入', 'error');
+        if (!window.PdfExamPaper) return window.showFlash('PdfExamPaper 模組未載入', 'error');
+
+        window.showFlash('⏳ 讀取 PDF…', 'info');
+        var pdfDoc;
+        try {
+            pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(job.pdf_file_id);
+        } catch (err) {
+            console.error('[FeaturePdfExamJob] loadPdfDocumentFromDrive', err);
+            return window.showFlash('PDF 讀取失敗：' + (err.message || err), 'error');
+        }
+
+        _boxState = { pathStr: pathStr, task: task, job: job, pdfDoc: pdfDoc, numPages: pdfDoc.numPages, currentPage: 1 };
+        _renderBoxEditorModal();
+    }
+
+    function _renderBoxEditorModal() {
+        window.ModalOverlay.open({
+            id: BOX_MODAL_ID,
+            tier: 'B',
+            isDirty: function () { return false; },
+            onMount: function () { _renderBoxEditorPage(); },
+            contentHtml:
+                '<div style="width:96vw; max-width:1100px; height:92vh; background:white; border-radius:14px; padding:14px; box-shadow:0 20px 50px rgba(15,23,42,0.2); display:flex; flex-direction:column; box-sizing:border-box;">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">' +
+                        '<h3 style="margin:0; font-size:1.05rem; font-weight:900; color:#0F766E;">🔍 檢查／手動補救少數框</h3>' +
+                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeaturePdfExamJob._closeBoxEditor()">完成／關閉</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.78rem; color:#64748B; margin-bottom:8px;">綠色框＝已自動定位好的題目（右側標🤖）；紅色框／清單裡「未偵測到空格」的題目，才需要在下方頁面圖上「按住拖曳」手動畫一個方框，再從右側清單選這個框對應哪一題。多數題目應該已經自動定位好，不需要逐一手動畫。</div>' +
+                    '<div style="display:flex; gap:12px; flex:1; min-height:0;">' +
+                        '<div style="flex:1; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; display:flex; flex-direction:column; align-items:center; padding:10px;">' +
+                            '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">' +
+                                '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeaturePdfExamJob._goToPage(-1)">◀ 上一頁</button>' +
+                                '<span id="pdf-exam-box-pageinfo" style="font-weight:800; color:#334155; font-size:0.85rem;"></span>' +
+                                '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeaturePdfExamJob._goToPage(1)">下一頁 ▶</button>' +
+                            '</div>' +
+                            '<div id="pdf-exam-box-canvaswrap" style="position:relative; display:inline-block;"></div>' +
+                        '</div>' +
+                        '<div style="width:300px; flex-shrink:0; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; padding:10px;">' +
+                            '<div style="font-weight:900; color:#334155; margin-bottom:6px; font-size:0.85rem;">本頁已畫的框</div>' +
+                            '<div id="pdf-exam-box-sidebar"></div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>'
+        });
+    }
+
+    async function _renderBoxEditorPage() {
+        var s = _boxState;
+        if (!s) return;
+        var pageInfoEl = document.getElementById('pdf-exam-box-pageinfo');
+        if (pageInfoEl) pageInfoEl.textContent = '第 ' + s.currentPage + ' / ' + s.numPages + ' 頁';
+        var wrap = document.getElementById('pdf-exam-box-canvaswrap');
+        if (!wrap) return;
+        wrap.innerHTML = '<div style="padding:40px; color:#94A3B8;">⏳ 渲染頁面…</div>';
+        try {
+            var page = await s.pdfDoc.getPage(s.currentPage);
+            var viewport = page.getViewport({ scale: 1.3 });
+            var canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            var ctx = canvas.getContext('2d');
+            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+            wrap.innerHTML = '';
+            canvas.style.display = 'block';
+            wrap.appendChild(canvas);
+
+            var overlay = document.createElement('div');
+            overlay.id = 'pdf-exam-box-overlay';
+            overlay.style.cssText = 'position:absolute; left:0; top:0; width:100%; height:100%; cursor:crosshair;';
+            wrap.appendChild(overlay);
+            wrap.style.width = canvas.width + 'px';
+            wrap.style.height = canvas.height + 'px';
+
+            _attachDrawHandlers(overlay);
+            _renderBoxesOnPage();
+            _renderSidebar();
+        } catch (err) {
+            console.error('[FeaturePdfExamJob] render page', err);
+            wrap.innerHTML = '<div style="padding:40px; color:#DC2626;">頁面渲染失敗：' + esc(err.message || String(err)) + '</div>';
+        }
+    }
+
+    function _attachDrawHandlers(overlay) {
+        var dragging = false;
+        var startX = 0, startY = 0;
+        var liveBox = null;
+
+        function pct(clientX, clientY) {
+            var rect = overlay.getBoundingClientRect();
+            var x = Math.min(Math.max(0, (clientX - rect.left) / rect.width), 1);
+            var y = Math.min(Math.max(0, (clientY - rect.top) / rect.height), 1);
+            return { x: x, y: y };
+        }
+
+        overlay.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            dragging = true;
+            var p = pct(e.clientX, e.clientY);
+            startX = p.x; startY = p.y;
+            liveBox = document.createElement('div');
+            liveBox.style.cssText = 'position:absolute; border:2px dashed #0EA5E9; background:rgba(14,165,233,0.15); pointer-events:none;';
+            overlay.appendChild(liveBox);
+        });
+        overlay.addEventListener('mousemove', function (e) {
+            if (!dragging || !liveBox) return;
+            var p = pct(e.clientX, e.clientY);
+            var x1 = Math.min(startX, p.x), x2 = Math.max(startX, p.x);
+            var y1 = Math.min(startY, p.y), y2 = Math.max(startY, p.y);
+            liveBox.style.left = (x1 * 100) + '%';
+            liveBox.style.top = (y1 * 100) + '%';
+            liveBox.style.width = ((x2 - x1) * 100) + '%';
+            liveBox.style.height = ((y2 - y1) * 100) + '%';
+        });
+        function finish(e) {
+            if (!dragging) return;
+            dragging = false;
+            var p = pct(e.clientX, e.clientY);
+            var x1 = Math.min(startX, p.x), x2 = Math.max(startX, p.x);
+            var y1 = Math.min(startY, p.y), y2 = Math.max(startY, p.y);
+            if (liveBox && liveBox.parentNode) liveBox.parentNode.removeChild(liveBox);
+            liveBox = null;
+            var wPct = (x2 - x1) * 100, hPct = (y2 - y1) * 100;
+            if (wPct < 1.5 || hPct < 1) return; // 太小視為誤觸，不建立框
+            _addBox({ xPct: x1 * 100, yPct: y1 * 100, wPct: wPct, hPct: hPct });
+        }
+        overlay.addEventListener('mouseup', finish);
+        overlay.addEventListener('mouseleave', function (e) { if (dragging) finish(e); });
+    }
+
+    function _addBox(box) {
+        var s = _boxState;
+        if (!s) return;
+        s.job.items.push({
+            key: null, section: null, item_no: null, part: null,
+            page: s.currentPage, box: box, answer_text: '', accepted_answers: []
+        });
+        _renderBoxesOnPage();
+        _renderSidebar();
+    }
+
+    function _renderBoxesOnPage() {
+        var s = _boxState;
+        var overlay = document.getElementById('pdf-exam-box-overlay');
+        if (!overlay || !s) return;
+        Array.prototype.slice.call(overlay.querySelectorAll('.pdf-exam-box-rect')).forEach(function (el) { el.remove(); });
+        s.job.items.forEach(function (it) {
+            if (it.page !== s.currentPage) return;
+            var assigned = !!it.key;
+            var el = document.createElement('div');
+            el.className = 'pdf-exam-box-rect';
+            el.style.cssText = 'position:absolute; pointer-events:none; border:2px solid ' + (assigned ? '#059669' : '#DC2626')
+                + '; background:' + (assigned ? 'rgba(5,150,105,0.12)' : 'rgba(220,38,38,0.12)') + ';'
+                + ' left:' + it.box.xPct + '%; top:' + it.box.yPct + '%; width:' + it.box.wPct + '%; height:' + it.box.hPct + '%;';
+            var label = document.createElement('span');
+            label.style.cssText = 'position:absolute; left:2px; top:-1px; font-size:11px; font-weight:900; color:' + (assigned ? '#059669' : '#DC2626') + '; background:white; padding:0 2px; border-radius:2px;';
+            label.textContent = assigned ? (String(it.item_no) + (it.part ? ('-' + it.part) : '')) : '?';
+            el.appendChild(label);
+            overlay.appendChild(el);
+        });
+    }
+
+    function _renderSidebar() {
+        var s = _boxState;
+        var el = document.getElementById('pdf-exam-box-sidebar');
+        if (!el || !s) return;
+        var usedKeys = {};
+        s.job.items.forEach(function (it) { if (it.key) usedKeys[it.key] = true; });
+        var rows = [];
+        s.job.items.forEach(function (it, absIdx) {
+            if (it.page !== s.currentPage) return;
+            var optionsHtml = '<option value="">-- 選擇題目 --</option>' + window.PdfExamPaper.groupItemsBySection(s.job.parsed_bank).map(function (g) {
+                var opts = g.items.map(function (bk) {
+                    var dupWarn = (usedKeys[bk.key] && bk.key !== it.key) ? '⚠已用 ' : '';
+                    var label = dupWarn + bk.item_no + (bk.part ? ('-' + bk.part) : '') + '：' + truncate(bk.answer_text, 16);
+                    return '<option value="' + esc(bk.key) + '" ' + (it.key === bk.key ? 'selected' : '') + '>' + esc(label) + '</option>';
+                }).join('');
+                return '<optgroup label="' + esc(g.section) + '">' + opts + '</optgroup>';
+            }).join('');
+            var methodTag = !it._auto ? ''
+                : it._auto_method === 'position'
+                    ? '<span title="沒偵測到題號文字，依座標順序猜的，請務必確認" style="font-size:0.7rem; color:#B45309; background:#FFFBEB; border:1px solid #FDE68A; padding:1px 5px; border-radius:4px; margin-left:4px;">🤖 依順序猜</span>'
+                    : '<span title="偵測到旁邊印的題號文字直接對到答案" style="font-size:0.7rem; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:1px 5px; border-radius:4px; margin-left:4px;">🤖 依題號</span>';
+            rows.push(
+                '<div style="border:1px solid #E2E8F0; border-radius:6px; padding:6px; margin-bottom:6px;">' +
+                    '<div style="margin-bottom:2px;">' + methodTag + '</div>' +
+                    '<select style="width:100%; font-size:0.8rem; padding:4px;" onchange="window.FeaturePdfExamJob._assignBox(' + absIdx + ', this.value)">' + optionsHtml + '</select>' +
+                    (it.key ? ('<div style="font-size:0.75rem; color:#047857; margin-top:2px;">答案：' + esc(it.answer_text || '(空白)') + '</div>') : '') +
+                    '<button type="button" class="btn-icon" style="font-size:0.75rem; margin-top:4px;" onclick="window.FeaturePdfExamJob._removeBox(' + absIdx + ')">🗑️ 刪除這個框</button>' +
+                '</div>'
+            );
+        });
+        el.innerHTML = rows.length ? rows.join('') : '<div style="color:#94A3B8; font-size:0.8rem;">這一頁還沒有畫框，在左邊頁面圖上拖曳畫一個</div>';
+    }
+
+    function _assignBox(absIdx, bankKey) {
+        var s = _boxState;
+        if (!s) return;
+        var it = s.job.items[absIdx];
+        if (!it) return;
+        if (!bankKey) {
+            it.key = null; it.section = null; it.item_no = null; it.part = null; it.answer_text = ''; it.accepted_answers = [];
+        } else {
+            var bk = (s.job.parsed_bank || []).find(function (b) { return b.key === bankKey; });
+            if (!bk) return;
+            it.key = bk.key; it.section = bk.section; it.item_no = bk.item_no; it.part = bk.part;
+            it.answer_text = bk.answer_text; it.accepted_answers = bk.accepted_answers;
+        }
+        _renderBoxesOnPage();
+        _renderSidebar();
+    }
+
+    function _removeBox(absIdx) {
+        var s = _boxState;
+        if (!s) return;
+        s.job.items.splice(absIdx, 1);
+        _renderBoxesOnPage();
+        _renderSidebar();
+    }
+
+    function _goToPage(delta) {
+        var s = _boxState;
+        if (!s) return;
+        var next = s.currentPage + delta;
+        if (next < 1 || next > s.numPages) return;
+        s.currentPage = next;
+        _renderBoxEditorPage();
+    }
+
+    function _closeBoxEditor() {
+        var s = _boxState;
+        if (window.ModalOverlay) window.ModalOverlay.close(BOX_MODAL_ID);
+        if (s) {
+            refreshStatusLine(s.pathStr, s.job);
+            refreshBankTable(s.pathStr, s.job); // 更新哪些題已畫框（📌）的標記
+        }
+        _boxState = null;
+    }
+    REMOVED_UNUSED_BOX_EDITOR_END */
+
+    // ------------------------------------------------------------------
+    // 老師複核：查看學生作答、修正標準答案後重新批改全班
+    // ------------------------------------------------------------------
+
+    async function openReview(assignmentId, taskId) {
+        if (!window.ModalOverlay) return;
+        window.ModalOverlay.open({
+            id: REVIEW_MODAL_ID,
+            tier: 'A',
+            contentHtml: '<div style="max-width:820px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取學生作答中…</div>'
+        });
+        try {
+            if (!window.ApiQuizReview) throw new Error('ApiQuizReview 模組未載入');
+            var assignment = await window.ApiQuizReview.fetchAssignment(assignmentId);
+            if (!assignment) throw new Error('找不到作業');
+            var lookup = window.TaskScriptResolver.patchTaskRawDataInTree(assignment.tasks, taskId, function () {});
+            if (!lookup.patched || !lookup.task) throw new Error('在作業裡找不到這個任務');
+            var task = lookup.task;
+            var job = ensureJob(task);
+            var completions = await window.ApiQuizReview.fetchCompletionsForTask(assignmentId, taskId);
+            var students = await window.ApiQuizReview.fetchClassStudents(assignment.class_id);
+            _reviewState = { assignmentId: assignmentId, taskId: taskId, assignment: assignment, task: task, job: job, completions: completions, students: students };
+            _renderReviewModal();
+        } catch (err) {
+            console.error('[FeaturePdfExamJob] openReview', err);
+            if (window.ModalOverlay) window.ModalOverlay.close(REVIEW_MODAL_ID);
+            window.showFlash('讀取失敗：' + (err.message || err), 'error');
+        }
+    }
+
+    function _renderReviewModal() {
+        var st = _reviewState;
+        var compByStudent = {};
+        st.completions.forEach(function (c) { compByStudent[String(c.student_id)] = c; });
+        var rowsHtml = st.students.map(function (stu) {
+            var c = compByStudent[String(stu.id)];
+            var raw = (c && c.raw_data) || {};
+            var result = raw.pdf_quiz_result;
+            // 學生端改成「每大題提交就批改」，考卷可能只寫了一部分——result.all_submitted===false
+            // 代表還在作答中，這裡要跟「整份都批改完」分開顯示，不要誤報成有完整分數。
+            var statusHtml = result
+                ? (result.all_submitted === false
+                    ? ('<span style="color:#B45309; font-weight:800;">作答中：已批改 ' + esc(result.submitted_sections) + ' / ' + esc(result.total_sections) + ' 大題</span>')
+                    : ('<span style="color:#0F766E; font-weight:800;">' + esc(result.correct) + ' / ' + esc(result.total) + '（' + esc(result.score) + '%）</span>'))
+                : (c ? '<span style="color:#94A3B8;">未作答</span>' : '<span style="color:#CBD5E1;">—</span>');
+            return (
+                '<tr>' +
+                    '<td style="padding:6px 8px; border-bottom:1px solid #F1F5F9;">' + esc(stu.name) + '</td>' +
+                    '<td style="padding:6px 8px; border-bottom:1px solid #F1F5F9;">' + statusHtml + '</td>' +
+                    '<td style="padding:6px 8px; border-bottom:1px solid #F1F5F9;">' +
+                        (result ? ('<button type="button" class="btn" style="font-size:0.78rem; padding:3px 8px;" onclick="window.FeaturePdfExamJob._viewStudentDetail(\'' + esc(String(stu.id)) + '\')">查看</button>') : '') +
+                    '</td>' +
+                '</tr>'
+            );
+        }).join('');
+
+        var bankEditHtml = (st.job.parsed_bank || []).map(function (it, idx) {
+            return (
+                '<div style="display:flex; gap:6px; align-items:center; padding:3px 0;">' +
+                    '<span style="width:70px; font-size:0.78rem; color:#0369A1; font-weight:800;">' + esc(it.item_no || '?') + (it.part ? ('-' + esc(it.part)) : '') + '</span>' +
+                    '<input type="text" value="' + esc(it.answer_text || '') + '" style="flex:1; padding:3px 6px; font-size:0.8rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
+                        'onchange="window.FeaturePdfExamJob._updateReviewAnswer(' + idx + ', \'answer_text\', this.value)">' +
+                    '<input type="text" value="' + esc((it.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案" style="flex:1; padding:3px 6px; font-size:0.8rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
+                        'onchange="window.FeaturePdfExamJob._updateReviewAnswer(' + idx + ', \'accepted_answers\', this.value)">' +
+                '</div>'
+            );
+        }).join('');
+
+        var regradeWarningHtml = st.job.needs_regrade
+            ? ('<div id="pdf-exam-review-regrade-warning" style="margin-bottom:10px; padding:8px 10px; background:#FEF2F2; border:1px solid #FECACA; border-radius:8px; font-size:0.82rem; color:#B91C1C; font-weight:800;">'
+                + '⚠ 答案有更新，目前顯示的學生分數可能是舊答案批改的結果，請按下面「儲存並重新批改全班」重新計分。'
+                + '</div>')
+            : '<div id="pdf-exam-review-regrade-warning"></div>';
+        var regradeBtnLabel = st.job.needs_regrade ? '⚠ 答案有更新，按此重新批改全班' : '💾 儲存並重新批改全班';
+
+        window.ModalOverlay.open({
+            id: REVIEW_MODAL_ID,
+            tier: 'A',
+            contentHtml:
+                '<div style="max-width:820px; width:94vw; max-height:90vh; overflow:auto; background:white; border-radius:14px; padding:20px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">📊 PDF 考卷複核</h3>' +
+                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + REVIEW_MODAL_ID + '\')">關閉</button>' +
+                    '</div>' +
+                    regradeWarningHtml +
+                    '<div style="font-weight:900; color:#334155; margin:10px 0 4px;">標準答案（可修改後重新批改全班）</div>' +
+                    '<div style="max-height:26vh; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; padding:8px; margin-bottom:8px;">' + (bankEditHtml || '<div style="color:#94A3B8; font-size:0.85rem;">尚無題目</div>') + '</div>' +
+                    '<div style="display:flex; justify-content:flex-end; margin-bottom:14px;">' +
+                        '<button type="button" class="btn btn-action" id="pdf-exam-review-regrade-btn" style="background:' + (st.job.needs_regrade ? '#B91C1C' : '#7C3AED') + '; color:white; border:none; padding:6px 14px; font-weight:800;" onclick="window.FeaturePdfExamJob._saveAndRegradeAll()">' + regradeBtnLabel + '</button>' +
+                    '</div>' +
+                    '<div style="font-weight:900; color:#334155; margin-bottom:6px;">學生作答狀況</div>' +
+                    '<table style="width:100%; border-collapse:collapse; font-size:0.85rem;">' +
+                        '<thead><tr style="text-align:left; color:#64748B;"><th style="padding:6px 8px;">學生</th><th style="padding:6px 8px;">分數</th><th style="padding:6px 8px;"></th></tr></thead>' +
+                        '<tbody>' + (rowsHtml || '<tr><td colspan="3" style="padding:10px; color:#94A3B8;">目前班上沒有學生</td></tr>') + '</tbody>' +
+                    '</table>' +
+                '</div>'
+        });
+    }
+
+    /** 複核頁改標準答案後，就地更新警示 banner／按鈕樣式，不整個重繪 modal（避免打字中斷焦點） */
+    function _refreshRegradeWarningInline() {
+        var st = _reviewState;
+        if (!st) return;
+        var warnEl = document.getElementById('pdf-exam-review-regrade-warning');
+        if (warnEl) {
+            warnEl.innerHTML = st.job.needs_regrade
+                ? '<div style="padding:8px 10px; background:#FEF2F2; border:1px solid #FECACA; border-radius:8px; font-size:0.82rem; color:#B91C1C; font-weight:800;">⚠ 答案有更新，目前顯示的學生分數可能是舊答案批改的結果，請按下面「儲存並重新批改全班」重新計分。</div>'
+                : '';
+        }
+        var btnEl = document.getElementById('pdf-exam-review-regrade-btn');
+        if (btnEl) {
+            btnEl.style.background = st.job.needs_regrade ? '#B91C1C' : '#7C3AED';
+            btnEl.textContent = st.job.needs_regrade ? '⚠ 答案有更新，按此重新批改全班' : '💾 儲存並重新批改全班';
+        }
+    }
+
+    function _updateReviewAnswer(idx, field, value) {
+        var st = _reviewState;
+        if (!st) return;
+        var it = (st.job.parsed_bank || [])[idx];
+        if (!it) return;
+        if (field === 'answer_text') it.answer_text = value;
+        else if (field === 'accepted_answers') it.accepted_answers = String(value || '').split(/[,;、]/).map(function (s) { return s.trim(); }).filter(Boolean);
+        it._manuallyEdited = true;
+        st.job.needs_regrade = true;
+        _refreshRegradeWarningInline();
+    }
+
+    function _viewStudentDetail(studentId) {
+        var st = _reviewState;
+        if (!st) return;
+        var c = st.completions.find(function (x) { return String(x.student_id) === String(studentId); });
+        var stu = st.students.find(function (x) { return String(x.id) === String(studentId); });
+        if (!c) return;
+        var raw = c.raw_data || {};
+        var answers = raw.pdf_quiz_answers || {};
+        var rowsHtml = (st.job.parsed_bank || []).map(function (it) {
+            var got = answers[it.key] || '';
+            var okList = [it.answer_text].concat(it.accepted_answers || []).map(function (a) { return window.QuizPaperBuilder.normalizeAnswer(a); }).filter(Boolean);
+            var ok = window.QuizPaperBuilder.isAcceptableAnswer(window.QuizPaperBuilder.normalizeAnswer(got), okList);
+            return (
+                '<div style="border:1px solid ' + (ok ? '#A7F3D0' : '#FECACA') + '; background:' + (ok ? '#ECFDF5' : '#FEF2F2') + '; border-radius:6px; padding:8px; margin-bottom:6px;">' +
+                    '<div style="font-size:0.78rem; font-weight:800; color:#334155;">' + esc(it.section || '') + ' 第' + esc(it.item_no || '?') + '題' + (it.part ? ('-' + esc(it.part)) : '') + '</div>' +
+                    '<div style="font-size:0.85rem; margin-top:2px;">學生答：<b>' + esc(got || '(未填)') + '</b></div>' +
+                    '<div style="font-size:0.8rem; color:#64748B;">標準答案：' + esc(it.answer_text || '') + (it.accepted_answers && it.accepted_answers.length ? ('（或：' + esc(it.accepted_answers.join('、')) + '）') : '') + '</div>' +
+                '</div>'
+            );
+        }).join('');
+        window.ModalOverlay.open({
+            id: REVIEW_MODAL_ID + '-detail',
+            tier: 'A',
+            contentHtml:
+                '<div style="max-width:640px; width:92vw; max-height:86vh; overflow:auto; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.05rem; font-weight:900; color:#0F766E;">' + esc((stu && stu.name) || '學生') + ' 的作答</h3>' +
+                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + REVIEW_MODAL_ID + '-detail\')">關閉</button>' +
+                    '</div>' +
+                    rowsHtml +
+                '</div>'
+        });
+    }
+
+    async function _saveAndRegradeAll() {
+        var st = _reviewState;
+        if (!st) return;
+        try {
+            window.showFlash('⏳ 儲存並重新批改…', 'info');
+            st.job.needs_regrade = false; // 這次重新批改完成後，答案跟分數就同步了，清掉警示
+            var result = window.TaskScriptResolver.patchTaskRawDataInTree(st.assignment.tasks, st.taskId, function (t) {
+                t.raw_data.pdf_exam_job = st.job;
+            });
+            if (!result.patched) throw new Error('找不到任務，無法儲存');
+            var { error: updErr } = await window.supabaseClient.from('assignments').update({ tasks: result.tasks }).eq('id', st.assignmentId);
+            if (updErr) throw new Error('儲存標準答案失敗：' + updErr.message);
+            st.assignment.tasks = result.tasks;
+
+            var paper = window.PdfExamPaper.buildGradingPaper(st.job);
+            var toSave = [];
+            var skippedInProgress = 0;
+            st.completions.forEach(function (c) {
+                var raw = c.raw_data || {};
+                if (!raw.pdf_quiz_answers) return;
+                // 學生端改成「每大題提交就批改」，考卷有可能只寫到一半——這種還在作答中的
+                // 不能拿目前殘缺的 pdf_quiz_answers 當「全卷已交」重批，否則會把還沒寫的
+                // 大題全部判錯，蓋掉正確的「部分完成」狀態。只重批已經整份交完的學生。
+                if (raw.pdf_quiz_result && raw.pdf_quiz_result.all_submitted === false) {
+                    skippedInProgress++;
+                    return;
+                }
+                var gradeResult = window.QuizPaperBuilder.gradeAnswers(paper, raw.pdf_quiz_answers);
+                var nextRaw = Object.assign({}, raw, {
+                    pdf_quiz_result: {
+                        score: gradeResult.score,
+                        correct: gradeResult.correct,
+                        total: gradeResult.total,
+                        wrong_items: gradeResult.wrong_items,
+                        // 重新批改也要重算各大題分數，否則學生結果頁的「各大題結果」會停留在舊資料
+                        section_stats: window.PdfExamPaper.computeSectionStats(st.job.parsed_bank, gradeResult),
+                        all_submitted: true,
+                        graded_at: new Date().toISOString()
+                    }
+                });
+                toSave.push({ id: c.id, rawData: nextRaw });
+                c.raw_data = nextRaw;
+            });
+            var saveResult = await window.ApiQuizReview.batchSaveCompletions(toSave);
+            window.showFlash('✅ 已重新批改 ' + saveResult.okCount + ' 位學生' + (saveResult.failCount ? '（' + saveResult.failCount + ' 位失敗）' : '')
+                + (skippedInProgress ? '（' + skippedInProgress + ' 位還在作答中，未重批）' : ''), 'success');
+            _renderReviewModal();
+        } catch (err) {
+            console.error('[FeaturePdfExamJob] _saveAndRegradeAll', err);
+            window.showFlash('儲存/重新批改失敗：' + (err.message || err), 'error');
+        }
+    }
+
+    return {
+        renderInlineEditorHtml: renderInlineEditorHtml,
+        syncInlineEditor: syncInlineEditor,
+        handlePdfFileChange: handlePdfFileChange,
+        parseAnswerTextAction: parseAnswerTextAction,
+        updateBankField: updateBankField,
+        removeBankRow: removeBankRow,
+        addBankRow: addBankRow,
+        openReview: openReview,
+        _updateReviewAnswer: _updateReviewAnswer,
+        _viewStudentDetail: _viewStudentDetail,
+        _saveAndRegradeAll: _saveAndRegradeAll
+    };
+})();
