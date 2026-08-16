@@ -188,10 +188,12 @@ window.FeatureStudentPdfQuiz = (function () {
         return canvas.toDataURL('image/png');
     }
 
-    function _boxHtml(sectionIdx, box, orderIdx, locked) {
+    function _boxHtml(sectionIdx, box, orderIdx, locked, isWrong) {
         var fontPx = (_quizState && _quizState.fontSizePx) || DEFAULT_FONT_PX;
         var initialW = Math.max(MIN_INPUT_WIDTH_PX, _measureTextWidthPx(box.text || '', fontPx) + INPUT_WIDTH_PADDING_PX);
-        var accent = locked ? '#94A3B8' : '#0EA5E9';
+        // 批改鎖定後：錯的格子背景改紅色，讓學生一看就知道錯在哪格（不顯示正確答案，只標位置）
+        var accent = locked ? (isWrong ? '#DC2626' : '#94A3B8') : '#0EA5E9';
+        var inputBg = locked ? (isWrong ? '#FEE2E2' : '#F1F5F9') : 'rgba(255,255,255,0.95)';
         var removeBtnHtml = locked ? '' : (
             '<button type="button" class="pdf-quiz-box-remove" data-box-id="' + esc(box.id) + '" title="刪除這個作答框" ' +
                 'style="border:none; background:#FEE2E2; color:#B91C1C; width:16px; height:16px; border-radius:50%; font-size:0.65rem; line-height:1; cursor:pointer; flex-shrink:0;">×</button>'
@@ -199,11 +201,11 @@ window.FeatureStudentPdfQuiz = (function () {
         return (
             '<div class="pdf-quiz-box" data-box-id="' + esc(box.id) + '" ' +
                 'style="position:absolute; left:' + box.xPct + '%; top:' + box.yPct + '%; transform:translate(-6px,-50%); display:flex; align-items:center; gap:2px;">' +
-                '<span class="pdf-quiz-box-handle" data-box-id="' + esc(box.id) + '" title="' + (locked ? '這一大題已批改鎖定' : '按住拖曳可移動位置') + '" ' +
+                '<span class="pdf-quiz-box-handle" data-box-id="' + esc(box.id) + '" title="' + (locked ? (isWrong ? '這格答錯了（已批改鎖定）' : '這格答對了（已批改鎖定）') : '按住拖曳可移動位置') + '" ' +
                     'style="font-size:0.65rem; font-weight:900; color:' + accent + '; background:white; border:1px solid ' + accent + '; border-radius:50%; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; cursor:' + (locked ? 'default' : 'grab') + '; touch-action:none; user-select:none;">' + (orderIdx + 1) + '</span>' +
                 '<input type="text" class="pdf-quiz-answer-input" data-box-id="' + esc(box.id) + '" value="' + esc(box.text || '') + '" ' + (locked ? 'disabled' : '') + ' ' +
                     'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-gramm="false" ' +
-                    'style="width:' + initialW + 'px; border:2px solid ' + accent + '; background:' + (locked ? '#F1F5F9' : 'rgba(255,255,255,0.95)') + '; font-size:' + fontPx + 'px; padding:2px 4px; box-sizing:border-box; border-radius:3px; font-family:' + _fontFamilyForMeasure() + ';">' +
+                    'style="width:' + initialW + 'px; border:2px solid ' + accent + '; background:' + inputBg + '; font-size:' + fontPx + 'px; padding:2px 4px; box-sizing:border-box; border-radius:3px; font-family:' + _fontFamilyForMeasure() + ';">' +
                 removeBtnHtml +
             '</div>'
         );
@@ -308,10 +310,11 @@ window.FeatureStudentPdfQuiz = (function () {
         _updateActionButton();
     }
 
-    function _pageBlockHtml(dataUrl, pageNum, sectionIdx, boxesOnPage, orderOffsetByBox, locked) {
+    function _pageBlockHtml(dataUrl, pageNum, sectionIdx, boxesOnPage, orderOffsetByBox, locked, isWrongAtOrder) {
         var boxesHtml = boxesOnPage.map(function (b) {
             var orderIdx = orderOffsetByBox(b);
-            return _boxHtml(sectionIdx, b, orderIdx, locked);
+            var isWrong = locked && typeof isWrongAtOrder === 'function' && isWrongAtOrder(orderIdx);
+            return _boxHtml(sectionIdx, b, orderIdx, locked, isWrong);
         }).join('');
         return '<div class="pdf-quiz-page-block" data-page="' + pageNum + '" ' +
                 'style="position:relative; display:inline-block; margin-bottom:14px; max-width:100%; cursor:' + (locked ? 'default' : 'crosshair') + ';">' +
@@ -336,12 +339,25 @@ window.FeatureStudentPdfQuiz = (function () {
             var pages = [];
             for (var p = range.startPage; p <= range.endPage; p++) pages.push(p);
             var boxes = st.boxesBySection[idx] || [];
+
+            // 批改鎖定後：用「這一格排第幾個」反查它對到答案清單哪一個 key，
+            // 再看那個 key 有沒有在這大題批改結果的 wrong_items 裡，決定要不要標紅。
+            var isWrongAtOrder = null;
+            if (locked) {
+                var wrongKeySet = {};
+                (st.sectionResults[idx].wrong_items || []).forEach(function (w) { wrongKeySet[w.item_id] = true; });
+                isWrongAtOrder = function (orderIdx) {
+                    var it = sec.items[orderIdx];
+                    return !!(it && wrongKeySet[it.key]);
+                };
+            }
+
             var htmlParts = [];
             for (var i = 0; i < pages.length; i++) {
                 var pageNum = pages[i];
                 var dataUrl = await _renderPageImage(st.pdfDoc, pageNum);
                 var boxesOnPage = boxes.filter(function (b) { return b.page === pageNum; });
-                htmlParts.push(_pageBlockHtml(dataUrl, pageNum, idx, boxesOnPage, function (b) { return boxes.indexOf(b); }, locked));
+                htmlParts.push(_pageBlockHtml(dataUrl, pageNum, idx, boxesOnPage, function (b) { return boxes.indexOf(b); }, locked, isWrongAtOrder));
             }
             var bannerHtml = locked
                 ? ('<div style="margin-bottom:8px; padding:8px 10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#134E4A; font-weight:700;">'

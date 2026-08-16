@@ -212,7 +212,7 @@
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>
     <script defer src="../120_student_core/feature-student-messages.js?v=13"></script>
     <script defer src="../120_student_core/feature-student-quiz.js?v=23"></script> <!-- v23 完成一個欄位後自動跳下一欄（不用手動點）；完成後紅字答案不消失，只拿掉輸入框；開啟練習當下自動 focus 第一個未完成欄位 -->
-    <script defer src="../120_student_core/feature-student-pdf-quiz.js?v=5"></script> <!-- v5：改成每大題各自提交批改（不用等整份考卷寫完），提交後鎖定該大題並馬上顯示對錯格數／百分比；中途關閉重開會自動接續上次已批改的大題。v4：繳交結果頁改成只標「哪一大題錯幾格＋百分比」，不再顯示正確答案；完整保留整份卷子作答框（pdf_quiz_boxes_by_section，含頁碼／位置／文字）。v3：作答框可拖曳（抓圓形編號拖動）、統一文字大小可調（＋／－，影響所有作答框）、輸入框寬度隨文字自動變長。v2：改版——空格位置不再由老師/程式預先定位，改成學生依「答案清單順序」自己在 PDF 頁面圖上點出每一格作答框（建立順序＝配對依據，不是座標；不會寫也要點出留空），一大題一畫面、不逐題彈窗提示；送出後用 QuizPaperBuilder.gradeAnswers 評分。完全獨立於 feature-student-quiz.js（meta 出題的線上考試），互不影響 -->
+    <script defer src="../120_student_core/feature-student-pdf-quiz.js?v=6"></script> <!-- v6：批改鎖定後，錯的作答框背景改紅色（依建立順序反查答案清單 key 比對 wrong_items），對的維持原本灰色，不顯示正確答案只標出錯在哪格。v5：改成每大題各自提交批改（不用等整份考卷寫完），提交後鎖定該大題並馬上顯示對錯格數／百分比；中途關閉重開會自動接續上次已批改的大題。v4：繳交結果頁改成只標「哪一大題錯幾格＋百分比」，不再顯示正確答案；完整保留整份卷子作答框（pdf_quiz_boxes_by_section，含頁碼／位置／文字）。v3：作答框可拖曳（抓圓形編號拖動）、統一文字大小可調（＋／－，影響所有作答框）、輸入框寬度隨文字自動變長。v2：改版——空格位置不再由老師/程式預先定位，改成學生依「答案清單順序」自己在 PDF 頁面圖上點出每一格作答框（建立順序＝配對依據，不是座標；不會寫也要點出留空），一大題一畫面、不逐題彈窗提示；送出後用 QuizPaperBuilder.gradeAnswers 評分。完全獨立於 feature-student-quiz.js（meta 出題的線上考試），互不影響 -->
     <script defer src="../120_student_core/feature-student-timeline.js?v=103"></script> <!-- v103 老師回報「細節描述在學生端根本沒顯示」——根因是 fetchData() 查 assignments 時沒選 description 欄位，course.description 永遠是 undefined；補上這欄，v102 錄音上傳：沒有結構化 grading_units 時，改用 base 範圍文字展開頁數比對已選/已上傳檔數，數量不符時跳非阻擋式提醒 -->
     <script defer src="../120_student_core/feature-student-analytics.js?v=3"></script>
     
