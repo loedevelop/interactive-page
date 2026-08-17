@@ -1307,8 +1307,41 @@ window.UIStudentTimelineTemplates = (() => {
                             const safeUrlForJS = escapeJsSingleQuoted(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl);
                             const safeRangeForJS = escapeJsSingleQuoted(materialRange);
 
-                            const recordBtnText = hasValidAudioFile ? '重新錄製' : '🎙️ 開啟錄音艙';
-                            const recordBtnStyle = hasValidAudioFile ? 
+                            let studioPageCount = 0;
+                            if (task.raw_data && Array.isArray(task.raw_data.grading_units) && task.raw_data.grading_units.length > 1) {
+                                studioPageCount = task.raw_data.grading_units.length;
+                            } else if (task.raw_data && task.raw_data.material_range) {
+                                const rangeN = pagesFromRangeText(task.raw_data.material_range).length;
+                                if (rangeN > 1) studioPageCount = rangeN;
+                            }
+                            let submittedPageCount = 0;
+                            if (studioPageCount && Array.isArray(window._studentTaskCompletions)) {
+                                const rec = window._studentTaskCompletions.find(function (c) {
+                                    return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
+                                });
+                                const segs = (rec && rec.raw_data && Array.isArray(rec.raw_data.audio_segments))
+                                    ? rec.raw_data.audio_segments : [];
+                                const expectKeys = {};
+                                if (task.raw_data && Array.isArray(task.raw_data.grading_units) && task.raw_data.grading_units.length > 1) {
+                                    task.raw_data.grading_units.forEach(function (u) {
+                                        const k = String((u && u.unit_key) || '').trim();
+                                        if (k) expectKeys[k] = true;
+                                    });
+                                } else {
+                                    pagesFromRangeText((task.raw_data && task.raw_data.material_range) || '').forEach(function (p) {
+                                        expectKeys['range:' + p] = true;
+                                    });
+                                }
+                                segs.forEach(function (s) {
+                                    const k = String((s && s.unit_key) || '').trim();
+                                    if (k && expectKeys[k]) submittedPageCount += 1;
+                                });
+                            }
+                            const studioPartial = studioPageCount > 1 && submittedPageCount > 0 && submittedPageCount < studioPageCount;
+                            const recordBtnText = studioPartial
+                                ? ('🎙️ 繼續錄音（' + submittedPageCount + '/' + studioPageCount + '）')
+                                : (hasValidAudioFile ? '重新錄製' : '🎙️ 開啟錄音艙');
+                            const recordBtnStyle = (hasValidAudioFile && !studioPartial) ?
                                 'background:white; color:#94A3B8; border:1px solid #CBD5E1;' : 
                                 'background:#EF4444; color:white; border:none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);';
 
@@ -1556,7 +1589,7 @@ window.UIStudentTimelineTemplates = (() => {
                             : '繳交時，可複選多檔一次上傳';
                         recordingUnitHintHtml = `
                             <ul class="rt-normalize" style="margin:6px 0 0; padding-left:34px; font-size:0.78rem; color:#64748B; line-height:1.65; list-style:none;">
-                                <li>🎙️ 錄音時，每一頁請錄成一支音檔</li>
+                                <li>🎙️ 錄音艙可一頁一頁錄：繳交這一頁後，接著錄下一頁（也可從選單改頁／重錄已繳頁）</li>
                                 <li>📤 ${uploadLine}</li>
                                 <li>⚠️ 複選時，請依「頁面順序」點選檔案（先選第 1 頁、再選第 2 頁…），系統會依點選先後對應頁碼</li>
                             </ul>`;

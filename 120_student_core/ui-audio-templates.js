@@ -289,6 +289,7 @@ window.UIAudioTemplates = {
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow: hidden; flex: 1;">
                         <h2 class="audio-header-title" style="margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1;">🎙️ ${displayTitle}</h2>
                         ${rangeText}
+                        <div id="audio-page-picker" style="display:none; align-items:center; gap:6px; flex-shrink:0;"></div>
                     </div>
                     
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex-shrink: 0;">

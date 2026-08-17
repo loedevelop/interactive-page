@@ -262,6 +262,76 @@ window.FeatureStudentTimeline = (() => {
         return [];
     }
 
+    function getExistingAudioSegments(assignmentId, taskId) {
+        const existingCompletion = (window._studentTaskCompletions || []).find(function (c) {
+            return String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId);
+        });
+        return (existingCompletion && existingCompletion.raw_data && Array.isArray(existingCompletion.raw_data.audio_segments))
+            ? existingCompletion.raw_data.audio_segments
+            : [];
+    }
+
+    function submittedUnitKeyMap(assignmentId, taskId) {
+        const map = {};
+        getExistingAudioSegments(assignmentId, taskId).forEach(function (s) {
+            const key = String((s && s.unit_key) || '').trim();
+            if (key) map[key] = true;
+        });
+        return map;
+    }
+
+    /**
+     * 錄音艙用的頁清單：優先 Snapshot／骨架的 grading_units；
+     * 沒有結構化單位、但 base 範圍展開超過 1 頁時，用頁碼當穩定 unit_key。
+     * 單頁／無範圍＝空陣列，艙內維持舊的單檔流程。
+     */
+    function getStudioRecordingPages(taskConfig) {
+        const units = getTaskGradingUnits(taskConfig);
+        if (units.length > 1) {
+            return units.map(function (u, i) {
+                return {
+                    unit_key: String((u && u.unit_key) || '').trim() || ('unit:' + i),
+                    stem: (u && u.stem) || '',
+                    page: (u && u.page != null) ? u.page : null,
+                    label: (u && u.label) || ('第' + (i + 1) + '頁'),
+                    original_script: String((u && u.original_script) || '').trim()
+                };
+            });
+        }
+        if (units.length === 1) return [];
+        const rangeText = (taskConfig && taskConfig.raw_data && taskConfig.raw_data.material_range)
+            ? String(taskConfig.raw_data.material_range).trim()
+            : '';
+        const pages = (rangeText && window.UIStudentTimelineTemplates
+            && typeof window.UIStudentTimelineTemplates.pagesFromRangeText === 'function')
+            ? window.UIStudentTimelineTemplates.pagesFromRangeText(rangeText)
+            : [];
+        if (pages.length <= 1) return [];
+        return pages.map(function (p) {
+            return {
+                unit_key: 'range:' + p,
+                stem: '',
+                page: p,
+                label: 'p. ' + p,
+                original_script: ''
+            };
+        });
+    }
+
+    function firstUnsubmittedStudioIndex(pages, submittedKeys, afterIndex) {
+        const keys = submittedKeys || {};
+        const start = (afterIndex == null ? -1 : afterIndex) + 1;
+        for (let i = start; i < pages.length; i++) {
+            const key = String((pages[i] && pages[i].unit_key) || '').trim();
+            if (!key || !keys[key]) return i;
+        }
+        for (let j = 0; j < start && j < pages.length; j++) {
+            const key = String((pages[j] && pages[j].unit_key) || '').trim();
+            if (!key || !keys[key]) return j;
+        }
+        return -1;
+    }
+
     async function submitAudioSegmentsToAIGrading(assignmentId, taskId, segments) {
         assertAssignmentUuid(assignmentId, '作業 ID');
         const taskConfig = findTaskConfig(assignmentId, taskId);
@@ -372,12 +442,14 @@ window.FeatureStudentTimeline = (() => {
         ]);
     }
 
-    async function uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, fileItems) {
+    async function uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, fileItems, opts) {
+        opts = opts || {};
+        const targetUnit = opts.targetUnit || null;
         const statusEl = document.getElementById(statusId);
 
         if (window._isUploadingAudio) {
             console.warn('正在處理上傳中，請勿重複點擊');
-            return;
+            return null;
         }
         window._isUploadingAudio = true;
         const originalPointerEvents = document.body.style.pointerEvents;
@@ -388,7 +460,8 @@ window.FeatureStudentTimeline = (() => {
             const taskConfig = findTaskConfig(assignmentId, taskId);
             const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
             const gradingUnits = getTaskGradingUnits(taskConfig);
-            const hasScript = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim());
+            const hasScript = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim())
+                || !!(targetUnit && String(targetUnit.original_script || '').trim());
             // 💣 雷區：這裡曾只看「有沒有文稿」決定 canSendAI，完全沒檢查老師有沒有勾選
             // 「AI 批改發音」。導致老師沒勾 AI 批改，只要材料 Snapshot 帶了文稿，
             // 音檔還是會被送進 AI 管線、學生端也會出現「分段進度」批改中訊息。
@@ -416,14 +489,17 @@ window.FeatureStudentTimeline = (() => {
                 ? gradingUnits.filter(function (u) { return !existingUnitKeys.has(String(u.unit_key || '').trim()); })
                 : gradingUnits;
             // 所有頁都已提交過（existingUnitKeys 涵蓋全部）→ 視為刻意整份重傳，退回完整 gradingUnits
-            const effectiveUnits = remainingUnits.length ? remainingUnits : gradingUnits;
-            const alreadyDoneCount = gradingUnits.length - effectiveUnits.length;
+            // 錄音艙指定某一頁（含重錄已繳頁）時，只對那一頁，不要改走「尚未提交的頁」。
+            const effectiveUnits = targetUnit
+                ? [targetUnit]
+                : (remainingUnits.length ? remainingUnits : gradingUnits);
+            const alreadyDoneCount = targetUnit ? 0 : (gradingUnits.length - effectiveUnits.length);
 
             // 選取順序對應「尚未提交」的 grading_units（一頁一檔）
             const pairCount = effectiveUnits.length
                 ? Math.min(items.length, effectiveUnits.length)
                 : items.length;
-            if (effectiveUnits.length && items.length !== effectiveUnits.length) {
+            if (!targetUnit && effectiveUnits.length && items.length !== effectiveUnits.length) {
                 window.showFlash(
                     `已選 ${items.length} 檔；此作業共 ${gradingUnits.length} 個錄音頁單位`
                     + (alreadyDoneCount > 0 ? `（其中 ${alreadyDoneCount} 頁先前已提交，將接續補上剩下的頁）` : '')
@@ -539,12 +615,22 @@ window.FeatureStudentTimeline = (() => {
                 window.showFlash('音檔已上傳到資料夾。此任務' + (!hasScript ? '尚未設定批改文稿' : '未開啟 AI 批改') + '，故未送 AI。');
             }
             renderCourses();
+            const afterKeys = submittedUnitKeyMap(assignmentId, taskId);
+            const studioPages = getStudioRecordingPages(taskConfig);
+            const remainingCount = studioPages.length
+                ? studioPages.filter(function (p) {
+                    const k = String((p && p.unit_key) || '').trim();
+                    return k && !afterKeys[k];
+                }).length
+                : 0;
+            return { uploaded: uploaded, remainingCount: remainingCount, submittedKeys: afterKeys };
         } catch (err) {
             window.showFlash('音檔上傳失敗: ' + err.message, 'error');
             if (statusEl) {
                 statusEl.textContent = '❌ 上傳失敗';
                 statusEl.style.color = '#EF4444';
             }
+            return null;
         } finally {
             window._isUploadingAudio = false;
             document.body.style.pointerEvents = originalPointerEvents;
@@ -1503,79 +1589,35 @@ window.FeatureStudentTimeline = (() => {
                     }
                 }
 
+                const studioPages = getStudioRecordingPages(foundTask);
+                const submittedKeys = submittedUnitKeyMap(assignmentId, taskId);
+                const initialIndex = firstUnsubmittedStudioIndex(studioPages, submittedKeys, -1);
+
                 window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, finalMaterialUrl, finalMaterialRange, async (audioData) => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
-                    const statusEl = document.getElementById(statusId);
-                    
-                    if (window._isUploadingAudio) {
-                        console.warn('正在處理上傳中，請勿重複點擊');
-                        return;
+                    const bin = atob(audioData.base64);
+                    const bytes = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                    const wavBlob = new Blob([bytes], { type: audioData.mimeType || 'audio/wav' });
+                    const targetUnit = audioData.page || null;
+                    const result = await uploadAudioFilesForGrading(
+                        assignmentId, taskId, safeTitleForJS, statusId,
+                        [{ blob: wavBlob, name: audioData.fileName || 'recording.wav' }],
+                        { targetUnit: targetUnit }
+                    );
+                    if (!result) return { keepOpen: true };
+                    const keys = result.submittedKeys || submittedUnitKeyMap(assignmentId, taskId);
+                    const nextIndex = firstUnsubmittedStudioIndex(studioPages, keys, audioData.pageIndex);
+                    if (studioPages.length > 1 && nextIndex >= 0) {
+                        const nextLabel = studioPages[nextIndex] && (studioPages[nextIndex].label || studioPages[nextIndex].unit_key);
+                        window.showFlash('這一頁已繳交。請繼續錄「' + (nextLabel || ('第 ' + (nextIndex + 1) + ' 頁')) + '」。');
+                        return { keepOpen: true, nextIndex: nextIndex, submittedKeys: keys };
                     }
-                    window._isUploadingAudio = true;
-                    const originalPointerEvents = document.body.style.pointerEvents;
-                    document.body.style.pointerEvents = 'none';
-
-                    try {
-                        assertAssignmentUuid(assignmentId, '作業 ID');
-                        const taskConfig = findTaskConfig(assignmentId, taskId);
-                        const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-                        // 同 uploadAudioFilesForGrading：需同時有文稿「且」老師開啟 AI 批改才送 AI。
-                        // 見 .cursor/rules/ai-grading-pipeline-invariants.mdc。
-                        const canSendAI = !!scriptText && taskSupportsAIGrading(taskConfig, assignmentId);
-
-                        if (statusEl) {
-                            statusEl.textContent = '🚀 錄音上傳中...';
-                            statusEl.style.color = '#3B82F6';
-                        }
-                        
-                        const { userId, classId } = await getAuthContext(); 
-                        if (!window.ApiService || !window.ApiService.uploadToGAS) throw new Error("系統 API 模組尚未載入");
-
-                        const targetFolderId = resolveStudentUploadFolderId();
-
-                        const classPrefix = (classId || '0000').substring(0, 4);
-                        const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
-                        const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${audioData.fileName}`;
-
-                        const result = await window.ApiService.uploadToGAS(audioData.base64, finalFileName, audioData.mimeType, targetFolderId, assignmentId, taskId);
-                        const audioUrl = `https://drive.google.com/file/d/${result.fileId}/view`;
-
-                        if (canSendAI) {
-                            if (statusEl) {
-                                statusEl.textContent = '🧠 喚醒 AI 大腦批改中...';
-                                statusEl.style.color = '#8B5CF6';
-                            }
-                            await submitAudioToAIGrading(assignmentId, taskId, result.fileId, audioUrl);
-                            if (statusEl) {
-                                statusEl.textContent = '✅ 繳交成功！AI 已接管';
-                                statusEl.style.color = '#10B981';
-                            }
-                            applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, result.fileId, audioUrl);
-                        } else {
-                            await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, [{
-                                id: result.fileId,
-                                mime: audioData.mimeType || 'audio/wav',
-                                name: finalFileName
-                            }]);
-                            const skipReason = !scriptText ? '無文稿' : '未開啟 AI 批改';
-                            if (statusEl) {
-                                statusEl.textContent = `✅ 已上傳（${skipReason}，略過 AI）`;
-                                statusEl.style.color = '#10B981';
-                            }
-                            window.showFlash('錄音已上傳。此任務' + (!scriptText ? '尚未設定批改文稿' : '未開啟 AI 批改') + '，故未送 AI。');
-                        }
-                        renderCourses();
-
-                    } catch (err) {
-                        window.showFlash('錄音上傳失敗: ' + err.message, 'error');
-                        if (statusEl) {
-                            statusEl.textContent = '❌ 上傳失敗';
-                            statusEl.style.color = '#EF4444';
-                        }
-                    } finally {
-                        window._isUploadingAudio = false; 
-                        document.body.style.pointerEvents = originalPointerEvents;
-                    }
+                    return { keepOpen: false };
+                }, {
+                    pages: studioPages,
+                    initialIndex: initialIndex < 0 ? 0 : initialIndex,
+                    submittedKeys: submittedKeys
                 });
             } else {
                 window.showFlash('系統正在載入錄音模組，請稍候重試。', 'error');
