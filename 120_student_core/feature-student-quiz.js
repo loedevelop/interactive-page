@@ -96,6 +96,50 @@ window.FeatureStudentQuiz = (function () {
             : null;
     }
 
+    /**
+     * 💣 雷區（2026-08-17）：錯題本的 expected 是交卷當下凍結的。老師「重新批改」
+     * 已把目前試卷的標準答案寫回 quiz_paper.items[].answer_en，但學生端若只讀
+     * quiz_stats.wrong_items.expected，畫面會一直停在舊的「a」。顯示與改正練習
+     * 一律以目前作業卷上的 answer_en 為準。
+     */
+    function liveExpectedFromPaper(task, itemId) {
+        const paper = getPaper(task);
+        if (!paper || !Array.isArray(paper.items) || itemId == null) return '';
+        const hit = paper.items.find(function (it) { return String(it.item_id) === String(itemId); });
+        return hit ? String(hit.answer_en || '').trim() : '';
+    }
+
+    function overlayWrongItemsExpected(wrongItems, task) {
+        return (wrongItems || []).map(function (item) {
+            const live = liveExpectedFromPaper(task, item && item.item_id);
+            if (!live || String(item.expected || '').trim() === live) return item;
+            const next = Object.assign({}, item, { expected: live });
+            delete next.diff;
+            delete next.ops;
+            return next;
+        });
+    }
+
+    async function refreshAssignmentFromDb(assignmentId) {
+        try {
+            if (!window.supabaseClient || !isAssignmentId(assignmentId)) return;
+            const { data, error } = await window.supabaseClient
+                .from('assignments')
+                .select('id, title, description, target_date, due_date, tasks, raw_data, is_published, class_id')
+                .eq('id', assignmentId)
+                .maybeSingle();
+            if (error || !data) return;
+            const list = (window.FeatureStudentTimeline && typeof window.FeatureStudentTimeline.getAssignments === 'function')
+                ? window.FeatureStudentTimeline.getAssignments()
+                : [];
+            const idx = (list || []).findIndex(function (a) { return String(a.id) === String(assignmentId); });
+            if (idx >= 0) list[idx] = data;
+            else if (list) list.push(data);
+        } catch (err) {
+            console.warn('[FeatureStudentQuiz] refreshAssignmentFromDb', err);
+        }
+    }
+
     function walkFindTask(tasks, taskId) {
         let found = null;
         (tasks || []).forEach(function (t) {
@@ -482,7 +526,10 @@ window.FeatureStudentQuiz = (function () {
             tier: 'A',
             contentHtml: '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取最新批改結果…</div>'
         });
-        await refreshCompletionFromDb(assignmentId, taskId);
+        await Promise.all([
+            refreshCompletionFromDb(assignmentId, taskId),
+            refreshAssignmentFromDb(assignmentId)
+        ]);
         renderReviewFromCache(assignmentId, taskId, false);
     }
 
@@ -490,6 +537,8 @@ window.FeatureStudentQuiz = (function () {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const stats = readStats(raw);
+        const task = findTaskInAssignments(assignmentId, taskId);
+        stats.wrong_items = overlayWrongItemsExpected(stats.wrong_items, task);
         const qr = raw.quiz_result || {};
         const result = {
             correct: qr.correct != null ? qr.correct : '—',
@@ -499,7 +548,6 @@ window.FeatureStudentQuiz = (function () {
         const retake = raw.quiz_retake || null;
         const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
         const retakeReportReady = !!(retake && retake.done);
-        const task = findTaskInAssignments(assignmentId, taskId);
         const allowAppeal = !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID,
@@ -1350,7 +1398,8 @@ window.FeatureStudentQuiz = (function () {
     function buildRetakeReportHtml(title, originalResult, retake, opts) {
         opts = opts || {};
         const combined = retake.combined || {};
-        const wrongItems = (retake.result && retake.result.wrong_items) || [];
+        const taskForOverlay = findTaskInAssignments(opts.assignmentId, opts.taskId);
+        const wrongItems = overlayWrongItemsExpected((retake.result && retake.result.wrong_items) || [], taskForOverlay);
         const totalRetake = Array.isArray(retake.item_ids) ? retake.item_ids.length : 0;
         const fixedCount = Math.max(0, totalRetake - wrongItems.length);
         const appealsByItemId = opts.appealsByItemId || {};
@@ -1425,7 +1474,10 @@ window.FeatureStudentQuiz = (function () {
                 contentHtml: '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取最新批改結果…</div>'
             });
         }
-        await refreshCompletionFromDb(assignmentId, taskId);
+        await Promise.all([
+            refreshCompletionFromDb(assignmentId, taskId),
+            refreshAssignmentFromDb(assignmentId)
+        ]);
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const retake = raw.quiz_retake;
@@ -1838,7 +1890,7 @@ window.FeatureStudentQuiz = (function () {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const stats = readStats(raw);
-        const wrongItems = stats.wrong_items || [];
+        const wrongItems = overlayWrongItemsExpected(stats.wrong_items || [], task);
         if (!wrongItems.length) return window.showFlash('目前沒有錯題可以改正', 'warning');
         if (!window.QuizPaperBuilder) return window.showFlash('作答模組未載入', 'error');
         if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return window.showFlash('ModalOverlay 未載入', 'error');
@@ -1907,7 +1959,7 @@ window.FeatureStudentQuiz = (function () {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const stats = readStats(raw);
-        const wrongItems = stats.wrong_items || [];
+        const wrongItems = overlayWrongItemsExpected(stats.wrong_items || [], task);
         const requiredCount = Math.max(1, Number(task.raw_data.input_correction_count) || 1);
         if (!wrongItems.length) return { total: 0, done: 0, allDone: true, requiredCount: requiredCount, noWrong: true };
         const normItems = buildPracticeNormItems('correction', wrongItems);

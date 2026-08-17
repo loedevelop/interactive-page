@@ -2889,7 +2889,11 @@ window.FeatureExamJob = (function () {
         const t = findTemplateForProfile(profile);
         if (!t) return profile;
         const out = Object.assign({}, profile);
-        if (!out.quiz_answer && t.answer_combine_note) out.quiz_answer = t.answer_combine_note;
+        if (t.is_extraction_role) {
+            out.quiz_answer = String(t.answer_combine_note || '').trim();
+        } else {
+            out.quiz_answer = String(t.quiz_answer || '').trim();
+        }
         out.col_map = Object.assign({}, out.col_map || {}, colMapFromTemplate(t));
         return out;
     }

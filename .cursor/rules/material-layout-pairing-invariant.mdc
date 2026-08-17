@@ -1099,8 +1099,8 @@ AI對照稿（is_ai_ref）是完全獨立、選填的一欄，跟「答案」（
 
 ```
 template.answer_mode: 'combine' | 'separate'（預設 combine，向下相容舊教材）
-template.answer_combine_note: string（結合公式備註，例如 AN&" "&AO，僅供參考，
-  實際卷面組合仍以 Layout Profile 的 quiz_answer 公式為準，不是這裡的字串直接生效）
+template.answer_combine_note: string（這一筆範本自己的書寫答案結合公式；沒填就是沒有。
+  不是 quiz_answer 的備份，也不是別筆範本可以共用的公式）
 template.speak_mode: 'formula' | 'complex' | 'paste'（預設 formula）
 template.speak_formula: string（speak_mode==='formula' 時用 LayoutFieldsEval 計算候選值；
   可用資料項名稱或 Excel 欄位代號，例如 pre&" "&script 或 AN&" "&AO）
@@ -1167,9 +1167,8 @@ gradeSubAnswerItem 旁邊的 addAcceptedAnswer/removeAcceptedAnswer/setPrimaryAn
 //    老師已明確要求這兩種模式先整批留白，逼老師確實逐列輸入／貼上，不能悄悄冒出舊資料
 // ❌ 老師在逐列表格改了一列之後，重新按「產生預覽」把 speakOverrides 清掉——
 //    overrides 必須跨預覽保留（見 handleGeneratePreview 的 prevOverrides）
-// ❌ answer_combine_note 直接被當成真的拿去組合書寫答案寫入 meta.json——它只是備註／
-//    參考，真正的卷面組合仍是 Layout Profile 的 quiz_answer 公式（避免兩處各存一份
-//    組合規則、之後兩邊改到不同步）
+// ❌ 發明「quiz_answer 沒填才用 answer_combine_note」當產品規則
+// ❌ 用別份範本的公式（例如 AN&" "&AO）去推論這份 PIC 的公式
 // ❌ 書寫答案欄數 ≤1 的教材也被迫多寫 _answer_mode/_answer_keys——向下相容的教材完全
 //    不該多出這兩個欄位
 ```

@@ -1,0 +1,29 @@
+---
+description: 每個範本自己的公式；沒填就沒有；禁止互當備份、禁止套別筆
+globs: 110_teacher_core/feature-template-library.js,110_teacher_core/feature-exam-job.js,110_teacher_core/feature-material-layout-pairing.js,020_js_core/quiz-paper-builder.js
+alwaysApply: false
+---
+
+# 範本公式（雷區｜2026-08-17 老師痛斥）
+
+## 不變量
+
+```
+每個範本自己的公式，彼此不同。
+不是每個範本都有公式；沒填就是沒有。
+書寫答案結合公式不是 quiz_answer 的備份。
+禁止用 WORD 的公式去推論 PIC。
+禁止發明「A 沒填才用 B」。
+```
+
+## 正確
+
+```javascript
+// 擷取／雙用：這一筆的 answer_combine_note（沒填＝沒公式）
+// 僅試卷：這一筆的 quiz_answer（沒填＝沒公式）
+if (t.is_extraction_role) return String(t.answer_combine_note || '').trim();
+return String(t.quiz_answer || '').trim();
+```
+
+PIC 例：`AN=pos`、`AO=pre`、`AP=answer_en`，公式 `AO&" "&AP`。  
+WORD 例可能完全不同。不要互抄、不要當備份。

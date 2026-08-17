@@ -90,27 +90,52 @@ window.LayoutFieldsEval = (function () {
      * 「共同詞彙」，不管實際 Excel 欄位在哪裡都能正確對應。Excel 欄字母僅保留給
      * 「單一 schema、沒有多區塊」的舊教材相容用，多 schema 教材不要再用欄字母寫 `_Layout`。
      */
+    /**
+     * 舊教材／新教材欄名相容（不是猜詞性）：
+     * answer_en ↔ script（書寫英文單字）；pre ↔ article（冠詞／前置）。
+     * 試卷公式 AN&" "&AO 若 AO 對到 answer_en、列上卻只剩舊鍵 script，必須能讀到字。
+     */
+    const FIELD_ALIASES = {
+        ANSWER_EN: ['script'],
+        SCRIPT: ['answer_en'],
+        PRE: ['article'],
+        ARTICLE: ['pre']
+    };
+
+    function lookupDirect(row, name) {
+        if (!row || !name) return '';
+        const upper = String(name).toUpperCase();
+        const rowKeys = Object.keys(row);
+        for (let i = 0; i < rowKeys.length; i++) {
+            if (rowKeys[i].toUpperCase() === upper) {
+                const v = row[rowKeys[i]];
+                if (v != null && String(v).trim() !== '') return v;
+            }
+        }
+        return '';
+    }
+
     function lookupColumn(row, name, colMap) {
         const raw = String(name || '').trim();
         if (!raw) return '';
         const upper = raw.toUpperCase();
         // ① 優先當作語意欄位鍵（semantic_key，大小寫不拘）：跨 schema 皆可共用，建議寫法
-        if (row) {
-            const rowKeys = Object.keys(row);
-            for (let i = 0; i < rowKeys.length; i++) {
-                if (rowKeys[i].toUpperCase() === upper) {
-                    const v = row[rowKeys[i]];
-                    if (v != null && String(v).trim() !== '') return v;
-                }
-            }
-        }
+        let v = lookupDirect(row, upper);
+        if (v !== '') return v;
         // ② 相容：把「Excel 欄字母」透過 colMap 轉成語意欄位再查（僅單一 schema 教材安全）
         const map = resolveColMap(colMap);
         const semantic = map[upper];
-        if (semantic && row && row[semantic] != null && String(row[semantic]).trim() !== '') {
-            return row[semantic];
+        if (semantic) {
+            v = lookupDirect(row, semantic);
+            if (v !== '') return v;
         }
-        if (semantic && row && row[semantic] != null) return row[semantic];
+        // ③ 舊鍵相容：answer_en↔script、pre↔article
+        const aliasFrom = semantic ? String(semantic).toUpperCase() : upper;
+        const aliases = FIELD_ALIASES[aliasFrom] || FIELD_ALIASES[upper] || [];
+        for (let i = 0; i < aliases.length; i++) {
+            v = lookupDirect(row, aliases[i]);
+            if (v !== '') return v;
+        }
         return '';
     }
 

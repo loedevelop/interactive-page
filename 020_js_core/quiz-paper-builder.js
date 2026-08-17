@@ -41,10 +41,92 @@ window.QuizPaperBuilder = (function () {
             .trim();
     }
 
+    function fieldAlias(row, key) {
+        if (!row || !key) return '';
+        const k = String(key);
+        let v = String(row[k] != null ? row[k] : '').trim();
+        if (v) return v;
+        const lower = k.toLowerCase();
+        if (lower === 'answer_en') return String(row.script || '').trim();
+        if (lower === 'script') return String(row.answer_en || '').trim();
+        if (lower === 'pre') return String(row.article || '').trim();
+        if (lower === 'article') return String(row.pre || '').trim();
+        return '';
+    }
+
     function joinAnswerKeys(row) {
         if (!row || !Array.isArray(row._answer_keys) || !row._answer_keys.length) return '';
-        return row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
+        return row._answer_keys.map(function (key) { return fieldAlias(row, key); })
             .filter(Boolean).join(' ');
+    }
+
+    function wordFromRow(row) {
+        return fieldAlias(row, 'answer_en') || fieldAlias(row, 'script');
+    }
+
+    function preFromRow(row) {
+        return fieldAlias(row, 'pre') || fieldAlias(row, 'article');
+    }
+
+    /**
+     * 公式 AN&" "&AO 因 AO 空而整段空、或 _answer_keys 只勾了 pre 時，
+     * join／cells[2] 會卡在冠詞「a」。列上若已有英文單字，依老師公式接回 pre + 字。
+     * 禁止用詞性啟發式改公式；這裡只做舊鍵相容與不完整結合的補齊。
+     */
+    function finalizeWrittenAnswer(answerEn, row) {
+        const pre = preFromRow(row);
+        const word = wordFromRow(row);
+        const cur = String(answerEn || '').trim();
+        if (!word) return cur;
+        if (!cur || (pre && normalizeAnswer(cur) === normalizeAnswer(pre))) {
+            if (pre && normalizeAnswer(pre) !== normalizeAnswer(word)) {
+                return (pre + ' ' + word).trim();
+            }
+            return word;
+        }
+        return cur;
+    }
+
+    function rowsFromMetaPack(pack) {
+        return (pack && Array.isArray(pack.rows)) ? pack.rows : [];
+    }
+
+    function pairedSheetId(sheetId) {
+        const s = String(sheetId || '').trim();
+        if (/_PIC$/i.test(s)) return s.replace(/_PIC$/i, '_WORD');
+        if (/_WORD$/i.test(s)) return s.replace(/_WORD$/i, '_PIC');
+        return '';
+    }
+
+    function findPairedMetaRow(metaCache, sheetId, row) {
+        const want = pairedSheetId(sheetId);
+        if (!want || !metaCache) return null;
+        const page = toNum(row && row.page);
+        const itemNo = toNum(row && row.item_no);
+        if (isNaN(page) || isNaN(itemNo)) return null;
+        const keys = Object.keys(metaCache);
+        for (let i = 0; i < keys.length; i++) {
+            if (String(keys[i]).toUpperCase() !== want.toUpperCase()) continue;
+            const rows = rowsFromMetaPack(metaCache[keys[i]]);
+            const hit = rows.find(function (r) {
+                return toNum(r && r.page) === page && toNum(r && r.item_no) === itemNo;
+            });
+            if (hit) return hit;
+        }
+        return null;
+    }
+
+    function rowWithPairedWord(row, sibling) {
+        if (!row) return row || {};
+        const out = Object.assign({}, row);
+        if (!wordFromRow(out) && sibling) {
+            const w = wordFromRow(sibling);
+            if (w) {
+                if (!String(out.answer_en || '').trim()) out.answer_en = String(sibling.answer_en || sibling.script || w).trim();
+                if (!String(out.script || '').trim()) out.script = String(sibling.script || sibling.answer_en || w).trim();
+            }
+        }
+        return out;
     }
 
     function vbkNameOf(row, sheetId) {
@@ -489,15 +571,20 @@ window.QuizPaperBuilder = (function () {
     }
 
     function applyColMapAliases(row, colMap) {
-        if (!row || !colMap) return row || {};
+        if (!row) return {};
         const out = Object.assign({}, row);
+        if (!String(out.answer_en || '').trim() && String(out.script || '').trim()) out.answer_en = out.script;
+        if (!String(out.script || '').trim() && String(out.answer_en || '').trim()) out.script = out.answer_en;
+        if (!String(out.pre || '').trim() && String(out.article || '').trim()) out.pre = out.article;
+        if (!String(out.article || '').trim() && String(out.pre || '').trim()) out.article = out.pre;
+        if (!colMap) return out;
         Object.keys(colMap).forEach(function (letter) {
             const sem = colMap[letter];
             if (!sem) return;
             const L = String(letter).toUpperCase();
-            if ((out[L] == null || String(out[L]).trim() === '') && out[sem] != null && String(out[sem]).trim() !== '') {
-                out[L] = out[sem];
-            }
+            if (out[L] != null && String(out[L]).trim() !== '') return;
+            const v = fieldAlias(out, sem);
+            if (v) out[L] = v;
         });
         return out;
     }
@@ -549,11 +636,10 @@ window.QuizPaperBuilder = (function () {
         }
 
         /**
-         * 💣 雷區（2026-08-16）：試卷範本公式（quiz_answer／answer_combine_note，例如
-         * AN&" "&AO）是老師明確寫的標準答案來源，優先於 meta 裡可能過期的
-         * `_answer_combined_text`（舊擷取曾把 pos+pre 寫成「ph. -」）。
-         * 公式算出空白才退回結合快取／_answer_keys。
-         * skipStoredCombined（重新批改／重新批閱）再多跳過過期結合快取。
+         * 💣 雷區（2026-08-17）：老師填的結合公式死套（opts.quizAnswer 已是該範本
+         * 實際公式，例如 PIC 的 AO&" "&AP）。禁止發明 quiz_answer／answer_combine_note
+         * 優先序，也禁止用別份範本的 AN&" "&AO 來猜。
+         * skipStoredCombined（重新批改）跳過過期 `_answer_combined_text`。
          * 禁止用詞性啟發式去改公式。
          */
         if (opts.quizAnswer) {
@@ -561,17 +647,17 @@ window.QuizPaperBuilder = (function () {
             answerEn = tplCells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join(' ').trim();
         }
         if (!answerEn && opts.skipStoredCombined) {
-            if (row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
-                answerEn = joinAnswerKeys(row);
+            if (row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length) {
+                answerEn = joinAnswerKeys(evalRow);
             }
         } else if (!answerEn && row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
             answerEn = String(row._answer_combined_text).trim();
-        } else if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
-            answerEn = joinAnswerKeys(row);
+        } else if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length) {
+            answerEn = joinAnswerKeys(evalRow);
         }
         // 舊慣例（相容無 quiz_prompt／quiz_answer 的教材）：第2欄提示（Y）、第3欄英文答案（X）
         if (!promptZh) promptZh = (cells[1] && cells[1].text) || String(row.display_zh || '').trim();
-        if (!answerEn) answerEn = (cells[2] && cells[2].text) || String(row.script || '').trim();
+        if (!answerEn) answerEn = (cells[2] && cells[2].text) || wordFromRow(evalRow) || String(row.script || '').trim();
         let clozeStem = '';
         if (opts.quizMode === 'cloze' && cellsAnswer && cellsAnswer[1]) {
             clozeStem = cellsAnswer[1].text || '';
@@ -579,7 +665,8 @@ window.QuizPaperBuilder = (function () {
 
         // 'separate' 模式的合併預覽字串要靠下面 subAnswers 那段算（逐欄各自的值），這裡先不要
         // 用單欄 row.answer_en 卡位，否則下面 `if (!answerEn)` 會被誤判成「已經有了」而跳過。
-        if (!answerEn && row._answer_mode !== 'separate') answerEn = String(row.answer_en || '').trim();
+        if (!answerEn && row._answer_mode !== 'separate') answerEn = wordFromRow(evalRow) || String(row.answer_en || '').trim();
+        if (row._answer_mode !== 'separate') answerEn = finalizeWrittenAnswer(answerEn, evalRow);
 
         /**
          * 「分開比對」多空格：書寫答案欄數>1且老師選「分開比對」時，_answer_keys 各自
@@ -656,6 +743,11 @@ window.QuizPaperBuilder = (function () {
         const picked = [];
         const metaCache = {};
         const notices = [];
+
+        for (let pIdx = 0; pIdx < sections.length; pIdx++) {
+            const preloadId = String((sections[pIdx] || {}).sheet_id || '').trim().toUpperCase();
+            if (preloadId && !metaCache[preloadId]) metaCache[preloadId] = await loadSheetMeta(preloadId);
+        }
 
         for (let sIdx = 0; sIdx < sections.length; sIdx++) {
             const sec = sections[sIdx] || {};
@@ -736,8 +828,7 @@ window.QuizPaperBuilder = (function () {
 
             take.forEach(function (row) {
                 // 確保 sheet_id 在列上（若 Excel 有 D 欄會已有；否則補上）
-                const row2 = Object.assign({}, row);
-                if (!row2.sheet_id) row2.sheet_id = sheetId;
+                const row2 = rowWithPairedWord(Object.assign({}, row, row.sheet_id ? {} : { sheet_id: sheetId }), findPairedMetaRow(metaCache, sheetId, row));
                 picked.push(buildItemFromRow(row2, {
                     sheetId: sheetId,
                     materialFolder: materialFolder,
@@ -1023,6 +1114,20 @@ window.QuizPaperBuilder = (function () {
         const metaCache = {};
         let updated = 0;
         let missing = 0;
+        const sheetIdsToLoad = [];
+        items.forEach(function (it) {
+            const sid = String((it.source && it.source.sheet_id) || '').trim().toUpperCase();
+            if (sid && sheetIdsToLoad.indexOf(sid) === -1) sheetIdsToLoad.push(sid);
+            const pair = pairedSheetId(sid);
+            if (pair && sheetIdsToLoad.indexOf(pair.toUpperCase()) === -1) sheetIdsToLoad.push(pair.toUpperCase());
+        });
+        for (let p = 0; p < sheetIdsToLoad.length; p++) {
+            if (typeof loadSheetMeta !== 'function') break;
+            if (!metaCache[sheetIdsToLoad[p]]) {
+                try { metaCache[sheetIdsToLoad[p]] = await loadSheetMeta(sheetIdsToLoad[p]); }
+                catch (_preloadErr) { metaCache[sheetIdsToLoad[p]] = { rows: [] }; }
+            }
+        }
         for (let i = 0; i < items.length; i++) {
             const it = items[i];
             const src = it.source || {};
@@ -1033,13 +1138,14 @@ window.QuizPaperBuilder = (function () {
             const rows = Array.isArray(pack.rows) ? pack.rows : [];
             const row = rows.find(function (r) { return rowMatchesItem(r, it); });
             if (!row) { missing += 1; continue; }
+            const rowForBuild = rowWithPairedWord(row, findPairedMetaRow(metaCache, sheetId, row));
             const sec = (examJob.sections || []).find(function (s) {
                 return String((s && s.sheet_id) || '').toUpperCase() === sheetId;
             }) || {};
             const profile = sec.layout_profile_id
                 ? pickProfile(layout, sec.layout_profile_id)
                 : pickProfile(layout, examJob.layout_profile_id);
-            const rebuilt = buildItemFromRow(row, {
+            const rebuilt = buildItemFromRow(rowForBuild, {
                 sheetId: sheetId,
                 materialFolder: pack.materialFolder || layout.material_folder || src.material_folder || '',
                 schemaId: pack.schemaId || src.schema_id || '',

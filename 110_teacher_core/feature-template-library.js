@@ -274,6 +274,18 @@ window.FeatureTemplateLibrary = (function () {
         return { fields: fields, fields_answer: fieldsAnswer, lines_per_page: (template && template.lines_per_page) || DEFAULT_LINES_PER_PAGE };
     }
 
+    /**
+     * 這一筆範本自己的公式。每筆不同；沒填就是沒有。
+     * 擷取／雙用：書寫答案結合公式（answer_combine_note）。
+     * 僅試卷：quiz_answer。
+     * 禁止拿別筆範本的公式，禁止兩欄互當備份。
+     */
+    function templateOwnFormula(t) {
+        if (!t) return '';
+        if (t.is_extraction_role) return String(t.answer_combine_note || '').trim();
+        return String(t.quiz_answer || '').trim();
+    }
+
     function colMapFromTemplate(t) {
         const map = {};
         (t && Array.isArray(t.columns) ? t.columns : []).forEach(function (c) {
@@ -314,7 +326,7 @@ window.FeatureTemplateLibrary = (function () {
             fields: draft.fields || '',
             fields_answer: draft.fields_answer || '""',
             quiz_prompt: t.quiz_prompt || '',
-            quiz_answer: t.quiz_answer || t.answer_combine_note || '',
+            quiz_answer: templateOwnFormula(t),
             col_map: colMapFromTemplate(t),
             lines_per_page: draft.lines_per_page || t.lines_per_page || DEFAULT_LINES_PER_PAGE
         };

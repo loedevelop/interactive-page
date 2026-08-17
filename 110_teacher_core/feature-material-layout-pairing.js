@@ -218,7 +218,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}>
                         結合成一個答案（用公式組合多欄，例如 AN&amp;" "&amp;AO）
                     </label>
-                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='公式備註，例如 AN&amp;" "&amp;AO 或 pre&amp;" "&amp;script（僅供參考記錄，實際組合仍以試卷範本的 quiz_answer 公式為準）' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
+                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='結合公式，照欄位代號寫，例如 AO&amp;" "&amp;AP' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
                 </div>` : `
                 <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">📝 書寫答案批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
         return `
