@@ -13,29 +13,6 @@ window.FeatureExamJob = (function () {
         { id: 'gept2-v1', label: 'GEPT-2 v1', aliases: ['GEPT-2', 'GEPT2', 'gept-2', 'gept2'] }
     ];
 
-    /**
-     * 兩邊約定的卷面模板（優先以教材 _layout.json 為準）。
-     * 2026-08-04：老師提過的 5 個中央模板類型（整句翻譯／句子填空／單字帶圖／單字無圖／新版擴充），
-     * 加上既有舊 id（gept-translate-5col）共 6 個，先在這裡補齊，避免下拉/搭配清單漏選項。
-     * 🚧 vocab-with-image／v2-extended 目前只是占位 id（尚無圖片渲染／擴充公式實作），
-     *    真正的「中央模板管理（Drive 儲存＋template_ref 引用）」是更大的一輪工作，尚未落地。
-     */
-    const LAYOUT_CATALOG = [
-        { id: 'sentence-translate-4col', label: '整句翻譯（sentence-translate-4col）' },
-        { id: 'sentence-cloze-4col', label: '句子填空（sentence-cloze-4col）' },
-        { id: 'gept-translate-5col', label: 'GEPT 翻譯五欄（舊 id）' },
-        { id: 'vocab-no-image', label: '單字無圖（vocab-no-image）' },
-        { id: 'vocab-with-image', label: '單字帶圖（vocab-with-image，🚧 占位，尚無圖片渲染）' },
-        { id: 'v2-extended', label: '新版擴充（v2-extended，🚧 占位）' }
-    ];
-
-    /** 卷面「欄位」公式提示（無 _layout 時的後備；正式以 _layout.json fields 為準） */
-    const LAYOUT_FIELD_HINTS = {
-        'sentence-translate-4col': 'STACK(D,E,C), FONTSIZE(Y,-1), X',
-        'sentence-cloze-4col': 'STACK(D,E,C), FONTSIZE(Y,-1), X',
-        'gept-translate-5col': 'STACK(D,E,C), FONTSIZE(Y,-1), X'
-    };
-
     const SHEET_SUGGESTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
     const DEFAULT_LINES_PER_PAGE = 10;
     const _availAutoFetchKey = {};
@@ -142,8 +119,7 @@ window.FeatureExamJob = (function () {
      * （見 feature-template-library.js），用 is_exam_role 角色勾選框篩選，不再是各自獨立的
      * material_exam_templates。這裡全部改成呼叫共用資料層，不自己直接查資料庫——避免這裡跟
      * feature-material-layout-pairing.js 各自維護一份取資料邏輯，之後改一邊漏一邊。
-     * LAYOUT_CATALOG／LAYOUT_FIELD_HINTS 兩個常數保留純粹是給 resolveExamTemplateProfile()
-     * 萬一資料庫種子資料缺失時的最後一層安全網，不是主要來源。
+     * 試卷範本只讀範本庫。庫找不到就回 null，不准退回舊 LAYOUT_CATALOG。
      */
     async function fetchExamTemplates(force) {
         await window.FeatureTemplateLibrary.fetchTemplates(force);
@@ -184,42 +160,95 @@ window.FeatureExamJob = (function () {
     }
 
     /**
-     * 統一考卷範本解析：委派給 FeatureTemplateLibrary.resolveTemplateProfile()（單一實作，
-     * 涵蓋新格式 uuid／legacy_profile_id（舊 LAYOUT_CATALOG 字串）／legacy_id（遷移前 mft_xxx
-     * 字串）／'tpl:{id}' 四種來源），不再各自寫一份。找不到時才退回 LAYOUT_CATALOG 常數當最後安全網。
-     * @returns {{profile_id, label, fields, fields_answer, quiz_prompt, quiz_answer, lines_per_page}|null}
+     * 統一考卷範本解析：只讀範本庫（uuid／legacy_profile_id／legacy_id／'tpl:{id}'）。
+     * 庫找不到就回 null，不准退回舊內建 6 個 id。
      */
     function resolveExamTemplateProfile(pid) {
         const id = String(pid || '').trim();
         if (!id) return null;
-        const resolved = window.FeatureTemplateLibrary.resolveTemplateProfile(id);
-        if (resolved) return resolved;
-        // 資料庫種子資料缺失時的最後安全網（正常情況不會走到這裡，backfill 已覆蓋所有已用過教材系統的老師）
-        const builtin = LAYOUT_CATALOG.find(function (l) { return l.id === id; });
-        if (!builtin) return null;
-        return {
-            profile_id: id,
-            label: builtin.label,
-            fields: LAYOUT_FIELD_HINTS[id] || '',
-            fields_answer: 'X',
-            quiz_prompt: '',
-            quiz_answer: '',
-            lines_per_page: DEFAULT_LINES_PER_PAGE
-        };
+        if (!window.FeatureTemplateLibrary || typeof window.FeatureTemplateLibrary.resolveTemplateProfile !== 'function') {
+            return null;
+        }
+        return window.FeatureTemplateLibrary.resolveTemplateProfile(id) || null;
     }
 
-    /** 出題下拉「⭐建議」用：只讀資料庫已有的考卷範本清單，不再自動把擷取範本換算成選項 */
-    function buildExamTemplateSelectOptionsHtml(selectedId, suggestedId) {
+    function findExamTemplateByAnyId(id) {
+        const want = String(id || '').trim();
+        if (!want) return null;
         const templates = getExamTemplatesCachedSync();
-        if (!templates.length) {
-            return '<option value="">（尚未建立任何試卷範本，請到「🧾 試卷範本」新增）</option>';
+        return templates.find(function (t) {
+            return t.id === want
+                || (t.legacy_profile_id && t.legacy_profile_id === want)
+                || (t.legacy_id && t.legacy_id === want);
+        }) || null;
+    }
+
+    /**
+     * 出題下拉：只列這個 meta 的官方認證試卷範本。
+     * allowedIds 空＝這份 meta 沒有官方配對，不准列出整庫。
+     */
+    function buildExamTemplateSelectOptionsHtml(selectedId, allowedIds) {
+        const allowed = [];
+        const seen = {};
+        (allowedIds || []).forEach(function (id) {
+            const t = findExamTemplateByAnyId(id);
+            const key = t ? t.id : String(id || '').trim();
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            allowed.push(t || { id: key, name: '' });
+        });
+        if (!allowed.length) {
+            return '<option value="" disabled>此 meta 尚未官方搭配試卷範本，無法出卷</option>';
         }
-        return templates.map(function (t) {
-            const isSuggested = !!(suggestedId && t.id === suggestedId);
-            const isSelected = selectedId === t.id || (!!t.legacy_profile_id && selectedId === t.legacy_profile_id);
-            const label = (isSuggested ? '⭐ ' : '') + t.name;
+        return allowed.map(function (t) {
+            const isSelected = selectedId === t.id
+                || (!!t.legacy_profile_id && selectedId === t.legacy_profile_id)
+                || (!!t.legacy_id && selectedId === t.legacy_id);
+            const label = t.name || '（找不到這筆試卷範本）';
             return '<option value="' + esc(t.id) + '"' + (isSelected ? ' selected' : '') + '>' + esc(label) + '</option>';
         }).join('');
+    }
+
+    function officialPairingCacheReady() {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        return !!(fcmc && typeof fcmc.isOfficialPairingCacheReady === 'function' && fcmc.isOfficialPairingCacheReady());
+    }
+
+    function officialExamTemplateIdsForMeta(rootKind, classId, folderName, sheetHint) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.listOfficialExamTemplateIds !== 'function') return [];
+        return fcmc.listOfficialExamTemplateIds(rootKind, classId, folderName, sheetHint) || [];
+    }
+
+    function folderHasOfficialExamPairing(rootKind, classId, folderName) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.folderHasOfficialExamPairing !== 'function') return false;
+        return !!fcmc.folderHasOfficialExamPairing(rootKind, classId, folderName);
+    }
+
+    function officialPairedMetaOptions(classId, rootKind, materialFolder) {
+        const all = catalogMetaOptionsForFolder(classId, rootKind, materialFolder);
+        if (!officialPairingCacheReady()) return [];
+        return all.filter(function (o) {
+            return officialExamTemplateIdsForMeta(rootKind, classId, materialFolder, o.fileName).length > 0;
+        });
+    }
+
+    function officialExamTemplateDefaultId(rootKind, classId, folderName, sheetHint) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (fcmc && typeof fcmc.getOfficialExamTemplateDefaultId === 'function') {
+            return fcmc.getOfficialExamTemplateDefaultId(rootKind, classId, folderName, sheetHint) || '';
+        }
+        const ids = officialExamTemplateIdsForMeta(rootKind, classId, folderName, sheetHint);
+        return ids[0] || '';
+    }
+
+    function isIdInOfficialList(pid, officialIds) {
+        const want = String(pid || '').trim();
+        if (!want || !officialIds || !officialIds.length) return false;
+        if (officialIds.indexOf(want) !== -1) return true;
+        const t = findExamTemplateByAnyId(want);
+        return !!(t && officialIds.indexOf(t.id) !== -1);
     }
 
     function layoutFieldHint(layoutId) {
@@ -988,7 +1017,6 @@ window.FeatureExamJob = (function () {
             include_nums: '',
             exclude_nums: ''
         };
-        if (assignedTemplateId) sec.layout_profile_id = assignedTemplateId;
         healExamSectionSheet(sec, metaOpts);
         return [sec];
     }
@@ -1913,9 +1941,7 @@ window.FeatureExamJob = (function () {
         const raw = (task && task.raw_data) || {};
         const job = raw.exam_job || {};
         const jobId = raw.exam_job_id || job.job_id || '';
-        // 💣 雷區：layoutId 從未明確選過時，不可偷偷預設成清單第一項（曾造成「明明沒選過
-        // 整句翻譯，畫面卻顯示已選好」的誤導）。真正的預設值要等下面算出 suggestedLayoutIds
-        // 後才決定（有登記建議 → 採建議；沒有 → 留空顯示「尚未選擇」，強制老師自己挑）。
+        // 試卷範本：選了 meta 之後只列官方認證組合。沒配對就不能出卷，不准列出整庫。
         // bank_id：老師反覆回報這個欄位沒用、看不懂放著幹嘛（只是原樣寫進匯出給 Python 排版
         // 系統的 spec_ref.bank_id 標籤，不影響線上卷實際抽哪些題），已拿掉 UI，改成存檔時
         // 固定寫入唯一值（見 syncInlineEditor），這裡不用再算。
@@ -1968,10 +1994,7 @@ window.FeatureExamJob = (function () {
         const forcedStandalone = !!(task && task.raw_data && task.raw_data.exam_force_standalone);
         const isStandaloneExam = !siblingAudio || forcedStandalone;
 
-        // layout_profile_id 下拉：改讀老師自己的「考卷範本」（material_exam_templates），不再
-        // 自動把擷取範本塞進來當選項（見 2026-08-14「分離擷取範本與考卷範本」）。⭐建議優先查
-        // 班級教材組合裡明確搭配過的考卷範本（material_combinations→material_combination_exam_templates，
-        // 老師在「🏫 班級教材組合」Step 2 勾選過的才算），查不到才退回舊的 material_layout_pairs 手動登記建議。
+        // 試卷範本下拉只列該 meta 的官方認證組合（material_combination_exam_templates）。
         const layoutMaterialFolder = isStandaloneExam
             ? examMaterialSelf.material_folder
             : ((siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs)
@@ -1981,29 +2004,12 @@ window.FeatureExamJob = (function () {
         const layoutRootKind = isStandaloneExam
             ? (examMaterialSelf.root_kind || 'teacher')
             : ((layoutComboFirstRef && layoutComboFirstRef.materials_root_kind === 'class') ? 'class' : 'teacher');
-        const layoutSectionSheetIds = sections.map(function (s) { return s.sheet_id; }).filter(Boolean);
-        const mlp = window.FeatureMaterialLayoutPairing;
-        const fcmc = window.FeatureClassMaterialCombinations;
-        const suggestedExamTemplateId = (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function')
-            ? fcmc.getSuggestedExamTemplateId(layoutRootKind, currentClassId, layoutMaterialFolder, layoutSectionSheetIds)
-            : '';
-        const suggestedLayoutIds = (!suggestedExamTemplateId && mlp && typeof mlp.getSuggestedLayoutIds === 'function')
-            ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, layoutSectionSheetIds)
-            : [];
         const previewFolderForAssign = examMaterialSelf.material_folder || layoutMaterialFolder;
         const folderIsAssigned = !!(previewFolderForAssign && isExamFolderAssignedToClass(currentClassId, previewFolderForAssign));
-        // 第一區塊（已指派）：自動帶入班級教材組合已配好的考卷範本。
-        // 第二區塊（其他可用）：不出現上方下拉，老師在表格「考卷範本」欄直接選。
-        const assignedTemplateId = suggestedExamTemplateId || suggestedLayoutIds[0] || '';
-        if (folderIsAssigned && assignedTemplateId) {
-            if (!job.layout_profile_id) job.layout_profile_id = assignedTemplateId;
-            sections.forEach(function (sec) {
-                if (sec && !sec.layout_profile_id) sec.layout_profile_id = assignedTemplateId;
-            });
-        }
-        const layoutId = folderIsAssigned
-            ? (job.layout_profile_id || assignedTemplateId)
-            : (job.layout_profile_id || '');
+        const assignedTemplateId = officialExamTemplateDefaultId(
+            layoutRootKind, currentClassId, layoutMaterialFolder, ''
+        );
+        const layoutId = job.layout_profile_id || assignedTemplateId || '';
 
         // 💣 雷區（2026-08-14 老師強烈回報「活頁根本沒有可選 meta，只給一個手打格子」＋
         // 「不會改成這個班級用過的教材 meta 嗎」）：這裡原本「教材資料夾」這個下拉只有獨立考試
@@ -2040,7 +2046,9 @@ window.FeatureExamJob = (function () {
         }
         // 選了教材資料夾才能推出「活頁」候選清單；還沒選或清單未載入時 examSheetStems 是空陣列，
         // 退回原本的文字輸入（見下方 rows 組裝），避免顯示一個永遠空的下拉
-        const examSheetMetaOpts = examSheetMetaOptionsForFolder(currentClassId, effectiveRootKind, effectiveMaterialFolder);
+        const examSheetMetaOpts = officialPairingCacheReady()
+            ? officialPairedMetaOptions(currentClassId, effectiveRootKind, effectiveMaterialFolder)
+            : [];
         const folderStageReady = !!(effectiveMaterialFolder && materialFolderCatalogLoaded);
         if (folderStageReady) {
             sections = seedSectionsAfterFolderReady(
@@ -2053,8 +2061,18 @@ window.FeatureExamJob = (function () {
         sections.forEach(function (s) {
             healExamSectionSheet(s, examSheetMetaOpts);
             attachCatalogMetaToSection(currentClassId, effectiveRootKind, effectiveMaterialFolder, s);
-            if (s && (s.sheet_id || s.meta_file_name) && !s.layout_profile_id) {
-                applyPairedTemplateToSection(s, pathStr, task);
+            if (s && (s.sheet_id || s.meta_file_name) && officialPairingCacheReady()) {
+                const officialIds = officialExamTemplateIdsForMeta(
+                    effectiveRootKind, currentClassId, effectiveMaterialFolder,
+                    s.meta_file_name || s.sheet_id
+                );
+                if (!isIdInOfficialList(s.layout_profile_id, officialIds)) {
+                    s.layout_profile_id = officialExamTemplateDefaultId(
+                        effectiveRootKind, currentClassId, effectiveMaterialFolder,
+                        s.meta_file_name || s.sheet_id
+                    );
+                    if (s.layout_profile_id) applyPairedTemplateToSection(s, pathStr, task);
+                }
             }
         });
         if (folderStageReady && task.raw_data && task.raw_data.exam_job) {
@@ -2063,7 +2081,7 @@ window.FeatureExamJob = (function () {
 
         let totalCountSum = 0;
         const rows = sections.map(function (s, idx) {
-            const rowLayoutId = String(s.layout_profile_id || (folderIsAssigned ? layoutId : '') || '').trim();
+            const rowLayoutId = String(s.layout_profile_id || '').trim();
             const rowProfileForLpp = rowLayoutId ? resolveExamTemplateProfile(rowLayoutId) : null;
             const rowTemplateLpp = (rowProfileForLpp && Number(rowProfileForLpp.lines_per_page) > 0)
                 ? Number(rowProfileForLpp.lines_per_page) : DEFAULT_LINES_PER_PAGE;
@@ -2135,22 +2153,28 @@ window.FeatureExamJob = (function () {
                     <td style="padding:4px;">
                         <select id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" style="min-width:180px; max-width:260px; padding:4px;"
                             title="選這個教材資料夾裡的 meta"
-                            onchange="window.FeatureExamJob._inlineOnSheetSelectChange('${pathStr}', ${idx})">${buildExamSheetOptionsHtml(examSheetMetaOpts, s, { folderSelected: !!effectiveMaterialFolder, catalogLoaded: materialFolderCatalogLoaded })}</select>
+                            onchange="window.FeatureExamJob._inlineOnSheetSelectChange('${pathStr}', ${idx})">${buildExamSheetOptionsHtml(examSheetMetaOpts, s, { folderSelected: !!effectiveMaterialFolder, catalogLoaded: materialFolderCatalogLoaded, pairingReady: officialPairingCacheReady() })}</select>
                         <input id="exam-inline-sheet-manual-${pathStr}-${idx}" class="form-control" value="${esc(s.meta_file_name || s.sheet_id || '')}" placeholder="完整 meta 檔名" style="width:180px; padding:4px; margin-top:2px; display:none;"${refreshAttr}>
                     </td>
                     <td style="padding:4px;">
                         <select id="exam-inline-sectionlayout-${pathStr}-${idx}" class="form-control" style="width:130px; padding:4px;"
-                            title="${folderIsAssigned ? '已依班級教材組合帶入；若要改可再選' : '請選這一列要套用的試卷範本'}"
+                            title="${(s.sheet_id || s.meta_file_name) ? '只列出此 meta 官方認證的試卷範本' : '請先選活頁 meta'}"
                             onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">
-                            <option value=""${rowLayoutId ? '' : ' selected'}>${folderIsAssigned ? '（尚未讀到已配對範本）' : '— 請選擇試卷範本 —'}</option>
                             ${(function () {
-                                const rowSuggestedExamTemplateId = (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function')
-                                    ? fcmc.getSuggestedExamTemplateId(layoutRootKind, currentClassId, layoutMaterialFolder, [s.sheet_id])
+                                if (!(s.sheet_id || s.meta_file_name)) {
+                                    return '<option value="">請先選活頁 meta</option>';
+                                }
+                                if (!officialPairingCacheReady()) {
+                                    return '<option value="">⏳ 載入官方搭配…</option>';
+                                }
+                                const officialIds = officialExamTemplateIdsForMeta(
+                                    effectiveRootKind, currentClassId, effectiveMaterialFolder,
+                                    s.meta_file_name || s.sheet_id
+                                );
+                                const placeholder = officialIds.length
+                                    ? ('<option value=""' + (rowLayoutId ? '' : ' selected') + '>— 請選擇試卷範本 —</option>')
                                     : '';
-                                const rowSuggested = (!rowSuggestedExamTemplateId && mlp && typeof mlp.getSuggestedLayoutIds === 'function')
-                                    ? mlp.getSuggestedLayoutIds(layoutMaterialFolder, [s.sheet_id])
-                                    : [];
-                                return buildExamTemplateSelectOptionsHtml(rowLayoutId, rowSuggestedExamTemplateId || rowSuggested[0] || assignedTemplateId);
+                                return placeholder + buildExamTemplateSelectOptionsHtml(rowLayoutId, officialIds);
                             })()}
                         </select>
                     </td>
@@ -2213,7 +2237,7 @@ window.FeatureExamJob = (function () {
                             onchange="window.FeatureExamJob._inlineOnExamMaterialChange('${pathStr}')">
                     </div>
                     <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入教材資料夾清單…'}</div>
-                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">請先選教材資料夾。清單載入並選定後，才會出現活頁與可用題；已指派給本班的會自動帶入已配好的試卷範本。</div>
+                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">只列出已官方搭配試卷範本的教材與 meta。選了 meta 之後，試卷範本下拉只列該檔的認證組合。</div>
                 </div>
                 <input type="hidden" id="exam-inline-layout-${pathStr}" value="${esc(layoutId)}">
                 ${!folderStageReady ? `
@@ -2753,22 +2777,12 @@ window.FeatureExamJob = (function () {
         return s;
     }
 
-    /** 活頁選定後帶入已配好的考卷範本：先班級教材組合，沒有再讀搭配表。兩邊都是 DB，不從檔名猜。 */
+    /** 活頁選定後帶入該 meta 官方認證試卷範本的預設項。沒有官方配對就不帶。 */
     function lookupPairedExamTemplateId(pathStr, task, sheetId) {
         const ctx = examInlineMaterialContext(pathStr, task);
-        const sid = sheetIdForTemplateLookup(sheetId);
-        if (!sid || !ctx.folderName) return '';
-        const fcmc = window.FeatureClassMaterialCombinations;
-        if (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function') {
-            const fromCombo = fcmc.getSuggestedExamTemplateId(ctx.rootKind, ctx.classId, ctx.folderName, [sid]);
-            if (fromCombo) return fromCombo;
-        }
-        const mlp = window.FeatureMaterialLayoutPairing;
-        if (mlp && typeof mlp.getSuggestedLayoutIds === 'function') {
-            const ids = mlp.getSuggestedLayoutIds(ctx.folderName, [sid]);
-            if (ids && ids[0]) return ids[0];
-        }
-        return '';
+        const raw = String(sheetId || '').trim();
+        if (!raw || raw === '__manual__' || !ctx.folderName) return '';
+        return officialExamTemplateDefaultId(ctx.rootKind, ctx.classId, ctx.folderName, raw);
     }
 
     function applyPairedTemplateToSection(sec, pathStr, task) {
@@ -2864,11 +2878,7 @@ window.FeatureExamJob = (function () {
         });
         out.profiles = Object.keys(byId).map(function (k) { return byId[k]; });
         if (examJob && examJob.layout_profile_id) out.default_profile_id = examJob.layout_profile_id;
-        const mergedCol = Object.assign({}, out.col_map || {});
-        out.profiles.forEach(function (p) {
-            if (p && p.col_map) Object.assign(mergedCol, p.col_map);
-        });
-        out.col_map = mergedCol;
+        // 禁止把各範本 col_map 合成一份。PIC 的 AN=pos、WORD 的 AN=pre，合成後全卷用錯欄。
         return out;
     }
 
@@ -2916,9 +2926,8 @@ window.FeatureExamJob = (function () {
         idsNeeded.forEach(function (pid) {
             if (seenIds[pid]) return;
             seenIds[pid] = true;
-            profiles.push(enrichProfileQuizAnswer(resolveExamTemplateProfile(pid) || {
-                profile_id: pid, label: pid, fields: '', fields_answer: 'X', quiz_answer: ''
-            }));
+            const resolved = resolveExamTemplateProfile(pid);
+            if (resolved) profiles.push(enrichProfileQuizAnswer(resolved));
         });
         return profiles;
     }
@@ -2999,7 +3008,7 @@ window.FeatureExamJob = (function () {
         const layout = mergeExamProfilesIntoLayout(fetchedLayout || {
             material_folder: (ctx && ctx.materialFolder) || '',
             default_profile_id: examJob.layout_profile_id,
-            col_map: (window.QuizPaperBuilder && window.QuizPaperBuilder.FALLBACK_COL_MAP) || {},
+            col_map: {},
             profiles: []
         }, examJob);
 
@@ -3247,13 +3256,16 @@ window.FeatureExamJob = (function () {
             }
         });
 
+        const pairingReady = officialPairingCacheReady();
         const otherOpts = [];
         teacherFolders.forEach(function (f) {
             if (seenAssigned[String(f).toUpperCase()]) return;
+            if (!pairingReady || !folderHasOfficialExamPairing('teacher', classId, f)) return;
             otherOpts.push(optionHtml('teacher', f));
         });
         classFolders.forEach(function (f) {
             if (seenAssigned[String(f).toUpperCase()]) return;
+            if (!pairingReady || !folderHasOfficialExamPairing('class', classId, f)) return;
             otherOpts.push(optionHtml('class', f));
         });
 
@@ -3262,12 +3274,10 @@ window.FeatureExamJob = (function () {
             + (assignedOpts.length ? assignedOpts.join('') : '<option value="" disabled>（尚未指派教材給這個班級）</option>')
             + '</optgroup>';
         html += '<optgroup label="其他可用">'
-            + (otherOpts.length ? otherOpts.join('') : '<option value="" disabled>（沒有其他教材資料夾）</option>')
+            + (pairingReady
+                ? (otherOpts.length ? otherOpts.join('') : '<option value="" disabled>（沒有其他已搭配試卷範本的教材）</option>')
+                : '<option value="" disabled>⏳ 載入官方搭配…</option>')
             + '</optgroup>';
-        if (currentValue && !matchedCurrent) {
-            html += '<option value="' + esc(currentValue) + '" selected>⚠️ ' + esc(examMaterialSelf.material_folder)
-                + '（清單中找不到，可按「重新整理清單」）</option>';
-        }
         html += '<option value="__manual__">✏️ 其他（手動輸入資料夾名稱）</option>';
         return html;
     }
@@ -3463,10 +3473,12 @@ window.FeatureExamJob = (function () {
         if (!flags.catalogLoaded && !(metaOpts || []).length) {
             return '<option value="">⏳ 載入活頁清單…</option>';
         }
+        if (!flags.pairingReady) {
+            return '<option value="">⏳ 載入官方搭配…</option>';
+        }
         const sec = section || {};
         const curFile = String(sec.meta_file_name || '').trim();
         const curSheet = String(sec.sheet_id || '').trim();
-        const curLabel = curFile || curSheet;
         const hits = (metaOpts || []).filter(function (opt) { return optionMatchesExamSection(opt, sec); });
         hits.sort(function (a, b) { return String(a.fileName).length - String(b.fileName).length; });
         const chosenName = hits.length ? hits[0].fileName : '';
@@ -3478,16 +3490,8 @@ window.FeatureExamJob = (function () {
             return '<option value="' + esc(name) + '"' + (isCur ? ' selected' : '') + '>' + esc(name) + '</option>';
         }).join('');
         if (!(metaOpts || []).length) {
-            html += '<option value="" disabled>（這個教材資料夾還沒有 meta）</option>';
+            html += '<option value="" disabled>（這個資料夾沒有已搭配試卷範本的 meta）</option>';
         }
-        if (curLabel && !chosenName) {
-            const why = (metaOpts || []).length
-                ? '（清單中找不到對應 meta，請重選）'
-                : '（這個資料夾還沒載入到 meta，請按「重新整理清單」）';
-            html += '<option value="' + esc(curFile || curSheet) + '" selected>⚠️ ' + esc(curLabel)
-                + why + '</option>';
-        }
-        html += '<option value="__manual__">✏️ 其他（手動輸入）</option>';
         return html;
     }
 
@@ -4053,6 +4057,8 @@ window.FeatureExamJob = (function () {
             : '⏳ 正在產生線上卷…（讀取已選的 meta 檔）', 'busy');
         if (!silent) window.showFlash('正在產生線上卷…', 'info');
         try {
+            setGenerateStatus(pathStr, '⏳ 載入試卷範本…', 'busy');
+            await fetchExamTemplates(true);
             const localRowsByStem = forceRefreshMeta
                 ? {}
                 : Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {});
@@ -4074,6 +4080,24 @@ window.FeatureExamJob = (function () {
                 attachCatalogMetaToSection(bState.classId, ctx.rootKind, ctx.materialFolder, sec);
             });
             if (task.raw_data && task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
+
+            const fcmcPair = window.FeatureClassMaterialCombinations;
+            if (fcmcPair && typeof fcmcPair.fetchOfficialPairings === 'function') {
+                await fcmcPair.fetchOfficialPairings(false);
+            }
+            for (let pi = 0; pi < (examJob.sections || []).length; pi++) {
+                const psec = examJob.sections[pi];
+                const hint = (psec && (psec.meta_file_name || psec.sheet_id)) || '';
+                const officialIds = officialExamTemplateIdsForMeta(
+                    ctx.rootKind, bState.classId, ctx.materialFolder, hint
+                );
+                if (!officialIds.length) {
+                    throw new Error('區段 ' + (pi + 1) + ' 的 meta「' + (hint || '（未選）') + '」尚未官方搭配試卷範本，無法出卷');
+                }
+                if (!isIdInOfficialList(psec && psec.layout_profile_id, officialIds)) {
+                    throw new Error('區段 ' + (pi + 1) + ' 請從官方認證的試卷範本裡選擇');
+                }
+            }
 
             setGenerateStatus(pathStr, '⏳ 讀取 Drive meta…', 'busy');
             ctx.sections = examJob.sections || [];
@@ -4109,29 +4133,12 @@ window.FeatureExamJob = (function () {
                     if (seenIds[pid]) return;
                     seenIds[pid] = true;
                     const resolved = resolveExamTemplateProfile(pid);
-                    profiles.push(resolved || {
-                        profile_id: pid,
-                        label: pid,
-                        fields: layoutFieldHint(pid),
-                        fields_answer: 'X',
-                        lines_per_page: DEFAULT_LINES_PER_PAGE
-                    });
+                    if (resolved) profiles.push(resolved);
                 });
-                // 全部區段都沒設 layout_profile_id（teacher 完全沒選）：仍要放一個非空 profile 進去，
-                // 否則 pickProfile 拿到空陣列會回 null，下面 fields 變空字串直接整份考卷生成失敗。
-                if (!profiles.length) {
-                    profiles.push({
-                        profile_id: '',
-                        label: '（尚未選擇）',
-                        fields: layoutFieldHint(''),
-                        fields_answer: 'X',
-                        lines_per_page: DEFAULT_LINES_PER_PAGE
-                    });
-                }
                 layout = {
                     material_folder: ctx.materialFolder,
                     default_profile_id: examJob.layout_profile_id,
-                    col_map: (window.QuizPaperBuilder && window.QuizPaperBuilder.FALLBACK_COL_MAP) || {},
+                    col_map: {},
                     profiles: profiles
                 };
             }
@@ -4515,8 +4522,8 @@ window.FeatureExamJob = (function () {
         generatePaperForSave: function (pathStr) {
             return inlineGeneratePaper(pathStr, { silent: true, skipAutoSave: true });
         },
-        /** 給「🧩 教材/Layout 搭配」central 頁「教材／考試 Layout 搭配」舊區塊用：內建 6 種舊版排版（唯讀相容常數，不再是主要來源） */
-        getLayoutCatalog: function () { return LAYOUT_CATALOG.slice(); },
+        /** 舊內建 6 個 id 已刪，搭配頁那塊不再有選項。 */
+        getLayoutCatalog: function () { return []; },
         // 2026-08-14（分離「擷取範本」與「考卷範本」）：考卷範本 CRUD／快取，給
         // feature-exam-template-editor.js 的編輯器 UI 用；resolveExamTemplateProfile 給任何
         // 需要「依 layout_profile_id 換算實際排版公式」的地方共用（新格式／舊字串／tpl: 都吃）。

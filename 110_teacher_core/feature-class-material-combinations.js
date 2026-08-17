@@ -14,9 +14,9 @@
  * 老師需要在這裡手動建立指派紀錄。
  *
  * 只做資料庫層的組合＋指派，不影響「產生線上卷」本身讀取教材的路徑（那條路徑仍然是
- * feature-exam-job.js 直接讀 material_folder 字串＋Drive meta；這裡建立的
- * material_combination_exam_templates 關聯會被 feature-exam-job.js 的出題下拉優先讀來當
- * ⭐建議，見 getSuggestedExamTemplateId）。
+ * feature-exam-job.js 直接讀 material_folder 字串＋Drive meta）。
+ * 出題下拉的試卷範本只能列這裡的官方認證組合（listOfficialExamTemplateIds），
+ * 一個 meta 可對多個試卷範本；沒有官方配對就不能出卷。
  */
 window.FeatureClassMaterialCombinations = (function () {
     'use strict';
@@ -556,10 +556,8 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     // ------------------------------------------------------------------
-    // 🌟 出題畫面 ⭐建議用：依（root_kind／班級／教材資料夾／活頁）查「老師在 Step 2 明確搭配過
-    // 哪個考卷範本」——優先序高於舊版 material_layout_pairs 手動登記建議（見
-    // feature-exam-job.js 的 suggestedExamTemplateId），因為這是套用到教材時「連活頁都對得上」
-    // 的精準建議，不是資料夾層級的粗略猜測。
+    // 官方配對：老師在「🏫 班級教材組合」Step 2 明確勾選的
+    // material_combination_exam_templates。出題下拉只能列這些，一個 meta 可對多個試卷範本。
     // ------------------------------------------------------------------
     let _suggestionCache = null;
     let _suggestionLoadPromise = null;
@@ -568,6 +566,25 @@ window.FeatureClassMaterialCombinations = (function () {
 
     function folderKeyFor(rootKind, classId, folderName) {
         return [(rootKind === 'class' ? 'class' : 'teacher'), classId || '', String(folderName || '').trim().toUpperCase()].join('|');
+    }
+
+    function normalizePairStem(raw) {
+        return String(raw || '').trim().replace(/\.meta\.json$/i, '').toUpperCase();
+    }
+
+    function addOfficialLinks(bucket, stemKey, links) {
+        if (!stemKey) return;
+        if (!bucket[stemKey]) bucket[stemKey] = [];
+        (links || []).forEach(function (l) {
+            const id = l && l.exam_template_id ? String(l.exam_template_id) : '';
+            if (!id) return;
+            const found = bucket[stemKey].find(function (x) { return x.id === id; });
+            if (found) {
+                if (l.is_default) found.isDefault = true;
+                return;
+            }
+            bucket[stemKey].push({ id: id, isDefault: !!l.is_default });
+        });
     }
 
     async function fetchSuggestionMap(force) {
@@ -581,13 +598,13 @@ window.FeatureClassMaterialCombinations = (function () {
                 .select(`
                     id,
                     material_folders!inner ( root_kind, class_id, folder_name, teacher_id ),
-                    material_combination_sheets ( material_sheets ( sheet_stem ) ),
+                    material_combination_sheets ( material_sheets ( sheet_stem, meta_file_name ) ),
                     material_combination_exam_templates ( exam_template_id, is_default ),
                     class_material_combinations ( class_id )
                 `)
                 .eq('material_folders.teacher_id', userId);
             if (error) {
-                console.warn('[FeatureClassMaterialCombinations] 讀取考卷範本建議失敗', error);
+                console.warn('[FeatureClassMaterialCombinations] 讀取官方試卷配對失敗', error);
                 _suggestionCache = _suggestionCache || {};
                 return _suggestionCache;
             }
@@ -621,16 +638,23 @@ window.FeatureClassMaterialCombinations = (function () {
                     }
                 });
                 const sheets = Array.isArray(combo.material_combination_sheets) ? combo.material_combination_sheets : [];
-                const stems = sheets.map(function (cs) {
-                    return cs.material_sheets && cs.material_sheets.sheet_stem;
-                }).filter(Boolean);
-                if (!stems.length) stems.push('*');
+                const stemKeys = [];
+                sheets.forEach(function (cs) {
+                    const sh = cs.material_sheets || {};
+                    const stem = normalizePairStem(sh.sheet_stem);
+                    const meta = normalizePairStem(sh.meta_file_name);
+                    if (stem && stemKeys.indexOf(stem) === -1) stemKeys.push(stem);
+                    if (meta && stemKeys.indexOf(meta) === -1) stemKeys.push(meta);
+                });
                 keys.forEach(function (fKey) {
                     if (!map[fKey]) map[fKey] = {};
-                    stems.forEach(function (stem) {
-                        map[fKey][String(stem).trim().toUpperCase()] = chosen.exam_template_id;
+                    if (!stemKeys.length) {
+                        addOfficialLinks(map[fKey], '*', links);
+                        return;
+                    }
+                    stemKeys.forEach(function (stem) {
+                        addOfficialLinks(map[fKey], stem, links);
                     });
-                    map[fKey]['*'] = chosen.exam_template_id;
                 });
             });
             _suggestionCache = map;
@@ -640,11 +664,7 @@ window.FeatureClassMaterialCombinations = (function () {
         return _suggestionLoadPromise;
     }
 
-    /**
-     * 同步讀「目前已知」的建議（第一次呼叫順便觸發背景載入，跟其他 CachedSync helper 同精神）。
-     * @returns {string} exam_template_id，找不到回空字串
-     */
-    function getSuggestedExamTemplateId(rootKind, classId, folderName, sheetIds) {
+    function ensureOfficialCacheLoading() {
         if (_suggestionCache === null && !_suggestionLoadPromise) {
             fetchSuggestionMap(false).then(function () {
                 if (window.FeatureExamJob && typeof window.FeatureExamJob.refreshExamBuilder === 'function') {
@@ -654,43 +674,80 @@ window.FeatureClassMaterialCombinations = (function () {
                 }
             }).catch(function () {});
         }
-        if (!_suggestionCache) return '';
-        const keys = [
+    }
+
+    function pickOfficialEntriesFromBucket(bucket, hint) {
+        if (!bucket) return [];
+        const u = normalizePairStem(hint);
+        const star = bucket['*'] ? bucket['*'].slice() : [];
+        const specificKeys = Object.keys(bucket).filter(function (k) { return k !== '*'; });
+        if (!u) return star;
+        if (bucket[u] && bucket[u].length) return bucket[u].slice();
+        if (!specificKeys.length) return star;
+        // 只允許「活頁字母對到唯一一份官方 stem」。
+        // 禁止用 A 去套 A.word／A.pic——那會讓沒配對的檔出現在下拉。
+        if (u.indexOf('.') === -1) {
+            const children = specificKeys.filter(function (k) { return k === u || k.indexOf(u + '.') === 0; });
+            if (children.length === 1) return bucket[children[0]].slice();
+        }
+        return [];
+    }
+
+    function folderLookupKeys(rootKind, classId, folderName) {
+        return [
             folderKeyFor(rootKind, classId, folderName),
             folderKeyFor('teacher', classId, folderName),
             folderKeyFor('class', classId, folderName),
             folderKeyFor('teacher', '', folderName)
         ];
-        const sids = (sheetIds || []).map(function (s) { return String(s || '').trim().toUpperCase(); }).filter(Boolean);
-        function pick(bucket) {
-            if (!bucket) return '';
-            for (let i = 0; i < sids.length; i++) {
-                if (bucket[sids[i]]) return bucket[sids[i]];
-            }
-            return bucket['*'] || '';
-        }
+    }
+
+    /**
+     * 這個 meta（資料夾＋活頁／檔名）的官方認證試卷範本 id 清單。
+     * 對不到就不回資料夾萬用項——那代表這份 meta 沒被放進有搭配試卷的組合。
+     */
+    function listOfficialExamTemplateIds(rootKind, classId, folderName, sheetHint) {
+        ensureOfficialCacheLoading();
+        if (!_suggestionCache || !folderName) return [];
+        const hint = Array.isArray(sheetHint) ? (sheetHint[0] || '') : sheetHint;
+        const keys = folderLookupKeys(rootKind, classId, folderName);
         for (let k = 0; k < keys.length; k++) {
-            const hit = pick(_suggestionCache[keys[k]]);
-            if (hit) return hit;
+            const hits = pickOfficialEntriesFromBucket(_suggestionCache[keys[k]], hint);
+            if (hits.length) {
+                const seen = {};
+                return hits.filter(function (x) {
+                    if (!x || !x.id || seen[x.id]) return false;
+                    seen[x.id] = true;
+                    return true;
+                }).map(function (x) { return x.id; });
+            }
+        }
+        return [];
+    }
+
+    function getOfficialExamTemplateDefaultId(rootKind, classId, folderName, sheetHint) {
+        ensureOfficialCacheLoading();
+        if (!_suggestionCache || !folderName) return '';
+        const hint = Array.isArray(sheetHint) ? (sheetHint[0] || '') : sheetHint;
+        const keys = folderLookupKeys(rootKind, classId, folderName);
+        for (let k = 0; k < keys.length; k++) {
+            const hits = pickOfficialEntriesFromBucket(_suggestionCache[keys[k]], hint);
+            if (!hits.length) continue;
+            const def = hits.find(function (x) { return x && x.isDefault; });
+            return (def && def.id) || hits[0].id || '';
         }
         return '';
     }
 
-    function ensureSuggestionCacheLoading() {
-        if (_suggestionCache === null && !_suggestionLoadPromise) {
-            fetchSuggestionMap(false).then(function () {
-                if (window.FeatureExamJob && typeof window.FeatureExamJob.refreshExamBuilder === 'function') {
-                    window.FeatureExamJob.refreshExamBuilder();
-                } else if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-                    window.FeatureTimeline.refreshBuilder({ skipSync: true });
-                }
-            }).catch(function () {});
-        }
+    /** 官方清單的預設項（is_default 或第一筆）。沒有官方配對回空字串。 */
+    function getSuggestedExamTemplateId(rootKind, classId, folderName, sheetIds) {
+        const hint = (sheetIds && sheetIds.length) ? sheetIds[0] : '';
+        return getOfficialExamTemplateDefaultId(rootKind, classId, folderName, hint);
     }
 
     /** 已指派給這個班級、且已知考卷範本的教材資料夾 */
     function listAssignedFoldersForClass(classId) {
-        ensureSuggestionCacheLoading();
+        ensureOfficialCacheLoading();
         return (_assignedFoldersByClass[String(classId || '')] || []).slice();
     }
 
@@ -703,6 +760,23 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function invalidateSuggestionCache() { _suggestionCache = null; _assignedFoldersByClass = {}; }
+
+    function isOfficialPairingCacheReady() { return _suggestionCache !== null; }
+
+    function fetchOfficialPairings(force) { return fetchSuggestionMap(!!force); }
+
+    /** 這個教材資料夾是否有任何官方試卷配對（含整夾萬用 *）。 */
+    function folderHasOfficialExamPairing(rootKind, classId, folderName) {
+        ensureOfficialCacheLoading();
+        if (!_suggestionCache || !folderName) return false;
+        const keys = folderLookupKeys(rootKind, classId, folderName);
+        for (let k = 0; k < keys.length; k++) {
+            const bucket = _suggestionCache[keys[k]];
+            if (!bucket) continue;
+            if (Object.keys(bucket).length) return true;
+        }
+        return false;
+    }
 
     // ------------------------------------------------------------------
     // 🖼 render
@@ -1267,6 +1341,11 @@ window.FeatureClassMaterialCombinations = (function () {
     return {
         render: render,
         getSuggestedExamTemplateId: getSuggestedExamTemplateId,
+        listOfficialExamTemplateIds: listOfficialExamTemplateIds,
+        getOfficialExamTemplateDefaultId: getOfficialExamTemplateDefaultId,
+        isOfficialPairingCacheReady: isOfficialPairingCacheReady,
+        fetchOfficialPairings: fetchOfficialPairings,
+        folderHasOfficialExamPairing: folderHasOfficialExamPairing,
         listAssignedFoldersForClass: listAssignedFoldersForClass,
         isFolderAssignedToClass: isFolderAssignedToClass,
         lookupUsage: lookupUsage,

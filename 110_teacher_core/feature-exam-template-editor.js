@@ -117,15 +117,15 @@ window.FeatureExamTemplateEditor = (function () {
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                     <div class="form-group">
-                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">題目排版（呈現公式）</label>
-                        <textarea id="exam-tpl-fields" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="STACK(display_zh, display_en), FONTSIZE(display_en,-1)">${esc(_draft.fields)}</textarea>
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">排版訊息（訊息列公式）</label>
+                        <textarea id="exam-tpl-fields" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no'>${esc(_draft.fields)}</textarea>
                     </div>
                     <div class="form-group">
                         <label style="font-size:0.78rem; font-weight:800; color:#475569;">答案排版（呈現公式）</label>
                         <textarea id="exam-tpl-fields-answer" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="TEXTJOIN(&quot; / &quot;, answer_zh)">${esc(_draft.fields_answer)}</textarea>
                     </div>
                     <div class="form-group">
-                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">quiz_prompt（選填，考卷版另外的題目公式）</label>
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">排版題目（題目公式，例如 display_zh 或 pos&amp;" "&amp;display_zh）</label>
                         <textarea id="exam-tpl-quiz-prompt" class="form-control" rows="2" style="padding:6px; font-family:monospace; font-size:0.8rem;">${esc(_draft.quiz_prompt)}</textarea>
                     </div>
                     <div class="form-group">

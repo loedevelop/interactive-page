@@ -139,6 +139,8 @@ window.QuizPaperBuilder = (function () {
 
     function formatItemSourceLabel(item) {
         const src = (item && item.source) || {};
+        const fromTpl = String(src.info_label || '').trim();
+        if (fromTpl) return fromTpl;
         const vbk = String(src.vbk_name || src.vBK_name || '').trim() || vbkNameOf(src, src.sheet_id);
         const page = src.page != null && src.page !== '' ? String(src.page) : '';
         const itemNo = String(src.item_no_label != null && src.item_no_label !== ''
@@ -146,7 +148,6 @@ window.QuizPaperBuilder = (function () {
             : (src.item_no != null && src.item_no !== '' ? src.item_no : '')).trim();
         const parts = [];
         if (vbk) parts.push(vbk);
-        else if (src.sheet_id) parts.push(String(src.sheet_id).replace(/\.meta\.json$/i, ''));
         if (page) parts.push(page);
         if (itemNo) parts.push(itemNo);
         return parts.join(' - ');
@@ -417,24 +418,52 @@ window.QuizPaperBuilder = (function () {
         return Object.assign({}, FALLBACK_COL_MAP);
     }
 
-    function pickProfile(layout, profileId) {
-        const profiles = (layout && Array.isArray(layout.profiles)) ? layout.profiles : [];
-        if (!profiles.length) return null;
-        const want = String(profileId || '').trim();
-        if (want) {
-            const hit = profiles.find(function (p) {
-                return String(p.profile_id || '') === want;
-            });
-            if (hit) return hit;
+    function resolveFromTemplateLibrary(pid) {
+        if (!pid) return null;
+        if (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.resolveTemplateProfile === 'function') {
+            return window.FeatureTemplateLibrary.resolveTemplateProfile(pid);
         }
-        const defId = layout.default_profile_id;
-        if (defId) {
-            const hit2 = profiles.find(function (p) {
-                return String(p.profile_id || '') === String(defId);
+        return null;
+    }
+
+    /**
+     * 試卷範本只認區段／該題已選的那一筆（範本庫）。
+     * 沒選＝不管。不准讀 _layout.json、不准改套 job 預設、不准合併舊 profile。
+     */
+    function resolveSectionProfile(_layout, section, _examJob, itemSource) {
+        const pid = String((itemSource && itemSource.layout_profile_id)
+            || (section && section.layout_profile_id) || '').trim();
+        if (!pid) return null;
+        return resolveFromTemplateLibrary(pid);
+    }
+
+    /** 只信這一筆範本自己的欄位對應。禁止用全卷合成的 layout.col_map（PIC 的 AN=pos，WORD 的 AN=pre）。 */
+    function colMapForProfile(profile) {
+        return Object.assign({}, (profile && profile.col_map) || {});
+    }
+
+    function findSectionForItem(examJob, item) {
+        const sections = (examJob && Array.isArray(examJob.sections)) ? examJob.sections : [];
+        const src = (item && item.source) || {};
+        const sheetId = String(src.sheet_id || '').trim().toUpperCase();
+        const itemPid = String(src.layout_profile_id || '').trim();
+        if (itemPid) {
+            const byBoth = sections.find(function (s) {
+                return String((s && s.layout_profile_id) || '') === itemPid
+                    && (!sheetId || String((s && s.sheet_id) || '').toUpperCase() === sheetId);
             });
-            if (hit2) return hit2;
+            if (byBoth) return byBoth;
+            const byPid = sections.find(function (s) {
+                return String((s && s.layout_profile_id) || '') === itemPid;
+            });
+            if (byPid) return byPid;
         }
-        return profiles[0];
+        if (sheetId) {
+            return sections.find(function (s) {
+                return String((s && s.sheet_id) || '').toUpperCase() === sheetId;
+            }) || {};
+        }
+        return {};
     }
 
     function sheetStemsLooselyMatch(a, b) {
@@ -616,6 +645,7 @@ window.QuizPaperBuilder = (function () {
         }
 
         const cells = safeEvalFields(opts.fields || '');
+        const infoLabel = cells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join('');
         let cellsAnswer = null;
         if (opts.fieldsAnswer) cellsAnswer = safeEvalFields(opts.fieldsAnswer);
 
@@ -655,9 +685,8 @@ window.QuizPaperBuilder = (function () {
         } else if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length) {
             answerEn = joinAnswerKeys(evalRow);
         }
-        // 舊慣例（相容無 quiz_prompt／quiz_answer 的教材）：第2欄提示（Y）、第3欄英文答案（X）
-        if (!promptZh) promptZh = (cells[1] && cells[1].text) || String(row.display_zh || '').trim();
-        if (!answerEn) answerEn = (cells[2] && cells[2].text) || wordFromRow(evalRow) || String(row.script || '').trim();
+        if (!promptZh) promptZh = '';
+        if (!answerEn) answerEn = wordFromRow(evalRow) || String(row.script || '').trim();
         let clozeStem = '';
         if (opts.quizMode === 'cloze' && cellsAnswer && cellsAnswer[1]) {
             clozeStem = cellsAnswer[1].text || '';
@@ -705,7 +734,8 @@ window.QuizPaperBuilder = (function () {
                 item_no: isNaN(itemNo) ? null : itemNo,
                 item_no_label: String(row.item_no != null ? row.item_no : (isNaN(itemNo) ? '' : itemNo)).trim(),
                 schema_id: opts.schemaId || '',
-                layout_profile_id: opts.layoutProfileId || ''
+                layout_profile_id: opts.layoutProfileId || '',
+                info_label: infoLabel
             }
         };
     }
@@ -723,18 +753,6 @@ window.QuizPaperBuilder = (function () {
         const loadSheetMeta = args.loadSheetMeta;
         if (typeof loadSheetMeta !== 'function') throw new Error('缺少 loadSheetMeta');
 
-        // 整份考卷的預設 layout（多數情況所有區段都用這個，維持既有行為／既有匯出格式不變）
-        const defaultProfile = pickProfile(layout, examJob.layout_profile_id);
-        // 2026-08-07 修正：下面 return 組「整份考卷摘要」用的 layout 欄位必須用這幾個
-        // defaultXxx（作用域在函式頂層，迴圈結束後仍存在）——不能用迴圈內每個區段自己算的
-        // profile/fields/fieldsAnswer/quizPrompt/quizAnswer（那幾個是 for 迴圈內的 const，
-        // 迴圈跑完就脫離作用域，return 裡引用會直接丟 ReferenceError: profile is not defined，
-        // 每個區段成功跑完都會炸，跟是否「沿用上方預設」無關）。每題實際用的 profile 早就
-        // 正確存在 item.source.layout_profile_id（迴圈內算的，見下面 buildItemFromRow 呼叫）。
-        const defaultFields = (defaultProfile && defaultProfile.fields) || args.fields || '';
-        const defaultFieldsAnswer = (defaultProfile && (defaultProfile.fields_answer || defaultProfile.answer_fields)) || args.fieldsAnswer || '';
-        const defaultQuizPrompt = (defaultProfile && defaultProfile.quiz_prompt) || args.quizPrompt || '';
-        const defaultQuizAnswer = (defaultProfile && defaultProfile.quiz_answer) || args.quizAnswer || '';
         const shuffle = !(examJob.options && examJob.options.shuffle === false);
 
         const sections = Array.isArray(examJob.sections) ? examJob.sections : [];
@@ -763,20 +781,28 @@ window.QuizPaperBuilder = (function () {
             const materialFolder = pack.materialFolder || layout.material_folder || '';
 
             /**
-             * 💣 雷區（見 material-layout-pairing-invariant.mdc）：同一活頁（同一份 meta 檔）
-             * 可能需要套用不只一個 layout（例如同一份單字表同時要「整句翻譯」＋「單字無圖」）。
-             * 正確做法：1 個 meta 檔＋2 個區段，各自的 sec.layout_profile_id 各設一個；
-             * 不是複製 meta 檔、也不是在同一個區段塞兩個 layout_profile_id。
-             * 這裡改成逐區段解析 profile（沒設就沿用 examJob.layout_profile_id），
-             * 讓同一活頁的兩個區段各自吃到自己的 fields／quiz_prompt／quiz_answer。
+             * 💣 雷區：一份卷可有多個試卷範本。每一區段只套該列下拉選中的那一筆
+             * （fields／col_map／結合公式）。禁止找不到就改套 profiles[0]、
+             * 禁止 || args.quizAnswer 讓空區段吃到另一份範本的公式。
              */
-            const profile = sec.layout_profile_id ? pickProfile(layout, sec.layout_profile_id) : defaultProfile;
-            const colMap = Object.assign({}, resolveColMap(layout, schemaId), (profile && profile.col_map) || {});
-            const fields = (profile && profile.fields) || args.fields || '';
-            if (!fields) throw new Error('區段 ' + (sIdx + 1) + '（活頁 ' + sheetId + '）的 layout 缺少 fields 公式（請確認 _layout.json 或該區段的 layout_profile_id）');
-            const fieldsAnswer = (profile && (profile.fields_answer || profile.answer_fields)) || args.fieldsAnswer || '';
-            const quizPrompt = (profile && profile.quiz_prompt) || args.quizPrompt || '';
-            const quizAnswer = (profile && profile.quiz_answer) || args.quizAnswer || '';
+            const pid = String(sec.layout_profile_id || '').trim();
+            const profile = resolveSectionProfile(layout, sec, examJob);
+            if (!pid) {
+                throw new Error('區段 ' + (sIdx + 1) + '（活頁 ' + sheetId + '）尚未選擇試卷範本');
+            }
+            if (!profile) {
+                throw new Error('區段 ' + (sIdx + 1) + '（活頁 ' + sheetId + '）找不到試卷範本 ' + pid
+                    + '（請硬重新整理後再產生，或確認該範本未被刪除）。禁止改套其他區段的範本。');
+            }
+            const colMap = colMapForProfile(profile);
+            const fields = String(profile.fields || '').trim();
+            if (!fields) {
+                throw new Error('區段 ' + (sIdx + 1) + '（活頁 ' + sheetId + '／範本 '
+                    + (profile.label || pid) + '）缺少題目排版 fields（請到範本管理補上這一筆，不要改套其他範本）');
+            }
+            const fieldsAnswer = (profile.fields_answer || profile.answer_fields) || '';
+            const quizPrompt = profile.quiz_prompt || '';
+            const quizAnswer = profile.quiz_answer || '';
             const quizMode = inferQuizMode(profile && profile.profile_id, fieldsAnswer);
 
             let pool = filterRowsForSection(rows, sec);
@@ -839,7 +865,7 @@ window.QuizPaperBuilder = (function () {
                     quizAnswer: quizAnswer,
                     colMap: colMap,
                     quizMode: quizMode,
-                    layoutProfileId: (profile && profile.profile_id) || examJob.layout_profile_id || ''
+                    layoutProfileId: (profile && profile.profile_id) || pid
                 }));
             });
         }
@@ -854,17 +880,15 @@ window.QuizPaperBuilder = (function () {
             generated_at: new Date().toISOString(),
             spec_ref: {
                 job_id: examJob.job_id || '',
-                bank_id: examJob.bank_id || '',
-                layout_profile_id: (defaultProfile && defaultProfile.profile_id) || examJob.layout_profile_id || ''
+                bank_id: examJob.bank_id || ''
             },
             layout: {
-                profile_id: (defaultProfile && defaultProfile.profile_id) || '',
-                label: (defaultProfile && defaultProfile.label) || '',
-                fields: defaultFields,
-                fields_answer: defaultFieldsAnswer || '',
-                quiz_prompt: defaultQuizPrompt || '',
-                quiz_answer: defaultQuizAnswer || '',
-                lines_per_page: (defaultProfile && defaultProfile.lines_per_page) || 10
+                section_templates: sections.map(function (sec) {
+                    return {
+                        sheet_id: String((sec && sec.sheet_id) || '').trim(),
+                        layout_profile_id: String((sec && sec.layout_profile_id) || '').trim()
+                    };
+                }).filter(function (s) { return s.layout_profile_id; })
             },
             items: picked,
             notices: notices
@@ -1089,6 +1113,10 @@ window.QuizPaperBuilder = (function () {
         return true;
     }
 
+    function normVbkName(s) {
+        return String(s || '').trim().toUpperCase();
+    }
+
     function rowMatchesItem(row, item) {
         const src = (item && item.source) || {};
         const itemNo = toNum(src.item_no);
@@ -1096,8 +1124,19 @@ window.QuizPaperBuilder = (function () {
         if (isNaN(itemNo) || isNaN(ri) || itemNo !== ri) return false;
         const page = toNum(src.page);
         const rp = toNum(row && row.page);
-        if (!isNaN(page) && !isNaN(rp) && page !== rp) return false;
+        if (isNaN(page) || isNaN(rp) || page !== rp) return false;
+        const itemVbk = normVbkName(src.vbk_name || src.vBK_name || vbkNameOf(src, src.sheet_id));
+        const rowVbk = normVbkName(vbkNameOf(row, row.sheet_id || src.sheet_id));
+        if (!itemVbk || !rowVbk || itemVbk !== rowVbk) return false;
         return true;
+    }
+
+    function findMetaRowForItem(metaCache, sheetId, item) {
+        const pack = metaCache[sheetId] || {};
+        const rows = Array.isArray(pack.rows) ? pack.rows : [];
+        const hit = rows.find(function (r) { return rowMatchesItem(r, item); });
+        if (!hit) return null;
+        return { row: hit, pack: pack, sheetId: sheetId };
     }
 
     /**
@@ -1134,17 +1173,13 @@ window.QuizPaperBuilder = (function () {
             const sheetId = String(src.sheet_id || '').trim().toUpperCase();
             if (!sheetId || typeof loadSheetMeta !== 'function') { missing += 1; continue; }
             if (!metaCache[sheetId]) metaCache[sheetId] = await loadSheetMeta(sheetId);
-            const pack = metaCache[sheetId] || {};
-            const rows = Array.isArray(pack.rows) ? pack.rows : [];
-            const row = rows.find(function (r) { return rowMatchesItem(r, it); });
-            if (!row) { missing += 1; continue; }
-            const rowForBuild = rowWithPairedWord(row, findPairedMetaRow(metaCache, sheetId, row));
-            const sec = (examJob.sections || []).find(function (s) {
-                return String((s && s.sheet_id) || '').toUpperCase() === sheetId;
-            }) || {};
-            const profile = sec.layout_profile_id
-                ? pickProfile(layout, sec.layout_profile_id)
-                : pickProfile(layout, examJob.layout_profile_id);
+            const found = findMetaRowForItem(metaCache, sheetId, it);
+            if (!found) { missing += 1; continue; }
+            const pack = found.pack || {};
+            const row = found.row;
+            const rowForBuild = rowWithPairedWord(row, findPairedMetaRow(metaCache, found.sheetId || sheetId, row));
+            const sec = findSectionForItem(examJob, it);
+            const profile = resolveSectionProfile(layout, sec, examJob, src);
             const rebuilt = buildItemFromRow(rowForBuild, {
                 sheetId: sheetId,
                 materialFolder: pack.materialFolder || layout.material_folder || src.material_folder || '',
@@ -1153,7 +1188,7 @@ window.QuizPaperBuilder = (function () {
                 fieldsAnswer: (profile && (profile.fields_answer || profile.answer_fields)) || '',
                 quizPrompt: (profile && profile.quiz_prompt) || '',
                 quizAnswer: (profile && profile.quiz_answer) || '',
-                colMap: Object.assign({}, resolveColMap(layout, pack.schemaId || src.schema_id || ''), (profile && profile.col_map) || {}),
+                colMap: colMapForProfile(profile),
                 quizMode: it.quiz_mode || 'full_sentence',
                 layoutProfileId: (profile && profile.profile_id) || src.layout_profile_id || '',
                 skipStoredCombined: true
@@ -1161,6 +1196,8 @@ window.QuizPaperBuilder = (function () {
             it.answer_en = rebuilt.answer_en;
             it.accepted_answers = rebuilt.accepted_answers;
             it.sub_answers = rebuilt.sub_answers;
+            if (!it.source) it.source = {};
+            it.source.info_label = (rebuilt.source && rebuilt.source.info_label) || '';
             updated += 1;
         }
         paper.answers_refreshed_at = new Date().toISOString();
@@ -1390,6 +1427,7 @@ window.QuizPaperBuilder = (function () {
         attachStrictRetypeInput: attachStrictRetypeInput,
         formatItemSourceLabel: formatItemSourceLabel,
         formatItemHeadline: formatItemHeadline,
-        refreshPaperAnswersKeepItems: refreshPaperAnswersKeepItems
+        refreshPaperAnswersKeepItems: refreshPaperAnswersKeepItems,
+        resolveSectionProfile: resolveSectionProfile
     };
 })();

@@ -191,10 +191,11 @@ window.FeatureTemplateLibrary = (function () {
         const payload = { updated_at: new Date().toISOString() };
         if (role === 'exam') {
             payload.is_exam_role = true;
-            if (!t.fields && !t.fields_answer) {
-                const draft = computeExamDraftFromColumns(t);
-                payload.fields = draft.fields;
-                payload.fields_answer = draft.fields_answer;
+            if (!String(t.fields || '').trim()) {
+                payload.fields = 'vBK_name&" - "&page&" - "&item_no';
+            }
+            if (!String(t.quiz_prompt || '').trim()) {
+                payload.quiz_prompt = 'display_zh';
             }
         } else {
             payload.is_extraction_role = true;
@@ -304,31 +305,38 @@ window.FeatureTemplateLibrary = (function () {
      * （resolveExamTemplateProfile）的兩份邏輯。
      * @returns {{profile_id, label, fields, fields_answer, quiz_prompt, quiz_answer, lines_per_page}|null}
      */
-    function resolveTemplateProfile(pid) {
-        const raw = String(pid || '').trim();
-        if (!raw) return null;
-        const id = raw.indexOf('tpl:') === 0 ? raw.slice(4) : raw;
+    function normTemplateName(s) {
+        return String(s || '').trim().replace(/^⭐\s*/, '').toLowerCase();
+    }
+
+    /** 下拉選中的那一筆：uuid／legacy／名稱都要對到同一筆，禁止改套別份。 */
+    function findTemplateByAnyId(raw) {
+        const id = String(raw || '').trim().replace(/^tpl:/, '');
         if (!id) return null;
         const list = getTemplatesCachedSync();
-        const t = list.find(function (x) { return x.id === id; })
-            || list.find(function (x) { return x.legacy_id && x.legacy_id === id; })
-            || list.find(function (x) { return x.legacy_profile_id && x.legacy_profile_id === id; });
+        const wantName = normTemplateName(id);
+        return list.find(function (x) { return String(x.id) === id; })
+            || list.find(function (x) { return x.legacy_id && String(x.legacy_id) === id; })
+            || list.find(function (x) { return x.legacy_profile_id && String(x.legacy_profile_id) === id; })
+            || list.find(function (x) { return normTemplateName(x.name) === wantName; })
+            || null;
+    }
+
+    function resolveTemplateProfile(pid) {
+        const t = findTemplateByAnyId(pid);
         if (!t) return null;
-        // 有勾試卷角色且已存公式才直接用；否則（例如只勾了擷取角色，走舊版 tpl: 相容路徑）
-        // 現算一次當唯讀預覽，不寫回資料庫
-        const hasStoredExamFormula = t.is_exam_role && (t.fields || t.fields_answer);
-        const draft = hasStoredExamFormula
-            ? { fields: t.fields, fields_answer: t.fields_answer, lines_per_page: t.lines_per_page }
-            : computeExamDraftFromColumns(t);
+        const storedFields = String(t.fields || '').trim();
+        const storedAnswer = String(t.fields_answer || '').trim();
+        const oldPaperStack = /^STACK\(\s*vBK_name\s*,\s*page\s*\)\s*,\s*display_zh$/i.test(storedFields);
         return {
             profile_id: t.id,
             label: t.name,
-            fields: draft.fields || '',
-            fields_answer: draft.fields_answer || '""',
-            quiz_prompt: t.quiz_prompt || '',
+            fields: oldPaperStack ? 'vBK_name&" - "&page&" - "&item_no' : storedFields,
+            fields_answer: storedAnswer,
+            quiz_prompt: String(t.quiz_prompt || '').trim() || 'display_zh',
             quiz_answer: templateOwnFormula(t),
             col_map: colMapFromTemplate(t),
-            lines_per_page: draft.lines_per_page || t.lines_per_page || DEFAULT_LINES_PER_PAGE
+            lines_per_page: t.lines_per_page || DEFAULT_LINES_PER_PAGE
         };
     }
 

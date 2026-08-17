@@ -87,7 +87,7 @@ window.FeatureReviewCatalog = (function () {
         return {
             material_folder: folderName,
             default_profile_id: profile.profile_id || templateId || '',
-            col_map: (window.QuizPaperBuilder && window.QuizPaperBuilder.FALLBACK_COL_MAP) || {},
+            col_map: {},
             profiles: [profile]
         };
     }

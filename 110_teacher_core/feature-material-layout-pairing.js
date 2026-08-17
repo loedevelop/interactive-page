@@ -204,48 +204,52 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 只有📝書寫答案批改標準（分開比對／結合成一個答案）在欄數≤1 時沒有意義（沒有「多欄」可選），
      * 才單獨收起來。
      */
-    function renderAnswerGradingSettingsHtml(prefix, cfg, aCount) {
+    function renderAnswerGradingSettingsHtml(prefix, cfg, aCount, opts) {
+        const gateByExamRole = !!(opts && opts.gateByExamRole);
+        const examRoleOn = !!(opts && opts.examRoleOn);
+        const gradingLocked = gateByExamRole && !examRoleOn;
+        const lockAttr = gradingLocked ? ' disabled' : '';
         const answerMode = cfg.answerMode === 'separate' ? 'separate' : 'combine';
         const speakMode = normalizeSpeakMode(cfg.speakMode);
         const writtenGradingBlock = aCount > 1 ? `
                 <div style="margin-bottom:10px;">
                     <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">📝 書寫答案批改標準（共 ${aCount} 欄）</div>
                     <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="separate" ${answerMode === 'separate' ? 'checked' : ''}>
+                        <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="separate" ${answerMode === 'separate' ? 'checked' : ''}${lockAttr}>
                         分開比對（每欄各自獨立比對，例如 AN、AO 各一個空格分開判定）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer;">
-                        <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'};">
+                        <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}${lockAttr}>
                         結合成一個答案（用公式組合多欄，例如 AN&amp;" "&amp;AO）
                     </label>
-                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='結合公式，照欄位代號寫，例如 AO&amp;" "&amp;AP' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
+                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='結合公式，照欄位代號寫，例如 AO&amp;" "&amp;AP' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};"${lockAttr}>
                 </div>` : `
                 <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">📝 書寫答案批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
         return `
-            <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:10px 12px; margin-top:10px;">
-                <div style="font-size:0.76rem; font-weight:800; color:#B45309; margin-bottom:8px;">⚖️ 批改標準</div>
+            <div style="background:${gradingLocked ? '#F1F5F9' : '#FFF7ED'}; border:1px solid ${gradingLocked ? '#CBD5E1' : '#FED7AA'}; border-radius:8px; padding:10px 12px; margin-top:10px; opacity:${gradingLocked ? '0.55' : '1'}; pointer-events:${gradingLocked ? 'none' : 'auto'};">
+                <div style="font-size:0.76rem; font-weight:800; color:${gradingLocked ? '#94A3B8' : '#B45309'}; margin-bottom:8px;">⚖️ 批改標準${gradingLocked ? '（未勾試卷範本，不使用）' : ''}</div>
                 ${writtenGradingBlock}
                 <div>
                     <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">🎤 口說答案批改標準</div>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="direct" ${speakMode === 'direct' ? 'checked' : ''}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="direct" ${speakMode === 'direct' ? 'checked' : ''}${lockAttr}>
                         比對口說答案（直接取已勾的口說答案欄）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="formula" ${speakMode === 'formula' ? 'checked' : ''}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="formula" ${speakMode === 'formula' ? 'checked' : ''}${lockAttr}>
                         帶入公式（可再逐列個別修正）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="complex" ${speakMode === 'complex' ? 'checked' : ''}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="complex" ${speakMode === 'complex' ? 'checked' : ''}${lockAttr}>
                         之後會寫複雜規則（規則還沒定，先整批留白讓老師逐列輸入／修正）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="paste" ${speakMode === 'paste' ? 'checked' : ''}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'};">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="paste" ${speakMode === 'paste' ? 'checked' : ''}${lockAttr}>
                         直接貼上多筆資料（標注起始題號，可再逐列個別修正）
                     </label>
-                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};">
+                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};"${lockAttr}>
                 </div>
-                <div style="font-size:0.68rem; color:#92400E; margin-top:8px;">💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到「⚡ 快速套用」產生預覽後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。</div>
+                <div style="font-size:0.68rem; color:${gradingLocked ? '#94A3B8' : '#92400E'}; margin-top:8px;">${gradingLocked ? '批改屬於試卷範本。只勾擷取時這裡不能用。' : '💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到「⚡ 快速套用」產生預覽後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。'}</div>
             </div>
         `;
     }
@@ -276,12 +280,14 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /** 書寫答案勾選狀態改變（欄數可能跨過 1↔2 這條門檻）時，重畫這個獨立小區塊，不用整塊欄位對應重繪 */
-    function refreshAnswerGradingBlock(containerEl, prefix, cfg, aCount) {
+    function refreshAnswerGradingBlock(containerEl, prefix, cfg, aCount, opts) {
         if (!containerEl) return;
         const wrap = containerEl.querySelector('.' + prefix + '-answer-grading-wrap');
         if (!wrap) return;
-        wrap.innerHTML = renderAnswerGradingSettingsHtml(prefix, cfg, aCount);
-        bindAnswerGradingSettingsEvents(wrap, prefix, cfg);
+        wrap.innerHTML = renderAnswerGradingSettingsHtml(prefix, cfg, aCount, opts);
+        if (!(opts && opts.gateByExamRole && !opts.examRoleOn)) {
+            bindAnswerGradingSettingsEvents(wrap, prefix, cfg);
+        }
     }
 
     /** 欄位選取／欄位對應設定要「看」哪個活頁的欄位當預覽——現在活頁選擇是每組（Template）各自的 */
@@ -2988,7 +2994,14 @@ window.FeatureMaterialLayoutPairing = (function () {
             linesPerPage: (t && t.lines_per_page) || 10,
             // 2026-08-14（老師四次強調）：題目排版也是每個擷取範本本來就該有、老師能直接改的值，不是
             // 只有勾了考卷範本才算得出來的唯讀預覽——跟每頁行數一樣放在編輯表單裡，直接讀寫 fields 欄位。
-            fields: (t && t.fields) || '',
+            fields: (function () {
+                const raw = String((t && t.fields) || '').trim();
+                if (!raw || /^STACK\(\s*vBK_name\s*,\s*page\s*\)\s*,\s*display_zh$/i.test(raw)) {
+                    return 'vBK_name&" - "&page&" - "&item_no';
+                }
+                return raw;
+            })(),
+            quizPrompt: String((t && t.quiz_prompt) || '').trim() || 'display_zh',
             // 2026-08-15（老師回報意外刪除事件後要求）：角色勾選（擷取範本／考卷範本）只在編輯表單
             // 裡才能改，不放在清單上，見 renderTemplateEditor() 的角色勾選那一行。
             isExtractionRole: t && t.is_extraction_role !== false,
@@ -3034,9 +3047,15 @@ window.FeatureMaterialLayoutPairing = (function () {
                     </label>
                 </div>
                 ${roleRowHtml}
-                <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">題目排版（考題怎麼呈現的公式，例如 STACK(vBK_name,page), display_zh）
-                    <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="STACK(vBK_name,page), display_zh">${esc(st.fields)}</textarea>
-                </label>
+                <div style="margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid ${st.isExamRole ? '#C7D2FE' : '#CBD5E1'}; background:${st.isExamRole ? '#F8FAFC' : '#F1F5F9'}; opacity:${st.isExamRole ? '1' : '0.55'}; pointer-events:${st.isExamRole ? 'auto' : 'none'};">
+                    <div style="font-size:0.76rem; font-weight:800; color:${st.isExamRole ? '#4338CA' : '#94A3B8'}; margin-bottom:8px;">排版${st.isExamRole ? '' : '（未勾試卷範本，不使用）'}</div>
+                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">排版訊息（訊息列公式，例如 vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no）
+                        <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no' ${st.isExamRole ? '' : 'disabled'}>${esc(st.fields)}</textarea>
+                    </label>
+                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">排版題目（題目公式，例如 display_zh 或 pos&amp;" "&amp;display_zh）
+                        <textarea id="mlp-tpl-quiz-prompt" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='display_zh' ${st.isExamRole ? '' : 'disabled'}>${esc(st.quizPrompt || '')}</textarea>
+                    </label>
+                </div>
                 <div style="margin-top:12px;">
                     <div style="font-size:0.78rem; font-weight:800; color:#475569; margin-bottom:6px;">欄位設定（欄位代號自己打，可自由新增／刪除列）</div>
                     <div id="mlp-tpl-cols"></div>
@@ -3045,7 +3064,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <button type="button" id="mlp-tpl-clear-airef" class="btn" style="padding:5px 12px; font-size:0.78rem; font-weight:800; background:white; color:#6D28D9; border:1px solid #DDD6FE; border-radius:6px;">✕ 清除所有已選的口說答案欄（允許不指定）</button>
                     </div>
                 </div>
-                <div class="mlp-tpl-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-tpl', st, countAnswerColsFromColumns(st.columns))}</div>
+                <div class="mlp-tpl-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-tpl', st, countAnswerColsFromColumns(st.columns), { gateByExamRole: true, examRoleOn: !!st.isExamRole })}</div>
                 <div style="margin-top:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button type="button" id="mlp-tpl-save" class="btn btn-primary" style="padding:7px 16px; font-weight:800;">💾 儲存這個 Template</button>
                     <button type="button" id="mlp-tpl-cancel" class="btn" style="padding:7px 16px; font-weight:800; background:white; border:1px solid #CBD5E1; color:#475569;">取消</button>
@@ -3115,7 +3134,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             const aEl = rowEl.querySelector('.mlp-tpl-col-answer');
             if (aEl) aEl.addEventListener('change', function () {
                 col.is_answer = this.checked;
-                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns));
+                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns), { gateByExamRole: true, examRoleOn: !!_templateEditorState.isExamRole });
             });
             const iEl = rowEl.querySelector('.mlp-tpl-col-info');
             if (iEl) iEl.addEventListener('change', function () { col.is_info = this.checked; });
@@ -3138,6 +3157,8 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (lppEl) lppEl.addEventListener('change', function () { _templateEditorState.linesPerPage = parseInt(this.value, 10) || 10; });
         const fieldsEl = document.getElementById('mlp-tpl-fields');
         if (fieldsEl) fieldsEl.addEventListener('change', function () { _templateEditorState.fields = this.value; });
+        const quizPromptEl = document.getElementById('mlp-tpl-quiz-prompt');
+        if (quizPromptEl) quizPromptEl.addEventListener('change', function () { _templateEditorState.quizPrompt = this.value; });
         const addColBtn = document.getElementById('mlp-tpl-add-col');
         if (addColBtn) addColBtn.addEventListener('click', function () {
             _templateEditorState.columns.push({ letter: '', semantic_key: '', is_question: false, is_answer: false, is_info: false, is_ai_ref: false });
@@ -3273,7 +3294,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             speak_mode: normalizeSpeakMode(st.speakMode),
             speak_formula: st.speakFormula || '',
             lines_per_page: parseInt(st.linesPerPage, 10) || 10,
-            fields: st.fields || ''
+            fields: st.fields || '',
+            quiz_prompt: st.quizPrompt || ''
         };
         record.columns.forEach(function (c) { rememberSemanticKey(c.semantic_key); });
         const saveBtn = document.getElementById('mlp-tpl-save');

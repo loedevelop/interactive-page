@@ -1,29 +1,50 @@
 ---
-description: 每個範本自己的公式；沒填就沒有；禁止互當備份、禁止套別筆
-globs: 110_teacher_core/feature-template-library.js,110_teacher_core/feature-exam-job.js,110_teacher_core/feature-material-layout-pairing.js,020_js_core/quiz-paper-builder.js
-alwaysApply: false
+description: 範本不可共用；禁止亂套別份、禁止發明退路
+alwaysApply: true
 ---
 
-# 範本公式（雷區｜2026-08-17 老師痛斥）
+# 範本不可共用（雷區｜老師禁止自以為是）
+
+老師花時間寫不同範本，就是因為**不能共用**。AI 不得自行發明「找不到就改套」「合成一份給全卷」「A 沒填用 B」。
 
 ## 不變量
 
 ```
-每個範本自己的公式，彼此不同。
-不是每個範本都有公式；沒填就是沒有。
-書寫答案結合公式不是 quiz_answer 的備份。
-禁止用 WORD 的公式去推論 PIC。
-禁止發明「A 沒填才用 B」。
+每一區段只套該列下拉已選的那一筆（範本庫）。
+選了＝照搭配使用。沒選＝不管。
+不准讀、合併、改套 _layout.json。
+產生試卷＝產出一份新卷（新試卷 id），從頭來。這是老師的定義，不是跟舊卷或舊檔拼出來的。
+重批＝舊卷、舊 id。題目用 vBK name＋page＋item no 指定（不重抽）。資料一樣從 meta 撈這三個都符合的列；缺一或對不到→該題不猜、報找不到。
+目前資料都有這三個（標準化）；以後才開放老師自設。
+新卷與重批的差異只有：選題（亂數 vs 指定）＋卷 id（新 vs 舊）。資料撈法相同。
+該筆的 fields、col_map、結合公式只屬於該筆。
+沒填＝沒有。禁止拿別筆、別欄、別區段來補。
+有欄位就用；沒有就不用。禁止用 GEPT 寫死欄位去補 PIC 或其他教材。必要但找不到→停並報缺哪個欄。
+PIC 與 WORD 的欄字母語意不同，禁止互套。
+對不到該區段的範本 → 報該區段，禁止改套 profiles[0]／預設／另一區段。
+沒有「整卷一個範本」摘要。paper.layout 只記各區段已選的 layout_profile_id，不准寫單一公式、不准改套第一筆。
+禁止把各範本 col_map 合成 layout.col_map 給全卷用。
+```
+
+## 禁止
+
+```javascript
+// ❌ 找不到就改套別份
+return profiles[0];
+quizAnswer = profile.quiz_answer || args.quizAnswer || defaultQuizAnswer;
+col_map = Object.assign({}, picMap, wordMap);
+
+// ❌ 兩欄互當備份
+quiz_answer || answer_combine_note
 ```
 
 ## 正確
 
 ```javascript
-// 擷取／雙用：這一筆的 answer_combine_note（沒填＝沒公式）
-// 僅試卷：這一筆的 quiz_answer（沒填＝沒公式）
-if (t.is_extraction_role) return String(t.answer_combine_note || '').trim();
-return String(t.quiz_answer || '').trim();
+// 擷取／雙用：只讀這一筆 answer_combine_note
+// 僅試卷：只讀這一筆 quiz_answer
+// 區段：只讀 sec.layout_profile_id 對到的那一筆（範本庫 uuid／名稱）
 ```
 
-PIC 例：`AN=pos`、`AO=pre`、`AP=answer_en`，公式 `AO&" "&AP`。  
-WORD 例可能完全不同。不要互抄、不要當備份。
+PIC：`AN=pos`、`AO=pre`、`AP=answer_en`，公式 `AO&" "&AP`。  
+WORD：自己的欄位與公式。不要互抄。

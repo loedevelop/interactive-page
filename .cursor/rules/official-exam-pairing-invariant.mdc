@@ -1,0 +1,63 @@
+---
+description: 出考卷必須走官方 meta↔試卷範本配對；選了 meta 後下拉只能列認證組合
+globs: 110_teacher_core/feature-exam-job.js,110_teacher_core/feature-class-material-combinations.js,110_teacher_core/feature-material-layout-pairing.js,020_js_core/quiz-paper-builder.js
+alwaysApply: true
+---
+
+# 官方配對出卷鐵律（2026-08-17）
+
+> 老師定案：meta **一定要有搭配試卷範本**，才能拿來出考卷。
+> 一個 meta 可以搭配**不同**試卷範本。關鍵是必須走官方配對，不准另開退路。
+
+## 不變量
+
+```
+沒有官方配對的 meta → 不能出考卷、也不能出現在出題下拉
+有官方配對的 meta → 試卷範本下拉只列該 meta 已認證的組合
+一個 meta 可對多個試卷範本（下拉列出全部認證項，不是只留一筆預設）
+比對用完整 stem／檔名；禁止用活頁字母 A 去套 A.pic／A.word
+```
+
+## 出題下拉
+
+1. **選教材／meta**
+   - 上方：已指派到該班的教材
+   - 下方：其他可用、且已有官方試卷配對的教材
+   - **沒有官方配對的 meta 不准出現在下拉**
+2. **一旦選了教材 meta**
+   - 試卷範本下拉**只能**顯示官方認證的搭配
+   - 不准列出整庫所有試卷範本
+   - 不准用舊 `LAYOUT_CATALOG` 字串 id 當選項或退路（該常數已刪）
+
+## 禁止
+
+```javascript
+// ❌ 選了 meta 仍列出全部試卷範本
+buildExamTemplateSelectOptionsHtml(selectedId, suggestedId) // 整庫 + ⭐建議
+
+// ❌ 庫 miss 就退回 LAYOUT_CATALOG
+const builtin = LAYOUT_CATALOG.find(...)
+
+// ❌ 沒配對仍允許出卷、或默默改套別的範本
+```
+
+## 舊 LAYOUT_CATALOG id（已掃過，不是現行資料）
+
+2026-08-14 掃過現行 `exam_job`：這 6 個**沒有被任何現行設定／meta 套用**，已軟刪：
+
+- `sentence-translate-4col`
+- `sentence-cloze-4col`
+- `gept-translate-5col`
+- `vocab-no-image`
+- `vocab-with-image`
+- `v2-extended`
+
+唯一歷史快取用過 `sentence-translate-4col`，即時設定已改走範本庫；公式已烘焙進該份 `quiz_paper`。
+
+**2026-08-17 已刪：** `LAYOUT_CATALOG`／`LAYOUT_FIELD_HINTS` 與 `resolveExamTemplateProfile` 退路。庫找不到就回 null。
+
+## 改動前自問
+
+1. 選了 meta 之後，試卷下拉是否只剩官方認證組合？
+2. 沒配對的 meta 是否被擋下、而不是改套別的範本？
+若任一否 → 停下。

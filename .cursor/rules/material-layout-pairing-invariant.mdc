@@ -13,11 +13,9 @@ alwaysApply: false
 ## 定位（不可誤解）
 
 ```
-這裡登記的是「建議」，不是強制規則。
-exam_job.layout_profile_id 是「整份考卷」層級的預設欄位（對外 Python 排版契約，見
-downloadJson()/saveAndExport() 的 payload 形狀，仍保留、不可移除）。
-2026-08-04 追加：exam_job.sections[].layout_profile_id 是「選填的逐區段覆蓋」，
-留空＝沿用上面的 job 層級預設；填了＝這個區段自己的 layout。
+2026-08-17 老師定案：出考卷必須走官方配對（見 official-exam-pairing-invariant.mdc）。
+這裡登記的不再只是「建議」——選了 meta 之後，試卷範本下拉只能列官方認證組合。
+一個 meta 可搭配多個試卷範本。沒有官方配對的 meta 不能出考卷。
 ```
 
 ## 一個檔案＝一個活頁；活頁要套用兩個 layout 時怎麼辦（2026-08-04 老師實測釐清）
@@ -40,8 +38,7 @@ downloadJson()/saveAndExport() 的 payload 形狀，仍保留、不可移除）�
 // ❌ 舊版做法：完全不给 sections[] 覆蓋 layout 的能力，老師只能開兩個「考試任務」
 //    才能讓同一活頁吃到兩種 layout —— 已於 2026-08-04 用逐區段覆蓋取代，見下方正確做法
 
-// ❌ 把「建議」變成強制鎖住 layout_profile_id 下拉，選了資料夾後只能選建議的那幾個
-//    （使用者已明確選 suggest_only：只排到最前面＋標「⭐建議」，其餘 LAYOUT_CATALOG 仍可選）
+// ❌ 選了 meta 仍列出整庫試卷範本／LAYOUT_CATALOG（2026-08-17 起：只能列官方認證組合）
 
 // ❌ quiz-paper-builder.js 在 for 迴圈外算一次 fields/quizPrompt/quizAnswer/quizMode 給全部區段共用
 //    （這樣逐區段覆蓋會失效，每個區段都會被迫吃到 job 層級預設的那一個 layout）
