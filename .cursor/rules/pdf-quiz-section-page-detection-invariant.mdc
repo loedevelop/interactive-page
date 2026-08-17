@@ -1,0 +1,84 @@
+---
+description: PDF 考卷 detectSectionPageRanges 找不到大題標題頁碼，導致某幾大題顯示成前面大題的內容
+globs: 020_js_core/pdf-exam-paper.js
+alwaysApply: false
+---
+
+# PDF 考卷大題頁碼偵測鐵律（雷區，已犯兩次）
+
+`detectSectionPageRanges` 掃描 PDF 文字圖層找每個大題標題（QUIZ N／Chapter N…）第一次出現
+在第幾頁，完全不用老師手動指定。這支函式已經因為不同根因壞過兩次，症狀都一樣：
+**某幾個大題顯示成前一個（甚至更早）大題的頁面內容**。
+
+## 第一次（已修）：分行排序＋letter-spacing
+
+- 自己兜的分行邏輯沒依 x 座標排序，標題不在字串最前面就配不到 `^Quiz\s*\d+`
+- 印刷標題常見 letter-spacing（PDF 文字圖層存成「Q U I Z 1 6」），regex 也配不到
+- 修法：共用 `_pageItemsPct`/`_groupLines`（跟找空格線同一套）＋ `_collapseLetterSpacedTokens`
+
+## 第二次（已修，2026-08-16）：OCR 把標題數字讀壞＋候選清單被正常大題污染
+
+實測掃描 PDF（ABBYY 文字層）：`QUIZ 7` 被讀成 `QUIZ?`（問號取代 7，連空格都不見）。
+`Quiz\s*\d+` 永遠配不到，退回「沿用前一個大題頁碼」，害 Quiz 6／Quiz 7 兩大題都顯示 Quiz 5 那頁。
+
+修法：新增兩層更寬鬆的候選收集（`SECTION_HEADER_GARBLED_RE` 關鍵字＋壞掉短符號、
+`SECTION_HEADER_BARE_KEYWORD_RE` 行首只有關鍵字），配合「大題一定依序出現」的順序，
+在前後兩個已確定大題的頁碼範圍內補位。
+
+**修的過程中踩到第二個坑**：`SECTION_HEADER_GARBLED_RE` 的 `[0-9]+` 分支本來就會連正常
+的「QUIZ 5」也配到，若不排除已經精確比對成功的行，候選清單會混進一堆「其實已經解決」的
+頁碼，補位時反而搶走真正缺的那個大題該用的候選（Quiz 7 被 Quiz 5 那筆候選頂替，補到錯的頁）。
+
+```javascript
+// ❌ 不管這一行是否已經被精確比對成功，都塞進候選清單
+var garbledMatch = collapsed.match(SECTION_HEADER_GARBLED_RE);
+if (garbledMatch) looseCandidates.push(...);
+
+// ✅ 只有精確比對（真的比對到數字）失敗時才收集候選，避免污染
+if (!secMatch) {
+    var garbledMatch = collapsed.match(SECTION_HEADER_GARBLED_RE);
+    ...
+}
+```
+
+## 第三層防線（2026-08-16 新增）：解答文字裡的課本印刷頁碼
+
+老師貼的解答常帶課本自己的頁碼（例如「Quiz 1, p. 50」），跟課本印在每頁頁尾的印刷頁碼是
+同一套，跟掃 PDF 找「QUIZ N」標題文字是**完全獨立**的第二資訊來源——任何一個被 OCR 讀壞，
+另一個還能用。做法：
+
+1. `parseAnswerText` 解析時，順手從「Quiz N, p. NN」擷取 `sectionPageHints`（附掛在回傳陣列上，
+   不會被 `JSON.stringify` 存進資料庫；呼叫端要自己複製到 `job.section_page_hints` 這個一般物件
+   欄位才會真的存檔）。
+2. `detectSectionPageRanges` 掃描 PDF 時，順手記錄每頁頁尾（最後 1~2 行）裡「單獨一個 1~4 位
+   數字」的 token，算出「印刷頁碼－PDF 頁碼」的落差，取票數最高且至少 2 頁同意的 offset。
+3. 換算出來的候選頁碼（`printedPage - offset`）**必須跟 loose/bare 候選補位用同一套雙向邊界
+   檢查**（落在前一個已確定大題跟下一個已確定大題頁碼之間才採信），否則一旦某個 `p.NN`
+   本身抄錄有誤，會把候選頁推到比後面已確定大題還後面，製造出順序顛倒的離譜範圍。
+
+```javascript
+// ❌ 只檢查「不早於前一個已知頁碼」，沒檢查上界——一個抄錄錯誤的 p.NN 會把候選頁推到
+// 比後面已確定大題還晚，順序顛倒（實測 Quiz 7 被錯誤 hint 推到 Quiz 8/9/10 後面的頁碼）
+var candidatePage = printedPage - offset;
+if (candidatePage >= lastConfirmedPage) foundPage[sec] = candidatePage;
+
+// ✅ 跟 loose/bare 候選補位同一套雙向邊界：必須夾在前一個／下一個已確定大題之間
+var prevPage = /* 往前找最近一個已確定大題的頁碼 */;
+var nextPage = /* 往後找最近一個已確定大題的頁碼 */;
+if (candidatePage >= prevPage && candidatePage <= nextPage) foundPage[sec] = candidatePage;
+```
+
+這一層放在 loose/bare 候選補位**之前**執行，但只補「還沒找到」的大題，不會覆蓋已經靠標題
+文字精確比對成功的大題。
+
+## 改動前自問
+
+1. 是不是又用了「單一 regex 一次到位」的想法？大題標題偵測**一定**要有「找不到就退化成更寬鬆
+   的候選＋靠順序補位」這層防呆，不能假設 OCR／文字圖層永遠讀得對。
+2. 任何新增的「寬鬆比對」規則，是否可能連「已經精確比對成功」的正常行也配到？如果會，
+   候選收集時必須排除已成功的行，否則補位邏輯會被污染的候選誤導。
+3. 改完務必用**真實 PDF**驗證，不要只憑 regex 推論就相信修好了——可用 `pdfjs-dist`
+   在 Node 直接 `require` 這份 production 檔案（`global.window={}` 後掛在
+   `window.PdfExamPaper`），對照 `pdftotext -f N -l N` 的原始文字，逐大題核對
+   `detectSectionPageRanges` 回傳的頁碼；驗證用的 npm 套件／暫存腳本要放在專案內的
+   暫存資料夾，測完即刪，不要留下 `node_modules`／測試腳本。

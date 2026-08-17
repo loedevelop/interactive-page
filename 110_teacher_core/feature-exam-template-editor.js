@@ -103,7 +103,7 @@ window.FeatureExamTemplateEditor = (function () {
         const isEdit = !!_draft.id;
         return `
             <div id="exam-tpl-editor-form" style="background:#F8FAFC; border:1px dashed #A5B4FC; border-radius:8px; padding:14px; margin:10px 0;">
-                <h4 style="margin:0 0 8px 0; color:#4338CA;">${isEdit ? '✏️ 編輯考卷範本' : '➕ 新增考卷範本'}</h4>
+                <h4 style="margin:0 0 8px 0; color:#4338CA;">${isEdit ? '✏️ 編輯試卷範本' : '➕ 新增試卷範本'}</h4>
 
                 <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
                     <span style="font-size:0.78rem; color:#6D28D9; font-weight:800;">🧩 從擷取範本開始（選填，只借用公式，存檔後不連動）：</span>
@@ -212,7 +212,7 @@ window.FeatureExamTemplateEditor = (function () {
                 if (!window.confirm('確定要取消這筆的「試卷範本」角色嗎？\n\n已經用過這個範本出過的考卷不會受影響（仍能重新產生），但之後出題下拉不會再看到它。若這筆同時也是擷取範本（雙用），只會關掉試卷角色，擷取範本那一側資料不受影響。')) return;
                 try {
                     await fej().deleteExamTemplate(id);
-                    window.showFlash && window.showFlash('✅ 已刪除考卷範本', 'success');
+                    window.showFlash && window.showFlash('✅ 已刪除試卷範本', 'success');
                     render();
                 } catch (err) {
                     console.error('[FeatureExamTemplateEditor] 刪除失敗', err);
@@ -263,7 +263,7 @@ window.FeatureExamTemplateEditor = (function () {
                     } else {
                         await fej().createExamTemplate(payload);
                     }
-                    window.showFlash && window.showFlash('✅ 已儲存考卷範本', 'success');
+                    window.showFlash && window.showFlash('✅ 已儲存試卷範本', 'success');
                     _draft = null;
                     render();
                 } catch (err) {
@@ -283,10 +283,10 @@ window.FeatureExamTemplateEditor = (function () {
                         <h3 style="margin:0 0 4px 0; color:var(--primary-dark);">📚 範本庫 — 試卷範本：meta 怎麼呈現成一道考題</h3>
                         <p style="color:#64748B; font-size:0.8rem; margin:0;">這裡顯示「範本庫」裡勾了🧾試卷角色的範本；跟「擷取範本」（上面「📎 套用到教材」用的 Excel 欄位對應）是同一份資料表，角色可以只勾一邊，也可以兩邊都勾（雙用，見清單裡的「🧩 雙用」標籤，可以直接到上面擷取範本清單編輯）。公式決定出題畫面／線上卷怎麼把 meta.json 的一列排成一道題目，可以自建、編輯、刪除，不再是寫死的 6 個選項。</p>
                     </div>
-                    <button type="button" id="exam-tpl-add-btn" class="btn btn-primary" style="padding:6px 14px; font-weight:800; white-space:nowrap;">➕ 新增考卷範本</button>
+                    <button type="button" id="exam-tpl-add-btn" class="btn btn-primary" style="padding:6px 14px; font-weight:800; white-space:nowrap;">➕ 新增試卷範本</button>
                 </div>
                 <div id="exam-tpl-form-slot">${formHtml()}</div>
-                <div id="exam-tpl-list" style="margin-top:10px;">${templates.length ? templates.map(function (t, idx) { return templateRowHtml(t, idx, templates.length); }).join('') : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有任何考卷範本，按上面「➕ 新增考卷範本」建立第一個。</div>'}</div>
+                <div id="exam-tpl-list" style="margin-top:10px;">${templates.length ? templates.map(function (t, idx) { return templateRowHtml(t, idx, templates.length); }).join('') : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有任何試卷範本，按上面「➕ 新增試卷範本」建立第一個。</div>'}</div>
             </div>
         `;
         bindEvents(wrap, templates);
@@ -303,7 +303,7 @@ window.FeatureExamTemplateEditor = (function () {
             paint(wrap, templates || []);
         }).catch(function (err) {
             console.error('[FeatureExamTemplateEditor] 載入失敗', err);
-            wrap.innerHTML = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 載入考卷範本失敗：' + esc(err.message || err) + '</div>';
+            wrap.innerHTML = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 載入試卷範本失敗：' + esc(err.message || err) + '</div>';
         });
     }
 

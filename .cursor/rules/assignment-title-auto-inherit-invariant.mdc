@@ -54,8 +54,18 @@ raw_data.title_auto_from_range === true 時：
 
 老師刪光標題文字 → 立刻把旗標翻回 true，恢復自動繼承（跟舊行為一致，這段沒變）。
 
-適用範圍：audio_record／exam 任務標題（跟同層 base 範圍／同層錄音範圍同步），
+適用範圍：audio_record 任務標題（跟同層 base 範圍同步），
   以及範圍群組（group_role==='range'）標題（跟 deriveRangeTitleFromGroup 同步）。
+
+## 考試標題（2026-08-16 老師裁定，覆蓋上面的 flag 規則）
+
+```
+考試（exam）標題：只有空白才能繼承同層錄音標題／範圍。
+標題只要有字＝老師手改，渲染／存檔／Snapshot 都禁止再用下面細節或 title_auto_from_range 覆寫。
+刪光之後才恢復繼承。
+```
+
+禁止再把 `autoFlag==='1'`、`titlePlain === prevFrom`、`titlePlain === '考試'` 當成可以覆寫考試標題。
 ```
 
 ## 資料流（修正後）

@@ -443,30 +443,24 @@ window.BuilderStore = (() => {
                 }
 
                 if (t.type === 'exam') {
-                    // 考試標題空白／自動繼承 → 跟同層錄音的標題（不是 base 範圍，見 getSiblingAudioRangeLabel 說明）
+                    // 考試標題：只有空白才繼承同層錄音標題。有字＝手改，存檔不得用細節覆寫。
                     if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         const examRange = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
-                        if (examRange) {
-                            const titlePlain = titleEl
-                                ? String(titleEl.textContent || '').trim()
-                                : String(t.title || '').replace(/<[^>]*>/g, '').trim();
-                            const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
-                            const prevFrom = titleEl
-                                ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
-                                : '';
-                            const shouldAuto = !titlePlain || autoFlag === '1'
-                                || (prevFrom && titlePlain === prevFrom)
-                                || titlePlain === '考試';
-                            if (shouldAuto) {
-                                t.title = examRange;
-                                if (!t.raw_data) t.raw_data = {};
-                                t.raw_data.title_auto_from_range = true;
-                                if (titleEl) {
-                                    titleEl.textContent = examRange;
-                                    titleEl.setAttribute('data-title-auto', '1');
-                                    titleEl.setAttribute('data-title-from-range', examRange);
-                                }
+                        const titlePlain = titleEl
+                            ? String(titleEl.textContent || '').trim()
+                            : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                        if (!t.raw_data) t.raw_data = {};
+                        if (!titlePlain && examRange) {
+                            t.title = examRange;
+                            t.raw_data.title_auto_from_range = true;
+                            if (titleEl) {
+                                titleEl.textContent = examRange;
+                                titleEl.setAttribute('data-title-auto', '1');
+                                titleEl.setAttribute('data-title-from-range', examRange);
                             }
+                        } else if (titlePlain) {
+                            t.raw_data.title_auto_from_range = false;
+                            if (titleEl) titleEl.setAttribute('data-title-auto', '0');
                         }
                     }
                     if (window.FeatureExamJob && typeof window.FeatureExamJob.syncInlineEditor === 'function') {

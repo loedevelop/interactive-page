@@ -928,11 +928,16 @@ window.FeatureTimeline = (() => {
         const titleEl = document.getElementById('node-title-' + pathStr);
         if (!titleEl || !rangeText) return;
         const current = String(titleEl.textContent || '').trim();
-        const autoFlag = titleEl.getAttribute('data-title-auto');
-        const prevFrom = String(titleEl.getAttribute('data-title-from-range') || '').trim();
-        // 空白＝一律可繼承（含手動改過再刪光）
-        const shouldAuto = !current || autoFlag === '1' || (prevFrom && current === prevFrom);
-        if (!shouldAuto) return;
+        const node = getTaskNodeByPathStr(pathStr);
+        // 考試標題：只有空白才能繼承。有字＝老師手改，禁止用下面細節／範圍覆寫。
+        if (node && node.type === 'exam') {
+            if (current) return;
+        } else {
+            const autoFlag = titleEl.getAttribute('data-title-auto');
+            const prevFrom = String(titleEl.getAttribute('data-title-from-range') || '').trim();
+            const shouldAuto = !current || autoFlag === '1' || (prevFrom && current === prevFrom);
+            if (!shouldAuto) return;
+        }
         titleEl.textContent = rangeText;
         titleEl.setAttribute('data-title-auto', '1');
         titleEl.setAttribute('data-title-from-range', rangeText);
@@ -2001,73 +2006,19 @@ window.FeatureTimeline = (() => {
                 await processTasksForUpload(bState.tasks);
 
                 /**
-                 * 💣 雷區（2026-08-11 老師回報「產生線上卷按鈕是廢物功能，應該存檔時自動產生」）：
-                 * 拿掉「📝 產生線上卷」獨立按鈕，改成「儲存作業」流程裡自動掃過整份作業樹，對每個
-                 * 「設定變了或還沒產生過」的考試任務（needsExamRegeneration）自動重新抽題排版。
-                 * 只在設定真的變了才重打 Drive／重新抽題（見 examJobSignature），避免老師隨便改個
-                 * 標題／截止日期，每次存檔都白白重跑一次考試產生（page-refresh-perf-invariant 鐵律的
-                 * 同一種精神）。單一考試產生失敗不擋整份作業存檔——失敗的維持原樣（不會清空舊卷），
-                 * 存完後用一句彙整警告告訴老師哪些考試沒產生成功，讓老師自己回去補設定。
+                 * 2026-08-16：儲存作業只存作業。線上卷只在老師按「產生試卷」時產生。
+                 * 這裡最多補寫舊卷缺的簽章，絕不重抽出卷。
                  */
-                const examWarnings = [];
-                const processExamPapers = async (tasks, prefix) => {
-                    for (let i = 0; i < (tasks || []).length; i++) {
-                        const t = tasks[i];
-                        const p = prefix ? (prefix + '-' + i) : String(i);
-                        if (t.type === 'group' && t.subTasks) {
-                            await processExamPapers(t.subTasks, p);
-                        } else if (t.type === 'exam' && window.FeatureExamJob
-                            && typeof window.FeatureExamJob.needsExamRegeneration === 'function'
-                            // 傳 p（這個任務目前的 pathStr）：needsExamRegeneration 內部會先強制用畫面上
-                            // 目前的值同步一次 exam_job，不要只信賴各欄位各自的 change 事件有沒有漏接
-                            // （2026-08-13 老師回報「明明填了，儲存後學生端還是說沒產生線上卷」）。
-                            && window.FeatureExamJob.needsExamRegeneration(t, p)) {
-                            const examTitle = String(t.title || '考試').replace(/<[^>]*>?/gm, '').trim() || '考試';
-                            // 💣 雷區（2026-08-12 老師提問「即便不是針對考卷做改變，存檔是否也會強迫重出考卷」）：
-                            // 簽章比對理論上設定沒變就不會誤觸發，但這份卷若已經有學生真的交過答案，
-                            // 任何一次「誤判成設定變了」代價都很高（重新抽題會讓已作答的題目對不起來）。
-                            // 這裡加最後一道防線：已經有題目的舊卷，一律先查有沒有學生答案，有就不自動
-                            // 靜默重新產生，只彈警告，交老師自己到考試設定按「🔁 立即重新產生」確認後才跑
-                            // （見 feature-exam-job.js 的 taskHasSubmittedAnswers／_inlineForceGeneratePaper）。
-                            const hadPaperBefore = !!(t.raw_data && t.raw_data.quiz_paper
-                                && Array.isArray(t.raw_data.quiz_paper.items) && t.raw_data.quiz_paper.items.length);
-                            let blockedBySubmittedAnswers = false;
-                            if (hadPaperBefore && bState.editId
-                                && typeof window.FeatureExamJob.taskHasSubmittedAnswers === 'function') {
-                                blockedBySubmittedAnswers = await window.FeatureExamJob.taskHasSubmittedAnswers(bState.editId, t.id || t.task_id);
-                            }
-                            if (blockedBySubmittedAnswers) {
-                                examWarnings.push(examTitle + '：設定看起來已變更，但已有學生作答，為避免影響現有成績未自動重新產生，請到該考試設定按「🔁 立即重新產生」手動確認');
-                            } else {
-                                btnEl.innerHTML = `⏳ 產生線上考卷：${examTitle}...`;
-                                const r = await window.FeatureExamJob.generatePaperForSave(p);
-                                if (!r || !r.ok) {
-                                    examWarnings.push(examTitle + '：' + ((r && r.error) || '產生失敗'));
-                                }
-                            }
-                        } else if (t.type === 'exam' && window.FeatureExamJob
+                const backfillExamSignatures = function (tasks) {
+                    (tasks || []).forEach(function (t) {
+                        if (t.type === 'group' && t.subTasks) backfillExamSignatures(t.subTasks);
+                        else if (t.type === 'exam' && window.FeatureExamJob
                             && typeof window.FeatureExamJob.ensureExamPaperSignatureBackfilled === 'function') {
-                            // 不需要重新產生：既有考卷若缺簽章（此功能上線前產生的）只補寫，不重新抽題
-                            // （見 needsExamRegeneration 的雷區說明，避免每份舊考試第一次存檔就被打亂）。
                             window.FeatureExamJob.ensureExamPaperSignatureBackfilled(t);
-                            // 💣 雷區（2026-08-13 老師回報「明明填了區段跟範圍，儲存後學生端還是說『老師尚未
-                            // 產生線上卷』，畫面卻顯示存檔成功」）：走到這個分支代表 needsExamRegeneration
-                            // 判定「不需要重新產生」——但這不等於「這份考卷是完整的」，也可能是這個考試任務
-                            // 從頭到尾就沒有任何區段填過活頁（examJobLooksReady 一路是 false），本來就沒東西
-                            // 可產生，之前的流程對這種情況完全靜音、老師存檔時看到的是跟正常存檔一模一樣的
-                            // 綠色成功訊息，完全沒有線索可以發現。這裡明確補一句警告，讓老師存檔後至少
-                            // 看得到「這份考試還沒設定好」，不用等學生回報才發現。
-                            const hasPaperNow = !!(t.raw_data && t.raw_data.quiz_paper
-                                && Array.isArray(t.raw_data.quiz_paper.items) && t.raw_data.quiz_paper.items.length);
-                            if (!hasPaperNow && typeof window.FeatureExamJob.examJobLooksReady === 'function'
-                                && !window.FeatureExamJob.examJobLooksReady(t.raw_data && t.raw_data.exam_job)) {
-                                const examTitle2 = String(t.title || '考試').replace(/<[^>]*>?/gm, '').trim() || '考試';
-                                examWarnings.push(examTitle2 + '：目前還沒有任何區段填好活頁（sheet_id），尚未產生線上卷，請展開這個考試任務確認設定');
-                            }
                         }
-                    }
+                    });
                 };
-                await processExamPapers(bState.tasks, '');
+                backfillExamSignatures(bState.tasks);
 
                 btnEl.innerHTML = '⏳ 儲存至雲端...';
 
@@ -2104,9 +2055,6 @@ window.FeatureTimeline = (() => {
                 const savedClassId = bState.classId; 
                 window.BuilderStore.clear();
                 renderTimeline(savedClassId, 'target', `assign-block-${savedId}`);
-                if (examWarnings.length) {
-                    window.showFlash('作業已儲存，但以下考試線上卷自動產生失敗，請回去檢查設定：' + examWarnings.join('；'), 'warning');
-                }
             } catch (err) {
                 window.showFlash('作業儲存失敗：' + err.message, 'error');
                 btnEl.innerHTML = originalText; btnEl.disabled = false;
@@ -2689,7 +2637,7 @@ window.FeatureTimeline = (() => {
                     <input type="text" class="form-control skeleton-unit-path" style="padding:6px; font-size:0.85rem; font-weight:800; color:#4338CA;" placeholder="單元路徑，如 Ch2/p15/Ex3/#1">
                     <textarea class="form-control skeleton-unit-script" style="width:100%; min-height:48px; padding:8px; font-size:0.85rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="批改文稿（可留空，之後再補）"></textarea>
                 </div>
-                <button type="button" class="btn" style="padding:6px 8px; color:#B91C1C;" onclick="window.FeatureTimeline.removeSkeletonUnitRow(this, '${pathStr}')" title="刪除此列">🗑</button>
+                <button type="button" class="btn" style="padding:6px 8px; background:white; color:#B91C1C; border:1px solid #FCA5A5;" onclick="window.FeatureTimeline.removeSkeletonUnitRow(this, '${pathStr}')" title="刪除此列">🗑</button>
             `;
             const pathInputEl = row.querySelector('.skeleton-unit-path');
             if (pathInputEl) {

@@ -114,7 +114,13 @@ window.FeatureGadgetCenter = (function () {
             if (seq !== renderSeq) return;
             container.innerHTML = ''
                 + renderToolsSection(classId, className, assignments, completions, students, heavyReady)
+                + (window.FeatureReviewRecords && typeof window.FeatureReviewRecords.renderPanel === 'function'
+                    ? window.FeatureReviewRecords.renderPanel(classId)
+                    : '')
                 + renderBackfillSection(classId, assignments, completions, students, heavyReady);
+            if (window.FeatureReviewRecords && typeof window.FeatureReviewRecords.hydratePanel === 'function') {
+                window.FeatureReviewRecords.hydratePanel(classId);
+            }
         }
 
         try {

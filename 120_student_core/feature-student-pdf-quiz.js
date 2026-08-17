@@ -5,13 +5,26 @@
  *
  * 💣 空格在 PDF 上的位置不是老師畫的、也不是程式用電腦視覺猜的（實測對掃描稿常常誤判，見討論
  * 記錄）——改成**由學生作答時自己依「答案清單的順序」逐一點出作答位置**：
- * - 一大題（section）一個畫面，該大題橫跨的每一頁 PDF 都會顯示出來，學生自己找到底線／空格，
- *   點一下就會長出一個小輸入框讓他打字，不用逐題彈窗提示「請點第幾題」。
  * - 「文字匡建立的順序」＝跟答案清單（老師貼的解答文字，已依大題內題號由小到大排好——見
  *   020_js_core/pdf-exam-paper.js 的 parseAnswerText 排序說明）逐一配對的依據，不是座標。
  *   陣列 push 的順序本身就等於時間先後，不用額外記時間戳記。
- * - 即使有題不會寫，也必須點出一個（可以留空的）作答框佔位，否則後面全部題目對位會錯掉——
- *   畫面上會擋著不給送出/換大題，直到這一大題的作答框數量跟題數一致。
+ * - 即使有題不會寫，也可以直接送出（不強制作答框數量要跟程式判斷的格數一致，見 submitSection）。
+ *
+ * 🆕 2026-08-16 改版：畫面從「一大題一個獨立畫面（只顯示該大題頁碼範圍）」改成「整份 PDF 連續
+ * 捲動、每一頁只畫一次」——因為同一張紙常常印了兩個不同大題（例如 Quiz5 結尾＋Quiz6 開頭疊在
+ * 同一頁），舊設計會讓那一頁在兩個大題各自的畫面裡各出現一次。新設計：
+ * - 畫面上方是一排大題按鈕（`_renderSectionTabsHtml`），每顆按鈕兩行：上面大題名、下面頁碼
+ *   （例如「QUIZ 11」／「p.57~58」）。按下＝呼叫 `_jumpToSection`，把 `st.currentIdx` 設成那個
+ *   大題，並用 `scrollIntoView({block:'start'})` 把該大題的錨點頁碼精準捲到畫面最上方（不是讓
+ *   學生自己上下滑找）。
+ * - 點 PDF 圖片建立作答框，永遠記到「目前選中的大題」（`st.currentIdx`），跟捲到第幾頁無關——
+ *   所以即使畫面同時看得到兩個大題的內容，點哪個空格永遠算「目前選中的那個大題」。
+ * - 每頁只會渲染一次（lazy render，捲到視窗附近才用 pdf.js 畫圖＋快取），頁面上疊的作答框來自
+ *   **所有**大題（不只是目前選中的），每個框自己的鎖定狀態依它自己所屬大題的批改狀態決定——
+ *   靠框上的 `data-section-idx` 反查，不能假設「畫面上看到的框都是目前選中的大題」。
+ * - `detectSectionPageRanges` 算出的頁碼範圍，現在只當作「按鈕捲動的錨點」，不再是「畫面顯示
+ *   範圍」的硬邊界——就算它判斷有些微誤差，最差情況只是錨點捲過去差一兩頁，不會再造成內容
+ *   顯示錯誤或重複（見 .cursor/rules/pdf-quiz-section-page-detection-invariant.mdc）。
  *
  * 💣 批改時機＝**每大題各自提交**，不是等整份考卷都寫完才一次送出：這一大題的作答框都點滿了，
  * 按「提交這一大題並批改」就立刻批改、鎖定這一大題（不能再改），並馬上顯示這一大題的對錯格數／
@@ -36,7 +49,8 @@ window.FeatureStudentPdfQuiz = (function () {
     var INPUT_WIDTH_PADDING_PX = 14; // 量出來的文字寬度再加一點緩衝，避免游標貼邊
 
     var _quizState = null;
-    var _drag = null; // 拖曳中的作答框狀態：{ boxId, pageBlockEl, boxEl }
+    var _drag = null; // 拖曳中的作答框狀態：{ boxId, sectionIdx, pageBlockEl, boxEl }
+    var _pageObserver = null; // IntersectionObserver：捲到視窗附近才渲染該頁 PDF 圖片（lazy render）
     var _measureCanvas = document.createElement('canvas');
     var _measureCtx = _measureCanvas.getContext('2d');
 
@@ -173,10 +187,6 @@ window.FeatureStudentPdfQuiz = (function () {
     // 畫面渲染：一大題＝該 section 橫跨的每一頁 PDF 疊在一起，各自有可點擊的 overlay
     // ------------------------------------------------------------------
 
-    function _pageIdAttr(sectionIdx, pageNum) {
-        return 'pdf-quiz-page-' + sectionIdx + '-' + pageNum;
-    }
-
     async function _renderPageImage(pdfDoc, pageNum) {
         var page = await pdfDoc.getPage(pageNum);
         var viewport = page.getViewport({ scale: 1.4 });
@@ -199,7 +209,7 @@ window.FeatureStudentPdfQuiz = (function () {
                 'style="border:none; background:#FEE2E2; color:#B91C1C; width:16px; height:16px; border-radius:50%; font-size:0.65rem; line-height:1; cursor:pointer; flex-shrink:0;">×</button>'
         );
         return (
-            '<div class="pdf-quiz-box" data-box-id="' + esc(box.id) + '" ' +
+            '<div class="pdf-quiz-box" data-box-id="' + esc(box.id) + '" data-section-idx="' + sectionIdx + '" ' +
                 'style="position:absolute; left:' + box.xPct + '%; top:' + box.yPct + '%; transform:translate(-6px,-50%); display:flex; align-items:center; gap:2px;">' +
                 '<span class="pdf-quiz-box-handle" data-box-id="' + esc(box.id) + '" title="' + (locked ? (isWrong ? '這格答錯了（已批改鎖定）' : '這格答對了（已批改鎖定）') : '按住拖曳可移動位置') + '" ' +
                     'style="font-size:0.65rem; font-weight:900; color:' + accent + '; background:white; border:1px solid ' + accent + '; border-radius:50%; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; cursor:' + (locked ? 'default' : 'grab') + '; touch-action:none; user-select:none;">' + (orderIdx + 1) + '</span>' +
@@ -264,13 +274,21 @@ window.FeatureStudentPdfQuiz = (function () {
             if (_allSectionsSubmitted()) {
                 btn.disabled = false;
                 btn.style.opacity = '1';
+                btn.style.background = '#0F766E';
+                btn.style.color = 'white';
                 btn.style.cursor = 'pointer';
                 btn.textContent = '🏁 查看總成績';
                 btn.onclick = function () { _showResultModal(_aggregateResults()); };
             } else {
                 var r = st.sectionResults[idx];
                 btn.disabled = true;
-                btn.style.opacity = '0.65';
+                // 💣 之前這裡用 opacity:0.65 讓按鈕看起來「變灰」，但底色是深色（#0F766E）配白字，
+                // opacity 是整顆按鈕（背景＋文字）一起往頁面背景淡化，深色淡化後文字也一起被淡化，
+                // 結果變成「淡色配淡色」，字幾乎看不清楚。改成直接換一組本來就低對比的「已完成」配色
+                // （淺灰底＋深灰字），全不透明，不管頁面背景是什麼都看得清楚。
+                btn.style.opacity = '1';
+                btn.style.background = '#E2E8F0';
+                btn.style.color = '#334155';
                 btn.style.cursor = 'not-allowed';
                 btn.textContent = '✅ 已批改 ' + r.correct + ' / ' + r.total;
                 btn.onclick = null;
@@ -280,6 +298,8 @@ window.FeatureStudentPdfQuiz = (function () {
             // 隨時都能提交這一大題，送出後就依學生當時實際點的作答框批改。
             btn.disabled = false;
             btn.style.opacity = '1';
+            btn.style.background = '#0F766E';
+            btn.style.color = 'white';
             btn.style.cursor = 'pointer';
             btn.textContent = '提交這一大題並批改';
             btn.onclick = submitSection;
@@ -308,70 +328,136 @@ window.FeatureStudentPdfQuiz = (function () {
         _updateActionButton();
     }
 
-    function _pageBlockHtml(dataUrl, pageNum, sectionIdx, boxesOnPage, orderOffsetByBox, locked, isWrongAtOrder) {
-        var boxesHtml = boxesOnPage.map(function (b) {
-            var orderIdx = orderOffsetByBox(b);
-            var isWrong = locked && typeof isWrongAtOrder === 'function' && isWrongAtOrder(orderIdx);
-            return _boxHtml(sectionIdx, b, orderIdx, locked, isWrong);
-        }).join('');
-        return '<div class="pdf-quiz-page-block" data-page="' + pageNum + '" ' +
-                'style="position:relative; display:inline-block; margin-bottom:14px; max-width:100%; cursor:' + (locked ? 'default' : 'crosshair') + ';">' +
-            '<img src="' + dataUrl + '" style="display:block; max-width:100%; height:auto; user-select:none;" draggable="false">' +
-            boxesHtml +
+    function _pagePlaceholderHtml(pageNum) {
+        return '<div class="pdf-quiz-page-block" data-page="' + pageNum + '" data-rendered="0" ' +
+                'style="min-height:360px; background:#F1F5F9; border-radius:6px; margin:0 auto 14px; max-width:100%; display:flex; align-items:center; justify-content:center; color:#94A3B8; font-size:0.8rem;">' +
+            '第 ' + pageNum + ' 頁　⏳ 捲到附近時載入…' +
         '</div>';
     }
 
-    async function _renderSection() {
+    /**
+     * 這一頁疊上「所有大題」中屬於這一頁的作答框（不只是目前選中的大題）——因為同一頁常常
+     * 同時看得到好幾個大題的內容（見檔案頂端說明）。每個框的鎖定／標紅狀態依它自己所屬大題
+     * 的批改結果判斷，不能假設畫面上的框都是目前選中的大題。
+     */
+    function _renderBoxOverlayForPage(pageNum) {
         var st = _quizState;
         if (!st) return;
+        var block = document.querySelector('.pdf-quiz-page-block[data-page="' + pageNum + '"]');
+        if (!block || block.getAttribute('data-rendered') !== '1') return; // 圖片還沒載入，不用疊框
+        Array.prototype.slice.call(block.querySelectorAll('.pdf-quiz-box')).forEach(function (el) { el.remove(); });
+        st.sections.forEach(function (sec, secIdx) {
+            var boxes = st.boxesBySection[secIdx] || [];
+            var locked = _isSectionSubmitted(secIdx);
+            var wrongKeySet = null;
+            if (locked) {
+                wrongKeySet = {};
+                (st.sectionResults[secIdx].wrong_items || []).forEach(function (w) { wrongKeySet[w.item_id] = true; });
+            }
+            boxes.forEach(function (b, orderIdx) {
+                if (b.page !== pageNum) return;
+                var isWrong = false;
+                if (locked && wrongKeySet) {
+                    var it = sec.items[orderIdx];
+                    isWrong = !!(it && wrongKeySet[it.key]);
+                }
+                block.insertAdjacentHTML('beforeend', _boxHtml(secIdx, b, orderIdx, locked, isWrong));
+            });
+        });
+    }
+
+    /** 捲到這一頁附近才真的用 pdf.js 畫圖（lazy render）＋快取，避免整份 PDF 一次全部渲染卡頓。
+     * 每一頁只會被渲染一次，即使好幾個大題共用同一頁也不會重複畫。 */
+    async function _ensurePageRendered(pageNum) {
+        var st = _quizState;
+        if (!st) return;
+        var block = document.querySelector('.pdf-quiz-page-block[data-page="' + pageNum + '"]');
+        if (!block || block.getAttribute('data-rendered') === '1') return;
+        block.setAttribute('data-rendered', '1'); // 先標記，避免 observer 短時間內重複觸發同一頁
+        try {
+            var dataUrl = st.pageImageCache[pageNum];
+            if (!dataUrl) {
+                dataUrl = await _renderPageImage(st.pdfDoc, pageNum);
+                st.pageImageCache[pageNum] = dataUrl;
+            }
+            block.style.cssText = 'position:relative; display:inline-block; margin:0 auto 14px; max-width:100%; cursor:crosshair;';
+            block.innerHTML = '<img src="' + dataUrl + '" style="display:block; max-width:100%; height:auto; user-select:none;" draggable="false">';
+            _renderBoxOverlayForPage(pageNum);
+        } catch (err) {
+            console.error('[FeatureStudentPdfQuiz] _ensurePageRendered', pageNum, err);
+            block.setAttribute('data-rendered', '0'); // 失敗了讓下次捲進視窗還能重試
+            block.textContent = '第 ' + pageNum + ' 頁載入失敗，請捲動離開再捲回來重試';
+        }
+    }
+
+    function _setupLazyPageObserver() {
+        var body = document.getElementById(MODAL_ID + '-body');
+        if (!body) return;
+        if (_pageObserver) { _pageObserver.disconnect(); _pageObserver = null; }
+        if (typeof IntersectionObserver !== 'function') {
+            // 沒有 IntersectionObserver 的舊瀏覽器：退回全部立即渲染，不做 lazy load。
+            Array.prototype.slice.call(body.querySelectorAll('.pdf-quiz-page-block')).forEach(function (el) {
+                _ensurePageRendered(Number(el.getAttribute('data-page')));
+            });
+            return;
+        }
+        _pageObserver = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+                if (entry.isIntersecting) _ensurePageRendered(Number(entry.target.getAttribute('data-page')));
+            });
+        }, { root: body, rootMargin: '600px 0px 600px 0px' });
+        Array.prototype.slice.call(body.querySelectorAll('.pdf-quiz-page-block')).forEach(function (el) {
+            _pageObserver.observe(el);
+        });
+    }
+
+    /** 開卷時一次把整份 PDF 的頁面區塊（先放占位）建好，捲到附近才實際畫圖。每一頁只建立一次
+     * DOM，即使好幾個大題共用同一頁也只會出現一次（取代舊版「一大題一畫面、各自只畫自己的
+     * 頁碼範圍」的 _renderSection，那樣共用頁會在兩個大題的畫面裡各出現一次）。 */
+    function _renderAllPages() {
+        var st = _quizState;
+        if (!st) return;
+        var body = document.getElementById(MODAL_ID + '-body');
+        if (!body) return;
+        var htmlParts = [];
+        for (var p = 1; p <= st.pdfDoc.numPages; p++) htmlParts.push(_pagePlaceholderHtml(p));
+        body.innerHTML = htmlParts.join('');
+        _setupLazyPageObserver();
+        _renderSectionTabs();
+        _jumpToSection(st.currentIdx, true);
+    }
+
+    /** 大題狀態有變動（提交批改）後，只重繪它自己作答框所在的那幾頁 overlay＋籤／提示條，
+     * 不動整份 PDF 的捲動位置——跟舊版整頁重繪不同，那樣做會把學生正在看的位置整個打亂。 */
+    function _refreshSectionRender(idx) {
+        var st = _quizState;
+        if (!st) return;
+        var boxes = st.boxesBySection[idx] || [];
+        var pages = {};
+        boxes.forEach(function (b) { pages[b.page] = true; });
+        Object.keys(pages).forEach(function (p) { _renderBoxOverlayForPage(Number(p)); });
+        _renderSectionTabs();
+        if (idx === st.currentIdx) { _renderActiveBanner(); _renderSectionCounter(); }
+        _updateNavButtons();
+    }
+
+    /** 畫面上方常駐提示條（不在可捲動區域內，捲頁面時一直看得到）：目前選中哪個大題、
+     * 該怎麼作答／已批改鎖定的說明。跟頁面內容分開更新，不用整份 PDF 重繪。 */
+    function _renderActiveBanner() {
+        var st = _quizState;
+        if (!st) return;
+        var el = document.getElementById('pdf-quiz-active-banner');
+        if (!el) return;
         var idx = st.currentIdx;
         var sec = st.sections[idx];
         var locked = _isSectionSubmitted(idx);
-        var indicatorEl = document.getElementById('pdf-quiz-section-indicator');
-        if (indicatorEl) indicatorEl.textContent = '大題 ' + (idx + 1) + ' / ' + st.sections.length + '：' + sec.section + (locked ? '（已批改）' : '');
-        _renderSectionTabs();
-        var body = document.getElementById(MODAL_ID + '-body');
-        if (!body) return;
-        body.innerHTML = '<div style="padding:30px; text-align:center; color:#94A3B8;">⏳ 載入頁面…</div>';
-        try {
-            var range = st.pageRanges[idx] || { startPage: 1, endPage: 1 };
-            var pages = [];
-            for (var p = range.startPage; p <= range.endPage; p++) pages.push(p);
-            var boxes = st.boxesBySection[idx] || [];
-
-            // 批改鎖定後：用「這一格排第幾個」反查它對到答案清單哪一個 key，
-            // 再看那個 key 有沒有在這大題批改結果的 wrong_items 裡，決定要不要標紅。
-            var isWrongAtOrder = null;
-            if (locked) {
-                var wrongKeySet = {};
-                (st.sectionResults[idx].wrong_items || []).forEach(function (w) { wrongKeySet[w.item_id] = true; });
-                isWrongAtOrder = function (orderIdx) {
-                    var it = sec.items[orderIdx];
-                    return !!(it && wrongKeySet[it.key]);
-                };
-            }
-
-            var htmlParts = [];
-            for (var i = 0; i < pages.length; i++) {
-                var pageNum = pages[i];
-                var dataUrl = await _renderPageImage(st.pdfDoc, pageNum);
-                var boxesOnPage = boxes.filter(function (b) { return b.page === pageNum; });
-                htmlParts.push(_pageBlockHtml(dataUrl, pageNum, idx, boxesOnPage, function (b) { return boxes.indexOf(b); }, locked, isWrongAtOrder));
-            }
-            var bannerHtml = locked
-                ? ('<div style="margin-bottom:8px; padding:8px 10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#134E4A; font-weight:700;">'
-                    + '✅ 這一大題已批改：' + st.sectionResults[idx].correct + ' / ' + st.sectionResults[idx].total + '（' + st.sectionResults[idx].score + '%），不能再修改（只鎖這一大題，其他大題不受影響）。'
-                    + '</div>')
-                : ('<div style="margin-bottom:8px; padding:8px 10px; background:#F0F9FF; border:1px solid #BAE6FD; border-radius:8px; font-size:0.82rem; color:#0369A1;">'
-                    + '💡 這一大題共 ' + sec.items.length + ' 格要填。在下面 PDF 圖片上，找到底線／空格的地方點一下，就會出現一個可以打字的框（框上數字＝這是你第幾個建立的），不會寫也要點一下留空，不要跳過。填完後按下面「提交這一大題並批改」，這一大題會馬上批改，之後不能再改這一大題。'
-                    + '</div>');
-            body.innerHTML = bannerHtml + htmlParts.join('');
-            _renderSectionCounter();
-        } catch (err) {
-            console.error('[FeatureStudentPdfQuiz] renderSection', err);
-            body.innerHTML = '<div style="padding:30px; color:#DC2626;">頁面載入失敗：' + esc(err.message || String(err)) + '</div>';
-        }
-        _updateNavButtons();
+        el.innerHTML = locked
+            ? ('<div style="padding:8px 10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#134E4A; font-weight:700;">'
+                + '✅ 目前選中「' + esc(sec.section) + '」，已批改：' + st.sectionResults[idx].correct + ' / ' + st.sectionResults[idx].total + '（' + st.sectionResults[idx].score + '%），不能再修改（只鎖這一大題，其他大題不受影響）。'
+                + '</div>')
+            : ('<div style="padding:8px 10px; background:#F0F9FF; border:1px solid #BAE6FD; border-radius:8px; font-size:0.82rem; color:#0369A1;">'
+                + '💡 目前選中「' + esc(sec.section) + '」（共 ' + sec.items.length + ' 格）。在下面 PDF 圖片上找到底線／空格點一下，就會出現作答框（框上數字＝第幾個建立的），不會寫也要點一下留空。填完按下面「提交這一大題並批改」，之後不能再改這一大題。'
+                + '</div>');
     }
 
     function _updateNavButtons() {
@@ -384,16 +470,26 @@ window.FeatureStudentPdfQuiz = (function () {
     }
 
     /**
-     * 直接跳到任一大題，不用依序完成。各大題的作答框各自存在 boxesBySection[idx]，跟目前顯示
-     * 哪一大題無關，所以自由跳題不會遺失任何已填的內容；已批改的大題跳進去就是鎖定唯讀畫面
-     * （沿用 _renderSection 既有的 locked 邏輯）。
+     * 設定「目前選中的大題」＋把它的錨點頁碼精準捲到畫面最上方（scrollIntoView block:'start'）。
+     * 不用「一大題一畫面」了——各大題的作答框各自存在 boxesBySection[idx]，跟目前選中哪個大題
+     * 無關，所以自由切換不會遺失任何已填的內容；已批改的大題選中後看到的框就是鎖定唯讀樣式。
+     * 頁碼範圍（pageRanges）現在只是「捲動錨點」，就算偵測有些微誤差，最差情況只是捲過去
+     * 差一兩頁，不會像舊版一樣造成內容顯示錯誤或重複。
      */
-    function _jumpToSection(idx) {
+    function _jumpToSection(idx, skipAnim) {
         var st = _quizState;
         if (!st) return;
-        if (idx < 0 || idx >= st.sections.length || idx === st.currentIdx) return;
+        if (idx < 0 || idx >= st.sections.length) return;
         st.currentIdx = idx;
-        _renderSection();
+        _renderSectionTabs();
+        _renderActiveBanner();
+        _renderSectionCounter();
+        _updateNavButtons();
+        var anchorPage = (st.pageRanges[idx] || {}).startPage || 1;
+        var block = document.querySelector('.pdf-quiz-page-block[data-page="' + anchorPage + '"]');
+        if (block && typeof block.scrollIntoView === 'function') {
+            block.scrollIntoView(skipAnim ? { block: 'start' } : { behavior: 'smooth', block: 'start' });
+        }
     }
 
     function _goToSection(delta) {
@@ -402,6 +498,8 @@ window.FeatureStudentPdfQuiz = (function () {
         _jumpToSection(st.currentIdx + delta);
     }
 
+    // 💣 按鈕上方是大題名稱、下方是頁碼（例如「QUIZ 11」／「p.57~58」），兩行都直接寫在按鈕上，
+    // 不是只顯示序號要靠 title 提示——老師/學生一眼就看到有哪些大題、各自從第幾頁開始。
     function _renderSectionTabsHtml() {
         var st = _quizState;
         if (!st) return '';
@@ -411,11 +509,17 @@ window.FeatureStudentPdfQuiz = (function () {
             var bg = submitted ? '#ECFDF5' : (isCurrent ? '#E0F2FE' : '#F8FAFC');
             var border = submitted ? '#6EE7B7' : (isCurrent ? '#7DD3FC' : '#E2E8F0');
             var color = submitted ? '#047857' : (isCurrent ? '#0369A1' : '#64748B');
-            var label = String(idx + 1) + (submitted ? ' ✓' : '');
-            return '<button type="button" class="pdf-quiz-section-tab" data-idx="' + idx + '" title="' + esc(sec.section) + '" ' +
-                'style="border:2px solid ' + border + '; background:' + bg + '; color:' + color + '; font-weight:800; font-size:0.75rem; padding:3px 10px; border-radius:999px; cursor:pointer; flex-shrink:0;' +
+            var range = st.pageRanges[idx] || {};
+            var pageLabel = range.startPage
+                ? ('p.' + range.startPage + (range.endPage && range.endPage !== range.startPage ? ('~' + range.endPage) : ''))
+                : '';
+            return '<button type="button" class="pdf-quiz-section-tab" data-idx="' + idx + '" ' +
+                'style="border:2px solid ' + border + '; background:' + bg + '; color:' + color + '; font-weight:800; padding:4px 10px; border-radius:10px; cursor:pointer; flex-shrink:0; display:flex; flex-direction:column; align-items:center; line-height:1.3; gap:1px;' +
                 (isCurrent ? ' box-shadow:0 0 0 2px rgba(3,105,161,0.25);' : '') + '" ' +
-                'onclick="window.FeatureStudentPdfQuiz._jumpToSection(' + idx + ')">' + esc(label) + '</button>';
+                'onclick="window.FeatureStudentPdfQuiz._jumpToSection(' + idx + ')">' +
+                '<span style="font-size:0.78rem;">' + esc(sec.section) + (submitted ? ' ✓' : '') + '</span>' +
+                (pageLabel ? ('<span style="font-size:0.66rem; font-weight:700; opacity:0.8;">' + esc(pageLabel) + '</span>') : '') +
+            '</button>';
         }).join('');
     }
 
@@ -470,12 +574,17 @@ window.FeatureStudentPdfQuiz = (function () {
         if (newInput) newInput.focus();
     }
 
+    // 💣 輸入框所屬大題一律看 .pdf-quiz-box 自己的 data-section-idx，不能假設是 st.currentIdx——
+    // 改版後同一頁畫面上同時看得到「所有大題」的框（不只是目前選中的），學生可能直接點旁邊
+    // 那大題已建立的框繼續打字，不用先切籤。
     function _onBodyInput(e) {
         if (!(e.target && e.target.classList && e.target.classList.contains('pdf-quiz-answer-input'))) return;
         var st = _quizState;
         if (!st) return;
+        var boxEl = e.target.closest('.pdf-quiz-box');
+        var secIdx = boxEl ? Number(boxEl.getAttribute('data-section-idx')) : st.currentIdx;
         var boxId = e.target.getAttribute('data-box-id');
-        var boxes = st.boxesBySection[st.currentIdx] || [];
+        var boxes = st.boxesBySection[secIdx] || [];
         var b = boxes.find(function (x) { return x.id === boxId; });
         if (b) b.text = e.target.value;
         _autoSizeInput(e.target);
@@ -486,12 +595,22 @@ window.FeatureStudentPdfQuiz = (function () {
         if (removeBtn) {
             e.stopPropagation();
             var st = _quizState;
-            if (!st || _isSectionSubmitted(st.currentIdx)) return;
+            if (!st) return;
+            var boxEl = removeBtn.closest('.pdf-quiz-box');
+            var secIdx = boxEl ? Number(boxEl.getAttribute('data-section-idx')) : st.currentIdx;
+            if (_isSectionSubmitted(secIdx)) return;
             var boxId = removeBtn.getAttribute('data-box-id');
-            var boxes = st.boxesBySection[st.currentIdx] || [];
+            var boxes = st.boxesBySection[secIdx] || [];
             var idx = boxes.findIndex(function (x) { return x.id === boxId; });
-            if (idx >= 0) boxes.splice(idx, 1);
-            _renderSection(); // 重新編號＋重繪，避免殘留錨點
+            if (idx >= 0) {
+                // 同一大題的框可能分散在跨頁的好幾張頁面上（見檔案頂端跨頁說明），刪除後其他
+                // 框的序號會往前移，所以要重繪「這個大題所有框所在」的每一頁，不只是被刪的那頁。
+                var affectedPages = {};
+                boxes.forEach(function (b) { affectedPages[b.page] = true; });
+                boxes.splice(idx, 1);
+                Object.keys(affectedPages).forEach(function (p) { _renderBoxOverlayForPage(Number(p)); });
+                if (secIdx === st.currentIdx) _renderSectionCounter();
+            }
             return;
         }
         _onPageBlockClick(e);
@@ -510,14 +629,16 @@ window.FeatureStudentPdfQuiz = (function () {
     function _onBodyMouseDown(e) {
         var handle = e.target.closest ? e.target.closest('.pdf-quiz-box-handle') : null;
         if (!handle) return;
-        var stChk = _quizState;
-        if (stChk && _isSectionSubmitted(stChk.currentIdx)) return; // 已批改鎖定，不能再拖曳
+        var boxEl = handle.closest('.pdf-quiz-box');
+        // 💣 鎖定狀態一律看這個框自己的 data-section-idx，不是目前選中的大題（st.currentIdx）——
+        // 同一頁畫面上可能同時看得到已鎖定大題的框跟還沒鎖定大題的框。
+        var secIdx = boxEl ? Number(boxEl.getAttribute('data-section-idx')) : NaN;
+        if (isNaN(secIdx) || _isSectionSubmitted(secIdx)) return; // 已批改鎖定，不能再拖曳
         e.preventDefault();
         e.stopPropagation();
-        var boxEl = handle.closest('.pdf-quiz-box');
         var pageBlockEl = handle.closest('.pdf-quiz-page-block');
         if (!boxEl || !pageBlockEl) return;
-        _drag = { boxId: handle.getAttribute('data-box-id'), boxEl: boxEl, pageBlockEl: pageBlockEl };
+        _drag = { boxId: handle.getAttribute('data-box-id'), sectionIdx: secIdx, boxEl: boxEl, pageBlockEl: pageBlockEl };
         handle.style.cursor = 'grabbing';
         document.addEventListener('mousemove', _onDragMove);
         document.addEventListener('mouseup', _onDragEnd);
@@ -537,7 +658,7 @@ window.FeatureStudentPdfQuiz = (function () {
         _drag.boxEl.style.top = yPct + '%';
         var st = _quizState;
         if (st) {
-            var boxes = st.boxesBySection[st.currentIdx] || [];
+            var boxes = st.boxesBySection[_drag.sectionIdx] || [];
             var b = boxes.find(function (x) { return x.id === _drag.boxId; });
             if (b) { b.xPct = xPct; b.yPct = yPct; }
         }
@@ -605,7 +726,7 @@ window.FeatureStudentPdfQuiz = (function () {
         var sections = window.PdfExamPaper.groupItemsBySection(bank);
         var pageRanges;
         try {
-            pageRanges = await window.PdfExamPaper.detectSectionPageRanges(pdfDoc, bank);
+            pageRanges = await window.PdfExamPaper.detectSectionPageRanges(pdfDoc, bank, job.section_page_hints);
         } catch (err) {
             console.error('[FeatureStudentPdfQuiz] detectSectionPageRanges', err);
             pageRanges = sections.map(function () { return { startPage: 1, endPage: pdfDoc.numPages }; });
@@ -653,7 +774,8 @@ window.FeatureStudentPdfQuiz = (function () {
             boxesBySection: boxesBySection,
             sectionResults: sectionResults,
             currentIdx: startIdx,
-            fontSizePx: DEFAULT_FONT_PX
+            fontSizePx: DEFAULT_FONT_PX,
+            pageImageCache: {} // pageNum -> dataURL，每頁只用 pdf.js 渲染一次（見 _ensurePageRendered）
         };
 
         var title = String(task.title || 'PDF 考卷').replace(/<[^>]*>?/gm, '');
@@ -683,7 +805,7 @@ window.FeatureStudentPdfQuiz = (function () {
                 overlay.addEventListener('click', _onBodyClick);
                 overlay.addEventListener('mousedown', _onBodyMouseDown);
                 overlay.addEventListener('touchstart', _onBodyMouseDown, { passive: false });
-                _renderSection();
+                _renderAllPages();
             },
             contentHtml:
                 '<div style="max-width:900px; width:95vw; height:92vh; background:white; border-radius:14px; padding:16px; box-shadow:0 20px 50px rgba(15,23,42,0.2); display:flex; flex-direction:column; box-sizing:border-box;">' +
@@ -700,8 +822,8 @@ window.FeatureStudentPdfQuiz = (function () {
                         '</div>' +
                     '</div>' +
                     prevScoreHtml +
-                    '<div id="pdf-quiz-section-indicator" style="font-size:0.85rem; font-weight:800; color:#0369A1; margin-bottom:4px;"></div>' +
                     '<div id="pdf-quiz-section-tabs" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;"></div>' +
+                    '<div id="pdf-quiz-active-banner" style="margin-bottom:6px;"></div>' +
                     '<div id="pdf-quiz-counter" style="font-size:0.8rem; margin-bottom:6px;"></div>' +
                     '<div id="' + MODAL_ID + '-body" style="flex:1; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; padding:10px;"></div>' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">' +
@@ -843,7 +965,7 @@ window.FeatureStudentPdfQuiz = (function () {
                 if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
                 _showResultModal(aggregate);
             } else {
-                _renderSection();
+                _refreshSectionRender(idx);
             }
         } catch (err) {
             st.sectionResults[idx] = null; // 沒存到就別讓畫面顯示已批改，避免跟資料庫狀態兜不起來

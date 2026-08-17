@@ -404,6 +404,74 @@ window.PdfExamPaper = (function () {
         });
     }
 
+    function _sectionReviewKey(s) {
+        return String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    /**
+     * 掃 PDF 空格線，依大題＋題號統計格數，給答案清單做交叉檢查（只提醒、不自動改拆格）。
+     * 回傳 { total, bySection: { reviewKey: { section, total, byLoose: { "1::B": 2 } } } }
+     */
+    function detectBlankReviewStats(pdfDoc) {
+        return _detectLabeledBlanks(pdfDoc).then(function (blanks) {
+            var bySection = {};
+            (blanks || []).forEach(function (bl) {
+                var sec = bl.section || '(未分類)';
+                var sk = _sectionReviewKey(sec);
+                if (!bySection[sk]) bySection[sk] = { section: sec, total: 0, byLoose: {} };
+                bySection[sk].total++;
+                if (bl.itemNo == null) return;
+                var loose = String(bl.itemNo) + '::' + (bl.part || '');
+                bySection[sk].byLoose[loose] = (bySection[sk].byLoose[loose] || 0) + 1;
+            });
+            return { total: (blanks || []).length, bySection: bySection };
+        });
+    }
+
+    /**
+     * 交叉檢查：清單格數 vs PDF 空格線。不一致的大題／題號列進 warnings，對應 key 列進 flagged_keys。
+     * 空格線偵測不到（該大題 total=0）不視為衝突，避免掃描稿誤報整份都紅。
+     */
+    function buildSplitReview(bank, blankStats) {
+        var flagged = {};
+        var sectionWarnings = [];
+        var groups = {};
+        (bank || []).forEach(function (it) {
+            if (!it) return;
+            var sk = _sectionReviewKey(it.section);
+            if (!groups[sk]) groups[sk] = { section: it.section, items: [], byLoose: {} };
+            groups[sk].items.push(it);
+            var loose = String(it.item_no || '') + '::' + (it.part || '');
+            (groups[sk].byLoose[loose] = groups[sk].byLoose[loose] || []).push(it);
+        });
+        var statsBySec = (blankStats && blankStats.bySection) || {};
+        Object.keys(groups).forEach(function (sk) {
+            var g = groups[sk];
+            var st = statsBySec[sk];
+            if (st && st.total > 0 && st.total !== g.items.length) {
+                sectionWarnings.push({
+                    section: g.section,
+                    parsed: g.items.length,
+                    blanks: st.total,
+                    message: '「' + g.section + '」清單 ' + g.items.length + ' 格，空格線偵測到 ' + st.total + ' 格，請人工核對'
+                });
+            }
+            Object.keys(g.byLoose).forEach(function (loose) {
+                var items = g.byLoose[loose];
+                var hintN = st && st.byLoose ? st.byLoose[loose] : null;
+                if (hintN == null || hintN <= 0 || hintN === items.length) return;
+                var label = (items[0].item_no || '') + (items[0].part ? ('-' + items[0].part) : '');
+                var reason = '第 ' + label + ' 題：清單 ' + items.length + ' 格，空格線 ' + hintN + ' 格';
+                items.forEach(function (it) { flagged[it.key] = reason; });
+            });
+        });
+        return {
+            pdf_checked: !!(blankStats && blankStats.total > 0),
+            section_warnings: sectionWarnings,
+            flagged_keys: flagged
+        };
+    }
+
     /**
      * 自動定位主流程，三層比對（信心程度由高到低）：
      * ① 空格前面的題號文字 + 大題完全對上解答清單的 key → 直接配對（多欄／跳頁都適用）
@@ -495,7 +563,85 @@ window.PdfExamPaper = (function () {
     // 「Part A：1~10 題（左右兩欄）」排版；用 \s+（要求至少一個空白）避免誤吃到 "Participants"／
     // "Partial" 之類單字（那些字緊接著小寫字母、沒有空白）。同一份 regex 供解答文字解析與 PDF
     // 標頭偵測共用。
-    var SECTION_HEADER_RE = /^(Quiz\s*\d+|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
+    // 💣 2026-08-16：加入 Test\s*\d+（例如「TEST 1」「TEST 2」）——這種整份文件裡會出現「多次
+    // 同名 Part A~F」的複習測驗（TEST 1 跟 TEST 2 底下都各有一組 Part A~F）。沒有 Test 這一層，
+    // parseAnswerText／detectSectionPageRanges 會把兩份測驗同名的 Part 直接當成「同一個大題」
+    // 合併在一起（見 _composeSectionLabel 說明），造成大題數量、頁碼、學生作答框全部對不起來。
+    var SECTION_HEADER_RE = /^(Quiz\s*\d+|Test\s*\d+|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
+    // detectSectionPageRanges 專用：跟 SECTION_HEADER_RE 同一組關鍵字，但不要求一定要在整行最前面
+    // （PDF 掃描頁上偶爾會有頁碼／裝飾文字混在同一行），避免因為位置沒對齊就整頁判定找不到標題。
+    var SECTION_HEADER_ANYWHERE_RE = /(Quiz\s*\d+|Test\s*\d+|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
+    // 用來判斷一個大題標題屬於哪個「家族」（quiz/test/part/…），供 _composeSectionLabel 判斷
+    // 是否要把 Part 這一層跟目前的 Test 上下文組合起來（見下方說明）。
+    var SECTION_FAMILY_OF_LABEL_RE = /^(quiz|test|chapter|unit|part|section|lesson)/i;
+    function sectionFamily(rawLabel) {
+        var m = String(rawLabel || '').match(SECTION_FAMILY_OF_LABEL_RE);
+        return m ? m[1].toLowerCase() : null;
+    }
+    /**
+     * 💣 「Part A」「Part B」…這種字母大題，在題庫課本裡常常是「附屬在某個 Test 底下」的子大題
+     * （例如 TEST 1 跟 TEST 2 各自都有一組 Part A~F），同一個「Part D」字串在文件裡出現兩次，
+     * 兩次代表的是完全不同的 10 題。若只用裸字串 "Part D" 當大題 key，會把兩份測驗的 Part D
+     * 直接合併成同一大題（實測事故：24 個大題裡 6 個 Part 大題各混了兩份測驗的題目，位置序全部
+     * 對不起來）。這裡在真正組出「大題 key」前，維護一個「目前是在哪個 Test 底下」的狀態
+     * （testCtx，可為 null）：遇到 Test 家族的標頭就更新 testCtx、標頭本身不當成獨立大題；
+     * 遇到 Part 家族的標頭，若 testCtx 有值就組成「TEST 1 - Part D」這種帶上下文的大題名；
+     * 遇到其他家族（quiz/chapter/unit/section/lesson）一律清空 testCtx（那些不會附屬在 Test 底下）。
+     * parseAnswerText（解答文字）跟 detectSectionPageRanges（掃 PDF 標題文字）兩處都要維持
+     * 同一份 testCtx 狀態機、用同一個函式組 key，兩邊組出來的大題名才會一致、才能互相比對定位。
+     */
+    function _composeSectionLabel(testCtx, rawLabel) {
+        var family = sectionFamily(rawLabel);
+        var normalized = normalizeSectionLabel(rawLabel);
+        if (family === 'test') {
+            return { testCtx: normalized, label: null, isTestHeader: true };
+        }
+        if (family === 'part' && testCtx) {
+            return { testCtx: testCtx, label: testCtx + ' - ' + normalized, isTestHeader: false };
+        }
+        return { testCtx: null, label: normalized, isTestHeader: false };
+    }
+    // 💣 2026-08-16：實測掃描 PDF（ABBYY 產生的文字層）偶爾會把標題裡的數字 OCR 壞掉，例如
+    // 「QUIZ 7」被讀成「QUIZ?」（問號取代 7，中間連空格都不見了）。此時 SECTION_HEADER_ANYWHERE_RE
+    // 完全配不到「Quiz\s*\d+」，這個大題就會被判定「找不到標題」，退回沿用前一個大題的頁碼——
+    // 結果 Quiz 6／Quiz 7 兩大題都顯示成 Quiz 5 那頁，往後 Quiz 8 又因為前面漂移而對齊到錯的頁。
+    // 沒辦法從壞掉的符號還原出正確數字，但可以利用「大題一定依序出現」這個已知順序來補：
+    // 抓出「關鍵字＋一段被 OCR 壞掉的短符號（不是字母也不是完整數字）」的候選行，記下頁碼；
+    // 真的找不到某大題的精確數字比對時，才在「前一個已確定大題」跟「下一個已確定大題」的
+    // 頁碼範圍內，找同一種關鍵字（quiz/chapter/…）的候選行來補這個大題，而不是照樣往前沿用。
+    var SECTION_KEYWORD_FAMILY_RE = /^(quiz|test|chapter|unit|part|section|lesson)/i;
+    var SECTION_HEADER_GARBLED_RE = /(Quiz|Test|Chapter|Unit|Part|Section|Lesson)\s*([0-9]+|[^\sA-Za-z0-9]{1,3})\s/i;
+    // 更弱的一層候選：letter-spacing 太誇張時，標題數字有時會被 _groupLines 依 y 座標分到
+    // 「下一行」去（例如「Q U I Z」跟「1 1」的 baseline 差一點點就被切成兩行），這一行本身
+    // 完全沒有數字可比對，只有關鍵字。只在整行「開頭」比對（避免吃到頁尾 "58 CHAPTER 4" 之類
+    // 每頁都有的裝飾文字，那種通常不會出現在整行最前面，而是在行尾或整行只有那幾個字）。
+    var SECTION_HEADER_BARE_KEYWORD_RE = /^\s*(Quiz|Test|Chapter|Unit|Part|Section|Lesson)\b/i;
+
+    /**
+     * 💣 印刷排版常見的「大題標題」字體會加 letter-spacing（每個字母間都撐開一點距離），PDF 內部
+     * 文字圖層對這種排版常常直接把每個字母存成獨立字串、字母間還真的塞了一個空白字元進去——例如
+     * 實測 Azar 課本考卷裡「QUIZ 16」在文字圖層其實是兩個 token："Q U I Z"、"1 6"，字母/數字之間
+     * 都各自帶一個空白。這種情況下 lineText 組出來會變成 "Q U I Z 1 6"，Quiz\s*\d+ 這種正規表達式
+     * 完全配不到（regex 找的是連續的 QUIZ 四個字母，不是中間插了空白的 Q、U、I、Z）。
+     * 這裡在比對大題標題前，先把「連續一串都只有單個字母/數字的 token」黏回去（"Q U I Z 1 6" -> "QUIZ16"），
+     * 一般語句裡幾乎不會連續出現兩個以上的單字元詞（"I"、"a" 這種單字通常不會連續相鄰），所以這個
+     * 黏合對其他內容影響很小，但能讓大題標題重新配對成功。
+     */
+    function _collapseLetterSpacedTokens(lineText) {
+        var tokens = String(lineText || '').split(' ');
+        var out = [];
+        var buf = '';
+        tokens.forEach(function (tok) {
+            if (tok.length === 1 && /[A-Za-z0-9]/.test(tok)) {
+                buf += tok;
+            } else {
+                if (buf) { out.push(buf); buf = ''; }
+                if (tok) out.push(tok);
+            }
+        });
+        if (buf) out.push(buf);
+        return out.join(' ');
+    }
     var ITEM_MARKER_RE = /(\d+)\.\s*/g;
     var AB_LINE_RE = /^([A-Za-z]):\s*(.*)$/;
     var OR_LEAD_RE = /^OR\b[\s:]*\s*(.*)$/i;
@@ -514,20 +660,24 @@ window.PdfExamPaper = (function () {
      * 是「同一個答案的另一種說法」，直接併入，不要再套用這個問句判斷。
      */
     /**
-     * 💣 逗號拆格判斷（混合式）：一行答案裡沒寫 OR、但有逗號分隔多段，到底是「同一格的替代答案」
-     * 還是「依序的多個空格」？純文字看不出來，所以：
-     * ① 預設（文字啟發式）：逗號＝依序多個空格，直接拆。這跟老師實測的 Quiz 2 全部答案一致
-     *    （例如 "B: have, have been"，真正的考卷上那一行印了 2 條底線）。
-     * ② 只有當這一題（同題號＋子項）在考卷 PDF 上明確偵測到「剛好 1 個空格」時，才否決①，
-     *    改判定逗號是同一格的替代寫法。PDF 偵測不到（沒上傳／載入失敗／這題比對不到／偵測到
-     *    ≥2個）都維持①的預設——PDF 偵測只用來「降級」，不會讓拆更多格，避免掃描品質不穩時
-     *    把答案拆爆。
+     * 💣 逗號拆格：純文字分不出「依序多格」跟「答案本身含逗號」（例如 "No, she hasn’t…"）。
+     * 自動決策只靠句首語氣詞／代詞這種高把握規則；空格線數量只拿來交叉檢查、紅字提醒老師，
+     * 不再拿來偷偷改拆或不拆（2026-08-16 實測：Quiz 2 第1題 B 的空格線 hint 誤判成 1，
+     * 若照 hint 降級會害後面整排錯位）。
      */
-    function _splitFragmentIntoBlanks(text, hintCount) {
+    function _looksLikeSentenceComma(pieces) {
+        if (!pieces || pieces.length < 2) return false;
+        var first = String(pieces[0] || '').trim().toLowerCase().replace(/[\u2018\u2019]/g, "'");
+        if (/^(yes|no|yeah|yep|ok|okay|well|oh|sorry|please)$/.test(first)) return true;
+        if (!/\s/.test(String(pieces[0] || '').trim()) && /^(she|he|i|they|we|it|the|you)\b/i.test(pieces[1] || '')) return true;
+        return false;
+    }
+
+    function _splitFragmentIntoBlanks(text) {
         if (!text || text.indexOf(',') === -1) return { mode: 'single', pieces: [text] };
         var pieces = text.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
         if (pieces.length < 2) return { mode: 'single', pieces: [text] };
-        if (hintCount === 1) return { mode: 'alternatives', pieces: pieces };
+        if (_looksLikeSentenceComma(pieces)) return { mode: 'single', pieces: [text] };
         return { mode: 'sequential', pieces: pieces };
     }
 
@@ -536,10 +686,8 @@ window.PdfExamPaper = (function () {
      * `sequential` 模式會把逗號分段各自變成一個新 item（帶 blankIndex 1..N，各自成一格）；
      * 其他模式維持原本「單一 item、fragments 陣列」的行為（fragments[0]＝答案，其餘＝其他可接受答案）。
      */
-    function _buildFragmentItems(section, itemNo, part, strippedFirst, blankCountHints) {
-        var loose = String(itemNo || '') + '::' + (part || '');
-        var hintCount = blankCountHints ? blankCountHints[loose] : undefined;
-        var split = _splitFragmentIntoBlanks(strippedFirst.text, hintCount);
+    function _buildFragmentItems(section, itemNo, part, strippedFirst) {
+        var split = _splitFragmentIntoBlanks(strippedFirst.text);
         if (split.mode === 'sequential' && split.pieces.length > 1) {
             return split.pieces.map(function (piece, i) {
                 var isLast = i === split.pieces.length - 1;
@@ -571,18 +719,28 @@ window.PdfExamPaper = (function () {
         item._pendingOr = stripped.endsWithOr;
     }
 
+    // 老師貼的解答文字常見「Quiz 1, p. 50」這種課本印刷頁碼，跟考卷 PDF 頁尾印的頁碼是同一套
+    // （課本自己的頁碼，不是 PDF 檔案的頁數）。用來輔助 detectSectionPageRanges 定位大題頁碼——
+    // 跟掃 PDF 裡「QUIZ N」標題文字是兩個獨立的資訊來源，其中一個被 OCR 讀壞時另一個還能用。
+    var SECTION_PAGE_HINT_RE = /pp?\.?\s*(\d{1,4})/i;
+
     /**
      * 寬鬆解析老師貼的解答原始文字，回傳扁平陣列：
      * [{ key, section, item_no, part, blank_index, answer_text, accepted_answers[] }]
      * key = "section::item_no::part::blankIndex"（part、blankIndex 可為 null），用來跟畫框時選的題目一一對應。
-     * `blankCountHints`（可選）＝ detectBlankCountsByLabel() 算出的 { "itemNo::part" -> 考卷上偵測到的空格數 }，
-     * 用來判斷逗號分隔的答案要不要拆成多格（見 _splitFragmentIntoBlanks）；不傳就完全走純文字啟發式。
+     * 逗號分隔的答案一律拆成依序多格（見 _splitFragmentIntoBlanks 說明，不再靠 PDF 空格數偵測降級）。
+     *
+     * 回傳的陣列另外附掛一個 sectionPageHints 屬性（{ section -> 課本印刷頁碼 }），從「Quiz N, p. NN」
+     * 這種標頭旁的頁碼擷取而來；呼叫端要自己在存檔時把它複製到 job.section_page_hints（陣列的額外
+     * 屬性存進資料庫 JSONB 會被 JSON.stringify 丟掉，只有陣列本身的索引元素會留下）。
      */
-    function parseAnswerText(raw, blankCountHints) {
+    function parseAnswerText(raw) {
         var lines = String(raw || '').split(/\r?\n/);
         var items = [];
         var currentSection = '(未分類)';
+        var testCtx = null; // 目前在哪個 Test 底下（見 _composeSectionLabel），非 Test/Part 大題時清空
         var last = null;
+        var sectionPageHints = {};
 
         lines.forEach(function (rawLine) {
             var line = rawLine.trim();
@@ -590,8 +748,18 @@ window.PdfExamPaper = (function () {
 
             var secMatch = line.match(SECTION_HEADER_RE);
             if (secMatch && !/^\d+\./.test(line)) {
-                currentSection = normalizeSectionLabel(secMatch[1]);
+                var composed = _composeSectionLabel(testCtx, secMatch[1]);
+                testCtx = composed.testCtx;
                 last = null;
+                if (composed.isTestHeader) return; // Test 標頭本身沒有題目，只更新上下文，不當大題
+                currentSection = composed.label;
+                if (sectionPageHints[currentSection] == null) {
+                    var pageHintMatch = line.slice(secMatch[0].length).match(SECTION_PAGE_HINT_RE);
+                    if (pageHintMatch) {
+                        var printedPage = parseInt(pageHintMatch[1], 10);
+                        if (!isNaN(printedPage)) sectionPageHints[currentSection] = printedPage;
+                    }
+                }
                 return;
             }
 
@@ -611,7 +779,7 @@ window.PdfExamPaper = (function () {
                     var abMatch = text.match(AB_LINE_RE);
                     if (abMatch) { part = abMatch[1].toUpperCase(); text = abMatch[2]; }
                     var strippedFirst = stripTrailingOr(text);
-                    var newItems = _buildFragmentItems(currentSection, seg.no, part, strippedFirst, blankCountHints);
+                    var newItems = _buildFragmentItems(currentSection, seg.no, part, strippedFirst);
                     newItems.forEach(function (it) { items.push(it); last = it; });
                 }
                 return;
@@ -620,7 +788,7 @@ window.PdfExamPaper = (function () {
             var abOnly = line.match(AB_LINE_RE);
             if (abOnly && last) {
                 var strippedAb = stripTrailingOr(abOnly[2].trim());
-                var newItems2 = _buildFragmentItems(last.section, last.itemNo, abOnly[1].toUpperCase(), strippedAb, blankCountHints);
+                var newItems2 = _buildFragmentItems(last.section, last.itemNo, abOnly[1].toUpperCase(), strippedAb);
                 newItems2.forEach(function (it) { items.push(it); last = it; });
                 return;
             }
@@ -665,7 +833,53 @@ window.PdfExamPaper = (function () {
             if (pa !== pb) return pa.localeCompare(pb);
             return (a.blank_index || 0) - (b.blank_index || 0); // 同題號同子項被拆成多格時，依拆出順序排列
         });
+        flat.sectionPageHints = sectionPageHints;
         return flat;
+    }
+
+    /**
+     * 把「舊版混合式拆格」存進資料庫的清單，對照目前的 parseAnswerText 結果補拆。
+     * 實測事故：Quiz 2 第1題 B: "haven't, have never done" 被舊邏輯收成單列
+     * （answer_text=haven't、accepted_answers=["have never done"]），後面每一格作答框全部錯位。
+     * 老師只要打開編輯器或按重新批改，就會用原始解答文字重跑，把缺的 ::1 / ::2 列補回來。
+     * 回傳 true＝清單有變，呼叫端應標記 needs_regrade。
+     */
+    function repairStaleCommaSplits(job) {
+        if (!job || typeof job.answer_text_raw !== 'string' || !job.answer_text_raw.trim()) return false;
+        var fresh = parseAnswerText(job.answer_text_raw);
+        if (!fresh.length) return false;
+        var prev = Array.isArray(job.parsed_bank) ? job.parsed_bank : [];
+        var prevByKey = {};
+        prev.forEach(function (b) { if (b && b.key) prevByKey[b.key] = b; });
+        var freshKeys = {};
+        fresh.forEach(function (b) { freshKeys[b.key] = true; });
+        var merged = fresh.map(function (b) {
+            var p = prevByKey[b.key];
+            if (p && p._manuallyEdited) {
+                return {
+                    key: b.key, section: b.section, item_no: b.item_no, part: b.part, blank_index: b.blank_index,
+                    answer_text: p.answer_text, accepted_answers: p.accepted_answers, _manuallyEdited: true
+                };
+            }
+            return b;
+        });
+        var preservedManual = prev.filter(function (b) {
+            if (!b || !b._manual || freshKeys[b.key]) return false;
+            // 舊的未拆格 key（Quiz 2::1::B）已被 Quiz 2::1::B::1 取代時，不要再留那一列
+            return !freshKeys[String(b.key) + '::1'];
+        });
+        var next = merged.concat(preservedManual);
+        var sig = function (bank) {
+            return (bank || []).map(function (b) {
+                return [b.key, b.answer_text || '', (b.accepted_answers || []).join('|')].join('\t');
+            }).join('\n');
+        };
+        if (sig(next) === sig(prev)) return false;
+        job.parsed_bank = next;
+        if (fresh.sectionPageHints) {
+            job.section_page_hints = Object.assign({}, job.section_page_hints || {}, fresh.sectionPageHints);
+        }
+        return true;
     }
 
     function makeKey(section, itemNo, part, blankIndex) {
@@ -777,9 +991,14 @@ window.PdfExamPaper = (function () {
      * 找不到某個大題的標題（例如那頁 OCR 剛好把標題讀壞了）時，不會整個放棄——退回「沿用前一個
      * 已定位大題的頁碼」，讓學生至少能看到「差不多在那附近」的頁面，而不是完全没東西可看。
      *
+     * `sectionPageHints`（可選）＝ parseAnswerText() 附掛的 { section -> 課本印刷頁碼 }（從「Quiz 1,
+     * p. 50」這種標頭旁的頁碼擷取）。跟掃 PDF 裡「QUIZ N」標題文字是兩個獨立來源：課本印刷頁碼會
+     * 印在每頁頁尾（例如「50 CHAPTER 4」），只要抓到幾頁頁尾的印刷頁碼、算出跟 PDF 頁碼的固定
+     * 落差（offset），就能把「p. 50」直接換算成 PDF 頁碼，不需要再靠容易被 OCR 讀壞的大題標題文字。
+     *
      * 回傳：[{ section, startPage, endPage }, ...]（依 bank 裡大題第一次出現的順序）
      */
-    function detectSectionPageRanges(pdfDoc, bank) {
+    function detectSectionPageRanges(pdfDoc, bank, sectionPageHints) {
         var sectionOrder = [];
         (bank || []).forEach(function (it) {
             var sec = it.section || '(未分類)';
@@ -797,18 +1016,44 @@ window.PdfExamPaper = (function () {
         var fuzzyTargets = sectionOrder.map(normFuzzy);
 
         var foundPage = {}; // section -> 第一次出現的頁碼
+        var looseCandidates = []; // { family, pageNum } - 關鍵字配到但數字被 OCR 壞掉的候選行
+        var bareCandidates = []; // { family, pageNum } - 只比對到行首關鍵字，連數字都配不到（更弱，最後才用）
+        var footerOffsetVotes = {}; // offset(印刷頁碼-PDF頁碼) -> 出現次數，用來推算全篇一致的落差
+        var pdfTestCtx = null; // 掃 PDF 時目前在哪個 Test 底下（跟 parseAnswerText 的 testCtx 同一套邏輯，見 _composeSectionLabel）
         return pageNums.reduce(function (chain, pageNum) {
             return chain.then(function () {
                 return pdfDoc.getPage(pageNum).then(function (page) {
-                    return page.getTextContent().then(function (tc) {
-                        var lines = {};
-                        (tc.items || []).forEach(function (ti) {
-                            var y = Math.round(ti.transform[5] / 3) * 3; // 粗略分行，容忍小數點誤差
-                            (lines[y] = lines[y] || []).push(ti.str);
-                        });
-                        Object.keys(lines).forEach(function (y) {
-                            var lineText = lines[y].join(' ').replace(/\s+/g, ' ').trim();
-                            var secMatch = lineText.match(SECTION_HEADER_RE);
+                    // 💣 之前這裡自己另外兜了一份「依 y 分行」的邏輯，但只是照 tc.items 原始順序
+                    // （content stream 順序，不一定是視覺上的左到右）直接 join 文字，沒有像
+                    // _groupLines 那樣依 x 座標排序——如果大題標題那一行裡，其他文字（例如頁碼、
+                    // 版面裝飾）在 content stream 裡排在標題文字「之前」，join 出來的字串就會變成
+                    // 「別的字 QUIZ 5 ...」，標題不在字串最前面，SECTION_HEADER_RE 的 ^ 就配不到，
+                    // 這一頁就會被判定「找不到標題」，害這個大題（甚至連帶後面幾個大題）誤套用
+                    // 前一個大題的頁碼。改成跟 _detectLabeledBlanks 共用同一套「先算座標、再依 x
+                    // 排序」的 _pageItemsPct/_groupLines，兩處分行邏輯只維護一份，不會各自漂移。
+                    return _pageItemsPct(page).then(function (items) {
+                        var lines = _groupLines(items);
+                        // 課本印刷頁碼通常印在頁尾（最靠下的那一兩行），跟其他文字混在一起
+                        // （例如「50 CHAPTER 4」「Present Perfect and Past Perfect 51」），
+                        // 找裡面「單獨一個 1~4 位數字」的 token 當候選印刷頁碼。
+                        for (var li = lines.length - 1; li >= 0 && li >= lines.length - 2; li--) {
+                            lines[li].items.forEach(function (it) {
+                                var tok = String(it.str || '').trim();
+                                if (/^\d{1,4}$/.test(tok)) {
+                                    var printedNum = parseInt(tok, 10);
+                                    var offset = printedNum - pageNum;
+                                    footerOffsetVotes[offset] = (footerOffsetVotes[offset] || 0) + 1;
+                                }
+                            });
+                        }
+                        lines.forEach(function (line) {
+                            var lineText = line.items.map(function (it) { return it.str; }).join(' ').replace(/\s+/g, ' ').trim();
+                            var collapsed = _collapseLetterSpacedTokens(lineText);
+                            // 標題通常是整行最前面的文字，但保險起見不要求一定要在字串最開頭：
+                            // 只要這一行「有出現」大題標題就算數，不用 ^ 錯位就整頁判定找不到。
+                            // 比對前先復原 letter-spacing（見 _collapseLetterSpacedTokens 說明），
+                            // 否則「Q U I Z 1 6」這種標題永遠配不到 Quiz\s*\d+。
+                            var secMatch = collapsed.match(SECTION_HEADER_ANYWHERE_RE);
                             var candidate = secMatch ? normalizeSectionLabel(secMatch[1]) : null;
                             sectionOrder.forEach(function (sec, idx) {
                                 if (foundPage[sec] != null) return; // 只記第一次出現
@@ -816,11 +1061,99 @@ window.PdfExamPaper = (function () {
                                     foundPage[sec] = pageNum;
                                 }
                             });
+                            // 數字被 OCR 壞掉（例如「QUIZ 7」變成「QUIZ?」）時上面精確比對永遠配不到，
+                            // 先把「關鍵字家族＋頁碼」記下來，等全部頁面掃完、確定哪些大題真的還沒找到
+                            // 之後，再用大題一定依序出現的順序去比對這些候選行（見迴圈外的補位邏輯）。
+                            // 💣 只有在 secMatch（精確、真的比對到數字）失敗時才收集候選——
+                            // SECTION_HEADER_GARBLED_RE 的 [0-9]+ 分支本來就會連正常「QUIZ 5」也配到，
+                            // 若不排除已經精確比對成功的行，候選清單會混進一堆「其實已經解決」的頁碼，
+                            // 補位時反而搶走真正缺的那個大題該用的候選（實測 Quiz 7 就是這樣被 Quiz 5
+                            // 那筆候選頂替掉，補到錯的頁）。
+                            if (!secMatch) {
+                                var garbledMatch = collapsed.match(SECTION_HEADER_GARBLED_RE);
+                                if (garbledMatch) {
+                                    var famMatch = garbledMatch[1].match(SECTION_KEYWORD_FAMILY_RE);
+                                    if (famMatch) looseCandidates.push({ family: famMatch[1].toLowerCase(), pageNum: pageNum });
+                                } else {
+                                    // 連「關鍵字＋壞掉的短符號」都配不到，才退而比對「行首只有關鍵字」——
+                                    // 標題數字可能被分到別的視覺行去了，這一行只剩關鍵字本身。
+                                    var bareMatch = collapsed.match(SECTION_HEADER_BARE_KEYWORD_RE);
+                                    if (bareMatch) bareCandidates.push({ family: bareMatch[1].toLowerCase(), pageNum: pageNum });
+                                }
+                            }
                         });
                     });
                 });
             });
         }, Promise.resolve()).then(function () {
+            // 印刷頁碼落差：全篇取「票數最多」的 offset，至少要有 2 頁同意才採信，避免單一頁碼
+            // 誤判（例如頁尾裝飾數字、章節編號）就套用到整份 PDF，反而幫倒忙。
+            var printedPageOffset = null;
+            var bestVoteCount = 0;
+            Object.keys(footerOffsetVotes).forEach(function (k) {
+                if (footerOffsetVotes[k] > bestVoteCount) { bestVoteCount = footerOffsetVotes[k]; printedPageOffset = parseInt(k, 10); }
+            });
+            if (bestVoteCount < 2) printedPageOffset = null;
+
+            // 補位第一層：解答文字裡「Quiz N, p. NN」的印刷頁碼，換算成 PDF 頁碼。跟掃 PDF 標題文字
+            // 是兩個獨立來源，任何一個被 OCR 讀壞都還有另一個可用；已經靠標題文字精確比對到的
+            // 大題不會被這裡覆蓋（只補「還沒找到」的）。
+            // 💣 大題本來就該依序出現在課本裡——換算出來的候選頁碼必須落在「前一個已確定大題」跟
+            // 「下一個已確定大題」的頁碼之間（跟下面 loose/bare 候選補位用同一套雙向邊界檢查），
+            // 不然一旦這個 p.NN 本身抄錄有誤，會把候選頁推到比後面已確定大題還後面，反而製造出
+            // 順序顛倒的離譜範圍（實測 Quiz 7 沒有這個邊界檢查時被推到 Quiz 8、9、10 後面的頁碼）。
+            // 落在邊界外就跳過，留給後面幾層候選機制去補。
+            if (sectionPageHints && printedPageOffset != null) {
+                sectionOrder.forEach(function (sec, idx) {
+                    if (foundPage[sec] != null) return;
+                    var printedPage = sectionPageHints[sec];
+                    if (printedPage == null) return;
+                    var candidatePage = printedPage - printedPageOffset;
+                    var prevPage = 1;
+                    for (var b = idx - 1; b >= 0; b--) { if (foundPage[sectionOrder[b]] != null) { prevPage = foundPage[sectionOrder[b]]; break; } }
+                    var nextPage = numPages;
+                    for (var a = idx + 1; a < sectionOrder.length; a++) { if (foundPage[sectionOrder[a]] != null) { nextPage = foundPage[sectionOrder[a]]; break; } }
+                    if (candidatePage >= prevPage && candidatePage <= nextPage) {
+                        foundPage[sec] = candidatePage;
+                    }
+                });
+            }
+            // 補位：還沒找到的大題，優先在「前一個已確定大題」跟「下一個已確定大題」的頁碼範圍內，
+            // 找同一種關鍵字家族（quiz/chapter/…）的候選行（數字被 OCR 壞掉但關鍵字還讀得到），
+            // 依序消耗候選行，不會被其他大題重複用到。真的連候選行都沒有才退回沿用前一個大題頁碼。
+            var usedCandidateIdx = {};
+            var usedBareIdx = {};
+            sectionOrder.forEach(function (sec, idx) {
+                if (foundPage[sec] != null) return;
+                var family = String(sec || '').toLowerCase().match(SECTION_KEYWORD_FAMILY_RE);
+                if (!family) return;
+                family = family[1];
+                var prevPage = 1;
+                for (var b = idx - 1; b >= 0; b--) { if (foundPage[sectionOrder[b]] != null) { prevPage = foundPage[sectionOrder[b]]; break; } }
+                var nextPage = numPages;
+                for (var a = idx + 1; a < sectionOrder.length; a++) { if (foundPage[sectionOrder[a]] != null) { nextPage = foundPage[sectionOrder[a]]; break; } }
+                for (var c = 0; c < looseCandidates.length; c++) {
+                    if (usedCandidateIdx[c]) continue;
+                    var cand = looseCandidates[c];
+                    if (cand.family === family && cand.pageNum >= prevPage && cand.pageNum <= nextPage) {
+                        foundPage[sec] = cand.pageNum;
+                        usedCandidateIdx[c] = true;
+                        break;
+                    }
+                }
+                if (foundPage[sec] != null) return;
+                // 連「關鍵字＋壞掉的短符號」候選都沒有——退到最弱的一層：行首只有關鍵字，
+                // 數字大概被分到別的視覺行去了。
+                for (var d = 0; d < bareCandidates.length; d++) {
+                    if (usedBareIdx[d]) continue;
+                    var bc = bareCandidates[d];
+                    if (bc.family === family && bc.pageNum >= prevPage && bc.pageNum <= nextPage) {
+                        foundPage[sec] = bc.pageNum;
+                        usedBareIdx[d] = true;
+                        break;
+                    }
+                }
+            });
             // 找不到的大題：沿用前一個已定位大題的頁碼（至少能看到差不多的頁面，不會整片空白）；
             // 第一個大題還是找不到就預設第 1 頁。
             var lastKnown = 1;
@@ -843,9 +1176,12 @@ window.PdfExamPaper = (function () {
         loadPdfDocumentFromDrive: loadPdfDocumentFromDrive,
         detectBlankCandidates: detectBlankCandidates,
         detectBlankCountsByLabel: detectBlankCountsByLabel,
+        detectBlankReviewStats: detectBlankReviewStats,
+        buildSplitReview: buildSplitReview,
         autoAssignBoxesInOrder: autoAssignBoxesInOrder,
         detectSectionPageRanges: detectSectionPageRanges,
         parseAnswerText: parseAnswerText,
+        repairStaleCommaSplits: repairStaleCommaSplits,
         makeKey: makeKey,
         itemLabel: itemLabel,
         buildGradingPaper: buildGradingPaper,

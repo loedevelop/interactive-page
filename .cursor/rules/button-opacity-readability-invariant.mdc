@@ -1,0 +1,88 @@
+---
+description: 按鈕白字配沒設背景／用 opacity 調暗，導致文字看不清楚（好幾次回報都是這個雷）
+globs: 010_css/style.css, **/*.js
+alwaysApply: false
+---
+
+# 按鈕可讀性鐵律（雷區）
+
+> 2026-08-16：老師回報好幾次「按鈕看不清楚字」，翻雷區規則卻找不到對應項目——
+> 因為當時真的沒人寫過。查出兩個根因，**第二個是全站最大宗、範圍最廣**：
+
+## 根因 1：opacity 調暗（範圍較小，已知案例：PDF 考卷「✅ 已批改」按鈕）
+
+`opacity` 是整顆元素（背景＋文字）一起往「背後的頁面背景」淡化，不是只調暗背景。
+按鈕預設幾乎都是「深色／彩色底 配 白字」（見 `010_css/style.css` 的 `.btn`），
+opacity 調低時背景跟白字一起變淡，最後變成「淡色配淡色」，對比消失。
+
+`checkbox`／`label` 這種本來就是「淺底配深字」的元素，用 opacity 調暗風險小，
+但**按鈕（`.btn` / `.btn-action` / `.std-btn` / 任何白字按鈕）絕對不能用 opacity 表示停用或已完成**。
+
+## 根因 2：`.btn` 只寫死 `color:white`，完全沒給預設 `background`（真正的大雷）
+
+`010_css/style.css` 的 `.btn` 從一開始就只有：
+
+```css
+.btn { color: white; ...沒有 background... }
+```
+
+指望每個用到 `.btn` 的地方都會自己再疊一個 `.btn-primary`／`.btn-action`／`.btn-danger`，
+或用 inline `style="background:..."` 補上背景色。但全站有數十處只寫
+`class="btn"` 加 `padding`/`font-size` 就結束，完全沒補背景——這種按鈕吃到瀏覽器
+原生按鈕的淺灰底，疊上被強制的白字，變成「白字配淺灰底」幾乎看不到字
+（老師截圖回報的「關閉」「下一大題 ▶」按鈕就是這樣壞掉的）。
+
+**這不是個案，是 `.btn` 這顆全站共用元件本身沒有安全預設值**——任何新按鈕只要忘記
+補顏色就會重演。已在 `.btn` 本身補上預設 `background:#0F172A`（近黑＋白字，看得清楚），
+任何 modifier class 或 inline style 一樣可以蓋掉它，但「什麼都不補」的最低情況
+也保證讀得到字。
+
+### 連動注意
+
+若某個 `.btn` 只用 inline style 覆寫了 `color`（例如紅字 `#B91C1C` 的刪除／🗑 按鈕），
+沒有一併補 `background`，改版後會吃到新的預設深灰底，紅字在深灰底上對比可能不夠。
+這種「只換顏色不换底色」的按鈕，要嘛跟著補 `background:white; border:1px solid #FCA5A5;`
+（既有慣例，見 `feature-exam-job.js` 的 🗑 按鈕），要嘛乾脆不要單獨覆寫 `color`。
+
+## 已做的全站防呆（`010_css/style.css`）
+
+```css
+.btn:hover { filter: brightness(0.92); transform: scale(1.05); } /* 不再用 opacity:0.8 */
+
+button:disabled, .btn:disabled, .btn-action:disabled, .btn-primary:disabled,
+.btn-danger:disabled, .std-btn:disabled,
+[disabled].btn, [disabled].btn-action, [disabled].std-btn {
+    opacity: 1 !important;
+    filter: none !important;
+}
+```
+
+`!important` 的一般規則會蓋掉 JS 用 `el.style.opacity = '0.x'` 設的 inline style
+（inline 沒加 `!important` 時，author stylesheet 的 `!important` 規則優先）。
+所以往後任何人／任何一輪對話又想用 opacity 讓按鈕「變灰」，一律不會生效——
+按鈕會維持全不透明，逼你改用背景色＋文字色來呈現停用狀態。
+
+## 禁止
+
+```javascript
+// ❌ 深色底配白字的按鈕，用 opacity 表示停用/已完成
+btn.style.opacity = '0.65';
+```
+
+```css
+/* ❌ 全站按鈕的 disabled 狀態用 opacity 調暗 */
+.std-btn:disabled { opacity: 0.5; }
+```
+
+## 正確做法
+
+```javascript
+// ✅ 换成本身就低對比、但全不透明的配色
+btn.style.opacity = '1';
+btn.style.background = '#E2E8F0';
+btn.style.color = '#334155';
+```
+
+改動前自問：這顆按鈕平常是白字／淺色字嗎？若是，任何「變灰」效果都不可以用 opacity，
+只能換底色＋字色。CSS 全站防呆已鎖住 opacity，就算漏改也不會出現看不清楚的文字，
+但仍應直接用正確寫法，不要依賴防呆網。

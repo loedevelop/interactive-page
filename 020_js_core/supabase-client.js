@@ -55,9 +55,14 @@ window.TeacherDB = {
             if (!sessionStr) return false;
             const session = JSON.parse(sessionStr);
 
-            // A：透過 ApiService 取得擁有權限的班級 (已完美處理 JSONB 與 Soft Delete)
-            const validClasses = await window.ApiService.fetchClasses();
-            
+            // 🚀 效能：fetchClasses／fetchAssignments 彼此不互相依賴（各自從 localStorage 讀
+            // session、各自查權限），之前卻寫成先 await 完 A 才做 B，等於白白多等一趟網路來回。
+            // 改成平行送出，reload 時間取兩者較長的那個，不是兩者相加。
+            const [validClasses, fetchedAssignments] = await Promise.all([
+                window.ApiService.fetchClasses(),
+                window.ApiService.fetchAssignments(session.id)
+            ]);
+
             window.TeacherDB.classes = validClasses.map(cls => ({
                 id: cls.id,
                 name: cls.name,
@@ -85,8 +90,8 @@ window.TeacherDB = {
             });
             console.log("📅 成功重建各班級排程日期:", window.TeacherDB.sessions);
             
-            // C：使用 API 獲取作業 (完美對接新寫好的 fetchAssignments)
-            window.TeacherDB.assignments = await window.ApiService.fetchAssignments(session.id);
+            // C：作業清單已在上面平行抓好，這裡直接接住結果即可
+            window.TeacherDB.assignments = fetchedAssignments;
 
             console.log("✅ [TeacherDB] 成功載入並初始化 TeacherDB 狀態!");
             return true;

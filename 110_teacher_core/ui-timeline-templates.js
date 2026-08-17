@@ -295,7 +295,7 @@ window.TimelineTemplates = (() => {
         const safeWinScript = String((win && win.script) || '').replace(/</g, '&lt;');
         const safeWinStudent = String((win && win.student) || '').replace(/</g, '&lt;');
         const removeBtn = total > 1
-            ? `<button type="button" class="btn" style="padding:6px 8px; color:#B91C1C; flex-shrink:0;" onclick="window.FeatureTimeline.removePasteWindowRow(this, '${pathStr}')" title="刪除此視窗">🗑</button>`
+            ? `<button type="button" class="btn" style="padding:6px 8px; background:white; color:#B91C1C; border:1px solid #FCA5A5; flex-shrink:0;" onclick="window.FeatureTimeline.removePasteWindowRow(this, '${pathStr}')" title="刪除此視窗">🗑</button>`
             : '';
         return `
             <div class="paste-window-row" data-idx="${winIdx}" style="display:flex; gap:8px; align-items:flex-start; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
@@ -669,7 +669,7 @@ window.TimelineTemplates = (() => {
                                     <input type="text" class="form-control skeleton-unit-path" style="padding:6px; font-size:0.85rem; font-weight:800; color:#4338CA;" placeholder="單元路徑，如 Ch2/p15/Ex3/#1" value="${uPathLabel}" oninput="window.FeatureTimeline.refreshSkeletonRangeLabel('${pathStr}')">
                                     <textarea class="form-control skeleton-unit-script" style="width:100%; min-height:48px; padding:8px; font-size:0.85rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="批改文稿（可留空，之後再補）">${uScript}</textarea>
                                 </div>
-                                <button type="button" class="btn" style="padding:6px 8px; color:#B91C1C;" onclick="window.FeatureTimeline.removeSkeletonUnitRow(this, '${pathStr}')" title="刪除此列">🗑</button>
+                                <button type="button" class="btn" style="padding:6px 8px; background:white; color:#B91C1C; border:1px solid #FCA5A5;" onclick="window.FeatureTimeline.removeSkeletonUnitRow(this, '${pathStr}')" title="刪除此列">🗑</button>
                             </div>`;
                     }).join('');
 
@@ -840,21 +840,20 @@ window.TimelineTemplates = (() => {
                     leafTitleAuto = audioTitleIsAuto ? '1' : '0';
                     leafTitleFromRange = audioTitleFromRangeAttr;
                 } else if (t.type === 'exam') {
-                    const examRaw = t.raw_data || {};
                     const plainExamTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                     let examRangeHint = '';
                     if (window.BuilderStore && typeof window.BuilderStore.getState === 'function'
                         && window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
                     }
-                    // 同樣不能只看標題是否為空，見上方「audio_record」的雷區說明
-                    const wasExamTitleAuto = examRaw.title_auto_from_range === true;
-                    if ((wasExamTitleAuto || !plainExamTitle) && examRangeHint) {
+                    // 考試標題只在空白時繼承。有字就顯示原文，禁止用 flag／下面細節覆寫。
+                    if (!plainExamTitle && examRangeHint) {
                         leafTitleHtml = examRangeHint.replace(/</g, '&lt;');
                         leafTitleAuto = '1';
                         leafTitleFromRange = examRangeHint.replace(/"/g, '&quot;');
                     } else {
                         leafTitleHtml = String(t.title || '');
+                        leafTitleAuto = '0';
                     }
                 }
 

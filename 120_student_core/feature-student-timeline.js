@@ -833,7 +833,7 @@ window.FeatureStudentTimeline = (() => {
                     }, 150);
                     return;
                 }
-                const allowed = { progress: 1, messages: 1, resources: 1, personal: 1, class: 1, analytics: 1 };
+                const allowed = { progress: 1, messages: 1, resources: 1, review: 1 };
                 let savedView = '';
                 try { savedView = localStorage.getItem('studentActiveView') || ''; } catch (_e) {}
                 if (!allowed[savedView]) savedView = 'messages';
@@ -951,6 +951,10 @@ window.FeatureStudentTimeline = (() => {
             } else if (viewId === 'analytics') {
                 if (window.FeatureStudentAnalytics && typeof window.FeatureStudentAnalytics.render === 'function') {
                     window.FeatureStudentAnalytics.render();
+                }
+            } else if (viewId === 'review') {
+                if (window.FeatureStudentReview && typeof window.FeatureStudentReview.render === 'function') {
+                    window.FeatureStudentReview.render();
                 }
             }
         },

@@ -274,6 +274,16 @@ window.FeatureTemplateLibrary = (function () {
         return { fields: fields, fields_answer: fieldsAnswer, lines_per_page: (template && template.lines_per_page) || DEFAULT_LINES_PER_PAGE };
     }
 
+    function colMapFromTemplate(t) {
+        const map = {};
+        (t && Array.isArray(t.columns) ? t.columns : []).forEach(function (c) {
+            const letter = (c && (c.letter || c.col)) ? String(c.letter || c.col).trim() : '';
+            if (!c || !letter || !c.semantic_key) return;
+            map[letter.toUpperCase()] = String(c.semantic_key).trim();
+        });
+        return map;
+    }
+
     /**
      * 統一考卷排版解析：新格式 uuid／legacy_profile_id（舊 LAYOUT_CATALOG 字串）／
      * legacy_id（遷移前 mft_xxx 字串）／'tpl:{uuid或字串id}'（唯讀相容前綴，歷史上已經存過
@@ -304,7 +314,8 @@ window.FeatureTemplateLibrary = (function () {
             fields: draft.fields || '',
             fields_answer: draft.fields_answer || '""',
             quiz_prompt: t.quiz_prompt || '',
-            quiz_answer: t.quiz_answer || '',
+            quiz_answer: t.quiz_answer || t.answer_combine_note || '',
+            col_map: colMapFromTemplate(t),
             lines_per_page: draft.lines_per_page || t.lines_per_page || DEFAULT_LINES_PER_PAGE
         };
     }

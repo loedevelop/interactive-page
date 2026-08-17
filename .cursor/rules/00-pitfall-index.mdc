@@ -23,5 +23,8 @@ alwaysApply: true
 | `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
 | `script-collector-paste-windows-invariant.mdc` | C 貼上多視窗（paste_windows）沒同步進 original_script／collector 誤回寫原始作業 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
 | `exam-wrong-retake-invariant.mdc` | 重考錯題（僅一次）判定範圍漂移／合併正確率分母算錯／重考按鈕找不到入口 | `feature-exam-job.js`, `feature-exam-review.js`, `feature-student-quiz.js`, `ui-student-timeline-templates.js` |
+| `button-opacity-readability-invariant.mdc` | 按鈕看不清楚字：`.btn` 沒設預設背景（白字配透明底）／用 opacity 調暗停用態 | `010_css/style.css`, 全站 `.js`（任何 `class="btn"` 或設 `.style.opacity` 的按鈕） |
+| `pdf-quiz-section-page-detection-invariant.mdc` | PDF 考卷大題顯示成前一個大題的頁面內容（標題 OCR 壞掉／letter-spacing／候選清單被污染） | `020_js_core/pdf-exam-paper.js` |
+| `template-usage-card-invariant.mdc` | 實際使用卡擷取／試卷列出的名字混用（活頁名 vs 範本名 vs meta 檔名） | `feature-class-material-combinations.js`, `feature-material-layout-pairing.js`, `feature-exam-template-editor.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

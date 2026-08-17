@@ -134,7 +134,7 @@ window.FeatureExamJob = (function () {
         }
         job.options = Object.assign({}, job.options, cfg.options);
         refreshExamBuilder();
-        window.showFlash('已套用本班上次出題設定（' + (cfg.material_folder || cfg.sections && cfg.sections[0] && cfg.sections[0].sheet_id || '') + '），請確認後按「儲存作業」（會自動產生線上卷）', 'success');
+        window.showFlash('已套用本班上次出題設定（' + (cfg.material_folder || cfg.sections && cfg.sections[0] && cfg.sections[0].sheet_id || '') + '），請確認後按「產生試卷」。', 'success');
     }
 
     /**
@@ -212,7 +212,7 @@ window.FeatureExamJob = (function () {
     function buildExamTemplateSelectOptionsHtml(selectedId, suggestedId) {
         const templates = getExamTemplatesCachedSync();
         if (!templates.length) {
-            return '<option value="">（尚未建立任何考卷範本，請到「🧾 考卷範本」新增）</option>';
+            return '<option value="">（尚未建立任何試卷範本，請到「🧾 試卷範本」新增）</option>';
         }
         return templates.map(function (t) {
             const isSuggested = !!(suggestedId && t.id === suggestedId);
@@ -226,7 +226,7 @@ window.FeatureExamJob = (function () {
         const profile = resolveExamTemplateProfile(layoutId);
         if (profile) return profile.fields + (profile.fields_answer ? ('｜答案：' + profile.fields_answer) : '');
         if (String(layoutId || '').indexOf('tpl:') === 0) return '（擷取範本已被刪除，請重選 layout_profile_id）';
-        return layoutId ? '（找不到這個考卷範本，可能已被刪除）' : '（依 layout_profile）';
+        return layoutId ? '（找不到這個試卷範本，可能已被刪除）' : '（依 layout_profile）';
     }
 
     function metaStemFromFileName(fileName) {
@@ -732,13 +732,19 @@ window.FeatureExamJob = (function () {
 
     function rememberMetaRows(byStem, section, rows) {
         if (!byStem || !Array.isArray(rows) || !rows.length) return;
-        [section && section.sheet_id, section && section.meta_file_name,
+        // 💣 之前這裡把同一份 rows 陣列同時存進 4 個 key 別名（sheet_id／meta_file_name／
+        // displayStem／metaStem），原意是「不管之後用哪種格式查都找得到」。這 4 個字串在記憶體裡
+        // 通常會是同一個 stem 的不同寫法，但如果檔名帶了額外的範本後綴（例如 "AvaLiu-vBK-2.vocab-
+        // word.meta.json"），這 4 種寫法會彼此不同，存成資料庫 JSON 時每個 key 底下都會把整份陣列
+        // 內容完整複製一份——實測有一筆作業因此被炸到 4.6MB（同一份 5045 列 meta 存了 3 份）。
+        // lookupRowsBySheetId 讀取端本身已經有完整的模糊比對（大小寫、去 .meta.json、去連字號比對
+        // stemCore），只存 1 個 key 一樣找得到，不需要也不該重複存多份。
+        const candidates = [section && section.sheet_id, section && section.meta_file_name,
             displayStemFromMetaFile((section && (section.meta_file_name || section.sheet_id)) || ''),
             metaStemFromFileName((section && section.meta_file_name) || '')
-        ].forEach(function (k) {
-            const key = String(k || '').trim();
-            if (key) byStem[key] = rows;
-        });
+        ].map(function (k) { return String(k || '').trim(); }).filter(Boolean);
+        const key = candidates[0];
+        if (key) byStem[key] = rows;
     }
 
     function summarizeMetaPages(rows) {
@@ -1520,7 +1526,7 @@ window.FeatureExamJob = (function () {
             <div data-exam-section="${idx}" style="border:1px solid #E2E8F0; border-radius:10px; padding:12px; margin-bottom:10px; background:#F8FAFC;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                     <strong style="color:#334155;">區段 ${idx + 1}</strong>
-                    <button type="button" class="btn" style="padding:2px 8px; font-size:0.8rem; color:#B91C1C;"
+                    <button type="button" class="btn" style="padding:2px 8px; font-size:0.8rem; background:white; color:#B91C1C; border:1px solid #FCA5A5;"
                         onclick="window.FeatureExamJob._removeSection(${idx})" ${state.sections.length <= 1 ? 'disabled' : ''}>刪除</button>
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:8px;">
@@ -1565,7 +1571,7 @@ window.FeatureExamJob = (function () {
         const bankOpts = BANK_CATALOG.map(function (b) {
             return '<option value="' + esc(b.id) + '"' + (state.bankId === b.id ? ' selected' : '') + '>' + esc(b.label) + '</option>';
         }).join('');
-        const layoutOpts = '<option value=""' + (state.layoutProfileId ? '' : ' selected') + '>請選擇考卷範本</option>'
+        const layoutOpts = '<option value=""' + (state.layoutProfileId ? '' : ' selected') + '>請選擇試卷範本</option>'
             + buildExamTemplateSelectOptionsHtml(state.layoutProfileId, '');
 
         const assignOpts = (cachedContext.assignments || []).map(function (a) {
@@ -1934,24 +1940,13 @@ window.FeatureExamJob = (function () {
         const paperItemCount = (raw.quiz_paper && Array.isArray(raw.quiz_paper.items))
             ? raw.quiz_paper.items.length
             : 0;
+        const paperNo = raw.quiz_paper_no || raw.exam_job_id || job.job_id || '';
+        const paperAt = (raw.quiz_paper && raw.quiz_paper.generated_at)
+            ? String(raw.quiz_paper.generated_at).replace('T', ' ').slice(0, 16)
+            : '';
         const paperCountHint = paperItemCount
-            ? ('｜線上卷 ' + paperItemCount + ' 題')
+            ? ('｜線上卷 ' + paperItemCount + ' 題' + (paperNo ? ('｜卷號 ' + paperNo) : '') + (paperAt ? ('｜' + paperAt) : ''))
             : '';
-        // 💣 雷區：「產生線上卷」已經拿掉獨立按鈕，改成按「儲存作業」時自動偵測＋重新產生
-        // （見 needsExamRegeneration／saveBlock），這裡只負責畫一句現況提示，不要再放按鈕。
-        // 例外：這份卷已經產生過（paperItemCount>0）又偵測到設定變更時，「儲存作業」那邊
-        // 若查到已有學生交過答案會保守跳過自動重新產生（見 taskHasSubmittedAnswers 的雷區
-        // 說明），這裡才要補一個手動「立即重新產生」逃生口，否則老師會卡住、看不到怎麼繼續。
-        const pendingRegen = needsExamRegeneration(task);
-        const forceGenBtnHtml = (pendingRegen && paperItemCount)
-            ? (' <button type="button" class="btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px;" '
-                + 'onclick="window.FeatureExamJob._inlineForceGeneratePaper(\'' + pathStr + '\')">🔁 立即重新產生</button>')
-            : '';
-        const genStatusInitialHtml = pendingRegen
-            ? (paperItemCount
-                ? ('⚠ 設定已變更，尚未套用到線上卷——按「儲存作業」時會自動重新產生（若已有學生作答則會保守跳過，需按右側按鈕手動確認）' + forceGenBtnHtml)
-                : '⚠ 尚未產生線上卷——填好區段（活頁／範圍）後按「儲存作業」，系統會自動產生')
-            : (paperItemCount ? ('✅ 線上卷已是最新（' + paperItemCount + ' 題）') : '');
 
         let siblingAudio = null;
         let siblingAudioCount = 0;
@@ -2058,6 +2053,9 @@ window.FeatureExamJob = (function () {
         sections.forEach(function (s) {
             healExamSectionSheet(s, examSheetMetaOpts);
             attachCatalogMetaToSection(currentClassId, effectiveRootKind, effectiveMaterialFolder, s);
+            if (s && (s.sheet_id || s.meta_file_name) && !s.layout_profile_id) {
+                applyPairedTemplateToSection(s, pathStr, task);
+            }
         });
         if (folderStageReady && task.raw_data && task.raw_data.exam_job) {
             task.raw_data.exam_job.sections = sections;
@@ -2142,9 +2140,9 @@ window.FeatureExamJob = (function () {
                     </td>
                     <td style="padding:4px;">
                         <select id="exam-inline-sectionlayout-${pathStr}-${idx}" class="form-control" style="width:130px; padding:4px;"
-                            title="${folderIsAssigned ? '已依班級教材組合帶入；若要改可再選' : '請選這一列要套用的考卷範本'}"
+                            title="${folderIsAssigned ? '已依班級教材組合帶入；若要改可再選' : '請選這一列要套用的試卷範本'}"
                             onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">
-                            <option value=""${rowLayoutId ? '' : ' selected'}>${folderIsAssigned ? '（尚未讀到已配對範本）' : '— 請選擇考卷範本 —'}</option>
+                            <option value=""${rowLayoutId ? '' : ' selected'}>${folderIsAssigned ? '（尚未讀到已配對範本）' : '— 請選擇試卷範本 —'}</option>
                             ${(function () {
                                 const rowSuggestedExamTemplateId = (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function')
                                     ? fcmc.getSuggestedExamTemplateId(layoutRootKind, currentClassId, layoutMaterialFolder, [s.sheet_id])
@@ -2156,7 +2154,7 @@ window.FeatureExamJob = (function () {
                             })()}
                         </select>
                     </td>
-                    <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(displayLpp)}" style="width:56px; padding:4px;" title="沿用這一列考卷範本的每頁行數（目前＝${esc(displayLpp)}）"${refreshAttr}></td>
+                    <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(displayLpp)}" style="width:56px; padding:4px;" title="沿用這一列試卷範本的每頁行數（目前＝${esc(displayLpp)}）"${refreshAttr}></td>
                     <td style="padding:4px;">
                         <select id="exam-inline-rtype-${pathStr}-${idx}" class="form-control" style="padding:4px; min-width:72px;"${refreshAttr}>
                             <option value="page" ${(s.range_type || 'page') === 'page' ? 'selected' : ''}>頁碼</option>
@@ -2215,7 +2213,7 @@ window.FeatureExamJob = (function () {
                             onchange="window.FeatureExamJob._inlineOnExamMaterialChange('${pathStr}')">
                     </div>
                     <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入教材資料夾清單…'}</div>
-                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">請先選教材資料夾。清單載入並選定後，才會出現活頁與可用題；已指派給本班的會自動帶入已配好的考卷範本。</div>
+                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">請先選教材資料夾。清單載入並選定後，才會出現活頁與可用題；已指派給本班的會自動帶入已配好的試卷範本。</div>
                 </div>
                 <input type="hidden" id="exam-inline-layout-${pathStr}" value="${esc(layoutId)}">
                 ${!folderStageReady ? `
@@ -2260,7 +2258,7 @@ window.FeatureExamJob = (function () {
                         <thead>
                             <tr style="background:#CCFBF1; color:#134E4A; text-align:left;">
                                 <th style="padding:4px;">活頁</th>
-                                <th style="padding:4px;" title="已指派資料夾會自動帶入已配對範本；其他可用請在這一欄選">考卷範本</th>
+                                <th style="padding:4px;" title="已指派資料夾會自動帶入已配對範本；其他可用請在這一欄選">試卷範本</th>
                                 <th style="padding:4px;">每頁行數</th>
                                 <th style="padding:4px;">基準</th>
                                 <th style="padding:4px;">起始</th>
@@ -2284,7 +2282,7 @@ window.FeatureExamJob = (function () {
                     ${getCachedLastConfigForClass(currentClassId) ? `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#EDE9FE; color:#5B21B6; border:1px solid #DDD6FE;"
                         onclick="window.FeatureExamJob._inlineApplyLastConfig('${pathStr}')"
-                        title="套用這個班級上次成功產生線上卷時的教材／layout／區段設定，套用後請自行確認再按「儲存作業」（會自動產生線上卷）。">📋 套用上次設定（本班）</button>
+                        title="套用這個班級上次成功產生線上卷時的教材／layout／區段設定，套用後請自行確認再按「產生試卷」。">📋 套用上次設定（本班）</button>
                     ` : ''}
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
@@ -2297,9 +2295,16 @@ window.FeatureExamJob = (function () {
                         onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ JSON</button>
                     <span style="margin-left:auto; font-weight:800; color:#134E4A; font-size:0.85rem;">總計考題 ${totalCountSum}${paperCountHint}</span>
                 </div>
-                <div id="exam-inline-gen-status-${pathStr}" style="margin-top:8px; min-height:1.2em; font-size:0.8rem; font-weight:800; color:${pendingRegen ? '#B45309' : '#0F766E'};">${genStatusInitialHtml}</div>
-                <div id="exam-inline-standalone-status-${pathStr}" style="margin-top:4px; min-height:1.2em; font-size:0.78rem; font-weight:700;"></div>
-                <div style="margin-top:6px; color:#64748B; font-size:0.75rem;">選好活頁與範圍後會自動讀取可用題（該 meta 檔在範圍內的實際列數）。線上卷在按「儲存作業」時自動產生。</div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button type="button" class="btn btn-action" style="flex:1; box-sizing:border-box; padding:4px 10px; background:#B91C1C; color:white; border:none;"
+                        title="依目前活頁／範圍／範本重新抽題出卷。會換題，舊作答可能對不上。"
+                        onclick="window.FeatureExamJob._inlineGeneratePaperNow('${pathStr}')">📝 產生試卷</button>
+                    <button type="button" class="btn btn-action" style="flex:1; box-sizing:border-box; padding:4px 10px; background:#0369A1; color:white; border:none;"
+                        title="維持現有題目與順序，只依目前試卷範本重算標準答案，再重批已交卷學生。"
+                        onclick="window.FeatureExamJob._inlineRegradeExistingPaper('${pathStr}')">🔄 重新批改</button>
+                </div>
+                <div id="exam-inline-gen-status-${pathStr}" style="margin-top:6px; font-size:0.8rem; font-weight:800;"></div>
+                <div id="exam-inline-standalone-status-${pathStr}" style="margin-top:4px; font-size:0.78rem; font-weight:700;"></div>
                 ` : ''}
             </div>
         `;
@@ -2549,7 +2554,7 @@ window.FeatureExamJob = (function () {
         refreshExamBuilder();
         window.showFlash(
             last && last.sheet_id
-                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數；若這列要套用不同考卷範本，請在「考卷範本」欄另選）')
+                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數；若這列要套用不同試卷範本，請在「試卷範本」欄另選）')
                 : '已加空白區段：請先「從錄音範圍帶入」，或自行填活頁字母',
             last && last.sheet_id ? 'success' : 'warning'
         );
@@ -2687,6 +2692,7 @@ window.FeatureExamJob = (function () {
         // 只帶範圍。可用題必須等老師按「讀取可用題數」從選中的 meta 檔算，禁止用錄音 Snapshot。
         sections = sections.map(function (sec) {
             const next = Object.assign({}, sec);
+            applyPairedTemplateToSection(next, pathStr, task);
             const avail = countAvailableFromMeta(next, task);
             if (avail != null && avail >= 0) next.count = avail;
             return next;
@@ -2723,14 +2729,359 @@ window.FeatureExamJob = (function () {
         refreshExamBuilder();
     }
 
+    function examInlineMaterialContext(pathStr, task) {
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const examMaterialSelf = getExamMaterialSelf(task);
+        const siblingHits = findAllSiblingAudioHits((bState && bState.tasks) || [], pathStr);
+        const siblingAudio = siblingHits[0] ? siblingHits[0].task : null;
+        const comboFirstRef = (siblingAudio && siblingAudio.raw_data && Array.isArray(siblingAudio.raw_data.material_refs))
+            ? siblingAudio.raw_data.material_refs[0] : null;
+        const comboFolder = (comboFirstRef && comboFirstRef.material_folder) || '';
+        const comboRootKind = (comboFirstRef && comboFirstRef.materials_root_kind === 'class') ? 'class' : 'teacher';
+        return {
+            classId: classId,
+            folderName: examMaterialSelf.material_folder || comboFolder,
+            rootKind: examMaterialSelf.material_folder ? (examMaterialSelf.root_kind || 'teacher') : comboRootKind
+        };
+    }
+
+    function sheetIdForTemplateLookup(raw) {
+        const s = String(raw || '').trim();
+        if (!s || s === '__manual__') return '';
+        if (/\.meta\.json$/i.test(s)) return displayStemFromMetaFile(s);
+        return s;
+    }
+
+    /** 活頁選定後帶入已配好的考卷範本：先班級教材組合，沒有再讀搭配表。兩邊都是 DB，不從檔名猜。 */
+    function lookupPairedExamTemplateId(pathStr, task, sheetId) {
+        const ctx = examInlineMaterialContext(pathStr, task);
+        const sid = sheetIdForTemplateLookup(sheetId);
+        if (!sid || !ctx.folderName) return '';
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (fcmc && typeof fcmc.getSuggestedExamTemplateId === 'function') {
+            const fromCombo = fcmc.getSuggestedExamTemplateId(ctx.rootKind, ctx.classId, ctx.folderName, [sid]);
+            if (fromCombo) return fromCombo;
+        }
+        const mlp = window.FeatureMaterialLayoutPairing;
+        if (mlp && typeof mlp.getSuggestedLayoutIds === 'function') {
+            const ids = mlp.getSuggestedLayoutIds(ctx.folderName, [sid]);
+            if (ids && ids[0]) return ids[0];
+        }
+        return '';
+    }
+
+    function applyPairedTemplateToSection(sec, pathStr, task) {
+        if (!sec) return;
+        const tplId = lookupPairedExamTemplateId(pathStr, task, sec.sheet_id || sec.meta_file_name);
+        if (!tplId) return;
+        sec.layout_profile_id = tplId;
+        const profile = resolveExamTemplateProfile(tplId);
+        if (profile && Number(profile.lines_per_page) > 0) {
+            sec.lines_per_page = Number(profile.lines_per_page);
+        }
+    }
+
     /** 獨立考試「活頁」下拉選了「✏️ 其他（手動輸入）」才顯示手動輸入框 */
     function inlineOnSheetSelectChange(pathStr, idx) {
         const selectEl = document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx);
         const manualEl = document.getElementById('exam-inline-sheet-manual-' + pathStr + '-' + idx);
         if (manualEl) manualEl.style.display = (selectEl && selectEl.value === '__manual__') ? 'block' : 'none';
         if (selectEl && selectEl.value === '__manual__') return; // 手動輸入還沒填完，先不重算可用題
+        const task = getBuilderTaskByPath(pathStr);
+        const sheetVal = selectEl ? selectEl.value : '';
+        const tplId = task ? lookupPairedExamTemplateId(pathStr, task, sheetVal) : '';
+        const layoutEl = document.getElementById('exam-inline-sectionlayout-' + pathStr + '-' + idx);
+        if (layoutEl) layoutEl.value = tplId || '';
+        if (tplId) {
+            const profile = resolveExamTemplateProfile(tplId);
+            const lppEl = document.getElementById('exam-inline-lpp-' + pathStr + '-' + idx);
+            if (lppEl && profile && Number(profile.lines_per_page) > 0) {
+                lppEl.value = String(profile.lines_per_page);
+            }
+        }
         inlineRefreshAvail(pathStr);
         if (selectEl && selectEl.value) inlineRefreshStandaloneMeta(pathStr);
+    }
+
+    function inlineGeneratePaperNow(pathStr) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        syncInlineEditor(pathStr, task);
+        if (!task.raw_data) task.raw_data = {};
+        if (!examJobLooksReady(task.raw_data.exam_job)) {
+            window.showFlash('請先填好活頁、範圍與試卷範本，再按「產生試卷」。', 'warning');
+            return;
+        }
+        const hasPaper = !!(task.raw_data.quiz_paper
+            && Array.isArray(task.raw_data.quiz_paper.items)
+            && task.raw_data.quiz_paper.items.length);
+        if (hasPaper) {
+            const ok = window.confirm(
+                '「產生試卷」會重新抽題，覆蓋現有卷。\n'
+                + '若只是改了試卷範本／標準答案、題目要維持不變，請改按「重新批改」。\n'
+                + '確定要重新出卷？'
+            );
+            if (!ok) return;
+        }
+        inlineGeneratePaper(pathStr, { forceRefreshMeta: true });
+    }
+
+    function colMapFromTemplate(t) {
+        const map = {};
+        (t && Array.isArray(t.columns) ? t.columns : []).forEach(function (c) {
+            const letter = (c && (c.letter || c.col)) ? String(c.letter || c.col).trim() : '';
+            if (!c || !letter || !c.semantic_key) return;
+            map[letter.toUpperCase()] = String(c.semantic_key).trim();
+        });
+        return map;
+    }
+
+    function hasCachedMetaRows(rowsByStem) {
+        if (!rowsByStem || typeof rowsByStem !== 'object') return false;
+        return Object.keys(rowsByStem).some(function (k) {
+            return Array.isArray(rowsByStem[k]) && rowsByStem[k].length;
+        });
+    }
+
+    function mergeExamProfilesIntoLayout(layout, examJob) {
+        const out = layout && typeof layout === 'object' ? layout : {};
+        const examProfiles = buildEnrichedProfiles(examJob);
+        const byId = {};
+        (out.profiles || []).forEach(function (p) {
+            if (p && p.profile_id) byId[String(p.profile_id)] = Object.assign({}, p);
+        });
+        examProfiles.forEach(function (p) {
+            if (!p || !p.profile_id) return;
+            const id = String(p.profile_id);
+            const prev = byId[id] || {};
+            byId[id] = Object.assign({}, prev, p, {
+                quiz_answer: p.quiz_answer || prev.quiz_answer || '',
+                quiz_prompt: p.quiz_prompt || prev.quiz_prompt || '',
+                col_map: Object.assign({}, prev.col_map || {}, p.col_map || {})
+            });
+        });
+        out.profiles = Object.keys(byId).map(function (k) { return byId[k]; });
+        if (examJob && examJob.layout_profile_id) out.default_profile_id = examJob.layout_profile_id;
+        const mergedCol = Object.assign({}, out.col_map || {});
+        out.profiles.forEach(function (p) {
+            if (p && p.col_map) Object.assign(mergedCol, p.col_map);
+        });
+        out.col_map = mergedCol;
+        return out;
+    }
+
+    function findTemplateForProfile(profile) {
+        const list = (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.getTemplatesCachedSync === 'function')
+            ? window.FeatureTemplateLibrary.getTemplatesCachedSync()
+            : [];
+        const pid = profile && profile.profile_id;
+        return list.find(function (x) {
+            return String(x.id) === String(pid)
+                || (x.legacy_id && String(x.legacy_id) === String(pid))
+                || (x.legacy_profile_id && String(x.legacy_profile_id) === String(pid));
+        }) || null;
+    }
+
+    function enrichProfileQuizAnswer(profile) {
+        if (!profile) return profile;
+        const t = findTemplateForProfile(profile);
+        if (!t) return profile;
+        const out = Object.assign({}, profile);
+        if (!out.quiz_answer && t.answer_combine_note) out.quiz_answer = t.answer_combine_note;
+        out.col_map = Object.assign({}, out.col_map || {}, colMapFromTemplate(t));
+        return out;
+    }
+
+    function collectSheetIdsFromPaper(paper) {
+        const sheetIds = [];
+        ((paper && paper.items) || []).forEach(function (it) {
+            const sid = String((it.source && it.source.sheet_id) || '').trim();
+            if (sid && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
+        });
+        return sheetIds;
+    }
+
+    function buildEnrichedProfiles(examJob) {
+        const idsNeeded = [examJob && examJob.layout_profile_id].concat(
+            (examJob && Array.isArray(examJob.sections) ? examJob.sections : []).map(function (sec) { return sec && sec.layout_profile_id; })
+        ).filter(Boolean);
+        const seenIds = {};
+        const profiles = [];
+        idsNeeded.forEach(function (pid) {
+            if (seenIds[pid]) return;
+            seenIds[pid] = true;
+            profiles.push(enrichProfileQuizAnswer(resolveExamTemplateProfile(pid) || {
+                profile_id: pid, label: pid, fields: '', fields_answer: 'X', quiz_answer: ''
+            }));
+        });
+        return profiles;
+    }
+
+    function resolveCtxFromTask(task) {
+        const self = getExamMaterialSelf(task);
+        const examJob = (task && task.raw_data && task.raw_data.exam_job) || {};
+        if (self.material_folder) {
+            return {
+                refs: [],
+                materialFolder: self.material_folder,
+                rootKind: self.root_kind,
+                schemaId: '',
+                audioPath: '',
+                sections: examJob.sections || []
+            };
+        }
+        const paper = task && task.raw_data && task.raw_data.quiz_paper;
+        const item0 = paper && paper.items && paper.items[0];
+        const src = (item0 && item0.source) || {};
+        if (src.material_folder) {
+            return {
+                refs: [],
+                materialFolder: String(src.material_folder).trim(),
+                rootKind: String(src.materials_root_kind || 'teacher').toLowerCase() === 'class' ? 'class' : 'teacher',
+                schemaId: String(src.schema_id || ''),
+                audioPath: '',
+                sections: examJob.sections || []
+            };
+        }
+        return null;
+    }
+
+    /**
+     * 維持現有題目與順序，依目前試卷範本公式重算標準答案（不抽新題）。
+     * 作業編輯「重新批改」與批改畫面「重新批閱」共用。
+     */
+    async function refreshTaskPaperFromTemplate(task, classId, opts) {
+        opts = opts || {};
+        if (!task || !task.raw_data || !task.raw_data.quiz_paper) {
+            throw new Error('找不到線上卷');
+        }
+        if (!window.QuizPaperBuilder || typeof window.QuizPaperBuilder.refreshPaperAnswersKeepItems !== 'function') {
+            throw new Error('批改模組未載入，請硬重新整理老師頁');
+        }
+        await fetchExamTemplates(true);
+        const paper = task.raw_data.quiz_paper;
+        const examJob = task.raw_data.exam_job || {};
+        const localRowsByStem = Object.assign({}, task.raw_data.meta_rows_by_stem || {});
+        const sheetIds = collectSheetIdsFromPaper(paper);
+        const ctx = opts.ctx || resolveCtxFromTask(task);
+        let fetchedLayout = null;
+        let usedCacheOnly = false;
+        if (classId && ctx && ctx.materialFolder) {
+            try {
+                const fetched = await fetchLayoutAndMetaForSheets(
+                    classId, ctx, sheetIds, localRowsByStem, { forceRefreshMeta: !!opts.forceRefreshMeta }
+                );
+                if (fetched && fetched.rowsByStem) {
+                    Object.assign(localRowsByStem, fetched.rowsByStem);
+                    if (!task.raw_data.meta_rows_by_stem) task.raw_data.meta_rows_by_stem = {};
+                    Object.assign(task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
+                }
+                if (fetched && fetched.layout) fetchedLayout = fetched.layout;
+                if (fetched && fetched.error && !hasCachedMetaRows(localRowsByStem)) {
+                    throw fetched.error;
+                }
+                if (fetched && fetched.error) usedCacheOnly = true;
+            } catch (err) {
+                if (!hasCachedMetaRows(localRowsByStem)) throw err;
+                usedCacheOnly = true;
+            }
+        } else if (!hasCachedMetaRows(localRowsByStem)) {
+            throw new Error('沒有教材 meta 可以重算標準答案。請先套用 Snapshot，或確認考試已選教材資料夾。');
+        } else {
+            usedCacheOnly = true;
+        }
+        const layout = mergeExamProfilesIntoLayout(fetchedLayout || {
+            material_folder: (ctx && ctx.materialFolder) || '',
+            default_profile_id: examJob.layout_profile_id,
+            col_map: (window.QuizPaperBuilder && window.QuizPaperBuilder.FALLBACK_COL_MAP) || {},
+            profiles: []
+        }, examJob);
+
+        const result = await window.QuizPaperBuilder.refreshPaperAnswersKeepItems({
+            paper: paper,
+            examJob: examJob,
+            layout: layout,
+            loadSheetMeta: async function (sheetId) {
+                const sid = String(sheetId || '').trim();
+                return {
+                    rows: lookupRowsBySheetId(localRowsByStem, sid) || [],
+                    schemaId: (ctx && ctx.schemaId) || '',
+                    materialFolder: (ctx && ctx.materialFolder) || ''
+                };
+            }
+        });
+        task.raw_data.quiz_paper = result.paper;
+        result.usedCacheOnly = usedCacheOnly;
+        result.sampleAnswers = (result.paper.items || []).slice(0, 3).map(function (it) {
+            return String(it.answer_en || '').trim();
+        }).filter(Boolean);
+        return result;
+    }
+
+    /**
+     * 維持現有卷（不抽新題），依目前試卷範本重算標準答案，再重批已交卷學生。
+     */
+    async function inlineRegradeExistingPaper(pathStr) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        const bState = window.BuilderStore && window.BuilderStore.getState();
+        if (!task || !bState) return window.showFlash('找不到任務', 'error');
+        syncInlineEditor(pathStr, task);
+        const paper = task.raw_data && task.raw_data.quiz_paper;
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) {
+            return window.showFlash('還沒有線上卷。要出新題請按「產生試卷」。', 'warning');
+        }
+        const examJob = syncInlineEditor(pathStr, task) || task.raw_data.exam_job;
+        if (examJob) task.raw_data.exam_job = examJob;
+        const audioHit = findPreferredAudioHit(bState.tasks || [], pathStr);
+        let ctx = null;
+        try {
+            ctx = resolveExamMaterialContext(pathStr, bState, audioHit);
+        } catch (_err) {
+            ctx = resolveCtxFromTask(task);
+        }
+        setGenerateStatus(pathStr, '⏳ 維持現有題目，依試卷範本重算標準答案…', 'busy');
+        try {
+            const result = await refreshTaskPaperFromTemplate(task, bState.classId, {
+                ctx: ctx,
+                forceRefreshMeta: !!ctx
+            });
+
+            let autoSaved = false;
+            if (window.FeatureTimeline && typeof window.FeatureTimeline.quickSaveTasksOnly === 'function') {
+                setGenerateStatus(pathStr, '⏳ 儲存更新後的標準答案…', 'busy');
+                const saveResult = await window.FeatureTimeline.quickSaveTasksOnly();
+                autoSaved = !!(saveResult && saveResult.ok);
+            }
+
+            let regradeTxt = '';
+            if (bState.editId && window.FeatureExamReview && typeof window.FeatureExamReview.regradeTaskPaper === 'function') {
+                setGenerateStatus(pathStr, '⏳ 重批已交卷學生…', 'busy');
+                const rg = await window.FeatureExamReview.regradeTaskPaper(bState.editId, task.id, result.paper);
+                regradeTxt = '｜已重批 ' + (rg && rg.okCount != null ? rg.okCount : 0) + ' 位學生';
+            }
+
+            const sample = (result.sampleAnswers && result.sampleAnswers.length)
+                ? ('｜例：' + result.sampleAnswers.slice(0, 2).join('、'))
+                : '';
+            const cacheNote = result.usedCacheOnly ? '（用已套用的 Snapshot 重算）' : '';
+            const msg = '✅ 已維持原卷 ' + result.updated + ' 題，依試卷範本更新標準答案'
+                + sample
+                + cacheNote
+                + (result.missing ? ('（' + result.missing + ' 題對不到 meta）') : '')
+                + regradeTxt
+                + (autoSaved ? '，並已存到雲端。' : '。請按「儲存作業」。');
+            setGenerateStatus(pathStr, msg, result.missing ? 'warn' : 'success');
+            window.showFlash(msg, result.missing ? 'warning' : 'success');
+            refreshExamBuilder();
+        } catch (err) {
+            console.error('[FeatureExamJob] regrade existing paper', err);
+            const msg = '重新批改失敗：' + (err.message || err);
+            setGenerateStatus(pathStr, '❌ ' + msg, 'error');
+            window.showFlash(msg, 'error');
+        }
     }
 
     /** 錄音 Snapshot 後：標題若為自動繼承則同步。可用題不從 Snapshot 重算。 */
@@ -2765,11 +3116,7 @@ window.FeatureExamJob = (function () {
                 const plain = titleEl
                     ? String(titleEl.textContent || '').trim()
                     : String(t.title || '').replace(/<[^>]*>/g, '').trim();
-                const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
-                const prevFrom = titleEl
-                    ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
-                    : '';
-                if (!plain || autoFlag === '1' || (prevFrom && plain === prevFrom) || plain === '考試') {
+                if (!plain) {
                     t.title = rangeLabel;
                     // 見 .cursor/rules/assignment-title-auto-inherit-invariant.mdc：
                     // 這個旗標才是跨 reload 持久判斷「自動繼承中」的來源，不能只靠 DOM 的 data-title-auto
@@ -3006,6 +3353,24 @@ window.FeatureExamJob = (function () {
         const na = stemCore(a);
         const nb = stemCore(b);
         return !!(na && nb && na === nb);
+    }
+
+    /** 重抓 Drive meta 前，清掉同一活頁的舊快取 key（含檔名／stem 別名），避免舊列蓋住新檔。 */
+    function dropMatchingMetaKeys(byStem, sheetIds) {
+        if (!byStem) return;
+        (sheetIds || []).forEach(function (sid) {
+            const target = String(sid || '').trim();
+            if (!target) return;
+            const tu = target.toUpperCase();
+            Object.keys(byStem).forEach(function (k) {
+                const ku = String(k || '').toUpperCase();
+                if (!ku) return;
+                if (ku === tu || stemsLooselyMatch(k, target)
+                    || ku.indexOf(tu + '.') === 0 || tu.indexOf(ku + '.') === 0) {
+                    delete byStem[k];
+                }
+            });
+        });
     }
 
     function toMetaNum(v) {
@@ -3306,10 +3671,12 @@ window.FeatureExamJob = (function () {
      * @param {object} ctx resolveExamMaterialContext() 的回傳值
      * @param {string[]} sheetIds 大寫 sheet_id 陣列
      * @param {object} [localRowsByStem] 已有的本地快取（有值就不重抓該活頁）
+     * @param {{forceRefreshMeta?:boolean}} [fetchOpts] 強制重抓 Drive，忽略本地快取
      * @returns {Promise<{rowsByStem:object, layout:object|null, rootKindUsed:string, missingMeta:string[], error:Error|null}>}
      */
-    async function fetchLayoutAndMetaForSheets(classId, ctx, sheetIds, localRowsByStem) {
-        const localByStem = localRowsByStem || {};
+    async function fetchLayoutAndMetaForSheets(classId, ctx, sheetIds, localRowsByStem, fetchOpts) {
+        const forceRefresh = !!(fetchOpts && fetchOpts.forceRefreshMeta);
+        const localByStem = forceRefresh ? {} : (localRowsByStem || {});
         const fileIdByStem = {};
         (ctx.refs || []).forEach(function (r) {
             const stem = String(r.label || '').trim().toUpperCase()
@@ -3456,13 +3823,11 @@ window.FeatureExamJob = (function () {
                         ? window.MaterialSnapshot.parseMetaContent(f.content)
                         : JSON.parse(f.content);
                     const rows = Array.isArray(parsed) ? parsed : [];
+                    // 💣 同 rememberMetaRows 的雷區：這裡以前會把同一份 rows 存進 sid／檔名／stem／
+                    // displayStem 4 個 key，存進資料庫的 meta_rows_by_stem 就會整份複製多份（實測有
+                    // 一筆作業被炸到 4.6MB）。lookupRowsBySheetId 讀取端本身已有模糊比對（大小寫、去
+                    // .meta.json、去連字號比對 stemCore），只存 sid 這 1 個 key 一樣找得到。
                     rowsByStem[sid] = rows;
-                    const fname = fileNameBySid[sid] || (f && f.fileName) || '';
-                    if (fname) rowsByStem[fname] = rows;
-                    const stem = metaStemFromFileName(fname || sid);
-                    if (stem) rowsByStem[stem] = rows;
-                    const display = displayStemFromMetaFile(fname || sid);
-                    if (display) rowsByStem[display] = rows;
                 } catch (_e) {}
             }
         });
@@ -3559,6 +3924,7 @@ window.FeatureExamJob = (function () {
         if (pathStr) syncInlineEditor(pathStr, task);
         const examJob = task.raw_data.exam_job;
         if (!examJobLooksReady(examJob)) return false;
+        if (task.raw_data.exam_reset_pending) return true;
         const paper = task.raw_data.quiz_paper;
         if (!paper || !Array.isArray(paper.items) || !paper.items.length) return true;
         if (!task.raw_data.quiz_paper_signature) return false;
@@ -3634,13 +4000,15 @@ window.FeatureExamJob = (function () {
      * 模式呼叫（不彈 showFlash／alert，回傳結果讓外層彙整成一句訊息），跟老師直接觸發（例如
      * 之後若還有除錯用途）共用同一套邏輯，避免兩份程式碼分岔。
      * @param {string} pathStr
-     * @param {{silent?:boolean, skipAutoSave?:boolean}} [opts]
+     * @param {{silent?:boolean, skipAutoSave?:boolean, forceRefreshMeta?:boolean, skipRefresh?:boolean}} [opts]
      * @returns {Promise<{ok:boolean, error?:string, itemCount?:number, skipped?:boolean}>}
      */
     async function inlineGeneratePaper(pathStr, opts) {
         opts = opts || {};
         const silent = !!opts.silent;
         const skipAutoSave = !!opts.skipAutoSave;
+        const skipRefresh = opts.skipRefresh != null ? !!opts.skipRefresh : skipAutoSave;
+        const forceRefreshMeta = opts.forceRefreshMeta !== false;
         function fail(msg) {
             setGenerateStatus(pathStr, '❌ ' + msg, 'error');
             if (!silent) window.showFlash(msg, 'error');
@@ -3676,10 +4044,14 @@ window.FeatureExamJob = (function () {
             return fail(err.message || String(err));
         }
 
-        setGenerateStatus(pathStr, '⏳ 正在產生線上卷…（讀取已選的 meta 檔）', 'busy');
+        setGenerateStatus(pathStr, forceRefreshMeta
+            ? '⏳ 正在產生線上卷…（重新從 Drive 讀取最新 meta）'
+            : '⏳ 正在產生線上卷…（讀取已選的 meta 檔）', 'busy');
         if (!silent) window.showFlash('正在產生線上卷…', 'info');
         try {
-            const localRowsByStem = Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {});
+            const localRowsByStem = forceRefreshMeta
+                ? {}
+                : Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {});
 
             const sheetIds = [];
             (examJob.sections || []).forEach(function (sec) {
@@ -3701,13 +4073,17 @@ window.FeatureExamJob = (function () {
 
             setGenerateStatus(pathStr, '⏳ 讀取 Drive meta…', 'busy');
             ctx.sections = examJob.sections || [];
-            const fetched = await fetchLayoutAndMetaForSheets(bState.classId, ctx, sheetIds, localRowsByStem);
+            const fetched = await fetchLayoutAndMetaForSheets(
+                bState.classId, ctx, sheetIds, localRowsByStem, { forceRefreshMeta: forceRefreshMeta }
+            );
             if (fetched.error) throw fetched.error;
             ctx.rootKind = fetched.rootKindUsed;
             Object.assign(localRowsByStem, fetched.rowsByStem);
             const remoteByName = fetched.remoteByName || {};
             if (!task.raw_data) task.raw_data = {};
-            task.raw_data.meta_rows_by_stem = Object.assign({}, task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
+            if (!task.raw_data.meta_rows_by_stem) task.raw_data.meta_rows_by_stem = {};
+            if (forceRefreshMeta) dropMatchingMetaKeys(task.raw_data.meta_rows_by_stem, sheetIds);
+            Object.assign(task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
 
             let layout = fetched.layout;
             if (!layout) {
@@ -3755,6 +4131,7 @@ window.FeatureExamJob = (function () {
                     profiles: profiles
                 };
             }
+            layout = mergeExamProfilesIntoLayout(layout || {}, examJob);
 
             const schemaBySheet = {};
             (ctx.refs || []).forEach(function (r) {
@@ -3797,9 +4174,11 @@ window.FeatureExamJob = (function () {
 
             if (!task.raw_data) task.raw_data = {};
             task.raw_data.quiz_paper = paper;
+            task.raw_data.quiz_paper_no = examJob.job_id || jobId || '';
             task.raw_data.quiz_paper_signature = examJobSignature(examJob);
             task.raw_data.exam_job = examJob;
             task.raw_data.exam_job_id = examJob.job_id;
+            delete task.raw_data.exam_reset_pending;
             if (audioHit && audioHit.task && ctx.refs.length) {
                 if (!audioHit.task.raw_data) audioHit.task.raw_data = {};
                 audioHit.task.raw_data.material_refs = ctx.refs;
@@ -3828,7 +4207,7 @@ window.FeatureExamJob = (function () {
                 options: examJob.options || {}
             }).catch(function () {});
 
-            refreshExamBuilder();
+            if (!skipRefresh) refreshExamBuilder();
             const noticeTxt = (Array.isArray(paper.notices) && paper.notices.length)
                 ? ('｜⚠ ' + paper.notices.join('；'))
                 : '';
@@ -3851,13 +4230,14 @@ window.FeatureExamJob = (function () {
                 }
             }
 
+            const paperNoTxt = (examJob.job_id || jobId) ? ('｜卷號 ' + (examJob.job_id || jobId)) : '';
             const msg = skipAutoSave
-                ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題' + noticeTxt)
+                ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題' + paperNoTxt + noticeTxt)
                 : autoSaved
-                    ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題，並已自動儲存到雲端，學生端可直接看到。' + noticeTxt)
+                    ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題' + paperNoTxt + '，並已自動儲存到雲端，學生端可直接看到。' + noticeTxt)
                     : autoSaveErr
-                        ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題，但自動儲存失敗（' + autoSaveErr + '），請務必立刻按「儲存作業」！' + noticeTxt)
-                        : ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題。請立刻按「儲存作業」，學生端才看得到。' + noticeTxt);
+                        ? ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題' + paperNoTxt + '，但自動儲存失敗（' + autoSaveErr + '），請務必立刻按「儲存作業」！' + noticeTxt)
+                        : ('✅ 已產生線上卷 ' + (paper.items || []).length + ' 題' + paperNoTxt + '。請立刻按「儲存作業」，學生端才看得到。' + noticeTxt);
             setGenerateStatus(pathStr, msg, (noticeTxt || (!autoSaved && autoSaveErr && !skipAutoSave)) ? 'warn' : 'success');
             if (!silent) window.showFlash(msg, (noticeTxt || (!autoSaved && autoSaveErr && !skipAutoSave)) ? 'warning' : 'success');
             return { ok: true, itemCount: (paper.items || []).length, notices: paper.notices || [] };
@@ -3996,11 +4376,18 @@ window.FeatureExamJob = (function () {
                 attachCatalogMetaToSection(bState.classId, ctx.rootKind, ctx.materialFolder, sec);
             });
             if (task.raw_data && task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
-            const localRowsByStem = (task.raw_data && task.raw_data.meta_rows_by_stem) || {};
+            const forceRefreshMeta = !opts.silent;
+            const localRowsByStem = forceRefreshMeta
+                ? {}
+                : ((task.raw_data && task.raw_data.meta_rows_by_stem) || {});
             ctx.sections = examJob.sections || [];
-            const fetched = await fetchLayoutAndMetaForSheets(bState.classId, ctx, sheetIds, localRowsByStem);
+            const fetched = await fetchLayoutAndMetaForSheets(
+                bState.classId, ctx, sheetIds, localRowsByStem, { forceRefreshMeta: forceRefreshMeta }
+            );
             if (!task.raw_data) task.raw_data = {};
-            task.raw_data.meta_rows_by_stem = Object.assign({}, task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
+            if (!task.raw_data.meta_rows_by_stem) task.raw_data.meta_rows_by_stem = {};
+            if (forceRefreshMeta) dropMatchingMetaKeys(task.raw_data.meta_rows_by_stem, sheetIds);
+            Object.assign(task.raw_data.meta_rows_by_stem, fetched.rowsByStem);
             const availNotes = [];
             let anyInRange = false;
             let anyMissingPage = false;
@@ -4089,21 +4476,16 @@ window.FeatureExamJob = (function () {
         _inlineImportFromSiblingAudio: inlineImportFromSiblingAudio,
         _inlineRefreshAvail: inlineRefreshAvail,
         _inlineOnSheetSelectChange: inlineOnSheetSelectChange,
+        _inlineResetPaper: inlineGeneratePaperNow,
+        _inlineGeneratePaperNow: inlineGeneratePaperNow,
+        _inlineRegradeExistingPaper: inlineRegradeExistingPaper,
+        refreshTaskPaperFromTemplate: refreshTaskPaperFromTemplate,
         _refreshAfterAudioSnapshot: refreshAfterAudioSnapshot,
         getSiblingAudioRangeLabel: getSiblingAudioRangeLabel,
         _inlineExport: inlineExport,
         _inlineGeneratePaper: inlineGeneratePaper,
         /** 手動逃生口：只在 needsExamRegeneration 為 true 時才會出現的按鈕用（見上方雷區說明） */
-        _inlineForceGeneratePaper: function (pathStr) {
-            const ok = window.confirm(
-                '設定已變更，確定要重新產生這份線上卷嗎？\n\n'
-                + '⚠️ 如果已經有學生作答過，重新產生後題目組合／順序可能改變，'
-                + '該學生原本的作答紀錄會跟新卷對不起來（分數、錯題對照都可能不準）。\n'
-                + '確定沒有學生受影響，或已經確認可以接受，才按「確定」。'
-            );
-            if (!ok) return;
-            inlineGeneratePaper(pathStr);
-        },
+        _inlineForceGeneratePaper: inlineGeneratePaperNow,
         _inlineOnExamMaterialChange: inlineOnExamMaterialChange,
         _inlineOnExamMaterialFolderSelectChange: inlineOnExamMaterialFolderSelectChange,
         _inlineToggleForceStandalone: inlineToggleForceStandalone,

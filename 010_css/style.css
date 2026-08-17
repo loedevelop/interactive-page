@@ -66,21 +66,60 @@ body {
 /* =========================================
    共用按鈕樣式 (Global Buttons)
    ========================================= */
+/* 🛑 2026-08-16 雷區防呆（比 opacity 那條更根本）：.btn 以前只寫死 color:white，
+   完全沒設 background，指望每個用到 .btn 的地方都會自己另外疊一個
+   .btn-primary／.btn-action／.btn-danger 或用 inline style 補 background。
+   全站一大堆地方（關閉／上一大題／下一大題／取消…）都只寫 class="btn" 加
+   padding/font-size 就結束，沒有補 background——這種按鈕會吃到瀏覽器原生按鈕的
+   淺灰底，疊上我們強制的白字，變成「白字配淺灰底」幾乎看不到字。
+   這不是個案，是 .btn 這顆共用元件本身沒有安全預設值。修法：.btn 本身就給一個
+   保證看得清楚的預設底色（近黑＋白字＋同色邊），任何有自己上色的 modifier class 或
+   inline style 一樣可以蓋掉它，但「什麼都不補」的最低情況也絕對讀得到字。
+   2026-08-17：#64748B／#1E293B 在白底 modal 上仍被回報成「灰鈕看不清」，改成 #0F172A。 */
 .btn {
     display: inline-block;
     padding: 8px 16px;
     border-radius: 8px;
     text-decoration: none;
     font-weight: 800;
-    color: white;
+    background: #0F172A;
+    color: #FFFFFF;
     cursor: pointer;
-    border: none;
+    border: 2px solid #0F172A;
     transition: 0.2s;
 }
-.btn:hover { opacity: 0.8; transform: scale(1.05); }
-.btn-primary { background: var(--primary); }
-.btn-action { background: #4A90E2; font-size: 0.85rem; }
-.btn-danger { background: #FF5252; color: white; padding: 6px 12px; }
+.btn-close {
+    background: #0F172A;
+    color: #FFFFFF;
+    border: 2px solid #0F172A;
+    font-weight: 900;
+}
+/* 🛑 按鈕絕對不能用 opacity 表示「hover／停用／已完成」——
+   按鈕預設是深色底配白字（見上方 .btn），opacity 調暗是把背景跟文字一起往頁面
+   背景淡化，深色底跟白字一起被沖淡會變成「淡色配淡色」，文字幾乎看不見
+   （PDF 考卷「已批改」按鈕就是這樣壞掉的，見 feature-student-pdf-quiz.js）。
+   hover 改用 filter:brightness 讓底色變暗但維持不透明，文字對比不會被破壞；
+   下面再用 !important 全站鎖住「有 disabled 屬性的按鈕」opacity 一律＝1，
+   不管是這份 CSS 舊規則、還是往後任何 JS 寫 el.style.opacity 想做出變灰效果，
+   一律失效。要做「停用／已完成」外觀，請改背景色＋文字色（例如淺灰底＋深灰字），
+   不要用 opacity。 */
+.btn:hover { filter: brightness(0.92); transform: scale(1.05); }
+.btn-primary { background: var(--primary); border-color: transparent; }
+.btn-action { background: #4A90E2; font-size: 0.85rem; border-color: transparent; }
+.btn-danger { background: #FF5252; color: white; padding: 6px 12px; border-color: transparent; }
+
+button:disabled,
+.btn:disabled,
+.btn-action:disabled,
+.btn-primary:disabled,
+.btn-danger:disabled,
+.std-btn:disabled,
+[disabled].btn,
+[disabled].btn-action,
+[disabled].std-btn {
+    opacity: 1 !important;
+    filter: none !important;
+}
 
 /* 🌟 滿版區塊按鈕 (Block Button) */
 .btn-block {
@@ -111,7 +150,9 @@ body {
 .class-item:hover { background: var(--primary-light); color: var(--primary-dark); }
 .class-item.active { background: var(--primary); color: white; box-shadow: var(--shadow); }
 /* 下區塊：全域管理，永遠固定顯示在 sidebar 最下方，不參與上面那塊的捲動、也不被壓縮 */
-.bottom-nav { flex-shrink: 0; border-top: 1px solid #E2E8F0; padding-top: 20px; }
+.bottom-nav { flex-shrink: 0; border-top: 1px solid #E2E8F0; padding-top: 10px; }
+.bottom-nav .nav-section-title { margin-bottom: 6px; font-size: 0.72rem; }
+.bottom-nav .class-item { padding: 7px 12px; margin-bottom: 4px; border-radius: 8px; font-size: 0.88rem; }
 
 /* 🌟 真正的遠見架構：將主內容區改為 Flex 容器，並鎖死外層捲動 */
 .main-content { 
@@ -284,7 +325,8 @@ body {
 .std-btn-drive { background: #3B82F6; color: white; }
 .std-btn-drive:hover { background: #2563EB; }
 .std-btn-check { background: #F8FAFC; color: #64748B; border: 1px solid #E2E8F0; }
-.std-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* opacity 已被上面全站規則鎖住＝1（不能再靠調暗表示停用），這裡改用實色呈現 */
+.std-btn:disabled { background: #E2E8F0 !important; color: #94A3B8 !important; cursor: not-allowed; }
 
 /* --- 學生資源與作品集網格 --- */
 .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }

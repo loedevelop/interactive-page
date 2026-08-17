@@ -63,7 +63,8 @@ window.FeaturePdfExamJob = (function () {
             answer_text_raw: '',
             parsed_bank: [],
             updated_at: '',
-            needs_regrade: false
+            needs_regrade: false,
+            section_page_hints: {}
         };
     }
 
@@ -76,6 +77,17 @@ window.FeaturePdfExamJob = (function () {
         if (!Array.isArray(job.parsed_bank)) job.parsed_bank = [];
         if (typeof job.answer_text_raw !== 'string') job.answer_text_raw = '';
         if (typeof job.needs_regrade !== 'boolean') job.needs_regrade = false;
+        // 解答文字裡「Quiz N, p. NN」的課本印刷頁碼，輔助 detectSectionPageRanges 定位大題頁碼
+        // （跟掃 PDF 標題文字是獨立的第二資訊來源，見 pdf-exam-paper.js）。
+        if (!job.section_page_hints || typeof job.section_page_hints !== 'object') job.section_page_hints = {};
+        // 舊版曾把「haven't, have never done」收成單列＋替代答案；打開編輯器就對照原始文字補拆，
+        // 並標記 needs_regrade，避免老師還要自己按一次「解析」才看得到 1-B-1／1-B-2。
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.repairStaleCommaSplits === 'function') {
+            if (window.PdfExamPaper.repairStaleCommaSplits(job)) {
+                job.needs_regrade = true;
+                job.split_review = null;
+            }
+        }
         return job;
     }
 
@@ -169,27 +181,62 @@ window.FeaturePdfExamJob = (function () {
     // ② 解答文字解析與確認清單
     // ------------------------------------------------------------------
 
+    function renderSplitReviewHtml(job) {
+        var review = job && job.split_review;
+        if (!review) return '';
+        var warnings = review.section_warnings || [];
+        var flagged = review.flagged_keys || {};
+        var flaggedReasons = [];
+        Object.keys(flagged).forEach(function (k) {
+            var r = flagged[k];
+            if (r && flaggedReasons.indexOf(r) === -1) flaggedReasons.push(r);
+        });
+        if (!warnings.length && !flaggedReasons.length) {
+            if (review.pdf_checked) return '';
+            return '<div style="margin-bottom:6px; padding:6px 8px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px; font-size:0.78rem; color:#92400E; font-weight:700;">尚未跟考卷空格線交叉檢查（沒上傳 PDF 或偵測不到底線）。逗號可能是多格、也可能是答案裡的逗號，請人工核對。</div>';
+        }
+        var lines = warnings.map(function (w) { return '• ' + esc(w.message); })
+            .concat(flaggedReasons.map(function (r) { return '• ' + esc(r); }));
+        return '<div style="margin-bottom:6px; padding:8px 10px; background:#FEF2F2; border:1px solid #FECACA; border-radius:6px; font-size:0.8rem; color:#B91C1C; font-weight:800;">'
+            + '⚠ 以下大題／答案需人工核對（清單格數跟空格線對不上；可能是答案本身含逗號，或空格線偵測有誤）<br>'
+            + lines.join('<br>')
+            + '</div>';
+    }
+
     function renderBankTableHtml(pathStr, job) {
         var bank = job.parsed_bank || [];
         if (!bank.length) {
             return '<div style="color:#94A3B8; font-size:0.85rem; padding:8px;">尚未解析出任何答案，請貼上文字後按「解析成答案清單」</div>';
         }
+        var flagged = (job.split_review && job.split_review.flagged_keys) || {};
+        var warnedSections = {};
+        ((job.split_review && job.split_review.section_warnings) || []).forEach(function (w) {
+            warnedSections[String(w.section || '')] = true;
+        });
         var groups = window.PdfExamPaper.groupItemsBySection(bank);
         return groups.map(function (g) {
+            var secWarn = !!warnedSections[g.section];
             var rowsHtml = g.items.map(function (bk) {
                 var idx = bank.indexOf(bk);
+                var flagReason = flagged[bk.key] || '';
+                var isFlag = !!flagReason || secWarn;
+                var rowBg = isFlag ? '#FEF2F2' : 'transparent';
+                var labelColor = isFlag ? '#B91C1C' : '#0369A1';
+                var inputBorder = isFlag ? '#F87171' : '#CBD5E1';
+                var inputColor = isFlag ? '#B91C1C' : '#0F172A';
                 return (
-                    '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid #E0F2FE;">' +
-                        '<span style="width:56px; font-size:0.78rem; color:#0369A1; font-weight:800;" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + (bk.blank_index ? ('-' + esc(bk.blank_index)) : '') + '</span>' +
-                        '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:4px 6px; font-size:0.82rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
+                    '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid ' + (isFlag ? '#FECACA' : '#E0F2FE') + '; background:' + rowBg + ';"'
+                        + (flagReason ? ' title="' + esc(flagReason) + '"' : '') + '>' +
+                        '<span style="width:56px; font-size:0.78rem; color:' + labelColor + '; font-weight:800;" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + (bk.blank_index ? ('-' + esc(bk.blank_index)) : '') + '</span>' +
+                        '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + '; font-weight:' + (isFlag ? '800' : '400') + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'answer_text\', this.value)">' +
-                        '<input type="text" value="' + esc((bk.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案（逗號分隔）" style="flex:1; min-width:130px; padding:4px 6px; font-size:0.82rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
+                        '<input type="text" value="' + esc((bk.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案（逗號分隔）" style="flex:1; min-width:130px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'accepted_answers\', this.value)">' +
                         '<button type="button" class="btn-icon" style="font-size:0.8rem; padding:2px 6px;" onclick="window.FeaturePdfExamJob.removeBankRow(\'' + pathStr + '\', ' + idx + ')">🗑️</button>' +
                     '</div>'
                 );
             }).join('');
-            return '<div style="margin-bottom:8px;"><div style="font-weight:800; color:#0369A1; font-size:0.82rem; margin:6px 0 2px;">📘 ' + esc(g.section) + '</div>' + rowsHtml + '</div>';
+            return '<div style="margin-bottom:8px;"><div style="font-weight:800; color:' + (secWarn ? '#B91C1C' : '#0369A1') + '; font-size:0.82rem; margin:6px 0 2px;">📘 ' + esc(g.section) + (secWarn ? ' ⚠' : '') + '</div>' + rowsHtml + '</div>';
         }).join('');
     }
 
@@ -207,6 +254,8 @@ window.FeaturePdfExamJob = (function () {
     function refreshBankTable(pathStr, job) {
         var el = document.getElementById('pdf-exam-bank-' + pathStr);
         if (el) el.innerHTML = renderBankTableHtml(pathStr, job);
+        var reviewEl = document.getElementById('pdf-exam-split-review-' + pathStr);
+        if (reviewEl) reviewEl.innerHTML = renderSplitReviewHtml(job);
     }
 
     function refreshStatusLine(pathStr, job) {
@@ -215,10 +264,9 @@ window.FeaturePdfExamJob = (function () {
     }
 
     /**
-     * 解析解答文字（混合式拆格判斷）：逗號分隔、沒寫 OR 的答案，預設當「依序多格」拆開；
-     * 若已經上傳考卷 PDF，會另外去比對這一題在 PDF 上實際偵測到幾條空格線，只有「剛好偵測到
-     * 1 個」才會改判定逗號其實是同一格的替代寫法（見 PdfExamPaper._splitFragmentIntoBlanks 說明）。
-     * PDF 沒上傳、下載/偵測失敗都不擋這個動作，直接退回純文字判斷。
+     * 解析解答文字：逗號預設拆成依序多格，但「No, she…」這種句首語氣詞不拆。
+     * 若已上傳 PDF，再跟空格線／大題格數交叉檢查；對不上的大題與答案用紅字標出，請老師核對。
+     * 空格線偵測不再偷偷改拆或不拆（見 pdf-exam-paper.js 事故說明）。
      */
     async function parseAnswerTextAction(pathStr) {
         var task = getBuilderTaskByPath(pathStr);
@@ -228,22 +276,26 @@ window.FeaturePdfExamJob = (function () {
         var raw = ta ? ta.value : job.answer_text_raw;
         job.answer_text_raw = raw;
 
-        var blankCountHints = null;
+        var blankStats = null;
         if (job.pdf_file_id) {
-            window.showFlash('⏳ 解析中…（比對考卷 PDF 上的空格線）', 'info');
+            window.showFlash('⏳ 解析中…（交叉檢查考卷空格線）', 'info');
             try {
                 var pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(job.pdf_file_id);
-                blankCountHints = await window.PdfExamPaper.detectBlankCountsByLabel(pdfDoc);
+                blankStats = await window.PdfExamPaper.detectBlankReviewStats(pdfDoc);
             } catch (err) {
-                console.warn('[FeaturePdfExamJob] detectBlankCountsByLabel 失敗，退回純文字判斷', err);
-                blankCountHints = null;
+                console.warn('[FeaturePdfExamJob] detectBlankReviewStats 失敗，仍完成文字解析', err);
+                blankStats = null;
             }
         }
 
-        var parsed = window.PdfExamPaper.parseAnswerText(raw, blankCountHints);
+        var parsed = window.PdfExamPaper.parseAnswerText(raw);
         if (!parsed.length) {
             window.showFlash('沒有解析出任何題目，請確認貼的文字裡有「數字.」開頭的題號', 'warning');
         }
+        // parsed.sectionPageHints 是掛在陣列上的額外屬性（JSON.stringify 存進資料庫時會被丟掉），
+        // 這裡先複製到 job.section_page_hints 這個一般物件欄位，才能真正跟著 parsed_bank 一起存檔、
+        // 供學生端 detectSectionPageRanges 用「解答裡的印刷頁碼」輔助定位大題頁碼。
+        job.section_page_hints = Object.assign({}, job.section_page_hints || {}, parsed.sectionPageHints || {});
         var freshKeys = {};
         parsed.forEach(function (b) { freshKeys[b.key] = true; });
         var prevByKey = {};
@@ -258,9 +310,17 @@ window.FeaturePdfExamJob = (function () {
         });
         var preservedManual = (job.parsed_bank || []).filter(function (b) { return !freshKeys[b.key] && b._manual; });
         job.parsed_bank = merged.concat(preservedManual);
+        job.split_review = window.PdfExamPaper.buildSplitReview(job.parsed_bank, blankStats);
         markNeedsRegrade(pathStr, job);
         refreshBankTable(pathStr, job);
-        window.showFlash('✅ 已解析出 ' + parsed.length + ' 題，請逐項確認答案文字再開始畫框', 'success');
+        var warnN = ((job.split_review.section_warnings || []).length)
+            + Object.keys(job.split_review.flagged_keys || {}).length;
+        window.showFlash(
+            warnN
+                ? ('⚠ 已解析出 ' + parsed.length + ' 題，但有 ' + warnN + ' 處跟空格線對不上，請看紅色標示並人工核對')
+                : ('✅ 已解析出 ' + parsed.length + ' 題，請逐項確認答案文字'),
+            warnN ? 'warning' : 'success'
+        );
     }
 
     function updateBankField(pathStr, idx, field, value) {
@@ -342,6 +402,7 @@ window.FeaturePdfExamJob = (function () {
                 '</div>' +
                 '<div style="margin-bottom:10px;">' +
                     '<label style="font-size:0.85rem; font-weight:800; color:#334155; display:block; margin-bottom:4px;">③ 答案清單（請逐項確認/修正——這是最後一道防線，自動解析不保證 100% 準）</label>' +
+                    '<div id="pdf-exam-split-review-' + pathStr + '">' + renderSplitReviewHtml(job) + '</div>' +
                     '<div id="pdf-exam-bank-' + pathStr + '" style="max-height:220px; overflow:auto; border:1px solid #E0F2FE; border-radius:6px; padding:6px;">' + bankHtml + '</div>' +
                     '<button type="button" class="btn" style="font-size:0.8rem; padding:4px 10px; margin-top:6px;" onclick="window.FeaturePdfExamJob.addBankRow(\'' + pathStr + '\')">＋ 手動新增一題</button>' +
                 '</div>' +
@@ -780,6 +841,9 @@ window.FeaturePdfExamJob = (function () {
         if (!st) return;
         try {
             window.showFlash('⏳ 儲存並重新批改…', 'info');
+            if (window.PdfExamPaper && typeof window.PdfExamPaper.repairStaleCommaSplits === 'function') {
+                window.PdfExamPaper.repairStaleCommaSplits(st.job);
+            }
             st.job.needs_regrade = false; // 這次重新批改完成後，答案跟分數就同步了，清掉警示
             var result = window.TaskScriptResolver.patchTaskRawDataInTree(st.assignment.tasks, st.taskId, function (t) {
                 t.raw_data.pdf_exam_job = st.job;

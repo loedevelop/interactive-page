@@ -261,10 +261,14 @@ window.FeatureClass = (() => {
 
             const overlay = document.getElementById(overlayId);
             if (!overlay) throw new Error('設定視窗已關閉');
-            overlay.innerHTML = TPL.getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy);
+            const reviewZone = (window.ReviewZone && typeof window.ReviewZone.parsePolicy === 'function')
+                ? window.ReviewZone.parsePolicy(dbRaw)
+                : {};
+            overlay.innerHTML = TPL.getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy, reviewZone);
             
             if (mainIconSelect) document.getElementById('edit-class-icon').value = cls.icon || '📘';
             bindClassSettingsDirtyTracking();
+            syncPracticeZoneLock();
         } catch (err) { 
             window.showFlash('載入資料失敗：' + err.message, 'error'); 
             closeClassSettings(true);
@@ -314,10 +318,16 @@ window.FeatureClass = (() => {
             if (typeof dbRaw === 'string') { try { dbRaw = JSON.parse(dbRaw); } catch(e) { dbRaw = {}; } }
             
             const lateSubmissionDefaults = { allow_late: allowLate, grace_period_hours: gracePeriod, penalty_percentage: penaltyPercent };
+            const reviewZone = (window.ReviewZone && typeof window.ReviewZone.readFromForm === 'function')
+                ? window.ReviewZone.readFromForm()
+                : (dbRaw.review_zone || {});
+            const prevZone = dbRaw.review_zone && typeof dbRaw.review_zone === 'object' ? dbRaw.review_zone : {};
+            if (prevZone.materials && !reviewZone.materials) reviewZone.materials = prevZone.materials;
             const mergedRawData = Object.assign({}, dbRaw, {
                 name_display_mode: newMode,
                 late_submission_defaults: lateSubmissionDefaults,
-                grading_policy: gradingPolicy
+                grading_policy: gradingPolicy,
+                review_zone: reviewZone
             });
 
             const { data: updatedRows, error } = await window.supabaseClient.from('classes').update({ name: newName, icon: newIcon, raw_data: mergedRawData }).eq('id', classId).select();
@@ -823,8 +833,59 @@ window.FeatureClass = (() => {
         renderClassManager();
     });
 
+    async function refreshReviewCatalog(classId) {
+        const statusEl = document.getElementById('rz-catalog-status');
+        const btn = document.getElementById('rz-refresh-catalog');
+        if (!window.FeatureReviewCatalog || typeof window.FeatureReviewCatalog.refreshForClass !== 'function') {
+            if (statusEl) statusEl.textContent = '教材目錄模組未載入';
+            return;
+        }
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 更新中…'; }
+        try {
+            const cls0 = db.classes.find(function (c) { return String(c.id) === String(classId); });
+            const zone0 = cls0 ? ((cls0.raw_data || cls0.rawData || {}).review_zone || {}) : {};
+            const result = await window.FeatureReviewCatalog.refreshForClass(classId, statusEl, {
+                materials: zone0.materials
+            });
+            const nowIso = new Date().toISOString();
+            const hidden = document.getElementById('rz-catalog-updated-at');
+            if (hidden) hidden.value = nowIso;
+            const cls = db.classes.find(function (c) { return String(c.id) === String(classId); });
+            if (cls) {
+                let raw = cls.raw_data || cls.rawData || {};
+                if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (_e) { raw = {}; } }
+                const zone = Object.assign({}, raw.review_zone || {}, { catalog_updated_at: nowIso });
+                const merged = Object.assign({}, raw, { review_zone: zone });
+                const { error } = await window.supabaseClient.from('classes').update({ raw_data: merged }).eq('id', classId);
+                if (!error) {
+                    cls.raw_data = merged;
+                    cls.rawData = merged;
+                }
+            }
+            const msg = '已快照 ' + (result && result.count ? result.count : 0) + ' 個活頁'
+                + (result && result.ready != null ? ('（其中 ' + result.ready + ' 個已有題目）') : '');
+            if (statusEl) statusEl.textContent = msg;
+            window.showFlash(msg, 'success');
+            window._classSettingsDirty = true;
+        } catch (err) {
+            if (statusEl) statusEl.textContent = '更新失敗：' + (err && err.message ? err.message : err);
+            window.showFlash('更新教材目錄失敗：' + (err && err.message ? err.message : err), 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = '🔄 更新教材目錄'; }
+        }
+    }
+
+    function syncPracticeZoneLock() {
+        const on = !!(document.getElementById('rz-enabled') && document.getElementById('rz-enabled').checked);
+        ['rz-allow-practice', 'rz-allow-test', 'rz-teacher-can-view', 'rz-test-counts-as-score'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = !on;
+        });
+    }
+
     return { 
         updateClassContent, renderClassManager, editClass: openClassSettings, openClassSettings, saveClassSettings, closeClassSettings,
+        refreshReviewCatalog, syncPracticeZoneLock,
         openArchiveConfirm, closeArchiveConfirm,
         executeDelete: async (classId) => {
             const btn = window.event ? window.event.target : document.activeElement;

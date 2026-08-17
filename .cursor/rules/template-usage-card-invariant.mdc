@@ -1,0 +1,69 @@
+---
+description: 實際使用卡兩邊列的名字不一致（活頁名／組合字串／範本名混用）
+globs: 110_teacher_core/feature-class-material-combinations.js,110_teacher_core/feature-material-layout-pairing.js,110_teacher_core/feature-exam-template-editor.js
+alwaysApply: false
+---
+
+# 實際使用卡列出欄位鐵律（雷區）
+
+> 2026-08-16：老師已要求統一，卻被做成「兩邊都列活頁／組合字串」，有的卡寫 `vBK-2`、有的卡寫 `vBK-2.vocab-pic+word_word`，還說已經統一。  
+> 動 `renderTemplateUsageHtml`／`usageExtractionHtml`／`usageExamSideHtml` 時必讀。
+
+## 症狀
+
+同一張「實際使用」卡：
+
+| 區塊 | 錯誤列出 | 老師要的 |
+|---|---|---|
+| 擷取範本展開 | 活頁名 `vBK-2`，或組合字串 `vBK-2.vocab-pic+word_word` | **meta 檔名**（`….meta.json`） |
+| 試卷範本展開 | 同上，或跟擷取列同一個字 | **範本名字**（如 `vocab-pic+word_word`） |
+
+徽章寫「考卷範本」也不對，必須是「試卷範本」。
+
+## 根因
+
+兩邊共用 `sheetIds`／`collapseRelatedSheetStems` 當展開內容。`sheet_stem` 有的是 Excel 分頁碼（`vBK-2`），有的是產出 stem（`vBK-2.範本名`），看起來像「有時範本名、有時活頁名」。
+
+## 不變量
+
+```
+擷取「檔案 xxx.xlsx」＝ Excel 來源，展開／計數單位是活頁（不是 meta）
+擷取「教材 資料夾」＝ 產出，展開 items ＝ meta 檔名（必須以 .meta.json 結尾）
+試卷展開 items ＝ material_templates.name（範本名字，不是活頁、不是檔名）
+徽章／按鈕／出題表頭：「考卷範本」禁止出現，一律「試卷範本」
+```
+
+## 禁止
+
+```javascript
+// ❌ 擷取、試卷都拿 sheetIds 展開
+usageExpandRowHtml('教材 ' + fn, info.sheetIds, '活頁');
+
+// ❌ 試卷列組合字串或 meta 檔名
+usageExpandRowHtml('教材 ' + fn, info.metaFiles, '檔案');
+
+// ❌ 擷取列活頁名（vBK-2）或沒有 .meta.json 的組合字串
+```
+
+## 正確
+
+```javascript
+// ✅ 擷取檔案列：活頁名（去掉 .範本名 後綴）
+usageExpandRowHtml('檔案 ' + xlsx, sheets, '活頁');
+// ✅ 擷取教材列：toMetaFileName(sheet_stem, 擷取範本名) → xxx.meta.json
+usageExpandRowHtml('教材 ' + folder, metaFiles, 'meta');
+
+// ✅ 試卷：只列 templateNames（addToSide 的 extra.templateName）
+usageExpandRowHtml('教材 ' + folder, templateNames, '範本', classPart);
+```
+
+## 實測
+
+1. 打開「教材範本管理」，找同時有擷取＋試卷的範本卡  
+2. 擷取展開＝`….meta.json`（不是 `vBK-2`）  
+3. 試卷展開＝範本名字（不是 `vBK-2`、也不是 `vBK-2.範本名`）  
+4. 徽章是「試卷範本」
+
+## 改動前自問
+
+會動到 `feature-class-material-combinations.js` 的 usage HTML 時：兩邊展開列的字串是否仍符合上表？若否，停下。未對照畫面就說「已統一」＝沒做完。

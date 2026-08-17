@@ -36,6 +36,284 @@ window.FeatureClassMaterialCombinations = (function () {
         return c ? (c.name || String(classId)) : String(classId || '（找不到班級）');
     }
 
+    function classRawOf(cls) {
+        let raw = (cls && (cls.raw_data || cls.rawData)) || {};
+        if (typeof raw === 'string') {
+            try { raw = JSON.parse(raw) || {}; } catch (_e) { raw = {}; }
+        }
+        return raw;
+    }
+
+    function folderKeyOf(name) {
+        return window.ReviewZone && typeof window.ReviewZone.folderKey === 'function'
+            ? window.ReviewZone.folderKey(name)
+            : String(name || '').trim().toUpperCase();
+    }
+
+    function relatedSheetsFromCombo(combo) {
+        const links = Array.isArray(combo.material_combination_sheets) ? combo.material_combination_sheets : [];
+        const raw = [];
+        links.forEach(function (cs) {
+            const sh = cs.material_sheets || {};
+            const stem = String(sh.sheet_stem || '').trim();
+            if (!stem) return;
+            raw.push({
+                sheetStem: stem,
+                metaFileName: sh.meta_file_name || (stem.replace(/\.meta\.json$/i, '') + '.meta.json')
+            });
+        });
+        const keep = collapseRelatedSheetStems(raw.map(function (x) { return x.sheetStem; }));
+        const keepU = {};
+        keep.forEach(function (s) { keepU[String(s).toUpperCase()] = true; });
+        return raw.filter(function (x) { return keepU[x.sheetStem.toUpperCase()]; });
+    }
+
+    function buildClassReviewDeskModel(combos) {
+        const byClass = {};
+        allClasses().forEach(function (cls) {
+            byClass[String(cls.id)] = { cls: cls, materials: [] };
+        });
+        (combos || []).forEach(function (combo) {
+            const folder = combo.material_folders || {};
+            const tpl = combo.material_templates || {};
+            const folderName = folder.folder_name || '';
+            const folderKey = folderKeyOf(folderName);
+            if (!folderKey) return;
+            const examLinks = Array.isArray(combo.material_combination_exam_templates) ? combo.material_combination_exam_templates : [];
+            const examNames = examLinks.map(function (l) { return examTemplateNameById(l.exam_template_id); }).filter(Boolean);
+            const assignments = Array.isArray(combo.class_material_combinations) ? combo.class_material_combinations : [];
+            const sheets = relatedSheetsFromCombo(combo);
+            assignments.forEach(function (a) {
+                const cid = String(a.class_id);
+                if (!byClass[cid]) {
+                    byClass[cid] = { cls: { id: cid, name: classNameById(cid) }, materials: [] };
+                }
+                const list = byClass[cid].materials;
+                sheets.forEach(function (sh) {
+                    const sheetKey = folderKey + '|' + String(sh.sheetStem).toUpperCase();
+                    const hit = list.find(function (m) { return m.sheetKey === sheetKey; });
+                    if (hit) {
+                        examNames.forEach(function (n) {
+                            if (hit.examNames.indexOf(n) === -1) hit.examNames.push(n);
+                        });
+                        if (combo.label && !hit.label) hit.label = combo.label;
+                        if (tpl.name && !hit.templateName) hit.templateName = tpl.name;
+                        return;
+                    }
+                    list.push({
+                        sheetKey: sheetKey,
+                        folderKey: folderKey,
+                        folderName: folderName,
+                        sheetStem: sh.sheetStem,
+                        metaFileName: sh.metaFileName,
+                        templateName: tpl.name || '',
+                        label: combo.label || '',
+                        examNames: examNames.slice()
+                    });
+                });
+            });
+        });
+        Object.keys(byClass).forEach(function (id) {
+            byClass[id].materials.sort(function (a, b) {
+                const fa = String(a.folderName || '').localeCompare(String(b.folderName || ''), 'zh-Hant');
+                if (fa) return fa;
+                return String(a.sheetStem || '').localeCompare(String(b.sheetStem || ''), 'zh-Hant');
+            });
+        });
+        return Object.keys(byClass).map(function (id) { return byClass[id]; });
+    }
+
+    function renderClassReviewDeskHtml(combos) {
+        const FS = '0.85rem';
+        const rows = buildClassReviewDeskModel(combos);
+        const cards = rows.map(function (row) {
+            const cls = row.cls;
+            const cid = String(cls.id);
+            const rz = (window.ReviewZone && typeof window.ReviewZone.parsePolicy === 'function')
+                ? window.ReviewZone.parsePolicy(classRawOf(cls))
+                : {};
+            const matCfg = rz.materials || {};
+            let matsHtml;
+            if (!row.materials.length) {
+                matsHtml = '<div style="color:#94A3B8; font-weight:700; padding:6px 0; font-size:' + FS + ';">尚未指派任何教材組合（學生練習專區選不到教材）</div>';
+            } else {
+                const groups = [];
+                row.materials.forEach(function (m) {
+                    const last = groups[groups.length - 1];
+                    if (!last || last.folderName !== m.folderName) {
+                        groups.push({ folderName: m.folderName, items: [m] });
+                    } else {
+                        last.items.push(m);
+                    }
+                });
+                matsHtml = groups.map(function (g) {
+                    const items = g.items.map(function (m) {
+                        const entry = (window.ReviewZone && typeof window.ReviewZone.materialEntry === 'function')
+                            ? window.ReviewZone.materialEntry(matCfg, m.folderName, m.sheetStem)
+                            : { display_name: '', enabled: true };
+                        const metaFile = m.metaFileName || (m.sheetStem + '.meta.json');
+                        const extractName = m.templateName || '尚未套用擷取範本';
+                        const examName = m.examNames.length ? m.examNames.join('、') : '尚未套用試卷範本';
+                        return (
+                            '<div class="cmc-rz-mat-row" data-sheet-key="' + esc(m.sheetKey) + '" data-folder-key="' + esc(m.folderKey) + '" data-folder-name="' + esc(m.folderName) + '" data-sheet-stem="' + esc(m.sheetStem) + '" data-meta-file="' + esc(metaFile) + '" style="border:1px solid #FED7AA; border-radius:8px; padding:10px; margin-bottom:8px; background:#FFFBF5;">'
+                            + '<div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-size:' + FS + '; margin-bottom:8px;">'
+                            + '<label style="font-weight:800; color:#9A3412; white-space:nowrap; font-size:' + FS + ';"><input type="checkbox" class="cmc-rz-mat-on" ' + (entry.enabled ? 'checked' : '') + '> 開放使用</label>'
+                            + '<label style="flex:1; min-width:200px; display:flex; align-items:center; gap:8px; font-size:' + FS + '; font-weight:800; color:#7C2D12;">顯示名稱'
+                            + '<input type="text" class="cmc-rz-mat-name" value="' + esc(entry.display_name || '') + '" placeholder="給學生看的名稱" style="flex:1; min-width:140px; padding:6px 8px; border:1px solid #FDBA74; border-radius:6px; font-size:' + FS + '; font-weight:800; color:#1E293B;"></label>'
+                            + '</div>'
+                            + '<div style="font-size:' + FS + '; color:#9A3412; font-weight:700; line-height:1.7;">'
+                            + '<div>教材：' + esc(metaFile) + '</div>'
+                            + '<div>擷取：' + esc(extractName) + '</div>'
+                            + '<div>試卷：' + esc(examName) + '</div>'
+                            + '</div>'
+                            + '</div>'
+                        );
+                    }).join('');
+                    return '<div style="margin-bottom:10px;">'
+                        + '<div style="font-weight:800; color:#9A3412; font-size:' + FS + '; margin:0 0 6px;">📁 ' + esc(g.folderName) + '（' + g.items.length + ' 個活頁 meta）</div>'
+                        + items
+                        + '</div>';
+                }).join('');
+            }
+            const updated = rz.catalog_updated_at
+                ? String(rz.catalog_updated_at).replace('T', ' ').slice(0, 16)
+                : '尚未更新';
+            return (
+                '<div class="cmc-rz-card" data-class-id="' + esc(cid) + '" style="background:white; border:1px solid #FED7AA; border-radius:10px; padding:14px; margin-bottom:10px; font-size:' + FS + ';">'
+                + '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:10px;">'
+                + '<div style="font-weight:900; color:#9A3412; font-size:' + FS + ';">🏫 ' + esc(cls.name || classNameById(cid)) + '</div>'
+                + '<div style="font-size:' + FS + '; color:#9A3412; font-weight:700;">目錄：' + esc(updated) + '</div>'
+                + '</div>'
+                + '<div style="background:#FFF7ED; border:1px dashed #FDBA74; border-radius:8px; padding:10px; margin-bottom:10px;">'
+                + '<div style="font-weight:900; color:#9A3412; margin-bottom:4px; font-size:' + FS + ';">教材</div>'
+                + '<p style="margin:0 0 8px; font-size:' + FS + '; color:#9A3412; font-weight:600; line-height:1.45;">只列出已指派組合裡、彼此有關係的活頁 meta（例如 A、B、C）。同資料夾裡沒被指派的 meta 不會出現。學生只會看到「顯示名稱」。</p>'
+                + matsHtml
+                + '</div>'
+                + '<div style="background:#FFF7ED; border:1px dashed #FDBA74; border-radius:8px; padding:10px;">'
+                + '<div style="font-weight:900; color:#9A3412; margin-bottom:8px; font-size:' + FS + ';">學生練習區設定</div>'
+                + '<div style="display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; font-size:' + FS + '; font-weight:700; color:#7C2D12;">'
+                + '<label><input type="checkbox" class="cmc-rz-enabled" ' + (rz.enabled ? 'checked' : '') + '> 開放學生練習專區</label>'
+                + '<label><input type="checkbox" class="cmc-rz-practice" ' + (rz.allow_practice !== false ? 'checked' : '') + (rz.enabled ? '' : ' disabled') + '> 允許練習</label>'
+                + '<label><input type="checkbox" class="cmc-rz-test" ' + (rz.allow_test !== false ? 'checked' : '') + (rz.enabled ? '' : ' disabled') + '> 允許測試</label>'
+                + '<label><input type="checkbox" class="cmc-rz-view" ' + (rz.teacher_can_view ? 'checked' : '') + (rz.enabled ? '' : ' disabled') + '> 老師可看練習／測試紀錄</label>'
+                + '<label><input type="checkbox" class="cmc-rz-score" ' + (rz.test_counts_as_score ? 'checked' : '') + (rz.enabled ? '' : ' disabled') + '> 測試分數納入作業成績／測驗成績</label>'
+                + '</div>'
+                + '</div>'
+                + '<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">'
+                + '<button type="button" class="btn cmc-rz-save-btn" data-class-id="' + esc(cid) + '" style="background:#C2410C; color:white; padding:6px 12px; font-size:' + FS + ';">💾 儲存設定</button>'
+                + '<span class="cmc-rz-status" data-class-id="' + esc(cid) + '" style="font-size:' + FS + '; font-weight:700; color:#9A3412;"></span>'
+                + '</div>'
+                + '<p style="margin:8px 0 0; font-size:' + FS + '; color:#9A3412; font-weight:600; line-height:1.45;">儲存時會一併更新學生可選的教材清單，不用另外按更新目錄。</p>'
+                + '</div>'
+            );
+        }).join('');
+        return ''
+            + '<div style="background:#FFF7ED; padding:20px; border-radius:12px; border:2px solid #FDBA74; margin-top:16px; font-size:0.85rem;">'
+            + '<h3 style="margin:0 0 4px 0; color:#9A3412; font-size:0.95rem;">📖 各班練習專區</h3>'
+            + '<p style="color:#9A3412; font-size:0.85rem; margin:0 0 12px 0; font-weight:600; line-height:1.5;">'
+            + '教材以活頁 meta 列出（不是整個資料夾）。顯示名稱給學生看；儲存時一併更新可選清單。預設關閉。'
+            + '</p>'
+            + (cards || '<div style="color:#9A3412; font-weight:700; font-size:0.85rem;">目前沒有班級。</div>')
+            + '</div>';
+    }
+
+    function readRzFromCard(card) {
+        const score = !!(card && card.querySelector('.cmc-rz-score') && card.querySelector('.cmc-rz-score').checked);
+        const viewEl = card && card.querySelector('.cmc-rz-view');
+        const materials = {};
+        (card ? card.querySelectorAll('.cmc-rz-mat-row') : []).forEach(function (row) {
+            const key = row.getAttribute('data-sheet-key') || row.getAttribute('data-folder-key');
+            if (!key) return;
+            const nameEl = row.querySelector('.cmc-rz-mat-name');
+            materials[key] = {
+                folder_name: row.getAttribute('data-folder-name') || '',
+                sheet_stem: row.getAttribute('data-sheet-stem') || '',
+                meta_file_name: row.getAttribute('data-meta-file') || '',
+                display_name: nameEl ? String(nameEl.value || '').trim() : '',
+                enabled: !!(row.querySelector('.cmc-rz-mat-on') && row.querySelector('.cmc-rz-mat-on').checked)
+            };
+        });
+        return {
+            enabled: !!(card && card.querySelector('.cmc-rz-enabled') && card.querySelector('.cmc-rz-enabled').checked),
+            allow_practice: !!(card && card.querySelector('.cmc-rz-practice') && card.querySelector('.cmc-rz-practice').checked),
+            allow_test: !!(card && card.querySelector('.cmc-rz-test') && card.querySelector('.cmc-rz-test').checked),
+            teacher_can_view: !!(viewEl && viewEl.checked) || score,
+            test_counts_as_score: score,
+            materials: materials
+        };
+    }
+
+    async function saveClassReviewZone(classId, zonePatch) {
+        const cls = allClasses().find(function (c) { return String(c.id) === String(classId); });
+        if (!cls) throw new Error('找不到班級');
+        const raw = classRawOf(cls);
+        const prev = raw.review_zone && typeof raw.review_zone === 'object' ? raw.review_zone : {};
+        const zone = Object.assign({}, prev, zonePatch);
+        const merged = Object.assign({}, raw, { review_zone: zone });
+        const { error } = await window.supabaseClient.from('classes').update({ raw_data: merged }).eq('id', classId);
+        if (error) throw error;
+        cls.raw_data = merged;
+        cls.rawData = merged;
+        if (window.TeacherDB && typeof window.TeacherDB.save === 'function') window.TeacherDB.save();
+        return zone;
+    }
+
+    function bindClassReviewDesk(wrap) {
+        function lockCardChildren(card) {
+            const on = !!(card.querySelector('.cmc-rz-enabled') && card.querySelector('.cmc-rz-enabled').checked);
+            ['.cmc-rz-practice', '.cmc-rz-test', '.cmc-rz-view', '.cmc-rz-score'].forEach(function (sel) {
+                const el = card.querySelector(sel);
+                if (el) el.disabled = !on;
+            });
+        }
+        wrap.querySelectorAll('.cmc-rz-card').forEach(lockCardChildren);
+        wrap.querySelectorAll('.cmc-rz-enabled').forEach(function (el) {
+            el.addEventListener('change', function () {
+                const card = el.closest('.cmc-rz-card');
+                if (card) lockCardChildren(card);
+            });
+        });
+        wrap.querySelectorAll('.cmc-rz-score').forEach(function (el) {
+            el.addEventListener('change', function () {
+                if (!el.checked) return;
+                const card = el.closest('.cmc-rz-card');
+                const viewEl = card && card.querySelector('.cmc-rz-view');
+                if (viewEl) viewEl.checked = true;
+            });
+        });
+        wrap.querySelectorAll('.cmc-rz-save-btn').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                const classId = btn.getAttribute('data-class-id');
+                const card = btn.closest('.cmc-rz-card');
+                const statusEl = wrap.querySelector('.cmc-rz-status[data-class-id="' + classId + '"]');
+                btn.disabled = true;
+                const orig = btn.textContent;
+                btn.textContent = '⏳ 儲存中…';
+                try {
+                    const zone = readRzFromCard(card);
+                    await saveClassReviewZone(classId, zone);
+                    let extra = '';
+                    if (window.FeatureReviewCatalog && typeof window.FeatureReviewCatalog.refreshForClass === 'function') {
+                        const result = await window.FeatureReviewCatalog.refreshForClass(classId, statusEl, { materials: zone.materials });
+                        const nowIso = new Date().toISOString();
+                        await saveClassReviewZone(classId, { catalog_updated_at: nowIso });
+                        extra = '｜已更新清單 ' + (result && result.count ? result.count : 0) + ' 個活頁'
+                            + (result && result.ready != null ? ('（' + result.ready + ' 個有題目）') : '');
+                    }
+                    const msg = '已儲存「' + classNameById(classId) + '」練習專區設定' + extra;
+                    if (statusEl) statusEl.textContent = msg;
+                    window.showFlash && window.showFlash(msg, 'success');
+                } catch (err) {
+                    if (statusEl) statusEl.textContent = '儲存失敗：' + (err.message || err);
+                    window.showFlash && window.showFlash('儲存失敗：' + (err.message || err), 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = orig;
+                }
+            });
+        });
+    }
+
     async function getCurrentUserId() {
         if (!window.supabaseClient) return null;
         const { data: { user } } = await window.supabaseClient.auth.getUser();
@@ -49,8 +327,20 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function examTemplateNameById(id) {
-        const t = examTemplatesList().find(function (x) { return x.id === id; });
-        return t ? (t.name || '（未命名）') : '（找不到考卷範本）';
+        const n = templateNameById(id);
+        return n || '（找不到試卷範本）';
+    }
+
+    function templateNameById(id) {
+        if (!id) return '';
+        if (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.getTemplatesCachedSync === 'function') {
+            const t = window.FeatureTemplateLibrary.getTemplatesCachedSync().find(function (x) {
+                return String(x.id) === String(id);
+            });
+            if (t && t.name) return String(t.name).trim();
+        }
+        const t2 = examTemplatesList().find(function (x) { return String(x.id) === String(id); });
+        return t2 && t2.name ? String(t2.name).trim() : '';
     }
 
     /**
@@ -118,10 +408,6 @@ window.FeatureClassMaterialCombinations = (function () {
         return data || [];
     }
 
-    function sanitizeFileNamePart(s) {
-        return String(s || '').trim().replace(/[\\/]/g, '-');
-    }
-
     /** 同一活頁會被記成 Excel 名（AvaLiu-vBK-2）又記成產出 stem（AvaLiu-vBK-2.vocab-word）。顯示／計數只留較完整的那一個。 */
     function collapseRelatedSheetStems(stems) {
         const raw = [];
@@ -139,20 +425,6 @@ window.FeatureClassMaterialCombinations = (function () {
         });
     }
 
-    function extractionOutputMetaName(sheetStem, templateName, sourceKind) {
-        const layoutPart = sanitizeFileNamePart(templateName);
-        let stem = String(sheetStem || '').trim().replace(/\.meta\.json$/i, '') || 'output';
-        if (layoutPart) {
-            const re = new RegExp('\\.' + layoutPart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
-            stem = stem.replace(re, '') || stem;
-        }
-        if (sourceKind !== 'local') {
-            return (layoutPart ? (stem + '.' + layoutPart) : stem) + '.meta.json';
-        }
-        const base = layoutPart ? (stem + '.' + layoutPart) : stem;
-        return base + '.meta.json';
-    }
-
     /** 已經建立好的組合＋目前搭配的考卷範本＋目前指派到哪些班級 */
     async function loadCombinations(userId) {
         const { data, error } = await window.supabaseClient
@@ -165,7 +437,7 @@ window.FeatureClassMaterialCombinations = (function () {
                 created_at,
                 material_folders!inner ( id, root_kind, class_id, folder_name, teacher_id ),
                 material_templates ( id, name ),
-                material_combination_sheets ( material_sheet_id ),
+                material_combination_sheets ( material_sheet_id, material_sheets ( id, sheet_stem, meta_file_name ) ),
                 material_combination_exam_templates ( id, exam_template_id, is_default ),
                 class_material_combinations ( id, class_id, assigned_at )
             `)
@@ -232,7 +504,7 @@ window.FeatureClassMaterialCombinations = (function () {
      */
     async function setComboExamTemplates(comboId, examTemplateIds) {
         const wanted = (examTemplateIds || []).filter(Boolean);
-        if (!wanted.length) throw new Error('請至少勾選一個考卷範本');
+        if (!wanted.length) throw new Error('請至少勾選一個試卷範本');
         const { data: existingLinks, error: readErr } = await window.supabaseClient
             .from('material_combination_exam_templates')
             .select('id, exam_template_id')
@@ -453,7 +725,7 @@ window.FeatureClassMaterialCombinations = (function () {
         const templates = examTemplatesList();
         const checked = checkedIds || [];
         if (!templates.length) {
-            return '<div style="color:#B45309; font-size:0.78rem;">目前還沒有任何考卷範本，請先按下面「🧾 新增考卷範本」建立至少一個。</div>';
+            return '<div style="color:#B45309; font-size:0.78rem;">目前還沒有任何試卷範本，請先按下面「🧾 新增試卷範本」建立至少一個。</div>';
         }
         return templates.map(function (t) {
             return '<label style="display:inline-flex; align-items:center; gap:4px; margin:2px 10px 2px 0; font-size:0.78rem; color:#334155;">'
@@ -483,9 +755,9 @@ window.FeatureClassMaterialCombinations = (function () {
             + '<input type="text" class="form-control cmc-group-label" placeholder="例如「GEPT-2 全冊」" style="width:260px; padding:5px; margin-top:2px; display:block;">'
             + '</label>'
             + '<div style="border-top:1px dashed #CBD5E1; margin:8px 0; padding-top:8px;">'
-            + '<div style="font-size:0.76rem; font-weight:800; color:#7C3AED; margin-bottom:4px;">Step 2：套用考卷範本（至少勾選一個，這是「明確搭配」，不是自動繼承）</div>'
+            + '<div style="font-size:0.76rem; font-weight:800; color:#7C3AED; margin-bottom:4px;">Step 2：套用試卷範本（至少勾選一個，這是「明確搭配」，不是自動繼承）</div>'
             + '<div class="cmc-group-exam-tpl-checks">' + examTemplateCheckboxesHtml('cmc-group', []) + '</div>'
-            + '<button type="button" class="cmc-group-new-exam-tpl-btn btn" data-idx="' + idx + '" style="margin-top:4px; padding:2px 8px; font-size:0.72rem; background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px;">🧾 新增考卷範本</button>'
+            + '<button type="button" class="cmc-group-new-exam-tpl-btn btn" data-idx="' + idx + '" style="margin-top:4px; padding:2px 8px; font-size:0.72rem; background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px;">🧾 新增試卷範本</button>'
             + '</div>'
             + '<div style="border-top:1px dashed #CBD5E1; margin:8px 0; padding-top:8px;">'
             + '<div style="font-size:0.76rem; font-weight:800; color:#475569; margin-bottom:4px;">Step 3：指派給班級</div>'
@@ -510,7 +782,7 @@ window.FeatureClassMaterialCombinations = (function () {
             ? examIds.map(function (id) {
                 return '<span style="display:inline-flex; align-items:center; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:14px; padding:2px 10px; margin:2px 4px 0 0; font-size:0.74rem; color:#6D28D9;">🧾 ' + esc(examTemplateNameById(id)) + '</span>';
             }).join('')
-            : '<span style="color:#B45309; font-size:0.76rem; font-weight:700;">⚠️ 尚未套用考卷範本，出題畫面不會標⭐建議</span>';
+            : '<span style="color:#B45309; font-size:0.76rem; font-weight:700;">⚠️ 尚未套用試卷範本，出題畫面不會標⭐建議</span>';
         const assignments = Array.isArray(combo.class_material_combinations) ? combo.class_material_combinations : [];
         const chipsHtml = assignments.length
             ? assignments.map(function (a) {
@@ -524,11 +796,11 @@ window.FeatureClassMaterialCombinations = (function () {
             + '<div style="font-size:0.82rem; color:#334155;">' + rootLabel + '｜📁 <strong>' + esc(folder.folder_name || '') + '</strong>｜🧩 ' + esc(tpl ? tpl.name : '（找不到擷取範本）') + '｜共 ' + sheetCount + ' 個活頁'
             + (combo.label ? ('｜🏷️ ' + esc(combo.label)) : '') + '</div>'
             + '<div style="margin-top:6px;">' + examChipsHtml
-            + ' <button type="button" class="cmc-combo-edit-exam-tpl-btn btn" data-idx="' + idx + '" style="padding:1px 8px; font-size:0.7rem; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:5px;">✏️ 編輯考卷範本搭配</button></div>'
+            + ' <button type="button" class="cmc-combo-edit-exam-tpl-btn btn" data-idx="' + idx + '" style="padding:1px 8px; font-size:0.7rem; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:5px;">✏️ 編輯試卷範本搭配</button></div>'
             + '<div class="cmc-combo-exam-tpl-edit-form" data-idx="' + idx + '" style="display:none; margin-top:8px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:6px; padding:8px;">'
             + '<div class="cmc-combo-exam-tpl-checks">' + examTemplateCheckboxesHtml('cmc-combo-' + idx, examIds) + '</div>'
             + '<div style="margin-top:6px; display:flex; align-items:center; gap:8px;">'
-            + '<button type="button" class="cmc-combo-new-exam-tpl-btn btn" style="padding:2px 8px; font-size:0.72rem; background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px;">🧾 新增考卷範本</button>'
+            + '<button type="button" class="cmc-combo-new-exam-tpl-btn btn" style="padding:2px 8px; font-size:0.72rem; background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px;">🧾 新增試卷範本</button>'
             + '<button type="button" class="cmc-combo-save-exam-tpl-btn btn btn-primary" data-idx="' + idx + '" style="padding:3px 12px; font-size:0.74rem; font-weight:800;">💾 儲存搭配</button>'
             + '<span class="cmc-combo-exam-tpl-msg" data-idx="' + idx + '" style="font-size:0.74rem; font-weight:700;"></span>'
             + '</div>'
@@ -546,9 +818,10 @@ window.FeatureClassMaterialCombinations = (function () {
         });
 
         wrap.innerHTML = `
+            ${renderClassReviewDeskHtml(combos)}
             <div style="background:#F8FAFC; padding:20px; border-radius:12px; border:2px solid #CBD5E1; margin-top:16px;">
-                <h3 style="margin:0 0 4px 0; color:var(--primary-dark);">🏫 班級教材組合：把「套用到教材」的組合搭配考卷範本後指派給班級</h3>
-                <p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">下面每一列都是上面「📎 套用到教材」已經有的（教材資料夾＋擷取範本）組合。選一組 → 勾選要搭配的考卷範本（Step 2，至少一個）→ 選要指派的班級（Step 3），三步驟一次完成；之後可以在資料庫查到「這個班級用了哪個教材組合、搭配哪個考卷範本」。只是額外記錄關聯，不影響出題與 Drive 上的檔案。</p>
+                <h3 style="margin:0 0 4px 0; color:var(--primary-dark);">🏫 班級教材組合：把「套用到教材」的組合搭配試卷範本後指派給班級</h3>
+                <p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">下面每一列都是上面「📎 套用到教材」已經有的（教材資料夾＋擷取範本）組合。選一組 → 勾選要搭配的試卷範本（Step 2，至少一個）→ 選要指派的班級（Step 3），三步驟一次完成；之後可以在資料庫查到「這個班級用了哪個教材組合、搭配哪個試卷範本」。只是額外記錄關聯，不影響出題與 Drive 上的檔案。</p>
                 <div id="cmc-groups-list">${groups.length ? groups.map(function (g, idx) { return renderGroupRowHtml(g, idx, comboClassIdsByGroupKey[groupKeyOf(g)] || []); }).join('') : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有任何「套用到教材」的紀錄，請先到上面「📎 套用到教材」建立至少一組。</div>'}</div>
 
                 <h4 style="margin:16px 0 6px 0; color:#15803D;">已建立的班級教材組合</h4>
@@ -580,7 +853,7 @@ window.FeatureClassMaterialCombinations = (function () {
                 const labelEl = form.querySelector('.cmc-group-label');
                 const checkedExamTemplateIds = Array.from(form.querySelectorAll('.cmc-group-exam-tpl-cb:checked')).map(function (cb) { return cb.value; });
                 if (!checkedExamTemplateIds.length) {
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個考卷範本（Step 2）'; }
+                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個試卷範本（Step 2）'; }
                     return;
                 }
                 const checkedClassIds = Array.from(form.querySelectorAll('.cmc-group-class-cb:checked:not(:disabled)')).map(function (cb) { return cb.value; });
@@ -623,7 +896,7 @@ window.FeatureClassMaterialCombinations = (function () {
                 const msgEl = wrap.querySelector('.cmc-combo-exam-tpl-msg[data-idx="' + idx + '"]');
                 const checkedExamTemplateIds = Array.from(form.querySelectorAll('.cmc-combo-' + idx + '-exam-tpl-cb:checked')).map(function (cb) { return cb.value; });
                 if (!checkedExamTemplateIds.length) {
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個考卷範本'; }
+                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個試卷範本'; }
                     return;
                 }
                 btn.disabled = true;
@@ -631,7 +904,7 @@ window.FeatureClassMaterialCombinations = (function () {
                 try {
                     await setComboExamTemplates(combo.id, checkedExamTemplateIds);
                     invalidateSuggestionCache();
-                    window.showFlash && window.showFlash('✅ 已更新考卷範本搭配', 'success');
+                    window.showFlash && window.showFlash('✅ 已更新試卷範本搭配', 'success');
                     render();
                 } catch (err) {
                     console.error('[FeatureClassMaterialCombinations] 更新考卷範本搭配失敗', err);
@@ -640,6 +913,8 @@ window.FeatureClassMaterialCombinations = (function () {
                 }
             });
         });
+
+        bindClassReviewDesk(wrap);
 
         wrap.querySelectorAll('.cmc-assign-remove-btn').forEach(function (btn) {
             btn.addEventListener('click', async function () {
@@ -763,10 +1038,11 @@ window.FeatureClassMaterialCombinations = (function () {
             if (!out[key]) out[key] = { folders: [], classNames: [], extraction: emptySide(), exam: emptySide(), hasExam: false };
             return out[key];
         }
-        function addToSide(rec, side, folderName, classId, sheetIds) {
+        function addToSide(rec, side, folderName, classId, sheetIds, extra) {
             const fn = String(folderName || '').trim();
             if (!rec || !side || !fn) return;
-            if (!side.byFolder[fn]) side.byFolder[fn] = { classNames: [], sheetIds: [] };
+            if (!side.byFolder[fn]) side.byFolder[fn] = { classNames: [], sheetIds: [], templateNames: [] };
+            if (!side.byFolder[fn].templateNames) side.byFolder[fn].templateNames = [];
             if (side.folders.indexOf(fn) === -1) side.folders.push(fn);
             if (rec.folders.indexOf(fn) === -1) rec.folders.push(fn);
             (sheetIds || []).forEach(function (s) {
@@ -774,6 +1050,10 @@ window.FeatureClassMaterialCombinations = (function () {
                 if (stem && side.byFolder[fn].sheetIds.indexOf(stem) === -1) side.byFolder[fn].sheetIds.push(stem);
             });
             side.byFolder[fn].sheetIds = collapseRelatedSheetStems(side.byFolder[fn].sheetIds);
+            const tplName = extra && extra.templateName ? String(extra.templateName).trim() : '';
+            if (tplName && side.byFolder[fn].templateNames.indexOf(tplName) === -1) {
+                side.byFolder[fn].templateNames.push(tplName);
+            }
             if (!classId) return;
             const n = classNameById(classId);
             if (!n) return;
@@ -793,16 +1073,12 @@ window.FeatureClassMaterialCombinations = (function () {
             });
             sheetsByFolder[fn] = collapseRelatedSheetStems(sheetsByFolder[fn]);
         });
-        function driveSheetStems(folderName) {
-            if (!window.FeatureExamJob || typeof window.FeatureExamJob.getSheetStemsForFolder !== 'function') return [];
-            return window.FeatureExamJob.getSheetStemsForFolder('', 'teacher', folderName) || [];
-        }
         function examSheetsForFolder(folderName, preferred) {
             const picked = (preferred && preferred.length)
                 ? preferred
                 : ((sheetsByFolder[String(folderName || '').trim()] && sheetsByFolder[String(folderName || '').trim()].length)
                     ? sheetsByFolder[String(folderName || '').trim()]
-                    : driveSheetStems(folderName));
+                    : []);
             return collapseRelatedSheetStems(picked);
         }
         (applyRows || []).forEach(function (row) {
@@ -810,41 +1086,32 @@ window.FeatureClassMaterialCombinations = (function () {
             if (!rec) return;
             const folderName = (row.material_folders && row.material_folders.folder_name) || '';
             const sourceFile = String(row.source_file_name || '').trim();
-            // 擷取範本的來源只能是本機 Excel；雲端教材是已發布檔，不能當擷取來源
-            if (!sourceFile || row.source_kind === 'drive') {
-                if (folderName && rec.folders.indexOf(folderName) === -1) rec.folders.push(folderName);
-                return;
-            }
-            const sourceKind = 'local';
-            const templateName = (row.material_templates && row.material_templates.name) || '';
-            const key = sourceKind + '|' + sourceFile.toUpperCase() + '|' + String(folderName).trim().toUpperCase();
+            const stem = String(row.sheet_stem || '').trim().replace(/\.meta\.json$/i, '');
+            const tplName = (row.material_templates && row.material_templates.name)
+                || templateNameById(row.extraction_template_id)
+                || '';
+            const metaName = toMetaFileName(stem, tplName);
+            if (folderName && rec.folders.indexOf(folderName) === -1) rec.folders.push(folderName);
+            if (!folderName && !sourceFile && !stem) return;
+            const key = (sourceFile || folderName || stem).toUpperCase() + '|' + String(folderName).trim().toUpperCase();
             if (!rec.extraction.byKey) rec.extraction.byKey = {};
             if (!rec.extraction.byKey[key]) {
                 const item = {
-                    sourceKind: sourceKind,
                     sourceFile: sourceFile,
                     sheets: [],
-                    targetFolder: folderName,
-                    files: [],
-                    templateName: templateName
+                    metaFiles: [],
+                    targetFolder: folderName
                 };
                 rec.extraction.byKey[key] = item;
                 rec.extraction.records.push(item);
             }
             const item = rec.extraction.byKey[key];
-            const rawStem = String(row.sheet_stem || '').trim();
-            const layoutPart = sanitizeFileNamePart(item.templateName || templateName);
-            let stem = rawStem.replace(/\.meta\.json$/i, '');
-            if (layoutPart) {
-                const re = new RegExp('\\.' + layoutPart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
-                stem = stem.replace(re, '') || stem;
-            }
-            if (stem && item.sheets.indexOf(stem) === -1) {
-                item.sheets.push(stem);
-                const fileName = extractionOutputMetaName(stem, item.templateName || templateName, item.sourceKind);
-                if (item.files.indexOf(fileName) === -1) item.files.push(fileName);
-            }
-            if (folderName && rec.folders.indexOf(folderName) === -1) rec.folders.push(folderName);
+            const sheetLabel = sheetLabelFromStem(stem, tplName);
+            if (sheetLabel && item.sheets.indexOf(sheetLabel) === -1) item.sheets.push(sheetLabel);
+            if (metaName && item.metaFiles.indexOf(metaName) === -1) item.metaFiles.push(metaName);
+            item.metaFiles = collapseRelatedSheetStems(item.metaFiles).map(function (s) {
+                return /\.meta\.json$/i.test(s) ? s : (s + '.meta.json');
+            });
             if (folderName && rec.extraction.folders.indexOf(folderName) === -1) rec.extraction.folders.push(folderName);
         });
         (combos || []).forEach(function (c) {
@@ -865,8 +1132,9 @@ window.FeatureClassMaterialCombinations = (function () {
                 const examRec = ensure(l.exam_template_id);
                 if (!examRec) return;
                 examRec.hasExam = true;
-                if (!assigns.length) addToSide(examRec, examRec.exam, folderName, null, sheetIds);
-                assigns.forEach(function (a) { addToSide(examRec, examRec.exam, folderName, a.class_id, sheetIds); });
+                const examTplName = templateNameById(l.exam_template_id);
+                if (!assigns.length) addToSide(examRec, examRec.exam, folderName, null, sheetIds, { templateName: examTplName });
+                assigns.forEach(function (a) { addToSide(examRec, examRec.exam, folderName, a.class_id, sheetIds, { templateName: examTplName }); });
             });
         });
         _usageSummaryCache = out;
@@ -898,42 +1166,62 @@ window.FeatureClassMaterialCombinations = (function () {
         return '<div style="font-size:0.76rem; color:#047857; font-weight:700;">' + esc(lead) + '｜' + countHtml + trailHtml + '</div>' + box;
     }
 
-    function usageExamSideHtml(side, emptyText) {
+    function sheetLabelFromStem(sheetStem, templateName) {
+        let s = String(sheetStem || '').trim().replace(/\.meta\.json$/i, '');
+        const t = String(templateName || '').trim().replace(/[\\/]/g, '-');
+        if (t) {
+            const re = new RegExp('\\.' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+            s = s.replace(re, '');
+        }
+        return s || String(sheetStem || '').trim().replace(/\.meta\.json$/i, '');
+    }
+
+    function toMetaFileName(sheetStem, templateName) {
+        let s = String(sheetStem || '').trim();
+        if (!s) return '';
+        if (/\.meta\.json$/i.test(s)) return s;
+        const tpl = String(templateName || '').trim().replace(/[\\/]/g, '-');
+        if (tpl) {
+            const suffix = '.' + tpl;
+            if (s.length >= suffix.length && s.slice(-suffix.length).toLowerCase() === suffix.toLowerCase()) {
+                return s + '.meta.json';
+            }
+            if (s.indexOf('.') < 0) return s + suffix + '.meta.json';
+        }
+        return s + '.meta.json';
+    }
+
+    function usageExamSideHtml(side, emptyText, fallbackTemplateName) {
         const folders = (side && side.folders) ? side.folders : [];
         if (!folders.length) {
             return '<div style="font-size:0.76rem; color:#94A3B8; font-weight:700; margin-left:2px;">' + esc(emptyText) + '</div>';
         }
         return folders.map(function (fn) {
             const info = side.byFolder && side.byFolder[fn];
-            const sheets = (info && info.sheetIds) ? info.sheetIds : [];
+            const names = (info && info.templateNames && info.templateNames.length)
+                ? info.templateNames
+                : (fallbackTemplateName ? [fallbackTemplateName] : []);
             const classes = (info && info.classNames) ? info.classNames : [];
             const classPart = classes.length ? ('班級 ' + classes.join('、')) : '尚未指派班級';
-            return usageExpandRowHtml('教材 ' + fn, sheets, '活頁', classPart);
+            return usageExpandRowHtml('教材 ' + fn, names, '範本', classPart);
         }).join('');
     }
 
     function usageExtractionHtml(side, emptyText) {
-        const records = ((side && side.records) ? side.records : []).filter(function (r) { return r && r.sourceFile; });
+        const records = ((side && side.records) ? side.records : []).filter(function (r) {
+            return r && (r.sourceFile || r.targetFolder || (r.metaFiles && r.metaFiles.length) || (r.sheets && r.sheets.length));
+        });
         if (!records.length) {
             return '<div style="font-size:0.76rem; color:#94A3B8; font-weight:700; margin-left:2px;">' + esc(emptyText) + '</div>';
         }
         return records.map(function (r) {
-            const targetLabel = r.targetFolder || '（未指定資料夾）';
-            const catalogReady = !!(window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function'
-                && window.FeatureTimeline.getMetaCatalogEntry('', 'teacher'));
-            const liveNames = (catalogReady && window.FeatureExamJob && typeof window.FeatureExamJob.getRawFileNamesForFolder === 'function')
-                ? (window.FeatureExamJob.getRawFileNamesForFolder('', 'teacher', r.targetFolder) || [])
-                : null;
-            const driveFiles = Array.isArray(liveNames) ? liveNames : [];
-            const fileLead = (catalogReady && !driveFiles.length)
-                ? ('目標 ' + targetLabel + '（Drive 尚無 meta，尚未上傳）')
-                : ('目標 ' + targetLabel);
-            const fileList = driveFiles.length ? driveFiles : (r.files || []);
-            const fileUnit = driveFiles.length ? '檔案' : '預計檔名';
-            return '<div style="margin-top:4px;">'
-                + usageExpandRowHtml('檔案 ' + r.sourceFile, r.sheets, '活頁')
-                + usageExpandRowHtml(fileLead, fileList, fileUnit)
-                + '</div>';
+            const sheets = (r.sheets && r.sheets.length) ? r.sheets : [];
+            const files = (r.metaFiles && r.metaFiles.length) ? r.metaFiles : [];
+            const parts = [];
+            if (r.sourceFile) parts.push(usageExpandRowHtml('檔案 ' + r.sourceFile, sheets, '活頁'));
+            if (r.targetFolder) parts.push(usageExpandRowHtml('教材 ' + r.targetFolder, files, 'meta'));
+            if (!parts.length) parts.push(usageExpandRowHtml('meta 檔', files, 'meta'));
+            return '<div style="margin-top:4px;">' + parts.join('') + '</div>';
         }).join('');
     }
 
@@ -950,8 +1238,8 @@ window.FeatureClassMaterialCombinations = (function () {
         }
         const extractionBlock = '<div style="margin-top:4px;"><span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.72rem; font-weight:800; color:#6D28D9; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:10px;">擷取範本</span></div>'
             + usageExtractionHtml(extraction, '尚未套用到教材');
-        const examBlock = '<div style="margin-top:6px;"><span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.72rem; font-weight:800; color:#1D4ED8; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px;">🧾 考卷範本</span></div>'
-            + usageExamSideHtml(exam, '尚未作為試卷套用');
+        const examBlock = '<div style="margin-top:6px;"><span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.72rem; font-weight:800; color:#1D4ED8; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px;">🧾 試卷範本</span></div>'
+            + usageExamSideHtml(exam, '尚未作為試卷套用', templateNameById(templateId));
         const body = lead === 'exam' ? (examBlock + extractionBlock) : (extractionBlock + examBlock);
         return '<div style="font-size:0.76rem; color:#047857; font-weight:700; margin-top:4px;">實際使用：</div>' + body;
     }

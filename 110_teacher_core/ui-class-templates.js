@@ -79,7 +79,59 @@ window.ClassTemplates = (() => {
         `;
     }
 
-    function getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy) {
+    function getReviewZoneSettingsHtml(cls, reviewZone) {
+        const rz = reviewZone || {};
+        const enabled = !!rz.enabled;
+        const allowPractice = rz.allow_practice !== false;
+        const allowTest = rz.allow_test !== false;
+        const teacherView = !!rz.teacher_can_view || !!rz.test_counts_as_score;
+        const countsScore = !!rz.test_counts_as_score;
+        const updated = rz.catalog_updated_at
+            ? String(rz.catalog_updated_at).replace('T', ' ').slice(0, 16)
+            : '尚未更新';
+        const classId = cls && cls.id ? String(cls.id) : '';
+        return `
+                <div style="background: #FFF7ED; padding: 15px; border-radius: 8px; border: 1px solid #FED7AA; margin-bottom: 20px;">
+                    <label style="display:block; font-weight:bold; color:#C2410C; margin-bottom:8px;">📖 練習專區</label>
+                    <p style="margin:0 0 10px; font-size:0.82rem; color:#9A3412; font-weight:600; line-height:1.5;">
+                        先勾「開放學生練習專區」，學生才能自選本班已指派教材做練習或測試。預設關閉。
+                    </p>
+                    <label style="cursor:pointer; font-weight:800; color:#9A3412; display:flex; align-items:center; margin-bottom:8px;">
+                        <input type="checkbox" id="rz-enabled" ${enabled ? 'checked' : ''} style="transform:scale(1.2); margin-right:8px;"
+                            onchange="window.FeatureClass.syncPracticeZoneLock && window.FeatureClass.syncPracticeZoneLock()">
+                        開放學生練習專區
+                    </label>
+                    <div style="display:flex; flex-direction:column; gap:6px; padding-left:4px; margin-bottom:10px;">
+                        <label style="font-size:0.85rem; font-weight:700; color:#7C2D12;">
+                            <input type="checkbox" id="rz-allow-practice" ${allowPractice ? 'checked' : ''} ${enabled ? '' : 'disabled'}> 允許練習（學生自設次數）
+                        </label>
+                        <label style="font-size:0.85rem; font-weight:700; color:#7C2D12;">
+                            <input type="checkbox" id="rz-allow-test" ${allowTest ? 'checked' : ''} ${enabled ? '' : 'disabled'}> 允許測試
+                        </label>
+                        <label style="font-size:0.85rem; font-weight:700; color:#7C2D12;">
+                            <input type="checkbox" id="rz-teacher-can-view" ${teacherView ? 'checked' : ''} ${enabled ? '' : 'disabled'}> 老師可看練習／測試紀錄
+                        </label>
+                        <label style="font-size:0.85rem; font-weight:700; color:#7C2D12;">
+                            <input type="checkbox" id="rz-test-counts-as-score" ${countsScore ? 'checked' : ''} ${enabled ? '' : 'disabled'}
+                                onchange="var v=document.getElementById('rz-teacher-can-view'); if(this.checked && v) v.checked=true;">
+                            測試分數納入作業成績／測驗成績
+                        </label>
+                    </div>
+                    <input type="hidden" id="rz-catalog-updated-at" value="${escapeHtml(rz.catalog_updated_at || '')}">
+                    <div style="font-size:0.78rem; color:#9A3412; font-weight:700; margin-bottom:8px;">教材目錄更新：${escapeHtml(updated)}</div>
+                    <button type="button" class="btn" id="rz-refresh-catalog" style="background:#EA580C; color:white; border:none; padding:8px 12px; border-radius:6px; font-weight:800; cursor:pointer;"
+                        onclick="window.FeatureClass.refreshReviewCatalog && window.FeatureClass.refreshReviewCatalog('${classId}')">
+                        🔄 更新教材目錄
+                    </button>
+                    <div id="rz-catalog-status" style="margin-top:6px; min-height:1.1em; font-size:0.78rem; font-weight:700; color:#9A3412;"></div>
+                    <p style="margin:8px 0 0; font-size:0.75rem; color:#C2410C; line-height:1.45;">
+                        「更新教材目錄」會把本班已指派教材做成學生可選清單。教材有增減或改過 meta 時再按。沒勾開放時，下面選項不能改。
+                    </p>
+                </div>
+        `;
+    }
+
+    function getClassSettingsModalHtml(cls, currentMode, lateDefaults, iconInputHTML, overlayId, gradingPolicy, reviewZone) {
         const gp = gradingPolicy ? gradingPolicy : {};
         const finalAuth = gp.final_authority ? gp.final_authority : 'human_confirm';
         const accent = gp.accent ? gp.accent : 'en-us';
@@ -200,6 +252,8 @@ window.ClassTemplates = (() => {
                         </div>
                     </div>
                 </div>
+
+                ${getReviewZoneSettingsHtml(cls, reviewZone)}
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
                     <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="window.FeatureClass.closeClassSettings()">取消</button>

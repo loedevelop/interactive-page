@@ -189,12 +189,27 @@ window.FeatureStudentQuiz = (function () {
      * 這裡改成一律用「這題在目前列表中排第幾個」（displayNo，1-based）當標籤，seq 只在
      * 沒給 displayNo 時（相容舊資料）當退路。
      */
+    function displaySheetName(sheetId) {
+        let s = String(sheetId || '').trim().replace(/\.meta\.json$/i, '');
+        if (!s) return '';
+        const dot = s.indexOf('.');
+        if (dot > 0) s = s.slice(0, dot);
+        return s.toUpperCase();
+    }
+
     function headlineFromWrongItem(d, displayNo) {
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.formatItemHeadline === 'function') {
+            const shared = window.QuizPaperBuilder.formatItemHeadline(d, displayNo);
+            if (shared) return shared;
+        }
         const seq = displayNo != null ? String(displayNo) : (d && d.seq != null ? String(d.seq) : '');
         const src = (d && d.source) || {};
-        const sheet = String(src.sheet_id || '').trim().toUpperCase();
+        const vbk = String(src.vbk_name || src.vBK_name || '').trim();
+        const sheet = vbk || displaySheetName(src.sheet_id);
         const page = src.page != null && src.page !== '' ? String(src.page) : '';
-        const itemNo = src.item_no != null && src.item_no !== '' ? String(src.item_no) : '';
+        const itemNo = String(src.item_no_label != null && src.item_no_label !== ''
+            ? src.item_no_label
+            : (src.item_no != null && src.item_no !== '' ? src.item_no : '')).trim();
         let meta = '';
         if (sheet && page && itemNo) meta = sheet + ' - ' + page + ' - ' + itemNo;
         else if (sheet && itemNo) meta = sheet + ' - ' + itemNo;
@@ -431,7 +446,7 @@ window.FeatureStudentQuiz = (function () {
             '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
                     '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">📋 ' + esc(title) + '</h3>' +
-                    '<button type="button" class="btn" style="padding:4px 10px;" onclick="' + closeAction + '">關閉</button>' +
+                    '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="' + closeAction + '">關閉</button>' +
                 '</div>' +
                 '<div style="margin-bottom:12px; padding:10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-weight:800; color:#134E4A; font-size:0.88rem;">'
                     + '得分 ' + esc(result.correct) + ' / ' + esc(result.total) + '（' + esc(result.score) + '%）'
@@ -504,11 +519,18 @@ window.FeatureStudentQuiz = (function () {
 
     /** 同 headlineFromWrongItem 的雷區說明：displayNo（畫面上排第幾題）優先於 it.seq。 */
     function formatItemHeadline(it, displayNo) {
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.formatItemHeadline === 'function') {
+            const shared = window.QuizPaperBuilder.formatItemHeadline(it, displayNo);
+            if (shared) return shared;
+        }
         const seq = displayNo != null ? String(displayNo) : (it && it.seq != null ? String(it.seq) : '');
         const src = (it && it.source) || {};
-        const sheet = String(src.sheet_id || '').trim().toUpperCase();
+        const vbk = String(src.vbk_name || src.vBK_name || '').trim();
+        const sheet = vbk || displaySheetName(src.sheet_id);
         const page = src.page != null && src.page !== '' ? String(src.page) : '';
-        const itemNo = src.item_no != null && src.item_no !== '' ? String(src.item_no) : '';
+        const itemNo = String(src.item_no_label != null && src.item_no_label !== ''
+            ? src.item_no_label
+            : (src.item_no != null && src.item_no !== '' ? src.item_no : '')).trim();
         let meta = '';
         if (sheet && page && itemNo) meta = sheet + ' - ' + page + ' - ' + itemNo;
         else if (sheet && itemNo) meta = sheet + ' - ' + itemNo;
@@ -517,8 +539,8 @@ window.FeatureStudentQuiz = (function () {
             const parts = String(stack).split(/\s+/).map(function (p) {
                 return String(p || '').trim();
             }).filter(Boolean);
-            if (parts.length >= 3) meta = parts[0] + ' - ' + parts[1] + ' - ' + parts[2];
-            else if (parts.length) meta = parts.join(' - ');
+            if (parts.length >= 3) meta = displaySheetName(parts[0]) + ' - ' + parts[1] + ' - ' + parts[2];
+            else if (parts.length) meta = parts.map(function (p, i) { return i === 0 ? displaySheetName(p) : p; }).join(' - ');
         }
         if (seq && meta) return seq + '. ' + meta;
         if (seq) return seq + '.';
@@ -1037,7 +1059,7 @@ window.FeatureStudentQuiz = (function () {
                         '<h3 style="margin:0; font-size:1.15rem; font-weight:900; color:#0F766E;">📝 ' + esc(title) + '</h3>' +
                         '<div style="display:flex; align-items:center; gap:8px;">' +
                             '<span id="' + MODAL_ID + '-leave-badge" style="font-size:0.8rem; font-weight:900; padding:4px 10px; border-radius:999px; border:1px solid #E2E8F0; background:#F1F5F9; color:#64748B;">離開 <span id="' + MODAL_ID + '-leave-count">0</span> 次</span>' +
-                            '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeatureStudentQuiz.requestCloseQuiz()">關閉</button>' +
+                            '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.FeatureStudentQuiz.requestCloseQuiz()">關閉</button>' +
                         '</div>' +
                     '</div>' +
                     prevScoreHtml +
@@ -1233,7 +1255,7 @@ window.FeatureStudentQuiz = (function () {
                 '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
                         '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">🔁 錯題重考・' + esc(title) + '</h3>' +
-                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + RETAKE_MODAL_ID + '\')">關閉</button>' +
+                        '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + RETAKE_MODAL_ID + '\')">關閉</button>' +
                     '</div>' +
                     '<div style="font-size:0.8rem; color:#92400E; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; padding:8px 10px; margin-bottom:10px;">' +
                         '本次只重考上次答錯的 ' + retakeItems.length + ' 題，僅能重考一次，交卷後會產生整體報告（原始成績＋訂正後成績）。</div>' +
@@ -1350,7 +1372,7 @@ window.FeatureStudentQuiz = (function () {
             '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
                     '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">📊 ' + esc(title) + '・整體報告</h3>' +
-                    '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">關閉</button>' +
+                    '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">關閉</button>' +
                 '</div>' +
                 '<div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;">' +
                     '<div style="flex:1 1 200px; padding:10px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;">' +
@@ -1523,27 +1545,53 @@ window.FeatureStudentQuiz = (function () {
         return (progressMap[itemId] && progressMap[itemId][partKey]) || 0;
     }
 
-    function summarizePracticeProgress(normItems, requiredCount, progressMap) {
+    function summarizePracticeProgress(normItems, requiredCount, progressMap, difficultyMap, levelCounts) {
         let done = 0;
         normItems.forEach(function (it) {
-            const itemDone = it.parts.every(function (p) { return practiceProgressReps(progressMap, it.item_id, p.key) >= requiredCount; });
+            const need = requiredForPracticeItem(it.item_id, difficultyMap, levelCounts, requiredCount);
+            const itemDone = it.parts.every(function (p) { return practiceProgressReps(progressMap, it.item_id, p.key) >= need; });
             if (itemDone) done += 1;
         });
         return { total: normItems.length, done: done, allDone: normItems.length > 0 && done === normItems.length };
     }
 
-    function renderPracticeSessionHtml(kind, normItems, requiredCount, progressMap) {
+    function defaultPracticeLevelCounts(teacherDefault) {
+        const easy = Math.max(1, Number(teacherDefault) || 1);
+        return { easy: easy, mid: Math.max(easy, 3), hard: Math.max(easy, 5) };
+    }
+
+    function requiredForPracticeItem(itemId, difficultyMap, levelCounts, fallbackCount) {
+        if (!difficultyMap) return Math.max(1, Number(fallbackCount) || 1);
+        const lv = difficultyMap[itemId] || 'easy';
+        const counts = levelCounts || {};
+        return Math.max(1, Number(counts[lv]) || (lv === 'hard' ? 5 : (lv === 'mid' ? 3 : 1)));
+    }
+
+    function practiceLevelChipHtml(itemId, current, i) {
+        return ['easy', 'mid', 'hard'].map(function (lv) {
+            const label = lv === 'easy' ? '易' : (lv === 'mid' ? '中' : '難');
+            const on = current === lv;
+            return '<button type="button" class="btn pi-level-btn" data-item-id="' + esc(itemId) + '" data-level="' + lv + '" data-card="' + i + '" style="padding:2px 8px; font-size:0.72rem; border-radius:999px; '
+                + (on ? 'background:#0F766E; color:white;' : 'background:#F1F5F9; color:#334155;') + '">' + label + '</button>';
+        }).join('');
+    }
+
+    function renderPracticeSessionHtml(kind, normItems, requiredCount, progressMap, difficultyMap, levelCounts) {
+        const useLevels = kind === 'practice' && difficultyMap;
         return normItems.map(function (it, i) {
+            const need = useLevels
+                ? requiredForPracticeItem(it.item_id, difficultyMap, levelCounts, requiredCount)
+                : requiredCount;
             const partsHtml = it.parts.map(function (p, j) {
                 const reps = practiceProgressReps(progressMap, it.item_id, p.key);
                 const rowId = 'pi-row-' + kind + '-' + i + '-' + j;
                 const labelHtml = p.label ? ('<div style="font-size:0.7rem; color:#64748B; font-weight:700;">' + esc(p.label) + '</div>') : '';
                 // 💣 老師要求（2026-08-14）：完成後紅字答案不要消失——完成只是拿掉輸入框，
                 // 答案本身仍留著給學生對照，不要整段被「✅ 已完成」取代掉。
-                if (reps >= requiredCount) {
+                if (reps >= need) {
                     return '<div id="' + rowId + '" style="margin-top:6px;">' + labelHtml
                         + '<div style="color:#DC2626; font-weight:900; font-size:1em; white-space:pre-wrap; margin-bottom:4px;">' + esc(p.expected) + '</div>'
-                        + '<div style="color:#047857; font-weight:800; font-size:0.85rem;">✅ 已完成（' + requiredCount + '/' + requiredCount + ' 次）</div></div>';
+                        + '<div style="color:#047857; font-weight:800; font-size:0.85rem;">✅ 已完成（' + need + '/' + need + ' 次）</div></div>';
                 }
                 return (
                     '<div id="' + rowId + '" style="margin-top:6px;">' + labelHtml +
@@ -1551,17 +1599,21 @@ window.FeatureStudentQuiz = (function () {
                         '<input id="pi-input-' + kind + '-' + i + '-' + j + '" class="quiz-answer-input" type="text" lang="en" inputmode="text" ' +
                             'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" ' +
                             'data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" data-lt-active="false" ' +
-                            'placeholder="請照打上方答案" ' +
+                            'placeholder="請照打上方紅字答案" ' +
                             'style="width:100%; padding:8px 10px; border:1px solid #CBD5E1; border-radius:8px; font-size:0.95rem;">' +
-                        '<div id="pi-counter-' + kind + '-' + i + '-' + j + '" style="font-size:0.72rem; color:#94A3B8; font-weight:700; margin-top:2px;">第 ' + (reps + 1) + '/' + requiredCount + ' 次</div>' +
+                        '<div id="pi-counter-' + kind + '-' + i + '-' + j + '" style="font-size:0.72rem; color:#94A3B8; font-weight:700; margin-top:2px;">第 ' + (reps + 1) + '/' + need + ' 次</div>' +
                     '</div>'
                 );
             }).join('');
-            const allDone = it.parts.every(function (p) { return practiceProgressReps(progressMap, it.item_id, p.key) >= requiredCount; });
+            const allDone = it.parts.every(function (p) { return practiceProgressReps(progressMap, it.item_id, p.key) >= need; });
+            const levelHtml = useLevels
+                ? '<div style="display:flex; gap:4px; align-items:center; flex-shrink:0;">' + practiceLevelChipHtml(it.item_id, difficultyMap[it.item_id] || 'easy', i) + '</div>'
+                : '';
             return (
                 '<div id="pi-card-' + kind + '-' + i + '" style="border:1px solid #E2E8F0; border-radius:10px; padding:12px; margin-bottom:10px; background:' + (allDone ? '#F0FDF4' : '#F8FAFC') + ';">' +
-                    '<div id="pi-head-' + kind + '-' + i + '" style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">' +
+                    '<div id="pi-head-' + kind + '-' + i + '" style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">' +
                         '<div style="font-size:0.85rem; color:#0F766E; font-weight:900;">' + esc(it.headline) + '</div>' +
+                        levelHtml +
                         (allDone ? '<span class="pi-done-badge" style="font-size:0.75rem; color:#047857; font-weight:900;">✅ 完成</span>' : '') +
                     '</div>' +
                     '<div style="font-size:1rem; font-weight:800; color:#1E293B; white-space:pre-wrap; margin:4px 0;">' + esc(it.prompt) + '</div>' +
@@ -1576,12 +1628,13 @@ window.FeatureStudentQuiz = (function () {
      * 自動把焦點移到「目前這個空格之後、還沒完成的下一個輸入框」——可能是同一題的下一個
      * sub_answer 空格，也可能是下一題的第一個空格；找不到（代表全部都完成了）就不做事。
      */
-    function focusNextPracticeInput(kind, normItems, requiredCount, progressMap, fromI, fromJ) {
+    function focusNextPracticeInput(kind, normItems, requiredCount, progressMap, fromI, fromJ, difficultyMap, levelCounts) {
         for (let i = fromI; i < normItems.length; i++) {
             const it = normItems[i];
+            const need = requiredForPracticeItem(it.item_id, difficultyMap, levelCounts, requiredCount);
             const startJ = (i === fromI) ? fromJ + 1 : 0;
             for (let j = startJ; j < it.parts.length; j++) {
-                if (practiceProgressReps(progressMap, it.item_id, it.parts[j].key) >= requiredCount) continue;
+                if (practiceProgressReps(progressMap, it.item_id, it.parts[j].key) >= need) continue;
                 const nextInput = document.getElementById('pi-input-' + kind + '-' + i + '-' + j);
                 if (nextInput) {
                     nextInput.focus();
@@ -1593,31 +1646,33 @@ window.FeatureStudentQuiz = (function () {
     }
 
     /** 掛上逐字比對引擎；已完成的空格不掛（避免完成後還被誤觸發）。回傳 detachAll()。 */
-    function wirePracticeSession(kind, normItems, requiredCount, progressMap, onProgress, onAllDone) {
+    function wirePracticeSession(kind, normItems, requiredCount, progressMap, onProgress, onAllDone, difficultyMap, levelCounts) {
         const detachers = [];
         normItems.forEach(function (it, i) {
             it.parts.forEach(function (p, j) {
-                if (practiceProgressReps(progressMap, it.item_id, p.key) >= requiredCount) return;
+                const need0 = requiredForPracticeItem(it.item_id, difficultyMap, levelCounts, requiredCount);
+                if (practiceProgressReps(progressMap, it.item_id, p.key) >= need0) return;
                 const inputEl = document.getElementById('pi-input-' + kind + '-' + i + '-' + j);
                 if (!inputEl || !window.QuizPaperBuilder || typeof window.QuizPaperBuilder.attachStrictRetypeInput !== 'function') return;
                 const handle = window.QuizPaperBuilder.attachStrictRetypeInput(inputEl, p.expected, function () {
                     if (!progressMap[it.item_id]) progressMap[it.item_id] = {};
                     const nowReps = (progressMap[it.item_id][p.key] || 0) + 1;
                     progressMap[it.item_id][p.key] = nowReps;
+                    const need = requiredForPracticeItem(it.item_id, difficultyMap, levelCounts, requiredCount);
                     if (typeof onProgress === 'function') onProgress(progressMap);
-                    if (nowReps >= requiredCount) {
+                    if (nowReps >= need) {
                         const rowEl = document.getElementById('pi-row-' + kind + '-' + i + '-' + j);
                         if (rowEl) {
                             const labelHtml = p.label ? ('<div style="font-size:0.7rem; color:#64748B; font-weight:700;">' + esc(p.label) + '</div>') : '';
                             // 紅字答案不要消失，只是拿掉輸入框（見上方 renderPracticeSessionHtml 同一份規則）
                             rowEl.innerHTML = labelHtml
                                 + '<div style="color:#DC2626; font-weight:900; font-size:1em; white-space:pre-wrap; margin-bottom:4px;">' + esc(p.expected) + '</div>'
-                                + '<div style="color:#047857; font-weight:800; font-size:0.85rem;">✅ 已完成（' + requiredCount + '/' + requiredCount + ' 次）</div>';
+                                + '<div style="color:#047857; font-weight:800; font-size:0.85rem;">✅ 已完成（' + need + '/' + need + ' 次）</div>';
                         }
                         handle.detach();
                         // 這個欄位不用再打了，游標自動移到下一個還沒完成的欄位，不用學生自己去點
-                        focusNextPracticeInput(kind, normItems, requiredCount, progressMap, i, j);
-                        const itemAllDone = it.parts.every(function (pp) { return practiceProgressReps(progressMap, it.item_id, pp.key) >= requiredCount; });
+                        focusNextPracticeInput(kind, normItems, requiredCount, progressMap, i, j, difficultyMap, levelCounts);
+                        const itemAllDone = it.parts.every(function (pp) { return practiceProgressReps(progressMap, it.item_id, pp.key) >= need; });
                         if (itemAllDone) {
                             const cardEl = document.getElementById('pi-card-' + kind + '-' + i);
                             const headEl = document.getElementById('pi-head-' + kind + '-' + i);
@@ -1633,19 +1688,108 @@ window.FeatureStudentQuiz = (function () {
                             }
                         }
                         const allSessionDone = normItems.every(function (oit) {
-                            return oit.parts.every(function (pp) { return practiceProgressReps(progressMap, oit.item_id, pp.key) >= requiredCount; });
+                            const oNeed = requiredForPracticeItem(oit.item_id, difficultyMap, levelCounts, requiredCount);
+                            return oit.parts.every(function (pp) { return practiceProgressReps(progressMap, oit.item_id, pp.key) >= oNeed; });
                         });
                         if (allSessionDone && typeof onAllDone === 'function') onAllDone();
                     } else {
                         inputEl.value = '';
                         const counterEl = document.getElementById('pi-counter-' + kind + '-' + i + '-' + j);
-                        if (counterEl) counterEl.textContent = '第 ' + (nowReps + 1) + '/' + requiredCount + ' 次';
+                        if (counterEl) counterEl.textContent = '第 ' + (nowReps + 1) + '/' + need + ' 次';
                     }
                 });
                 detachers.push(handle.detach);
             });
         });
         return function detachAll() { detachers.forEach(function (fn) { fn(); }); };
+    }
+
+    function practiceLevelCountsBarHtml(levelCounts) {
+        return '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; font-size:0.8rem; font-weight:800; color:#334155;">'
+            + '<span>各難度次數</span>'
+            + '<label>易 <input id="pi-count-easy" type="number" min="1" value="' + esc(levelCounts.easy) + '" style="width:52px; padding:2px 4px;"></label>'
+            + '<label>中 <input id="pi-count-mid" type="number" min="1" value="' + esc(levelCounts.mid) + '" style="width:52px; padding:2px 4px;"></label>'
+            + '<label>難 <input id="pi-count-hard" type="number" min="1" value="' + esc(levelCounts.hard) + '" style="width:52px; padding:2px 4px;"></label>'
+            + '</div>';
+    }
+
+    function mountPracticeModal(opts) {
+        const modalId = opts.modalId;
+        const kind = opts.kind || 'practice';
+        const normItems = opts.normItems;
+        const requiredCount = opts.requiredCount;
+        const progressMap = opts.progressMap;
+        const difficultyMap = opts.difficultyMap || {};
+        const levelCounts = opts.levelCounts || defaultPracticeLevelCounts(requiredCount);
+        let detachAll = null;
+
+        function persistMeta(done) {
+            if (typeof opts.persist !== 'function') return Promise.resolve();
+            return opts.persist(done ? { input_practice_done: true } : {}, !!done);
+        }
+
+        function remountBody() {
+            if (detachAll) { detachAll(); detachAll = null; }
+            const body = document.getElementById(modalId + '-body');
+            if (body) body.innerHTML = renderPracticeSessionHtml(kind, normItems, requiredCount, progressMap, difficultyMap, levelCounts);
+            bindLevelChips();
+            detachAll = wirePracticeSession(kind, normItems, requiredCount, progressMap, function () {
+                persistMeta(false).catch(function (err) {
+                    console.warn('[FeatureStudentQuiz] practice persist', err);
+                });
+            }, function () {
+                persistMeta(true).then(function () {
+                    window.showFlash('🎉 輸入練習全部完成！', 'success');
+                }).catch(function (err) {
+                    console.warn('[FeatureStudentQuiz] practice done', err);
+                });
+            }, difficultyMap, levelCounts);
+            focusNextPracticeInput(kind, normItems, requiredCount, progressMap, 0, -1, difficultyMap, levelCounts);
+        }
+
+        function bindLevelChips() {
+            document.querySelectorAll('#' + modalId + ' .pi-level-btn').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    const itemId = btn.getAttribute('data-item-id');
+                    difficultyMap[itemId] = btn.getAttribute('data-level') || 'easy';
+                    persistMeta(false).catch(function () {});
+                    remountBody();
+                });
+            });
+        }
+
+        function bindCountInputs() {
+            ['easy', 'mid', 'hard'].forEach(function (lv) {
+                const el = document.getElementById('pi-count-' + lv);
+                if (!el) return;
+                el.addEventListener('change', function () {
+                    levelCounts[lv] = Math.max(1, parseInt(el.value, 10) || 1);
+                    persistMeta(false).catch(function () {});
+                    remountBody();
+                });
+            });
+        }
+
+        window.ModalOverlay.open({
+            id: modalId,
+            tier: 'B',
+            isDirty: function () { return false; },
+            onClose: function () { if (detachAll) { detachAll(); detachAll = null; } },
+            onMount: function () {
+                remountBody();
+                bindCountInputs();
+            },
+            contentHtml:
+                '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">✍️ 輸入練習・' + esc(opts.title || '') + '</h3>' +
+                        '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + modalId + '\')">暫存並離開</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem; color:#64748B; margin-bottom:10px;">上方紅字是答案，請照打（不能改答案）。打錯會被擋住並發出提示音。每個字可自設易／中／難，次數依難度。可按「暫存並離開」，下次從中斷處繼續。</div>' +
+                    practiceLevelCountsBarHtml(levelCounts) +
+                    '<div id="' + modalId + '-body" style="overflow:auto; flex:1;"></div>' +
+                '</div>'
+        });
     }
 
     function openInputPractice(assignmentId, taskId) {
@@ -1663,41 +1807,27 @@ window.FeatureStudentQuiz = (function () {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const progressMap = JSON.parse(JSON.stringify(raw.input_practice_progress || {}));
+        const difficultyMap = JSON.parse(JSON.stringify(raw.input_practice_difficulty || {}));
+        const levelCounts = Object.assign(defaultPracticeLevelCounts(requiredCount), raw.input_practice_level_counts || {});
         const normItems = buildPracticeNormItems('practice', paper.items);
         const title = String(task.title || task.raw_data.exam_title || '線上考試').replace(/<[^>]*>?/gm, '');
 
-        let detachAll = null;
-        window.ModalOverlay.open({
-            id: INPUT_PRACTICE_MODAL_ID,
-            tier: 'B',
-            // 每打對一次就即時存檔，沒有「未儲存」風險，隨時可以安全關閉。
-            isDirty: function () { return false; },
-            onClose: function () { if (detachAll) { detachAll(); detachAll = null; } },
-            onMount: function () {
-                detachAll = wirePracticeSession('practice', normItems, requiredCount, progressMap, function (pm) {
-                    persistResult(assignmentId, taskId, { input_practice_progress: pm }, false).catch(function (err) {
-                        console.warn('[FeatureStudentQuiz] persist input_practice_progress', err);
-                    });
-                }, function () {
-                    persistResult(assignmentId, taskId, { input_practice_progress: progressMap, input_practice_done: true }, true).then(function () {
-                        window.showFlash('🎉 輸入練習全部完成！', 'success');
-                    }).catch(function (err) {
-                        console.warn('[FeatureStudentQuiz] persist input_practice_done', err);
-                    });
-                });
-                // 開啟（或續打）當下，直接把焦點放到第一個還沒完成的欄位，不用學生自己點進去
-                focusNextPracticeInput('practice', normItems, requiredCount, progressMap, 0, -1);
-            },
-            contentHtml:
-                '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
-                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
-                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">✍️ 輸入練習・' + esc(title) + '</h3>' +
-                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + INPUT_PRACTICE_MODAL_ID + '\')">關閉</button>' +
-                    '</div>' +
-                    '<div style="font-size:0.8rem; color:#64748B; margin-bottom:10px;">答案已直接顯示在上方（紅字），請照打；打錯會被立刻擋下（無法繼續往下打），需連續打對 '
-                        + requiredCount + ' 次才算完成該題。可隨時關閉，進度自動儲存，下次回來會從中斷處繼續。</div>' +
-                    '<div style="overflow:auto; flex:1;">' + renderPracticeSessionHtml('practice', normItems, requiredCount, progressMap) + '</div>' +
-                '</div>'
+        mountPracticeModal({
+            modalId: INPUT_PRACTICE_MODAL_ID,
+            title: title,
+            kind: 'practice',
+            normItems: normItems,
+            requiredCount: requiredCount,
+            progressMap: progressMap,
+            difficultyMap: difficultyMap,
+            levelCounts: levelCounts,
+            persist: function (extra, done) {
+                return persistResult(assignmentId, taskId, Object.assign({
+                    input_practice_progress: progressMap,
+                    input_practice_difficulty: difficultyMap,
+                    input_practice_level_counts: levelCounts
+                }, extra || {}), !!done);
+            }
         });
     }
 
@@ -1742,7 +1872,7 @@ window.FeatureStudentQuiz = (function () {
                 '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
                         '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">🔧 錯題改正練習・' + esc(title) + '</h3>' +
-                        '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + INPUT_CORRECTION_MODAL_ID + '\')">關閉</button>' +
+                        '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'' + INPUT_CORRECTION_MODAL_ID + '\')">關閉</button>' +
                     '</div>' +
                     '<div style="font-size:0.8rem; color:#64748B; margin-bottom:10px;">正確答案已直接顯示在上方（紅字），請照打；打錯會被立刻擋下，需連續打對 '
                         + requiredCount + ' 次才算完成該題改正。可隨時關閉，進度自動儲存。</div>' +
@@ -1760,7 +1890,13 @@ window.FeatureStudentQuiz = (function () {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const normItems = buildPracticeNormItems('practice', paper.items);
-        const summary = summarizePracticeProgress(normItems, requiredCount, raw.input_practice_progress || {});
+        const summary = summarizePracticeProgress(
+            normItems,
+            requiredCount,
+            raw.input_practice_progress || {},
+            raw.input_practice_difficulty || {},
+            Object.assign(defaultPracticeLevelCounts(requiredCount), raw.input_practice_level_counts || {})
+        );
         summary.requiredCount = requiredCount;
         return summary;
     }
@@ -1780,6 +1916,116 @@ window.FeatureStudentQuiz = (function () {
         return summary;
     }
 
+    /**
+     * 複習專區練習：不綁 assignment_id，進度回呼 onPersist(progressMap, allDone)。
+     */
+    function openStandalonePractice(opts) {
+        const paper = opts && opts.paper;
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) {
+            return window.showFlash('沒有題目可以練習', 'warning');
+        }
+        if (!window.QuizPaperBuilder) return window.showFlash('作答模組未載入', 'error');
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') {
+            return window.showFlash('ModalOverlay 未載入', 'error');
+        }
+        const requiredCount = Math.max(1, Number(opts.requiredCount) || 1);
+        const rawProgress = JSON.parse(JSON.stringify((opts.progressMap) || {}));
+        const savedMeta = rawProgress.__meta && typeof rawProgress.__meta === 'object' ? rawProgress.__meta : {};
+        delete rawProgress.__meta;
+        const progressMap = rawProgress;
+        const difficultyMap = JSON.parse(JSON.stringify(opts.difficultyMap || savedMeta.difficulty || {}));
+        const levelCounts = Object.assign(defaultPracticeLevelCounts(requiredCount), opts.levelCounts || savedMeta.level_counts || {});
+        const normItems = buildPracticeNormItems('practice', paper.items);
+        mountPracticeModal({
+            modalId: INPUT_PRACTICE_MODAL_ID,
+            title: String((opts && opts.title) || '複習練習').replace(/<[^>]*>?/gm, ''),
+            kind: 'practice',
+            normItems: normItems,
+            requiredCount: requiredCount,
+            progressMap: progressMap,
+            difficultyMap: difficultyMap,
+            levelCounts: levelCounts,
+            persist: function (_extra, done) {
+                if (typeof opts.onPersist !== 'function') return Promise.resolve();
+                const packed = Object.assign({}, progressMap, {
+                    __meta: { difficulty: difficultyMap, level_counts: levelCounts }
+                });
+                return opts.onPersist(packed, !!done);
+            }
+        });
+    }
+
+    /**
+     * 複習專區測試：不綁 assignment_id，不走全螢幕防作弊；交卷回呼 onSubmit(answers, result)。
+     */
+    function openStandaloneQuiz(opts) {
+        const paper = opts && opts.paper;
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) {
+            return window.showFlash('沒有題目可以測試', 'warning');
+        }
+        if (!window.QuizPaperBuilder) return window.showFlash('評分模組未載入', 'error');
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') {
+            return window.showFlash('ModalOverlay 未載入', 'error');
+        }
+        const title = String((opts && opts.title) || '複習測試').replace(/<[^>]*>?/gm, '');
+        const bodyId = 'student-review-test-body';
+        const itemsHtml = paper.items.map(function (it, idx) {
+            return renderItemRow(it, undefined, idx + 1);
+        }).join('');
+        window.ModalOverlay.open({
+            id: 'student-review-test',
+            tier: 'B',
+            isDirty: function () { return true; },
+            unsavedMessage: '作答尚未繳交，確定要關閉？',
+            onMount: function (overlay) { hardenAnswerInputs(overlay); },
+            contentHtml:
+                '<div style="max-width:720px; width:92vw; max-height:90vh; display:flex; flex-direction:column; background:white; border-radius:14px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+                        '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#EA580C;">📝 ' + esc(title) + '</h3>' +
+                        '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.ModalOverlay.close(\'student-review-test\')">關閉</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem; color:#64748B; margin-bottom:10px;">共 ' + paper.items.length + ' 題 · 交卷後會顯示正確率（不進課程進度作業格）</div>' +
+                    '<div id="' + bodyId + '" style="overflow:auto; flex:1;">' + itemsHtml + '</div>' +
+                    '<div style="display:flex; justify-content:flex-end; margin-top:12px;">' +
+                        '<button type="button" class="btn" id="student-review-test-submit" style="background:#EA580C; color:white; border:none; padding:8px 14px; font-weight:800;">繳交並看分數</button>' +
+                    '</div>' +
+                '</div>'
+        });
+        const btn = document.getElementById('student-review-test-submit');
+        if (btn) {
+            btn.addEventListener('click', function () {
+                const answers = collectAnswers(bodyId);
+                const graded = window.QuizPaperBuilder.gradeAnswers(paper, answers);
+                const result = {
+                    score: graded && graded.score != null ? graded.score : 0,
+                    correct: graded && graded.correct != null ? graded.correct : 0,
+                    total: graded && graded.total != null ? graded.total : paper.items.length,
+                    details: graded && graded.details ? graded.details : []
+                };
+                const done = (typeof opts.onSubmit === 'function')
+                    ? opts.onSubmit(answers, result)
+                    : Promise.resolve();
+                Promise.resolve(done).then(function () {
+                    window.ModalOverlay.close('student-review-test');
+                    const color = result.score >= 80 ? '#10B981' : (result.score >= 50 ? '#F59E0B' : '#EF4444');
+                    window.ModalOverlay.open({
+                        id: 'student-review-test-result',
+                        tier: 'A',
+                        contentHtml:
+                            '<div style="background:white; padding:24px; border-radius:14px; max-width:420px; width:90vw; text-align:center;">'
+                            + '<h3 style="margin:0 0 8px; color:#9A3412;">測試結果</h3>'
+                            + '<div style="font-size:2rem; font-weight:900; color:' + color + ';">' + esc(String(result.score)) + '%</div>'
+                            + '<div style="color:#64748B; font-weight:700; margin:8px 0 16px;">' + result.correct + ' / ' + result.total + ' 題正確</div>'
+                            + '<button type="button" class="btn" style="background:#EA580C; color:white; border:none; padding:8px 16px; font-weight:800;" onclick="window.ModalOverlay.close(\'student-review-test-result\')">關閉</button>'
+                            + '</div>'
+                    });
+                }).catch(function (err) {
+                    window.showFlash('繳交失敗：' + (err && err.message ? err.message : err), 'error');
+                });
+            });
+        }
+    }
+
     return {
         openQuiz: openQuiz,
         submit: submit,
@@ -1793,6 +2039,8 @@ window.FeatureStudentQuiz = (function () {
         closeRetakeReport: closeRetakeReport,
         submitAppeals: submitAppeals,
         openInputPractice: openInputPractice,
+        openStandalonePractice: openStandalonePractice,
+        openStandaloneQuiz: openStandaloneQuiz,
         openInputCorrection: openInputCorrection,
         getInputPracticeSummary: getInputPracticeSummary,
         getInputCorrectionSummary: getInputCorrectionSummary,

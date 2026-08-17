@@ -113,8 +113,8 @@ window.FeatureMaterialLayoutPairing = (function () {
              * 沒有任何範本時預設 design，否則預設 apply。
              */
             workflowMode: '',
-            /** extraction＝只當擷取範本；both＝擷取範本與試卷範本 */
-            quickApplyRole: 'extraction',
+            /** extraction＝只當擷取範本；both＝擷取範本與試卷範本。雲端來源固定試卷。 */
+            quickApplyRole: isDriveSource() ? 'both' : 'extraction',
             /** 這次套用要指派的班級 id → true */
             quickApplyClassIds: {},
             quickApplyTemplateName: '',
@@ -218,7 +218,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}>
                         結合成一個答案（用公式組合多欄，例如 AN&amp;" "&amp;AO）
                     </label>
-                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='公式備註，例如 AN&amp;" "&amp;AO 或 pre&amp;" "&amp;script（僅供參考記錄，實際組合仍以考卷範本的 quiz_answer 公式為準）' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
+                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='公式備註，例如 AN&amp;" "&amp;AO 或 pre&amp;" "&amp;script（僅供參考記錄，實際組合仍以試卷範本的 quiz_answer 公式為準）' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};">
                 </div>` : `
                 <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">📝 書寫答案批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
         return `
@@ -319,11 +319,21 @@ window.FeatureMaterialLayoutPairing = (function () {
         _excelDriveFileName = parsed.fileName;
     }
 
+    function isDriveWholeFolder() {
+        return isDriveSource() && !!_excelMaterialFolder && !_excelDriveFileName;
+    }
+
     function seedDriveFileCheck(seg) {
-        if (!seg || !isDriveSource() || !_excelDriveFileName) return;
+        if (!seg || !isDriveSource()) return;
+        if (!seg.checkedSheets) seg.checkedSheets = {};
+        if (isDriveWholeFolder()) {
+            currentSheetNames().forEach(function (n) { seg.checkedSheets[n] = true; });
+            return;
+        }
+        if (!_excelDriveFileName) return;
         const stem = stemFromMetaFileName(_excelDriveFileName);
         if (!stem) return;
-        const already = Object.keys(seg.checkedSheets || {}).some(function (k) { return seg.checkedSheets[k]; });
+        const already = Object.keys(seg.checkedSheets).some(function (k) { return seg.checkedSheets[k]; });
         if (!already) seg.checkedSheets[stem] = true;
     }
 
@@ -375,9 +385,97 @@ window.FeatureMaterialLayoutPairing = (function () {
         return html;
     }
 
+    function isSetupOrSystemSheet(name) {
+        return /^_?(Setup|Config|Schema|Publish|Layout)$/i.test(String(name || '').trim());
+    }
+
+    function workbookSheetByHint(wb, hint) {
+        const want = String(hint || '').replace(/^_/, '').toLowerCase();
+        const names = (wb && wb.SheetNames) || [];
+        for (let i = 0; i < names.length; i++) {
+            if (String(names[i] || '').replace(/^_/, '').toLowerCase() === want) return names[i];
+        }
+        return '';
+    }
+
+    function matrixFromWorkbookSheet(wb, sheetName) {
+        const sheet = wb && wb.Sheets && wb.Sheets[sheetName];
+        if (!sheet || !window.XLSX || !window.XLSX.utils) return [];
+        return window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' }) || [];
+    }
+
+    function mapsFromHeaderRows(matrix, headerIdx) {
+        const headers = (matrix[headerIdx] || []).map(function (h) { return String(h || '').trim().toLowerCase(); });
+        const out = [];
+        for (let r = headerIdx + 1; r < matrix.length; r++) {
+            const row = matrix[r] || [];
+            const first = String(row[0] || '').trim();
+            if (!first) break;
+            if (first.charAt(0) === '#') break;
+            const obj = {};
+            let empty = true;
+            headers.forEach(function (h, i) {
+                if (!h) return;
+                const v = row[i];
+                if (v != null && String(v).trim() !== '') empty = false;
+                obj[h] = v;
+            });
+            if (!empty) out.push(obj);
+        }
+        return out;
+    }
+
+    /**
+     * 讀 Excel 的 _Publish／_Setup#Publish。
+     * vBK-2 只是來源分頁；真正的 meta 檔名在 output_meta（例如 Vocab_Set1.meta.json）。
+     */
+    function parsePublishRowsFromWorkbook(wb) {
+        if (!wb) return [];
+        const setupName = workbookSheetByHint(wb, 'setup');
+        if (setupName) {
+            const matrix = matrixFromWorkbookSheet(wb, setupName);
+            for (let i = 0; i < matrix.length; i++) {
+                const cell = String((matrix[i] && matrix[i][0]) || '').trim().replace(/^#/, '');
+                if (/^_?Publish$/i.test(cell)) return mapsFromHeaderRows(matrix, i + 1);
+            }
+            return [];
+        }
+        const publishName = workbookSheetByHint(wb, 'publish');
+        if (!publishName) return [];
+        return mapsFromHeaderRows(matrixFromWorkbookSheet(wb, publishName), 0);
+    }
+
+    function publishOutputStemsFromWorkbook(wb) {
+        return parsePublishRowsFromWorkbook(wb).map(function (row) {
+            const enabled = String((row && row.enabled) || '').trim().toUpperCase();
+            if (enabled && enabled !== 'Y' && enabled !== 'YES' && enabled !== '1' && enabled !== '是') return '';
+            return String((row && row.output_meta) || '').trim().replace(/\.meta\.json$/i, '');
+        }).filter(Boolean).filter(function (s, i, arr) {
+            return arr.findIndex(function (x) { return x.toUpperCase() === s.toUpperCase(); }) === i;
+        });
+    }
+
+    /**
+     * 存進 material_sheets／實際使用卡的活頁名：Drive 上已有的 meta，或 _Publish.output_meta。
+     * 禁止把 Excel 分頁碼（vBK-2）當成 meta 檔名寫出去。
+     */
+    function resolveCanonicalSheetIds(excelSheetNames, folderName) {
+        const folder = String(folderName || '').trim();
+        const contentSheets = (excelSheetNames || []).filter(function (n) {
+            return String(n || '').trim() && !isSetupOrSystemSheet(n);
+        });
+        const drive = folder ? (sheetStemsForFolder('', 'teacher', folder) || []) : [];
+        if (drive.length) return drive.slice();
+        const published = publishOutputStemsFromWorkbook(_excelWb);
+        if (published.length) return published.slice();
+        if (folder && contentSheets.length === 1) return [folder];
+        return contentSheets;
+    }
+
     function currentSheetNames() {
         if (isDriveSource()) return sheetStemsForFolder('', 'teacher', _excelMaterialFolder);
-        return (_excelWb && Array.isArray(_excelWb.SheetNames)) ? _excelWb.SheetNames : [];
+        const raw = (_excelWb && Array.isArray(_excelWb.SheetNames)) ? _excelWb.SheetNames : [];
+        return raw.filter(function (n) { return !isSetupOrSystemSheet(n); });
     }
 
     function getReferenceSheetNameForSegment(seg) {
@@ -1195,6 +1293,15 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 每一「組」（Template）自己的活頁勾選清單（可多選）——不同組可以套用到不同活頁，
      * 不是整份 Excel 共用同一個活頁清單（2026-08-05 第七輪修正，見上方資料模型說明）。
      */
+    function renderDriveSheetAreaHtml(seg) {
+        if (!isDriveSource()) return renderSegmentSheetChecklistHtml(seg);
+        if (isDriveWholeFolder()) {
+            const n = currentSheetNames().length;
+            return '<div style="font-size:0.76rem; color:#047857; font-weight:700; margin-bottom:10px;">已選整個資料夾，' + n + ' 個 meta 全部納入，不用再勾選。</div>';
+        }
+        return renderSegmentSheetChecklistHtml(seg);
+    }
+
     function renderSegmentSheetChecklistHtml(seg) {
         const names = currentSheetNames();
         if (!names.length) {
@@ -1202,7 +1309,10 @@ window.FeatureMaterialLayoutPairing = (function () {
                 ? '<div style="font-size:0.76rem; color:#B45309; font-weight:800; margin-bottom:10px;">這個雲端教材資料夾目前偵測不到活頁（.meta.json）。清單可能還沒載入，或資料夾是空的。</div>'
                 : '';
         }
-        return '<div style="font-size:0.76rem; font-weight:800; color:#475569; margin-bottom:6px;">這組（Template）要套用到哪些活頁？偵測到 ' + names.length + ' 個活頁，可多選：'
+        const driveFileHint = (isDriveSource() && _excelDriveFileName)
+            ? '已自動勾選所選檔案，其餘 meta 可再複選：'
+            : '這組（Template）要套用到哪些活頁？偵測到 ' + names.length + ' 個活頁，可多選：';
+        return '<div style="font-size:0.76rem; font-weight:800; color:#475569; margin-bottom:6px;">' + driveFileHint
             + ' <span class="mlp-excel-sheets-status" style="font-weight:700; color:#0F766E;"></span></div>'
             + '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">'
             + names.map(function (name) {
@@ -1606,7 +1716,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!window.FeatureClassMaterialCombinations || typeof window.FeatureClassMaterialCombinations.summarizeUsageByTemplate !== 'function') {
             return Promise.resolve();
         }
-        return window.FeatureClassMaterialCombinations.summarizeUsageByTemplate().then(function () {
+        const catalogReady = (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function')
+            ? window.FeatureTimeline.ensureMetaCatalog('', 'teacher')
+            : Promise.resolve();
+        return catalogReady.then(function () {
+            return window.FeatureClassMaterialCombinations.summarizeUsageByTemplate();
+        }).then(function () {
             renderTemplateList();
             if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
                 window.FeatureExamTemplateEditor.render();
@@ -1616,8 +1731,14 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
     }
 
+    function templatesForCurrentSource() {
+        const all = getAllTemplatesForApply();
+        if (isDriveSource()) return all.filter(function (t) { return t && t.is_exam_role; });
+        return all.filter(function (t) { return t && t.is_extraction_role; });
+    }
+
     function buildApplyTemplateOptionsHtml(selectedId, selectedName) {
-        const applyable = getAllTemplatesForApply().filter(function (t) { return t && t.is_extraction_role; });
+        const applyable = templatesForCurrentSource();
         const usage = templateUsageMap();
         const used = [];
         const unused = [];
@@ -1652,18 +1773,20 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <div class="mlp-excel-workflow-radios" style="display:flex; flex-direction:column; gap:6px; margin-bottom:10px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:0.82rem; font-weight:800; color:#047857; cursor:pointer;">
                         <input type="radio" name="mlp-excel-workflow-${esc(seg.id)}" class="mlp-excel-workflow-opt" value="apply" ${isApply ? 'checked' : ''}>
-                        套用目前的範本
+                        ${isDriveSource() ? '套用目前的試卷範本' : '套用目前的範本'}
                     </label>
                     <label style="display:flex; align-items:center; gap:6px; font-size:0.82rem; font-weight:800; color:#0F766E; cursor:pointer;">
                         <input type="radio" name="mlp-excel-workflow-${esc(seg.id)}" class="mlp-excel-workflow-opt" value="design" ${!isApply ? 'checked' : ''}>
-                        🆕 設計新擷取範本（現有的擷取範本都不適用，需要重新勾欄位設定時才需要）
+                        ${isDriveSource()
+                            ? '🆕 設計新試卷範本（現有的試卷範本都不適用時才需要）'
+                            : '🆕 設計新擷取範本（現有的擷取範本都不適用，需要重新勾欄位設定時才需要）'}
                     </label>
                 </div>
                 <div class="mlp-excel-quickapply-area" style="display:${isApply ? 'block' : 'none'};">${renderQuickApplyAreaHtml(seg)}</div>
                 <div class="mlp-excel-quickapply-results">${(seg.quickApplyResults || []).map(function (app) { return renderAppRow(app, { collapsedSummary: true }); }).join('')}</div>
                 <div class="mlp-excel-design-body" style="display:${isApply ? 'none' : 'block'}; margin-top:8px; padding-top:8px; border-top:1px dashed #CBD5E1;">
-                    <div class="mlp-excel-sheets-area">${renderSegmentSheetChecklistHtml(seg)}</div>
-                    ${isDriveSource() ? '<div style="font-size:0.76rem; color:#B45309; font-weight:800; margin-bottom:10px;">雲端教材列出的是已發布的活頁檔名，沒有原始 Excel 欄位可勾。若要設計新擷取範本，請改選本機檔案；若只要把已有範本套到這個資料夾並指派班級，請改選「套用目前的範本」。</div>' : ''}
+                    <div class="mlp-excel-sheets-area">${renderDriveSheetAreaHtml(seg)}</div>
+                    ${isDriveSource() ? '<div style="font-size:0.76rem; color:#1D4ED8; font-weight:700; margin-bottom:10px;">雲端教材已是發布後的 meta，這裡是套用或新設計<b>試卷範本</b>並指派班級，不是從 Excel 擷取欄位。要擷取欄位請改選本機檔案。</div>' : ''}
                     <div class="mlp-excel-cols-area">${isDriveSource() ? '' : renderColsAreaHtml(seg, cols)}</div>
                     <div class="mlp-excel-mapping-area">${(!isDriveSource() && seg.confirmed) ? renderMappingAreaHtml(seg) : ''}</div>
                     <div class="mlp-excel-design-assign">${isApply ? '' : renderDesignAssignHtml(seg)}</div>
@@ -1917,6 +2040,16 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
         bindSegmentSheetChecklistEvents(seg, cardEl);
         bindQuickApplyAreaEvents(seg, cardEl);
+        const openExamTplBtn = cardEl.querySelector('.mlp-excel-open-exam-tpl-btn');
+        if (openExamTplBtn) openExamTplBtn.addEventListener('click', function () {
+            const container = document.getElementById('exam-template-editor-container');
+            if (container && typeof container.scrollIntoView === 'function') {
+                container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.openNewForm === 'function') {
+                window.FeatureExamTemplateEditor.openNewForm();
+            }
+        });
         cardEl.querySelectorAll('.mlp-excel-quickapply-results .mlp-app-row').forEach(function (rowEl) {
             bindQuickApplyResultRowEvents(seg, rowEl);
         });
@@ -2203,6 +2336,10 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     async function ensureApplyRoles(matchedTpl, includeExam) {
         if (!matchedTpl || !window.FeatureTemplateLibrary || typeof window.FeatureTemplateLibrary.addRole !== 'function') return;
+        if (isDriveSource()) {
+            if (!matchedTpl.is_exam_role) await window.FeatureTemplateLibrary.addRole(matchedTpl.id, 'exam');
+            return;
+        }
         if (!matchedTpl.is_extraction_role) {
             await window.FeatureTemplateLibrary.addRole(matchedTpl.id, 'extraction');
         }
@@ -2212,7 +2349,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     async function persistApplyComboRecord(seg, appRecord, matchedTpl) {
-        const includeExam = !!(seg && seg.quickApplyRole === 'both');
+        const includeExam = isDriveSource() || !!(seg && seg.quickApplyRole === 'both');
         await ensureApplyRoles(matchedTpl, includeExam);
         if (appRecord && appRecord.template_name && appRecord.material_folder && (appRecord.sheet_ids || []).length) {
             const latest = await fetchTemplateApplications(true);
@@ -2234,12 +2371,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         const matchedEarly = findApplyTemplateForSeg(seg);
         const templateName = (matchedEarly && matchedEarly.name) || (seg.quickApplyTemplateName || '').trim();
         if (!templateName && !seg.quickApplyTemplateId) {
-            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請先選一個要套用的現成擷取範本'; }
+            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = isDriveSource() ? '❌ 請先選一個要套用的試卷範本' : '❌ 請先選一個要套用的現成擷取範本'; }
             return;
         }
         const driveMode = isDriveSource();
         const sheetNames = driveMode
-            ? driveTargetSheetNames()
+            ? driveTargetSheetNames(seg)
             : Object.keys(seg.checkedSheets).filter(function (k) { return seg.checkedSheets[k]; }).sort();
         if (!driveMode && !sheetNames.length) {
             if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請先勾選至少一個活頁'; }
@@ -2268,8 +2405,10 @@ window.FeatureMaterialLayoutPairing = (function () {
             // （naturalAppKey 優先用 template_id），否則快速套用產生的紀錄跟手動新增列各用不同的鍵
             // （一個用 id、一個用名稱），同一組配對永遠合併不到一起，繼續長出重複項。
             const matchedTpl = matchedEarly || findApplyTemplateByName(templateName);
-            if (driveMode && matchedTpl) {
-                seg.quickApplyRole = matchedTpl.is_exam_role ? 'both' : 'extraction';
+            if (driveMode) {
+                seg.quickApplyRole = 'both';
+            } else if (matchedTpl && matchedTpl.is_exam_role) {
+                seg.quickApplyRole = 'both';
             }
             const newApp = {
                 id: 'mta_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
@@ -2278,7 +2417,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 root_kind: 'teacher',
                 class_id: '',
                 material_folder: _excelMaterialFolder || '',
-                sheet_ids: sheetNames,
+                sheet_ids: resolveCanonicalSheetIds(sheetNames, _excelMaterialFolder),
                 row_start: driveMode ? '' : rowStart,
                 row_end: driveMode ? '' : (seg.quickApplyRowEnd || '').trim(),
                 source_kind: driveMode ? 'drive' : 'local',
@@ -2372,13 +2511,15 @@ window.FeatureMaterialLayoutPairing = (function () {
             + (classChecks || '<div style="font-size:0.76rem; color:#94A3B8;">目前沒有班級可指派</div>');
     }
 
-    function driveTargetSheetNames() {
+    function driveTargetSheetNames(seg) {
         if (!isDriveSource() || !_excelMaterialFolder) return [];
-        if (_excelDriveFileName) {
-            const stem = stemFromMetaFileName(_excelDriveFileName);
-            return stem ? [stem] : [];
+        if (!_excelDriveFileName) return currentSheetNames();
+        if (seg) {
+            const picked = Object.keys(seg.checkedSheets || {}).filter(function (k) { return seg.checkedSheets[k]; }).sort();
+            if (picked.length) return picked;
         }
-        return currentSheetNames();
+        const stem = stemFromMetaFileName(_excelDriveFileName);
+        return stem ? [stem] : [];
     }
 
     function renderComboUsageBoxHtml(seg, templateName) {
@@ -2391,6 +2532,14 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     function renderComboAssignBlockHtml(seg, templateName) {
+        if (isDriveSource()) {
+            seg.quickApplyRole = 'both';
+            return (
+                '<div style="font-size:0.76rem; font-weight:800; color:#047857; margin-bottom:4px;">套用為</div>'
+                + '<div style="font-size:0.78rem; font-weight:800; color:#1D4ED8; margin-bottom:10px;">試卷範本</div>'
+                + renderComboUsageBoxHtml(seg, templateName)
+            );
+        }
         const role = seg.quickApplyRole === 'both' ? 'both' : 'extraction';
         return (
             '<div style="font-size:0.76rem; font-weight:800; color:#047857; margin-bottom:4px;">套用為</div>'
@@ -2406,8 +2555,12 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function renderDesignAssignHtml(seg) {
         const name = (seg.name || '').trim();
+        const examNewBtn = isDriveSource()
+            ? '<button type="button" class="mlp-excel-open-exam-tpl-btn btn" style="margin-bottom:8px; padding:6px 12px; font-size:0.78rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE;">➕ 新增試卷範本</button>'
+            : '';
         return (
             '<div style="margin-top:10px; padding:10px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px;">'
+                + examNewBtn
                 + '<div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">這個教材＋範本組合的班級使用現況（設計新範本也會一併記錄）</div>'
                 + renderComboAssignBlockHtml(seg, name)
             + '</div>'
@@ -2416,23 +2569,26 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function renderQuickApplyAreaHtml(seg) {
         const sheetNames = Object.keys(seg.checkedSheets).filter(function (k) { return seg.checkedSheets[k]; }).sort();
-        const applyable = getAllTemplatesForApply().filter(function (t) { return t && t.is_extraction_role; });
+        const applyable = templatesForCurrentSource();
         if (!applyable.length) {
-            return '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何擷取範本，請改選「🆕 設計新擷取範本」先設計一份。</div>';
+            return isDriveSource()
+                ? '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何試卷範本，請改選「🆕 設計新試卷範本」先建立一份。</div>'
+                : '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何擷取範本，請改選「🆕 設計新擷取範本」先設計一份。</div>';
         }
         const selectedName = (seg.quickApplyTemplateName || '').trim();
         const selectedId = (seg.quickApplyTemplateId || '').trim();
         const driveMode = isDriveSource();
-        const driveSheets = driveMode ? driveTargetSheetNames() : [];
+        const driveSheets = driveMode ? driveTargetSheetNames(seg) : [];
         const canConfirm = driveMode ? !!_excelMaterialFolder : !!sheetNames.length;
         const driveTargetHint = driveMode
             ? (_excelDriveFileName
-                ? ('將套用到檔案：' + _excelDriveFileName)
-                : ('將套用到整個資料夾「' + _excelMaterialFolder + '」' + (driveSheets.length ? ('（' + driveSheets.length + ' 個活頁）') : '')))
+                ? ('已選檔案：' + _excelDriveFileName + '（可再複選同資料夾其他 meta）')
+                : ('將套用到整個資料夾「' + _excelMaterialFolder + '」' + (driveSheets.length ? ('（' + driveSheets.length + ' 個 meta，不用再勾選）') : '')))
             : '';
         const afterSelectHtml = (selectedId || selectedName) ? (
             '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #A7F3D0;">'
-                + (driveMode ? renderComboUsageBoxHtml(seg, selectedName) : (renderComboAssignBlockHtml(seg, selectedName) + '<div class="mlp-excel-sheets-area">' + renderSegmentSheetChecklistHtml(seg) + '</div>'))
+                + renderComboAssignBlockHtml(seg, selectedName)
+                + '<div class="mlp-excel-sheets-area">' + (driveMode ? renderDriveSheetAreaHtml(seg) : renderSegmentSheetChecklistHtml(seg)) + '</div>'
                 + (driveMode && driveTargetHint ? '<div style="font-size:0.76rem; color:#047857; font-weight:700; margin-bottom:8px;">' + esc(driveTargetHint) + '</div>' : '')
                 + '<div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">'
                     + (driveMode ? '' : (
@@ -2453,7 +2609,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         ) : '';
         return (
             '<div style="margin-bottom:10px; padding:12px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px;">'
-                + '<div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">' + (driveMode ? '套用目前的範本：選範本後即可確認（角色與活頁已由範本／上方選單決定）' : '套用目前的範本：先選範本，再決定套用角色，然後勾活頁') + '</div>'
+                + '<div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">' + (driveMode ? '套用目前的試卷範本：選範本後確認並指派班級' : '套用目前的範本：先選範本，再決定套用角色，然後勾活頁') + '</div>'
                 + '<label style="font-size:0.78rem; font-weight:700; color:#334155;">選一個範本'
                     + '<select class="form-control mlp-excel-quickapply-select" style="width:100%; max-width:640px; padding:6px; margin-top:2px;">' + buildApplyTemplateOptionsHtml(selectedId, selectedName) + '</select>'
                 + '</label>'
@@ -2589,7 +2745,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             const result = generateMetaForDesignSheet(seg, sheetName);
             if (!result.ok) throw new Error(sheetName + '：' + (result.error || '產生失敗'));
             if (!result.rows || !result.rows.length) throw new Error(sheetName + '：產出 0 列，無法上傳');
-            const names = defaultOutputNames(sheetName, templateName);
+            const names = defaultOutputNames(sheetName, templateName, folderName, sheetIds.length);
             const metaJson = JSON.stringify(result.rows, null, 2);
             const scriptTxt = (result.scriptLines || []).join('\n') + ((result.scriptLines && result.scriptLines.length) ? '\n' : '');
             const metaRes = await window.GasService.uploadMaterialFile(utf8ToBase64(metaJson), names.meta, 'application/json', folderId);
@@ -2720,7 +2876,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     root_kind: 'teacher',
                     class_id: '',
                     material_folder: _excelMaterialFolder,
-                    sheet_ids: sheetIds,
+                    sheet_ids: resolveCanonicalSheetIds(sheetIds, _excelMaterialFolder),
                     row_start: seg.rowStart || (seg.mapping && seg.mapping.rowStart) || '',
                     row_end: seg.rowEnd || (seg.mapping && seg.mapping.rowEnd) || '',
                     source_kind: isDriveSource() ? 'drive' : 'local',
@@ -2856,13 +3012,13 @@ window.FeatureMaterialLayoutPairing = (function () {
         // 滑鼠底下被誤觸。新增中（isNew）還沒有 id，角色只能等存檔後才能加開，這裡先不顯示考卷角色
         // 勾選；擷取角色對新範本必定是 true（存檔那一刻就會建立），不用讓老師選。
         const roleRowHtml = st.isNew
-            ? '<div style="font-size:0.76rem; color:#64748B; margin-top:6px;">💡 新範本存檔後自動是「擷取範本」；要加開「考卷範本」角色，存檔後回到清單點「✏️ 編輯」即可。</div>'
+            ? '<div style="font-size:0.76rem; color:#64748B; margin-top:6px;">💡 新範本存檔後自動是「擷取範本」；要加開「試卷範本」角色，存檔後回到清單點「✏️ 編輯」即可。</div>'
             : '<div style="display:flex; align-items:center; gap:14px; margin-top:8px; flex-wrap:wrap;">'
-                + '<label style="display:flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#6D28D9; white-space:nowrap; cursor:pointer;" title="取消勾選＝這筆不再當擷取範本。若同時還有考卷範本角色，只拿掉擷取角色，考卷那一側不受影響。">'
+                + '<label style="display:flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#6D28D9; white-space:nowrap; cursor:pointer;" title="取消勾選＝這筆不再當擷取範本。若同時還有試卷範本角色，只拿掉擷取角色，試卷那一側不受影響。">'
                     + '<input type="checkbox" id="mlp-tpl-role-extraction-cb" ' + (st.isExtractionRole !== false ? 'checked' : '') + '>擷取範本'
                 + '</label>'
                 + '<label style="display:flex; align-items:center; gap:4px; font-size:0.78rem; font-weight:700; color:#1D4ED8; white-space:nowrap; cursor:pointer;" title="勾選後這筆範本同時可以在出題畫面／班級教材組合的試卷範本清單被選用">'
-                    + '<input type="checkbox" id="mlp-tpl-role-exam-cb" ' + (st.isExamRole ? 'checked' : '') + '>🧾 考卷範本'
+                    + '<input type="checkbox" id="mlp-tpl-role-exam-cb" ' + (st.isExamRole ? 'checked' : '') + '>🧾 試卷範本'
                 + '</label>'
                 + '<span id="mlp-tpl-role-msg" style="font-size:0.76rem; font-weight:800;"></span>'
             + '</div>';
@@ -3044,7 +3200,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     const confirmText = !keepOther
                         ? ('這筆目前沒有另一個角色，取消「' + roleLabel + '」等於刪除整筆。確定嗎？已套用到教材產生的 meta.json／script.txt 不會自動跟著刪除。')
                         : (role === 'extraction'
-                            ? '確定要把這筆從擷取範本移除嗎？考卷範本角色不受影響，之後仍可在試卷範本清單看到。'
+                            ? '確定要把這筆從擷取範本移除嗎？試卷範本角色不受影響，之後仍可在試卷範本清單看到。'
                             : '確定要取消這筆範本的「試卷範本」角色嗎？若沒有其他地方在用，考題排版公式會一併清除。擷取範本那一側不受影響。');
                     if (!window.confirm(confirmText)) {
                         cb.checked = true;
@@ -3067,7 +3223,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     renderTemplateList();
                     refreshAppTemplateSelectOptions();
                     window.showFlash && window.showFlash(keepOther
-                        ? '已從擷取範本移除，考卷範本角色仍保留'
+                        ? '已從擷取範本移除，試卷範本角色仍保留'
                         : '已刪除 Template「' + (st.name || '') + '」');
                     return;
                 }
@@ -3228,8 +3384,8 @@ window.FeatureMaterialLayoutPairing = (function () {
                 // 清單重繪時意外出現在滑鼠底下，從根本上降低誤觸機率。
                 const extractionBadgeHtml = '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:800; color:#6D28D9; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:10px; white-space:nowrap; flex-shrink:0;">擷取範本</span>';
                 const examBadgeHtml = t.is_exam_role
-                    ? '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:800; color:#1D4ED8; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; white-space:nowrap; flex-shrink:0;">🧾 考卷範本</span>'
-                    : '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:700; color:#94A3B8; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; white-space:nowrap; flex-shrink:0;">未開放考卷範本</span>';
+                    ? '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:800; color:#1D4ED8; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; white-space:nowrap; flex-shrink:0;">🧾 試卷範本</span>'
+                    : '<span style="display:inline-flex; align-items:center; padding:1px 8px; font-size:0.74rem; font-weight:700; color:#94A3B8; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; white-space:nowrap; flex-shrink:0;">未開放試卷範本</span>';
                 const row1 = '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap;">'
                     + '<div style="display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 auto; overflow:hidden;">'
                         + moveBtnsHtml
@@ -3961,11 +4117,26 @@ window.FeatureMaterialLayoutPairing = (function () {
         return s || String(stem || '').trim().replace(/\.meta\.json$/i, '');
     }
 
-    function defaultOutputNames(sheetName, templateName) {
+    function defaultOutputNames(sheetName, templateName, folderName, selectedCount) {
         const layoutPart = sanitizeForFileNamePart(templateName || '');
-        const sheetPart = stripTemplateSuffixFromStem(sheetName, templateName) || 'output';
+        let sheetPart = stripTemplateSuffixFromStem(sheetName, templateName) || 'output';
+        const folder = String(folderName || '').trim();
+        // 單活頁 Excel：分頁名常是版本碼（vBK-2），真正的教材身分是目標資料夾
+        if (folder && Number(selectedCount) === 1) sheetPart = folder;
         const base = layoutPart ? (sheetPart + '.' + layoutPart) : sheetPart;
         return { meta: base + '.meta.json', script: base + '.script.txt' };
+    }
+
+    /** 老師沒改過檔名時，把舊的「Excel 分頁名」預設升級成資料夾名；手改過的檔名保留。 */
+    function resolveOutputNames(sheetName, templateName, folderName, selectedCount, existing) {
+        const next = defaultOutputNames(sheetName, templateName, folderName, selectedCount);
+        const sheetDefault = defaultOutputNames(sheetName, templateName, '', 0);
+        const existingMeta = existing && existing.outputMeta;
+        const existingScript = existing && existing.outputScript;
+        return {
+            meta: (!existingMeta || existingMeta === sheetDefault.meta) ? next.meta : existingMeta,
+            script: (!existingScript || existingScript === sheetDefault.script) ? next.script : existingScript
+        };
     }
 
     /** 從 meta 檔名換算「stem」（跟其他地方統一：examSheetStemsForFolder／metaStemFromFileName 都是去掉 .meta.json 尾巴） */
@@ -4096,9 +4267,9 @@ window.FeatureMaterialLayoutPairing = (function () {
         }
         const rowsHtml = sheetNames.map(function (name) {
             const g = state.gen[name] || {};
-            const defaults = defaultOutputNames(name, templateName);
-            const metaName = g.outputMeta != null ? g.outputMeta : defaults.meta;
-            const scriptName = g.outputScript != null ? g.outputScript : defaults.script;
+            const defaults = resolveOutputNames(name, templateName, _excelMaterialFolder, sheetNames.length, g);
+            const metaName = defaults.meta;
+            const scriptName = defaults.script;
             let bodyHtml = '';
             if (g.previewed) {
                 if (g.error) {
@@ -4471,9 +4642,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                     const metaNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-metaname') : null;
                     const scriptNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-scriptname') : null;
                     const currentTemplateName = (rowEl.querySelector('.mlp-app-template') || {}).value || '';
-                    const defaults = defaultOutputNames(name, currentTemplateName);
-                    const finalMetaName = (metaNameInput && metaNameInput.value.trim()) || g.outputMeta || defaults.meta;
-                    const finalScriptName = (scriptNameInput && scriptNameInput.value.trim()) || g.outputScript || defaults.script;
+                    const defaults = resolveOutputNames(name, currentTemplateName, _excelMaterialFolder, sheetNames.length, g);
+                    const finalMetaName = (metaNameInput && metaNameInput.value.trim()) || defaults.meta;
+                    const finalScriptName = (scriptNameInput && scriptNameInput.value.trim()) || defaults.script;
                     g.outputMeta = finalMetaName;
                     g.outputScript = finalScriptName;
 
@@ -4844,7 +5015,10 @@ window.FeatureMaterialLayoutPairing = (function () {
         const template = getFieldTemplatesCachedSync().find(function (t) { return t.name === templateName; });
         const rowStart = rowEl.querySelector('.mlp-app-rowstart').value.trim();
         const rowEnd = rowEl.querySelector('.mlp-app-rowend').value.trim();
-        const sheetIds = Object.keys(state.checkedSheets).filter(function (k) { return state.checkedSheets[k]; }).sort();
+        const sheetIds = resolveCanonicalSheetIds(
+            Object.keys(state.checkedSheets).filter(function (k) { return state.checkedSheets[k]; }).sort(),
+            folder
+        );
         return {
             id: appId,
             template_id: template ? template.id : '',
@@ -5290,12 +5464,18 @@ window.FeatureMaterialLayoutPairing = (function () {
                     return cls && cls.name ? cls.name : ('班級 ' + (a.class_id || '未知'));
                 })())
                 : '👤 老師個人';
-            const sheetIds = Array.isArray(a.sheet_ids) ? a.sheet_ids : [];
+            const storedSheetIds = Array.isArray(a.sheet_ids) ? a.sheet_ids : [];
             const inferredSheetIdsUpper = (Array.isArray(a._inferredSheetIds) ? a._inferredSheetIds : [])
                 .map(function (s) { return String(s || '').trim().toUpperCase(); });
             const currentStems = sheetStemsForFolder(a.class_id, a.root_kind, a.material_folder || '');
             const currentStemsUpper = currentStems.map(function (s) { return String(s || '').trim().toUpperCase(); });
             const stemsKnown = currentStems.length > 0; // 目錄還沒載入完成時全部算未知，避免載入中被誤標成失效
+            // 舊紀錄常把 Excel 分頁碼（vBK-2）存成 sheet_ids；資料夾裡真正的 meta 是
+            // _Publish.output_meta／已發布檔。整批對不到 Drive 時改顯示真檔，不要把分頁碼標紅。
+            const storedAllMissing = !!(stemsKnown && storedSheetIds.length && storedSheetIds.every(function (s) {
+                return currentStemsUpper.indexOf(String(s || '').trim().toUpperCase()) === -1;
+            }));
+            const sheetIds = (storedAllMissing && currentStems.length) ? currentStems : storedSheetIds;
             const staleIds = [];
             const sheetsHtml = sheetIds.length ? sheetIds.map(function (s) {
                 const sUpper = String(s || '').trim().toUpperCase();
@@ -5492,11 +5672,10 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <div id="mlp-template-list"></div>
             </div>
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
-                <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">🧾 套用／設計擷取範本</h3>
+                <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">🧾 套用／設計範本</h3>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0;">
-                    先選來源：<b>本機檔案</b>會出現選檔＋目的資料夾（產生 meta/script）；<b>雲端教材檔案</b>則下拉選已在 Drive 的教材資料夾（把已有範本套上去並指派班級）。
-                    兩種來源都可以<b>套用目前的範本</b>（含同時是擷取＋試卷的 dual）或<b>🆕 設計新擷取範本</b>。
-                    套用與設計都會列出目前已在用這個組合的班級，也可再指派給新的班級，並寫進資料庫。
+                    <b>本機檔案</b>＝擷取 Excel 欄位、產生 meta/script。<b>雲端教材</b>＝套用或新設計<b>試卷範本</b>（不是擷取）。
+                    雲端選「整個資料夾」就全部 meta 納入、不用再勾；選單一檔案會自動勾該檔，其餘可複選。
                 </p>
                 <div id="mlp-excel-source-wrap"></div>
                 <div id="mlp-excel-block" style="margin-top:10px;"></div>

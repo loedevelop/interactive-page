@@ -1,0 +1,18 @@
+# 學生複習專區鐵律
+
+> 複習不是作業。學生不出卷、不打 GAS、不讀整本題庫。
+
+## 不變量
+
+- 學生分頁 `review` 只在 `switchView('review')` 才 render（page-refresh-perf）
+- 出卷只走 `build_review_paper`／Edge `build-review-paper`，讀 `class_review_catalog_meta`
+- 場次只寫 `review_sessions`，**禁止**建成 `assignments`
+- 學生選材是四步精靈，不複製老師出題 13 欄表；試卷範本自動帶入、學生看不到
+- 可用題沒快取就寫「需老師更新目錄」，禁止粉飾 `~20`
+- A／B／C 由 `classes.raw_data.review_zone` 決定；C 的分數用獨立「複習測試」欄，不混進作業勾選格
+
+## 禁止
+
+- 學生端載入 `feature-exam-job.js`／`api-gas-service.js`／`ensureMetaCatalog`
+- 把複習寫進課程進度時間軸
+- 學生手動提交 AI 批改

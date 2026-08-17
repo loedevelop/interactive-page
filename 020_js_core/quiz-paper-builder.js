@@ -41,6 +41,43 @@ window.QuizPaperBuilder = (function () {
             .trim();
     }
 
+    function joinAnswerKeys(row) {
+        if (!row || !Array.isArray(row._answer_keys) || !row._answer_keys.length) return '';
+        return row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
+            .filter(Boolean).join(' ');
+    }
+
+    function vbkNameOf(row, sheetId) {
+        const direct = String((row && (row.vBK_name || row.vbk_name)) || '').trim();
+        if (direct) return direct;
+        const s = String(sheetId || (row && row.sheet_id) || '').trim();
+        const m = s.match(/vBK-\d+/i);
+        return m ? m[0] : '';
+    }
+
+    function formatItemSourceLabel(item) {
+        const src = (item && item.source) || {};
+        const vbk = String(src.vbk_name || src.vBK_name || '').trim() || vbkNameOf(src, src.sheet_id);
+        const page = src.page != null && src.page !== '' ? String(src.page) : '';
+        const itemNo = String(src.item_no_label != null && src.item_no_label !== ''
+            ? src.item_no_label
+            : (src.item_no != null && src.item_no !== '' ? src.item_no : '')).trim();
+        const parts = [];
+        if (vbk) parts.push(vbk);
+        else if (src.sheet_id) parts.push(String(src.sheet_id).replace(/\.meta\.json$/i, ''));
+        if (page) parts.push(page);
+        if (itemNo) parts.push(itemNo);
+        return parts.join(' - ');
+    }
+
+    function formatItemHeadline(item, displayNo) {
+        const seq = displayNo != null ? String(displayNo) : (item && item.seq != null ? String(item.seq) : '');
+        const meta = formatItemSourceLabel(item);
+        if (seq && meta) return seq + '. ' + meta;
+        if (seq) return seq + '.';
+        return meta || '';
+    }
+
     /**
      * 中央可接受答案白名單（2026-08-11 新增，見「錯題申訴」規劃）：常見英文縮寫等價形式，
      * 雙向都算對——寫 "I am" 或 "I'm" 都不該被判錯，不需要老師/助教一個個手動加
@@ -451,6 +488,20 @@ window.QuizPaperBuilder = (function () {
         return out;
     }
 
+    function applyColMapAliases(row, colMap) {
+        if (!row || !colMap) return row || {};
+        const out = Object.assign({}, row);
+        Object.keys(colMap).forEach(function (letter) {
+            const sem = colMap[letter];
+            if (!sem) return;
+            const L = String(letter).toUpperCase();
+            if ((out[L] == null || String(out[L]).trim() === '') && out[sem] != null && String(out[sem]).trim() !== '') {
+                out[L] = out[sem];
+            }
+        });
+        return out;
+    }
+
     function buildItemFromRow(row, opts) {
         const Eval = window.LayoutFieldsEval;
         if (!Eval) throw new Error('LayoutFieldsEval 未載入');
@@ -459,6 +510,7 @@ window.QuizPaperBuilder = (function () {
         const itemNo = toNum(row.item_no);
         const folder = opts.materialFolder || '';
         const itemId = [folder || 'bank', sheet, isNaN(page) ? 'p' : page, isNaN(itemNo) ? 'i' : itemNo].join(':');
+        const evalRow = applyColMapAliases(row, opts.colMap);
 
         /**
          * 💣 雷區：fields／fields_answer／quizPrompt／quizAnswer 公式字串來自
@@ -472,7 +524,7 @@ window.QuizPaperBuilder = (function () {
          */
         function safeEvalFields(formula) {
             if (!formula) return [];
-            try { return cellsToPlain(Eval.evaluateFields(formula, row, opts.colMap)); }
+            try { return cellsToPlain(Eval.evaluateFields(formula, evalRow, opts.colMap)); }
             catch (_evalErr) { return []; }
         }
 
@@ -497,27 +549,25 @@ window.QuizPaperBuilder = (function () {
         }
 
         /**
-         * 💣 雷區（2026-08-11 老師回報「正確答案只有前置詞，沒有英文單字那欄」——答案結合
-         * 公式形同虛設）：`_answer_mode === 'combine'` 是老師在 Layout Template 明確設定過
-         * 「書寫答案有多欄，要用 answer_combine_note 公式（例如 AN&" "&AO）結合」，算出來、
-         * 也允許逐列修正的最終值（row._answer_combined_text），**優先權必須最高**。
-         * 之前這段寫在 `opts.quizAnswer` / cells[2] 舊慣例 fallback 之後，且用 `if (!answerEn)`
-         * 卡門——只要舊版 quiz_answer／fields 公式（通常只認得單一欄，例如只挑到 AN 這欄）
-         * 先算出任何非空字串，answerEn 就已經「有值」，下面整段 combine 判斷直接被跳過，
-         * 導致學生看到／用來批改的「正確答案」只有 AN（前置詞），完全漏掉 AO（動詞變化）。
-         * 現在改成：combine 模式一律優先讀 _answer_combined_text，其餘 quiz_answer／cells[2]／
-         * row.answer_en 都退到後面當 fallback，且只在「非 combine 模式」或「combine 但沒算出
-         * 結合值」時才會用到。
+         * 💣 雷區（2026-08-16）：試卷範本公式（quiz_answer／answer_combine_note，例如
+         * AN&" "&AO）是老師明確寫的標準答案來源，優先於 meta 裡可能過期的
+         * `_answer_combined_text`（舊擷取曾把 pos+pre 寫成「ph. -」）。
+         * 公式算出空白才退回結合快取／_answer_keys。
+         * skipStoredCombined（重新批改／重新批閱）再多跳過過期結合快取。
+         * 禁止用詞性啟發式去改公式。
          */
-        if (row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
-            answerEn = String(row._answer_combined_text).trim();
-        } else if (row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
-            answerEn = row._answer_keys.map(function (key) { return String(row[key] || '').trim(); })
-                .filter(Boolean).join(' ');
+        if (opts.quizAnswer) {
+            const tplCells = safeEvalFields(opts.quizAnswer);
+            answerEn = tplCells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join(' ').trim();
         }
-        if (!answerEn && opts.quizAnswer) {
-            const answerCells = safeEvalFields(opts.quizAnswer);
-            answerEn = answerCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
+        if (!answerEn && opts.skipStoredCombined) {
+            if (row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
+                answerEn = joinAnswerKeys(row);
+            }
+        } else if (!answerEn && row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
+            answerEn = String(row._answer_combined_text).trim();
+        } else if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
+            answerEn = joinAnswerKeys(row);
         }
         // 舊慣例（相容無 quiz_prompt／quiz_answer 的教材）：第2欄提示（Y）、第3欄英文答案（X）
         if (!promptZh) promptZh = (cells[1] && cells[1].text) || String(row.display_zh || '').trim();
@@ -563,8 +613,10 @@ window.QuizPaperBuilder = (function () {
             source: {
                 material_folder: folder,
                 sheet_id: sheet,
+                vbk_name: vbkNameOf(row, sheet),
                 page: isNaN(page) ? null : page,
                 item_no: isNaN(itemNo) ? null : itemNo,
+                item_no_label: String(row.item_no != null ? row.item_no : (isNaN(itemNo) ? '' : itemNo)).trim(),
                 schema_id: opts.schemaId || '',
                 layout_profile_id: opts.layoutProfileId || ''
             }
@@ -617,7 +669,6 @@ window.QuizPaperBuilder = (function () {
             const rows = Array.isArray(pack.rows) ? pack.rows : [];
             const schemaId = pack.schemaId || '';
             const materialFolder = pack.materialFolder || layout.material_folder || '';
-            const colMap = resolveColMap(layout, schemaId);
 
             /**
              * 💣 雷區（見 material-layout-pairing-invariant.mdc）：同一活頁（同一份 meta 檔）
@@ -628,6 +679,7 @@ window.QuizPaperBuilder = (function () {
              * 讓同一活頁的兩個區段各自吃到自己的 fields／quiz_prompt／quiz_answer。
              */
             const profile = sec.layout_profile_id ? pickProfile(layout, sec.layout_profile_id) : defaultProfile;
+            const colMap = Object.assign({}, resolveColMap(layout, schemaId), (profile && profile.col_map) || {});
             const fields = (profile && profile.fields) || args.fields || '';
             if (!fields) throw new Error('區段 ' + (sIdx + 1) + '（活頁 ' + sheetId + '）的 layout 缺少 fields 公式（請確認 _layout.json 或該區段的 layout_profile_id）');
             const fieldsAnswer = (profile && (profile.fields_answer || profile.answer_fields)) || args.fieldsAnswer || '';
@@ -664,8 +716,17 @@ window.QuizPaperBuilder = (function () {
             }
 
             if (shuffle) restPool = shuffleInPlace(restPool.slice());
-            const want = Math.max(0, Number(sec.count) || 0);
-            const fillWant = want > 0 ? Math.max(0, want - mandatoryRows.length) : restPool.length;
+            // 💣 雷區（2026-08-17）：題數填 0 以前被當成「沒填＝抽範圍內全部」，
+            // 三列各 20 可用、其中兩列題數 0，會產出 60 題。明確的 0＝不出這列；
+            // 只有空白／未填才沿用「抽全部」舊語意。
+            const countRaw = sec.count;
+            const countMissing = countRaw === '' || countRaw == null
+                || (typeof countRaw === 'string' && !String(countRaw).trim());
+            const want = countMissing ? restPool.length : Math.max(0, Number(countRaw) || 0);
+            if (!countMissing && want === 0 && !includeSet) {
+                continue;
+            }
+            const fillWant = Math.max(0, want - mandatoryRows.length);
             const filled = restPool.slice(0, Math.min(fillWant, restPool.length));
             const take = mandatoryRows.concat(filled);
             if (want > 0 && mandatoryRows.length > want) {
@@ -937,6 +998,69 @@ window.QuizPaperBuilder = (function () {
         return true;
     }
 
+    function rowMatchesItem(row, item) {
+        const src = (item && item.source) || {};
+        const itemNo = toNum(src.item_no);
+        const ri = toNum(row && row.item_no);
+        if (isNaN(itemNo) || isNaN(ri) || itemNo !== ri) return false;
+        const page = toNum(src.page);
+        const rp = toNum(row && row.page);
+        if (!isNaN(page) && !isNaN(rp) && page !== rp) return false;
+        return true;
+    }
+
+    /**
+     * 維持現有題目與順序，只依目前試卷範本公式重算每題標準答案。
+     * 不抽新題、不改 item_id。給「重新批改」用，不要跟「產生試卷」混在一起。
+     */
+    async function refreshPaperAnswersKeepItems(args) {
+        const paper = args && args.paper;
+        const items = (paper && Array.isArray(paper.items)) ? paper.items : [];
+        if (!items.length) throw new Error('沒有現有卷可以重批');
+        const loadSheetMeta = args.loadSheetMeta;
+        const layout = args.layout || {};
+        const examJob = args.examJob || {};
+        const metaCache = {};
+        let updated = 0;
+        let missing = 0;
+        for (let i = 0; i < items.length; i++) {
+            const it = items[i];
+            const src = it.source || {};
+            const sheetId = String(src.sheet_id || '').trim().toUpperCase();
+            if (!sheetId || typeof loadSheetMeta !== 'function') { missing += 1; continue; }
+            if (!metaCache[sheetId]) metaCache[sheetId] = await loadSheetMeta(sheetId);
+            const pack = metaCache[sheetId] || {};
+            const rows = Array.isArray(pack.rows) ? pack.rows : [];
+            const row = rows.find(function (r) { return rowMatchesItem(r, it); });
+            if (!row) { missing += 1; continue; }
+            const sec = (examJob.sections || []).find(function (s) {
+                return String((s && s.sheet_id) || '').toUpperCase() === sheetId;
+            }) || {};
+            const profile = sec.layout_profile_id
+                ? pickProfile(layout, sec.layout_profile_id)
+                : pickProfile(layout, examJob.layout_profile_id);
+            const rebuilt = buildItemFromRow(row, {
+                sheetId: sheetId,
+                materialFolder: pack.materialFolder || layout.material_folder || src.material_folder || '',
+                schemaId: pack.schemaId || src.schema_id || '',
+                fields: (profile && profile.fields) || '',
+                fieldsAnswer: (profile && (profile.fields_answer || profile.answer_fields)) || '',
+                quizPrompt: (profile && profile.quiz_prompt) || '',
+                quizAnswer: (profile && profile.quiz_answer) || '',
+                colMap: Object.assign({}, resolveColMap(layout, pack.schemaId || src.schema_id || ''), (profile && profile.col_map) || {}),
+                quizMode: it.quiz_mode || 'full_sentence',
+                layoutProfileId: (profile && profile.profile_id) || src.layout_profile_id || '',
+                skipStoredCombined: true
+            });
+            it.answer_en = rebuilt.answer_en;
+            it.accepted_answers = rebuilt.accepted_answers;
+            it.sub_answers = rebuilt.sub_answers;
+            updated += 1;
+        }
+        paper.answers_refreshed_at = new Date().toISOString();
+        return { paper: paper, updated: updated, missing: missing };
+    }
+
     /**
      * 用「目前」的 paper（含老師剛編輯過的 accepted_answers／answer_en）重新批改一份
      * 學生 completion 的 raw_data。只動 quiz_result／quiz_stats 裡跟批改直接相關的欄位，
@@ -1057,6 +1181,26 @@ window.QuizPaperBuilder = (function () {
      * @param {function} onComplete 每次「完整打對一次」都會呼叫；由呼叫端負責清空/鎖定
      * @returns {{ detach: function }} 可呼叫 detach() 移除監聽（例如切換題目、關閉視窗時）
      */
+    function playRetypeErrorBeep() {
+        try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) return;
+            if (!playRetypeErrorBeep._ctx) playRetypeErrorBeep._ctx = new AC();
+            const ctx = playRetypeErrorBeep._ctx;
+            if (ctx.state === 'suspended') ctx.resume();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.value = 240;
+            gain.gain.setValueAtTime(0.07, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.09);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.09);
+        } catch (_e) {}
+    }
+
     function attachStrictRetypeInput(inputEl, expectedText, onComplete) {
         const expected = String(expectedText == null ? '' : expectedText);
 
@@ -1080,6 +1224,7 @@ window.QuizPaperBuilder = (function () {
                         inputEl.style.borderColor = '';
                         inputEl.style.boxShadow = '';
                     }, 350);
+                    playRetypeErrorBeep();
                 }
             }
             if (expected && inputEl.value === expected) {
@@ -1136,6 +1281,9 @@ window.QuizPaperBuilder = (function () {
         equivalentAcceptedSeed: equivalentAcceptedSeed,
         mergeAcceptedAnswers: mergeAcceptedAnswers,
         shuffleInPlace: shuffleInPlace,
-        attachStrictRetypeInput: attachStrictRetypeInput
+        attachStrictRetypeInput: attachStrictRetypeInput,
+        formatItemSourceLabel: formatItemSourceLabel,
+        formatItemHeadline: formatItemHeadline,
+        refreshPaperAnswersKeepItems: refreshPaperAnswersKeepItems
     };
 })();

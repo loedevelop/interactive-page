@@ -26,6 +26,14 @@ window.FeatureExamReview = (function () {
         return esc(s).replace(/'/g, '&#39;');
     }
 
+    function itemHeadline(item, displayNo) {
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.formatItemHeadline === 'function') {
+            return window.QuizPaperBuilder.formatItemHeadline(item, displayNo != null ? displayNo : (item && item.seq));
+        }
+        const seq = displayNo != null ? displayNo : (item && item.seq);
+        return (seq != null && seq !== '') ? (String(seq) + '.') : '';
+    }
+
     function renderEntryButton(classId) {
         const safeClassId = String(classId).replace(/'/g, "\\'");
         return '<button type="button" class="btn btn-action" onclick="window.FeatureExamReview.renderReviewPage(\'' + safeClassId + '\')" '
@@ -150,7 +158,7 @@ window.FeatureExamReview = (function () {
                 + '<button type="button" onclick="window.FeatureExamReview.renderReviewPage(\'' + safeClassId + '\')" style="background:none; border:none; color:#6D28D9; font-weight:800; cursor:pointer; padding:0;">← 返回任務清單</button>'
                 + '<button type="button" id="regrade-whole-task-btn" onclick="window.FeatureExamReview._regradeWholeTask(\'' + safeClassId + '\', \'' + safeAssignId + '\', \'' + safeTaskId + '\')" '
                     + 'style="padding:6px 12px; border:1px solid #0EA5E9; border-radius:6px; background:white; color:#0369A1; font-weight:800; cursor:pointer;" '
-                    + 'title="用目前這份線上卷（老師剛改過答案／公式後，記得先重新按「產生線上卷」再來這裡重新批閱）重新批改全班已交卷的學生。">🔄 重新批閱本任務所有學生</button>'
+                    + 'title="依目前試卷範本重算標準答案（維持原題），再重批全班已交卷學生。">🔄 重新批閱本任務所有學生</button>'
                 + '</div>'
                 + appealBtnHtml
                 + '<div style="display:flex; flex-direction:column; gap:8px;">' + (rows || '<div style="color:#94A3B8;">此班級沒有學生。</div>') + '</div>';
@@ -424,7 +432,7 @@ window.FeatureExamReview = (function () {
 
         return '<div id="qr-row-' + idx + '" style="border:1px solid ' + (isCorrect ? '#D1FAE5' : '#FECACA') + '; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:' + (isCorrect ? '#F0FDF4' : '#FFF7F7') + ';">'
             + '<div style="display:flex; justify-content:space-between; font-size:0.78rem; font-weight:900; color:#64748B; margin-bottom:4px;">'
-                + '<span>第 ' + esc(item.seq) + ' 題</span>' + statusBadge
+                + '<span>' + esc(itemHeadline(item, item.seq)) + '</span>' + statusBadge
             + '</div>'
             + '<div style="font-weight:800; color:#1E293B; margin-bottom:8px; white-space:pre-wrap;">' + esc(item.prompt_zh || '') + '</div>'
             + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">學生答案</div>'
@@ -451,7 +459,7 @@ window.FeatureExamReview = (function () {
         // 又更新了），老師也可以強制重批這位學生一次，不需要先動一下考卷才能按存檔。
         const regradeBtnHtml = state && state.completion
             ? '<button type="button" id="qr-regrade-btn" onclick="window.FeatureExamReview._regradeThisStudent()" '
-                + 'title="即使沒有修改標準答案，也強制重新批改這位學生一次（例如中央白名單更新後）" '
+                + 'title="依目前試卷範本重算標準答案（維持原題），再重新批改這位學生" '
                 + 'style="padding:9px 18px; border:1px solid #0EA5E9; border-radius:8px; background:white; color:#0369A1; font-weight:800; cursor:pointer;">🔄 重新批閱</button>'
             : '';
         return '<div style="margin-top:16px; display:flex; justify-content:flex-end; gap:10px; position:sticky; bottom:0; background:white; padding-top:8px;">'
@@ -565,8 +573,25 @@ window.FeatureExamReview = (function () {
     }
 
     /**
-     * 獨立「重新批閱」：跟 isDirty 無關，即使沒改任何 accepted_answers 也強制重批這位學生
-     * 一次（例如中央白名單新增配對之後）。只動這一位學生，不影響同任務其他人。
+     * 依目前試卷範本重算卷上標準答案、寫回作業，再回傳更新後的 paper。
+     * 批改畫面的「重新批閱」必須走這條，否則只會對舊快照重算分、畫面標準答案不變。
+     */
+    async function refreshPaperAnswersFromTemplate(assignmentId, taskId, classId) {
+        if (!window.FeatureExamJob || typeof window.FeatureExamJob.refreshTaskPaperFromTemplate !== 'function') {
+            throw new Error('作業模組未載入，請硬重新整理老師頁');
+        }
+        const assignment = await window.ApiQuizReview.fetchAssignment(assignmentId);
+        const task = window.TaskScriptResolver.findTaskInTree(assignment.tasks, taskId);
+        if (!task || !task.raw_data || !task.raw_data.quiz_paper) {
+            throw new Error('找不到這個考試任務的線上卷');
+        }
+        const result = await window.FeatureExamJob.refreshTaskPaperFromTemplate(task, classId, { forceRefreshMeta: true });
+        await window.ApiQuizReview.saveQuizPaperPatch(assignmentId, taskId, result.paper);
+        return result;
+    }
+
+    /**
+     * 獨立「重新批閱」：先依試卷範本重算標準答案（維持原題），再強制重批這位學生。
      */
     async function _regradeThisStudent() {
         if (!state || !state.completion) {
@@ -576,7 +601,8 @@ window.FeatureExamReview = (function () {
         const btn = document.getElementById('qr-regrade-btn');
         if (btn) { btn.disabled = true; btn.textContent = '重新批閱中…'; }
         try {
-            await window.ApiQuizReview.saveQuizPaperPatch(state.assignmentId, state.taskId, state.paper);
+            const refreshed = await refreshPaperAnswersFromTemplate(state.assignmentId, state.taskId, state.classId);
+            state.paper = refreshed.paper;
             await regradeAndSaveTask(state.assignmentId, state.taskId, state.paper, {
                 onlyCompletionIds: [state.completion.id],
                 forceAll: true
@@ -588,7 +614,11 @@ window.FeatureExamReview = (function () {
                 state.answers = (freshC.raw_data && freshC.raw_data.quiz_answers) || {};
             }
             state.originalPaperJson = JSON.stringify(state.paper);
-            window.showFlash && window.showFlash('✅ 已重新批閱這位學生', 'success');
+            const miss = refreshed.missing ? '（' + refreshed.missing + ' 題對不到 meta）' : '';
+            const sample = (refreshed.sampleAnswers && refreshed.sampleAnswers.length)
+                ? '｜例：' + refreshed.sampleAnswers.slice(0, 2).join('、')
+                : '';
+            window.showFlash && window.showFlash('✅ 已依試卷範本更新標準答案並重新批閱這位學生' + sample + miss, refreshed.missing ? 'warning' : 'success');
             rerenderAll();
         } catch (err) {
             console.error('[FeatureExamReview] regradeThisStudent', err);
@@ -709,7 +739,7 @@ window.FeatureExamReview = (function () {
         const studentNames = group.students.map(function (s) { return esc(s.studentName); }).join('、');
         const hint = whitelistHintForGroup(group);
         return '<div id="appeal-group-' + idx + '" style="border:1px solid #DDD6FE; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:#FAF5FF;">'
-            + '<div style="font-size:0.76rem; color:#7C3AED; font-weight:900; margin-bottom:4px;">第 ' + esc(item ? item.seq : '?') + ' 題　🚩 ' + group.students.length + ' 人申訴</div>'
+            + '<div style="font-size:0.76rem; color:#7C3AED; font-weight:900; margin-bottom:4px;">' + esc(itemHeadline(item, item ? item.seq : '?')) + '　🚩 ' + group.students.length + ' 人申訴</div>'
             + '<div style="font-weight:800; color:#1E293B; margin-bottom:6px; white-space:pre-wrap;">' + promptHtml + '</div>'
             + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">申訴內容</div>'
             + '<div style="font-size:1rem; font-weight:900; color:#B45309; margin-bottom:6px;">' + esc(group.answerText) + ' ' + hint + '</div>'
@@ -822,24 +852,19 @@ window.FeatureExamReview = (function () {
     }
 
     /**
-     * 「考試批改」學生清單頁的通用「重新批閱本任務所有學生」（不需要有待審申訴才能用）。
-     * 2026-08-11 老師回報「書寫答案結合公式沒生效，正確答案缺欄」：修好 quiz-paper-builder.js
-     * 的公式優先權後，已經交卷的學生手上的 quiz_paper 仍是修正前產生的舊內容——老師必須先
-     * 在作業編輯器按「📝 產生線上卷」重新產生一次（拿到修正後的正確答案），再回這裡用目前
-     * 最新的 quiz_paper 重新批閱全班，兩步缺一都不會反映到已交卷學生的分數。
+     * 「考試批改」學生清單頁的通用「重新批閱本任務所有學生」。
+     * 先依目前試卷範本重算標準答案（維持原題），再重批全班；不必先「產生試卷」。
      */
     async function _regradeWholeTask(classId, assignmentId, taskId) {
         const btn = document.getElementById('regrade-whole-task-btn');
         try {
             if (btn) { btn.disabled = true; btn.textContent = '重新批閱中…'; }
-            const assignment = await window.ApiQuizReview.fetchAssignment(assignmentId);
-            const task = window.TaskScriptResolver.findTaskInTree(assignment.tasks, taskId);
-            if (!task || !task.raw_data || !task.raw_data.quiz_paper) {
-                throw new Error('找不到這個考試任務目前的線上卷內容（請先在作業編輯器產生線上卷）');
-            }
-            const result = await regradeAndSaveTask(assignmentId, taskId, task.raw_data.quiz_paper, { forceAll: true });
-            window.showFlash && window.showFlash('✅ 已用目前線上卷重新批閱 ' + (result.savedIds || []).length + ' 位學生'
-                + (result.failCount ? '（' + result.failCount + ' 位寫入失敗，請重試）' : ''), 'success');
+            const refreshed = await refreshPaperAnswersFromTemplate(assignmentId, taskId, classId);
+            const result = await regradeAndSaveTask(assignmentId, taskId, refreshed.paper, { forceAll: true });
+            window.showFlash && window.showFlash('✅ 已依試卷範本更新標準答案並重新批閱 ' + (result.savedIds || []).length + ' 位學生'
+                + (refreshed.missing ? '（' + refreshed.missing + ' 題對不到 meta）' : '')
+                + (result.failCount ? '（' + result.failCount + ' 位寫入失敗，請重試）' : ''),
+                (refreshed.missing || result.failCount) ? 'warning' : 'success');
             if (window.FeatureProgress && typeof window.FeatureProgress.refresh === 'function') {
                 window.FeatureProgress.refresh(classId);
             }
@@ -869,6 +894,9 @@ window.FeatureExamReview = (function () {
         renderReviewPage: renderReviewPage,
         openReview: openReview,
         _openTaskStudentList: openTaskStudentList,
+        regradeTaskPaper: function (assignmentId, taskId, paper) {
+            return regradeAndSaveTask(assignmentId, taskId, paper, { forceAll: true });
+        },
         _regradeWholeTask: _regradeWholeTask,
         _toggleShowWrongOnly: _toggleShowWrongOnly,
         _addAccepted: _addAccepted,

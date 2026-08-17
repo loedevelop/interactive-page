@@ -361,7 +361,12 @@ window.FeatureProgress = (() => {
                     </table>
                 </div>
             </div>
+            <div id="progress-review-score-slot"></div>
         `;
+
+        if (window.FeatureReviewRecords && typeof window.FeatureReviewRecords.renderScoreCardIfNeeded === 'function') {
+            window.FeatureReviewRecords.renderScoreCardIfNeeded(classId);
+        }
 
         if (window.FeatureReminderImage && typeof window.FeatureReminderImage.refreshEntryBadge === 'function') {
             window.FeatureReminderImage.refreshEntryBadge(classId);
