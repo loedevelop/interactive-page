@@ -159,6 +159,252 @@ window.UIStudentTimelineTemplates = (() => {
         return pages;
     };
 
+    /** 單純頁碼範圍（pp. 1~3／p. 1, 3），沒有 A／B 多活頁。這種標題學生看得到幾頁，提示不得另算一套。 */
+    const isSimplePageRangeText = (text) => {
+        const s = String(text || '').replace(/[～〜－—–-]/g, '~').replace(/\s+/g, ' ').trim();
+        if (!s) return false;
+        const withoutPp = s.replace(/pp?\.?\s*/gi, '');
+        if (/[A-Za-z\u4e00-\u9fff]/.test(withoutPp)) return false;
+        return /^\d+(\s*~\s*\d+)?(\s*,\s*\d+(\s*~\s*\d+)?)*$/.test(withoutPp);
+    };
+
+    /**
+     * 學生端錄音頁數唯一來源：標題／base 範圍看得到幾頁，就收幾檔。
+     * Snapshot 多出來的 grading_units（常見：範圍 pp. 1~3 卻殘留第 4 頁）要丟掉，否則提示寫 4 檔、標題寫 3 頁。
+     * 多活頁（A pp. 1~2；B pp. 1~2）維持用 grading_units，因為同頁碼會出現兩次。
+     */
+    const alignUnitsToVisibleRange = (units, rangeText) => {
+        const list = Array.isArray(units) ? units.slice() : [];
+        const pages = pagesFromRangeText(rangeText);
+        if (!list.length) {
+            return pages.map(function (p) {
+                return { unit_key: 'range:' + p, stem: '', page: p, label: 'p. ' + p, original_script: '' };
+            });
+        }
+        if (!pages.length || !isSimplePageRangeText(rangeText)) return list;
+        const unique = [];
+        pages.forEach(function (p) {
+            if (unique.indexOf(p) === -1) unique.push(p);
+        });
+        const pageOf = function (u) {
+            if (!u) return null;
+            if (u.page != null && u.page !== '') {
+                const n = Number(u.page);
+                return isNaN(n) ? null : n;
+            }
+            const m = String(u.label || u.unit_key || '').match(/(?:p\.?\s*)(\d+)/i);
+            return m ? parseInt(m[1], 10) : null;
+        };
+        const byPage = {};
+        list.forEach(function (u) {
+            const p = pageOf(u);
+            if (p == null || unique.indexOf(p) === -1 || byPage[p]) return;
+            byPage[p] = Object.assign({}, u, { page: p, label: u.label || ('p. ' + p) });
+        });
+        return unique.map(function (p) {
+            const found = byPage[p];
+            if (found) {
+                return Object.assign({}, found, { page: p, label: found.label || ('p. ' + p) });
+            }
+            return {
+                unit_key: 'range:' + p,
+                stem: '',
+                page: p,
+                label: 'p. ' + p,
+                original_script: ''
+            };
+        });
+    };
+
+    /**
+     * 學生看得到的範圍。標題若已是 pp. 1~3，以標題為準（Snapshot 殘列不得多出第 4 頁）。
+     * material_range 若是「A pp. 1~2；B pp. 1~2」多活頁，維持原字。
+     * 單段但夾了書名（Jessie-vBK A pp. 1~3）時，收成單純頁碼範圍再對齊。
+     */
+    const visibleRecordingRange = (task) => {
+        const raw = (task && task.raw_data) || {};
+        const title = String((task && task.title) || '').replace(/<[^>]*>/g, '').trim();
+        if (isSimplePageRangeText(title)) return title;
+        const range = String(raw.material_range || '').trim();
+        if (isSimplePageRangeText(range)) return range;
+        if (range && !/[;；]/.test(range)) {
+            const pages = pagesFromRangeText(range);
+            const unique = [];
+            pages.forEach(function (p) {
+                if (unique.indexOf(p) === -1) unique.push(p);
+            });
+            if (unique.length === 1) return 'p. ' + unique[0];
+            if (unique.length > 1) return 'pp. ' + unique.join(', ');
+        }
+        return range || title;
+    };
+
+    const isUglyDisplayStem = (stem) => {
+        const s = String(stem || '').trim();
+        return !s || /[./]/.test(s) || s.length > 16 || /vocab-word|meta\.json/i.test(s);
+    };
+
+    /** 從學生顯示全文抽出某一頁（【stem】[2] … 到下一頁之前）。檔名當 stem 時改成 p. 2。 */
+    const extractDisplayBlockForPage = (fullText, page) => {
+        const text = String(fullText || '');
+        if (!text.trim() || page == null || page === '') return '';
+        const pageNum = Number(page);
+        if (isNaN(pageNum)) return '';
+        const re = /【([^\n】]*)】\s*\[(\d+)\]/g;
+        const starts = [];
+        let m;
+        while ((m = re.exec(text))) {
+            starts.push({ stem: m[1], page: parseInt(m[2], 10), index: m.index, end: m.index + m[0].length });
+        }
+        if (!starts.length) return '';
+        const hit = starts.filter(function (s) { return s.page === pageNum; })[0];
+        if (!hit) return '';
+        let next = null;
+        starts.forEach(function (s) {
+            if (s.index > hit.index && (!next || s.index < next.index)) next = s;
+        });
+        let block = text.slice(hit.index, next ? next.index : text.length).trim();
+        const header = isUglyDisplayStem(hit.stem) ? ('p. ' + pageNum) : ('【' + hit.stem + '】[' + pageNum + ']');
+        block = block.replace(/【[^\n】]*】\s*\[\d+\]/, header);
+        return block.trim();
+    };
+
+    const studioTranscriptForPage = (task, pageUnit, fallbackText) => {
+        const raw = (task && task.raw_data) || {};
+        const page = pageUnit && pageUnit.page;
+        const display = String(raw.student_display_text || raw.student_display || raw.student_text || '');
+        const fromDisplay = extractDisplayBlockForPage(display, page);
+        if (fromDisplay) return fromDisplay;
+        const unitScript = String((pageUnit && pageUnit.original_script) || '').trim();
+        if (unitScript) return unitScript;
+        const fromScript = extractDisplayBlockForPage(String(raw.original_script || ''), page);
+        if (fromScript) return fromScript;
+        return String(fallbackText || '').trim();
+    };
+
+    const countRecordingUnits = (task) => getRecordingBoard(task, null).expectedCount;
+
+    const pageFromMeta = (meta) => {
+        if (!meta) return null;
+        if (meta.page != null && meta.page !== '') {
+            const n = Number(meta.page);
+            return isNaN(n) ? null : n;
+        }
+        const label = String(meta.label || '');
+        const m = label.match(/(?:p\.?\s*|第\s*)(\d+)/i);
+        return m ? parseInt(m[1], 10) : null;
+    };
+
+    /** 檔名對頁：認「第2頁」「Audio_p.2」。不要把作業標題裡的 pp. 1~3 當成第 1 頁。 */
+    const parseRecordingPageFromName = (name) => {
+        const base = String(name || '').replace(/\.[^.]+$/, '')
+            .replace(/pp?\.?\s*\d+\s*[~～〜－—–-]\s*\d+/gi, ' ');
+        let m = base.match(/第\s*(\d+)\s*頁/);
+        if (m) return parseInt(m[1], 10);
+        m = base.match(/(?:^|[^0-9a-z])(?:p|page)\s*\.?\s*(\d+)(?:[^0-9]|$)/i);
+        if (m) return parseInt(m[1], 10);
+        if (/T\d{2}-\d{2}-\d{2}/.test(base) || /\d{4}-\d{2}-\d{2}/.test(base)) return null;
+        return null;
+    };
+
+    /**
+     * 進度表播放器與錄音艙「已繳」共用：只認真正寫在檔／段上的頁碼，
+     * 禁止用「第幾個檔 = 範圍第幾頁」去猜（會出現艙內 1 已繳、外面卻 p.1＋p.3 兩個播放器）。
+     */
+    const collectSubmittedRecordingFiles = (raw, task) => {
+        const data = raw || {};
+        const expected = {};
+        alignUnitsToVisibleRange(
+            (task && task.raw_data && task.raw_data.grading_units) || [],
+            visibleRecordingRange(task)
+        ).forEach(function (u) {
+            if (u && u.page != null && u.page !== '') expected[Number(u.page)] = true;
+        });
+        const byId = {};
+        const add = function (id, extra) {
+            const fid = String(id || '').trim();
+            if (!fid || fid === 'undefined' || fid === 'null') return;
+            if (!byId[fid]) byId[fid] = { id: fid };
+            if (extra) Object.assign(byId[fid], extra);
+        };
+        (Array.isArray(data.submitted_files) ? data.submitted_files : []).forEach(function (f) {
+            if (f && f.id) add(f.id, f);
+        });
+        (Array.isArray(data.audio_segments) ? data.audio_segments : []).forEach(function (s) {
+            if (!s) return;
+            add(s.file_id, {
+                unit_key: s.unit_key,
+                label: s.label,
+                page: s.page,
+                name: s.name,
+                mime: s.uploadMime || s.mime
+            });
+        });
+        (Array.isArray(data.drive_file_ids) ? data.drive_file_ids : []).forEach(function (id) { add(id); });
+        const used = {};
+        const files = Object.keys(byId).map(function (id) {
+            const meta = byId[id];
+            let page = pageFromMeta(meta);
+            if (page == null) page = parseRecordingPageFromName(meta.name);
+            if (page != null && expected[page] && used[page]) page = null;
+            if (page != null && expected[page]) used[page] = true;
+            if (page != null && !expected[page] && Object.keys(expected).length) page = null;
+            return { id: id, page: page, meta: meta };
+        });
+        files.sort(function (a, b) {
+            const pa = a.page == null ? 999999 : Number(a.page);
+            const pb = b.page == null ? 999999 : Number(b.page);
+            return pa - pb;
+        });
+        return { files: files, pages: used };
+    };
+
+    /**
+     * 錄音進度唯一真相：進度表徽章／播放器、錄音艙頁選單都只讀這份。
+     * pages[] = 標題範圍展開的每一頁；submitted／fileId 來自同一份 collect。
+     */
+    const getRecordingBoard = (task, raw) => {
+        const units = alignUnitsToVisibleRange(
+            (task && task.raw_data && Array.isArray(task.raw_data.grading_units)) ? task.raw_data.grading_units : [],
+            visibleRecordingRange(task)
+        );
+        const collected = collectSubmittedRecordingFiles(raw, task);
+        const fileByPage = {};
+        collected.files.forEach(function (f) {
+            if (f && f.page != null && !fileByPage[Number(f.page)]) fileByPage[Number(f.page)] = f;
+        });
+        const pages = units.map(function (u, i) {
+            const pageNum = (u && u.page != null && u.page !== '') ? Number(u.page) : null;
+            const hit = (pageNum != null && fileByPage[pageNum]) ? fileByPage[pageNum] : null;
+            const row = {
+                unit_key: String((u && u.unit_key) || '').trim() || (pageNum != null ? ('range:' + pageNum) : ('unit:' + i)),
+                stem: (u && u.stem) || '',
+                page: pageNum,
+                label: (u && u.label) || (pageNum != null ? ('p. ' + pageNum) : ('第' + (i + 1) + '頁')),
+                original_script: String((u && u.original_script) || '').trim(),
+                submitted: !!hit,
+                fileId: hit ? String(hit.id) : '',
+                meta: hit ? hit.meta : null
+            };
+            row.student_display = studioTranscriptForPage(task, row, '');
+            return row;
+        });
+        const submittedKeys = {};
+        pages.forEach(function (p) {
+            if (!p.submitted) return;
+            if (p.unit_key) submittedKeys[p.unit_key] = true;
+            if (p.page != null) submittedKeys['range:' + Number(p.page)] = true;
+        });
+        const players = pages.filter(function (p) { return p.submitted && p.fileId; });
+        return {
+            pages: pages,
+            expectedCount: pages.length,
+            submittedCount: players.length,
+            submittedKeys: submittedKeys,
+            players: players
+        };
+    };
+
     /** 已繳交檔：音檔播放／圖片顯示／文件開預覽（開的是檔案，不是資料夾）；每筆都可「🔁 取代」 */
     const buildSubmittedFilesHtml = (fileIds, audioUrl, inlinePlayerId, fileMetas, courseId, taskId, statusId, skeletonUnitsForLabel, materialRangeForLabel) => {
         const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean).map(String) : [];
@@ -175,20 +421,30 @@ window.UIStudentTimelineTemplates = (() => {
         // 全部檔案就整批打回「第 X 檔」，看起來完全沒生效（老師回報「還是沒有顯示頁碼編號」）。
         // 改成逐檔位置對應：只要該位置有解析出頁碼就用，超出範圍的才 fallback，不要求整批數量剛好相等。
         const rangePages = pagesFromRangeText(materialRangeForLabel);
+        const rows = ids.map(function (fileId, idx) {
+            const meta = metas.find(function (m) { return m && String(m.id) === String(fileId); }) || metas[idx] || null;
+            let page = pageFromMeta(meta);
+            if (page == null) page = parseRecordingPageFromName(meta && meta.name);
+            return { fileId: fileId, meta: meta, idx: idx, page: page };
+        });
+        rows.sort(function (a, b) {
+            const pa = a.page == null ? 999999 : Number(a.page);
+            const pb = b.page == null ? 999999 : Number(b.page);
+            if (pa !== pb) return pa - pb;
+            return a.idx - b.idx;
+        });
         const showLabel = ids.length > 1;
         let html = '<div style="display:flex; flex-direction:column; gap:6px; width:100%;">';
-        ids.forEach((fileId, idx) => {
-            const meta = metas.find(function (m) { return m && String(m.id) === String(fileId); }) || metas[idx] || null;
-            const kind = guessSubmittedKind(fileId, idx === 0 ? audioUrl : '', meta);
+        rows.forEach((row, idx) => {
+            const fileId = row.fileId;
+            const meta = row.meta;
+            const kind = guessSubmittedKind(fileId, row.idx === 0 ? audioUrl : '', meta);
             const viewUrl = resolveDriveViewUrl(fileId);
             const playerId = ids.length === 1 ? inlinePlayerId : `${inlinePlayerId}-${idx}`;
-            const metaLabel = meta && meta.label ? String(meta.label).trim() : '';
-            const rangeLabel = (idx < rangePages.length) ? ('p. ' + rangePages[idx]) : '';
-            const unitLabel = metaLabel || rangeLabel || (fallbackUnits ? skeletonUnitLabelText(fallbackUnits[idx]) : '');
-            const labelChip = (showLabel && unitLabel)
-                ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(unitLabel)}</span>`
-                // title 帶診斷資訊（滑鼠移上去才看得到）：base 範圍解析出幾頁、目前共幾個檔案，方便回報問題時不用再猜。
-                : (showLabel ? `<span title="${escapeAttr('base 範圍解析出 ' + rangePages.length + ' 頁；本任務共 ' + ids.length + ' 個檔案，對不上才顯示檔案序號')}" style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">第 ${idx + 1} 檔</span>` : '');
+            const rangeLabel = (row.page != null) ? ('p. ' + row.page) : '';
+            const labelChip = rangeLabel
+                ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE; padding:2px 8px; border-radius:999px; min-width:20px; text-align:center;">${escapeAttr(rangeLabel)}</span>`
+                : (ids.length > 1 ? `<span style="flex:0 0 auto; font-size:0.75rem; font-weight:900; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:2px 8px; border-radius:999px;">未標頁</span>` : '');
             const replaceBtnHtml = buildReplaceButtonHtml(fileId, meta, kind, courseId, taskId, statusId, idx);
 
             if (kind === 'audio') {
@@ -197,7 +453,7 @@ window.UIStudentTimelineTemplates = (() => {
                 const streamUrl = resolveStreamUrl(fileId);
                 html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     ${labelChip}
-                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="none" style="height:34px; flex:1 1 220px; min-width:180px; max-width:340px; outline:none; border-radius:8px; vertical-align:middle;"></audio>
+                    <audio id="${escapeAttr(playerId)}" controls src="${escapeAttr(streamUrl)}" preload="none" data-stream-url="${escapeAttr(streamUrl)}" onerror="window.UIStudentTimelineTemplates && window.UIStudentTimelineTemplates.recoverAudioPlayer(this)" onloadedmetadata="window.UIStudentTimelineTemplates && window.UIStudentTimelineTemplates.recoverAudioPlayerIfEmpty(this)" style="height:34px; flex:1 1 220px; min-width:180px; max-width:340px; outline:none; border-radius:8px; vertical-align:middle;"></audio>
                     ${replaceBtnHtml}
                 </div>`;
             } else if (kind === 'image') {
@@ -950,16 +1206,56 @@ window.UIStudentTimelineTemplates = (() => {
             + '<div>' + chips + '</div></div>';
     }
 
-    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V124 模組已成功載入！");
+    const recoverAudioPlayer = (audioEl) => {
+        if (!audioEl || audioEl.dataset.recovering === '1' || audioEl.dataset.recovered === '1') return;
+        const src = audioEl.getAttribute('data-stream-url') || audioEl.getAttribute('src') || '';
+        if (!src || src.indexOf('stream-audio') === -1) return;
+        audioEl.dataset.recovering = '1';
+        fetch(src).then(function (r) {
+            if (!r.ok) throw new Error('stream ' + r.status);
+            const ct = String(r.headers.get('Content-Type') || '');
+            if (/json|html|text\/plain/i.test(ct)) throw new Error('not audio');
+            return r.blob();
+        }).then(function (blob) {
+            if (!blob || blob.size < 64) throw new Error('empty');
+            if (/json|html/i.test(blob.type || '')) throw new Error('not audio');
+            const url = URL.createObjectURL(blob);
+            audioEl.src = url;
+            audioEl.dataset.recovered = '1';
+            audioEl.dataset.recovering = '';
+            audioEl.preload = 'metadata';
+        }).catch(function () {
+            audioEl.dataset.recovering = '';
+            audioEl.title = '音檔無法播放，請用「取代」重傳這一頁';
+        });
+    };
+
+    const recoverAudioPlayerIfEmpty = (audioEl) => {
+        if (!audioEl) return;
+        const dur = Number(audioEl.duration);
+        if (!isFinite(dur) || dur <= 0) recoverAudioPlayer(audioEl);
+    };
+
+    console.log("🚀 [LogOn Web] UIStudentTimelineTemplates V146 模組已成功載入！");
 
     return {
         playGoogleTTS,
-        playStudentAudioSlice, 
+        playStudentAudioSlice,
+        recoverAudioPlayer,
+        recoverAudioPlayerIfEmpty, 
 
         // 供上傳流程（feature-student-timeline.js）重用：把 base 範圍文字展開成頁碼陣列，
         // 讓「已選檔數 vs. 範圍應有頁數」的提醒跟「已繳交檔頁碼標籤」共用同一套展開邏輯，
         // 避免兩處各寫一份、之後改一邊漏改另一邊。
         pagesFromRangeText,
+        alignUnitsToVisibleRange,
+        countRecordingUnits,
+        visibleRecordingRange,
+        extractDisplayBlockForPage,
+        studioTranscriptForPage,
+        parseRecordingPageFromName,
+        collectSubmittedRecordingFiles,
+        getRecordingBoard,
 
         // 供「學習分析」頁籤（feature-student-analytics.js）重用，不必複製一份邏輯。
         getScoresFromAi,
@@ -993,6 +1289,12 @@ window.UIStudentTimelineTemplates = (() => {
                     const compositeKey = `${course.id}_${task.id}`;
                     const isTaskDone = safeCompletedTasks.includes(compositeKey);
                     const checked = isTaskDone ? 'checked' : '';
+                    const recForBoard = (Array.isArray(window._studentTaskCompletions) ? window._studentTaskCompletions : []).find(function (c) {
+                        return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
+                    });
+                    const recordingBoard = (task.type === 'audio_record')
+                        ? getRecordingBoard(task, recForBoard && recForBoard.raw_data)
+                        : null;
                     
                     let aiFeedbackHtml = '';
                     let statusBadgeHtml = '';
@@ -1004,6 +1306,7 @@ window.UIStudentTimelineTemplates = (() => {
                     let directAudioUrl = '';
                     let submittedFileIds = [];
                     let submittedFileMetas = [];
+                    let recordingIncomplete = false;
                     
                     let inlinePlayerId = '';
                     if (course.id) {
@@ -1055,16 +1358,25 @@ window.UIStudentTimelineTemplates = (() => {
                                             retryAudioUrl = `https://drive.google.com/file/d/${retryAudioId}/view`;
                                         }
                                     } else if (retryAudioUrl) {
-                                        let driveIdMatch = retryAudioUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-                                        
+                                        // 只認檔案 ID，禁止把 /folders/ 資料夾 ID 拿來當 audio src（會 0:00/0:00）
+                                        let driveIdMatch = retryAudioUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                        if (!driveIdMatch) driveIdMatch = retryAudioUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                                        if (!driveIdMatch && !/\/folders\//.test(String(retryAudioUrl))) {
+                                            driveIdMatch = retryAudioUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                                        }
                                         if (driveIdMatch) retryAudioId = driveIdMatch[1];
                                     }
 
-                                    if (retryAudioId && submittedFileIds.indexOf(String(retryAudioId)) === -1) {
-                                        submittedFileIds.unshift(String(retryAudioId));
+                                    if (!submittedFileIds.length && retryAudioId) {
+                                        submittedFileIds.push(String(retryAudioId));
+                                    } else {
+                                        const seenIds = {};
+                                        submittedFileIds = submittedFileIds.filter(function (id) {
+                                            const k = String(id);
+                                            if (!k || seenIds[k]) return false;
+                                            seenIds[k] = true;
+                                            return true;
+                                        });
                                     }
                                     
                                     if (submittedFileIds.length > 0 || retryAudioUrl) {
@@ -1087,6 +1399,18 @@ window.UIStudentTimelineTemplates = (() => {
                                     ? 'submitted'
                                     : taskStatus;
 
+                                let recordingExpected = 0;
+                                let recordingSubmitted = 0;
+                                if (task.type === 'audio_record' && recordingBoard) {
+                                    recordingExpected = recordingBoard.expectedCount;
+                                    recordingSubmitted = recordingBoard.submittedCount;
+                                    submittedFileIds = recordingBoard.players.map(function (p) { return p.fileId; });
+                                    submittedFileMetas = recordingBoard.players.map(function (p) {
+                                        return Object.assign({}, p.meta || {}, { id: p.fileId, page: p.page, label: p.label });
+                                    });
+                                }
+                                recordingIncomplete = recordingExpected > 1 && recordingSubmitted < recordingExpected;
+
                                 if (effectiveTaskStatus === 'ai_processing') {
                                     const segProg = getAudioSegmentProgress(compRecord.raw_data);
                                     let processingLabel = '🤖 AI 批改中...';
@@ -1100,6 +1424,8 @@ window.UIStudentTimelineTemplates = (() => {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🤖 AI 分析完成</span>`;
                                 } else if (effectiveTaskStatus === 'graded') {
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#ECFDF5; color:#10B981; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #A7F3D0;">✅ 已批改</span>`;
+                                } else if (recordingIncomplete) {
+                                    statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🎙️ 已交 ${recordingSubmitted}/${recordingExpected} 頁</span>`;
                                 } else if (effectiveTaskStatus === 'completed') {
                                     // 自我勾選完成 ≠ 老師／AI 批改
                                     statusBadgeHtml = `<span style="font-size:0.75rem; background:#F1F5F9; color:#475569; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #CBD5E1;">✅ 已完成</span>`;
@@ -1231,7 +1557,7 @@ window.UIStudentTimelineTemplates = (() => {
                     const safeTaskId = escapeJsSingleQuoted(task.id);
                     // 打勾本身就代表「已繳交」，勾勾顏色跟底色要有明顯對比才夠醒目
                     const checkboxBaseStyle = 'transform: scale(1.4); margin-right: 8px; margin-top: 2px; accent-color: #059669; outline: 1px solid #CBD5E1; outline-offset: 1px; border-radius: 4px;';
-                    let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', this.checked)" ${checked}>`;
+                    let checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor: pointer;" onchange="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', this.checked)" ${recordingIncomplete ? '' : checked}>`;
 
                     let btn = '';
                     let taskTitleDisplay = '';
@@ -1307,37 +1633,14 @@ window.UIStudentTimelineTemplates = (() => {
                             const safeUrlForJS = escapeJsSingleQuoted(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl);
                             const safeRangeForJS = escapeJsSingleQuoted(materialRange);
 
-                            let studioPageCount = 0;
-                            if (task.raw_data && Array.isArray(task.raw_data.grading_units) && task.raw_data.grading_units.length > 1) {
-                                studioPageCount = task.raw_data.grading_units.length;
-                            } else if (task.raw_data && task.raw_data.material_range) {
-                                const rangeN = pagesFromRangeText(task.raw_data.material_range).length;
-                                if (rangeN > 1) studioPageCount = rangeN;
-                            }
-                            let submittedPageCount = 0;
-                            if (studioPageCount && Array.isArray(window._studentTaskCompletions)) {
-                                const rec = window._studentTaskCompletions.find(function (c) {
-                                    return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
-                                });
-                                const segs = (rec && rec.raw_data && Array.isArray(rec.raw_data.audio_segments))
-                                    ? rec.raw_data.audio_segments : [];
-                                const expectKeys = {};
-                                if (task.raw_data && Array.isArray(task.raw_data.grading_units) && task.raw_data.grading_units.length > 1) {
-                                    task.raw_data.grading_units.forEach(function (u) {
-                                        const k = String((u && u.unit_key) || '').trim();
-                                        if (k) expectKeys[k] = true;
-                                    });
-                                } else {
-                                    pagesFromRangeText((task.raw_data && task.raw_data.material_range) || '').forEach(function (p) {
-                                        expectKeys['range:' + p] = true;
-                                    });
-                                }
-                                segs.forEach(function (s) {
-                                    const k = String((s && s.unit_key) || '').trim();
-                                    if (k && expectKeys[k]) submittedPageCount += 1;
-                                });
-                            }
+                            if (recordingBoard && recordingBoard.players.length) hasValidAudioFile = true;
+                            const studioPageCount = recordingBoard ? recordingBoard.expectedCount : 0;
+                            const submittedPageCount = recordingBoard ? recordingBoard.submittedCount : 0;
                             const studioPartial = studioPageCount > 1 && submittedPageCount > 0 && submittedPageCount < studioPageCount;
+                            if (studioPartial) {
+                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🎙️ 已交 ${submittedPageCount}/${studioPageCount} 頁</span>`;
+                                checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" onclick="return false;" tabindex="-1" title="還沒交齊所有頁，不會打勾">`;
+                            }
                             const recordBtnText = studioPartial
                                 ? ('🎙️ 繼續錄音（' + submittedPageCount + '/' + studioPageCount + '）')
                                 : (hasValidAudioFile ? '重新錄製' : '🎙️ 開啟錄音艙');
@@ -1350,18 +1653,23 @@ window.UIStudentTimelineTemplates = (() => {
                             let audioPlayerHtml = '';
 
                             if (hasValidAudioFile) {
-                                const skeletonUnitsForLabel = (task.raw_data && task.raw_data.script_source === 'skeleton' && Array.isArray(task.raw_data.grading_units))
-                                    ? task.raw_data.grading_units
-                                    : null;
+                                const playerIds = (recordingBoard && recordingBoard.players.length)
+                                    ? recordingBoard.players.map(function (p) { return p.fileId; })
+                                    : submittedFileIds;
+                                const playerMetas = (recordingBoard && recordingBoard.players.length)
+                                    ? recordingBoard.players.map(function (p) {
+                                        return Object.assign({}, p.meta || {}, { id: p.fileId, page: p.page, label: p.label });
+                                    })
+                                    : submittedFileMetas;
                                 audioPlayerHtml = buildSubmittedFilesHtml(
-                                    submittedFileIds,
+                                    playerIds,
                                     retryAudioUrl,
                                     inlinePlayerId,
-                                    submittedFileMetas,
+                                    playerMetas,
                                     course.id,
                                     task.id,
                                     statusId,
-                                    skeletonUnitsForLabel,
+                                    null,
                                     materialRange
                                 );
                             }
@@ -1570,20 +1878,17 @@ window.UIStudentTimelineTemplates = (() => {
                     if (task.description) {
                         cleanTaskDesc = String(task.description).replace(/<[^>]*>?/gm, '').trim();
                     }
+                    if (task.type === 'audio_record' && cleanTaskDesc) {
+                        cleanTaskDesc = cleanTaskDesc.split(/\n/).filter(function (line) {
+                            return !/每一頁請錄成一支音檔|本作業共|依「?頁面順序」?點選|可複選多檔|請上傳\s*\d+\s*檔/.test(line);
+                        }).join('\n').trim();
+                    }
                     
                     // 不再顯示灰色「(範圍：...)」——標題（或標題空白時的 base 範圍 fallback）已有相同內容。
                     let finalDescText = cleanTaskDesc;
                     let recordingUnitHintHtml = '';
                     if (task.type === 'audio_record') {
-                        let unitCount = (task.raw_data && Array.isArray(task.raw_data.grading_units))
-                            ? task.raw_data.grading_units.length
-                            : 0;
-                        // 沒有結構化 grading_units（老師只手動貼 base 範圍文字，沒跑 meta／骨架流程）時，
-                        // 退回展開 base 範圍文字算頁數，跟 uploadAudioFilesForGrading 的比對提醒用同一套邏輯，
-                        // 否則老師手動貼範圍的作業永遠看不到「共 X 頁 → 請上傳 X 檔」提示（2026-08-09 使用者回報）。
-                        if (!unitCount && task.raw_data && task.raw_data.material_range) {
-                            unitCount = pagesFromRangeText(task.raw_data.material_range).length;
-                        }
+                        const unitCount = countRecordingUnits(task);
                         const uploadLine = unitCount > 0
                             ? `繳交時，可複選多檔一次上傳（本作業共 <strong>${unitCount}</strong> 頁 → 請上傳 <strong>${unitCount}</strong> 檔）`
                             : '繳交時，可複選多檔一次上傳';
@@ -1591,7 +1896,7 @@ window.UIStudentTimelineTemplates = (() => {
                             <ul class="rt-normalize" style="margin:6px 0 0; padding-left:34px; font-size:0.78rem; color:#64748B; line-height:1.65; list-style:none;">
                                 <li>🎙️ 錄音艙可一頁一頁錄：繳交這一頁後，接著錄下一頁（也可從選單改頁／重錄已繳頁）</li>
                                 <li>📤 ${uploadLine}</li>
-                                <li>⚠️ 複選時，請依「頁面順序」點選檔案（先選第 1 頁、再選第 2 頁…），系統會依點選先後對應頁碼</li>
+                                <li>📎 檔名含頁碼（如 p.2、第2頁）會自動對到該頁；沒有頁碼才依選取順序對剩下的頁</li>
                             </ul>`;
                     }
 

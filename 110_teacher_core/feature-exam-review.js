@@ -312,9 +312,29 @@ window.FeatureExamReview = (function () {
 
         const rowsHtml = items.map(function (_, idx) { return renderItemRow(idx); }).join('');
 
-        const savedScoreHtml = (state.completion && state.completion.raw_data && state.completion.raw_data.quiz_result)
-            ? '<span style="color:#94A3B8; font-size:0.8rem;">（已存檔分數：' + state.completion.raw_data.quiz_result.score + '%）</span>'
-            : '<span style="color:#94A3B8; font-size:0.8rem;">（尚未作答，以下僅供預覽／編輯標準答案）</span>';
+        const savedQr = state.completion && state.completion.raw_data && state.completion.raw_data.quiz_result;
+        const savedStats = state.completion && state.completion.raw_data && state.completion.raw_data.quiz_stats;
+        let savedScoreHtml = '<span style="color:#94A3B8; font-size:0.8rem;">（尚未作答，以下僅供預覽／編輯標準答案）</span>';
+        if (savedQr) {
+            const durMs = Number(savedQr.duration_ms) || Number(savedStats && savedStats.last_duration_ms) || 0;
+            const totalMs = Number(savedStats && savedStats.total_time_ms) || 0;
+            const durParts = [];
+            if (durMs > 0) {
+                const sec = Math.round(durMs / 1000);
+                const m = Math.floor(sec / 60);
+                const s = sec % 60;
+                durParts.push('本次 ' + (m ? (m + ' 分 ' + s + ' 秒') : (s + ' 秒')));
+            }
+            if (totalMs > 0 && totalMs !== durMs) {
+                const sec = Math.round(totalMs / 1000);
+                const m = Math.floor(sec / 60);
+                const s = sec % 60;
+                durParts.push('累計 ' + (m ? (m + ' 分' + (s ? (' ' + s + ' 秒') : '')) : (s + ' 秒')));
+            }
+            savedScoreHtml = '<span style="color:#94A3B8; font-size:0.8rem;">（已存檔分數：' + savedQr.score + '%'
+                + (durParts.length ? '　' + durParts.join('　') : '')
+                + '）</span>';
+        }
 
         const header = '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px; flex-wrap:wrap; gap:8px;">'
             + '<div>'

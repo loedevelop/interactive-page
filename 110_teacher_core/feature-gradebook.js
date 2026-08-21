@@ -294,7 +294,7 @@ window.FeatureGradebook = (function() {
         }
     });
 
-    document.addEventListener('mouseup', () => {
+    document.addEventListener('mouseup', async () => {
         const sidebarPanel = document.getElementById('grading-sidebar-panel');
         if (!sidebarPanel || sidebarPanel.classList.contains('translate-x-full')) return;
 
@@ -303,7 +303,7 @@ window.FeatureGradebook = (function() {
         if (text && text.length > 0 && text.length < 20 && /^[a-zA-Z']+$/.test(text)) {
             const context = window.GradebookStore.getActiveContext();
             const isAlreadyDefect = context && context.draft.manual_defects_added.includes(text.toLowerCase());
-            if (!isAlreadyDefect && confirm(`是否將 [ ${text} ] 手動標記為發音錯誤？`)) {
+            if (!isAlreadyDefect && (await window.ModalOverlay.confirm(`是否將 [ ${text} ] 手動標記為發音錯誤？`))) {
                 window.GradebookStore.toggleManualDefect(text);
                 reRenderSidebarContentOnly();
             }

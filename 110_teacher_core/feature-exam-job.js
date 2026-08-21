@@ -7,6 +7,7 @@
  */
 window.FeatureExamJob = (function () {
     'use strict';
+    try {
 
     /** 兩邊約定的題庫清單（可之後改設定檔／DB） */
     const BANK_CATALOG = [
@@ -15,8 +16,147 @@ window.FeatureExamJob = (function () {
 
     const SHEET_SUGGESTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
     const DEFAULT_LINES_PER_PAGE = 10;
+    if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+        window.MaterialNameMap.ensureLoaded(false).catch(function () {});
+    }
+
+    /** 舊作業資料夾名（如 GEPT-2_sentence）對到現用夾。上傳到未套用雲端夾時不要用這個。 */
+    function resolveStoredFolderName(name) {
+        const raw = String(name || '').trim();
+        if (!raw) return '';
+        if (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function') {
+            return window.MaterialNameMap.resolveFolderName(raw) || raw;
+        }
+        return raw;
+    }
+
     const _availAutoFetchKey = {};
     const _availAutoFetchBusy = {};
+
+    /**
+     * 試卷 → 段落 → 片段。舊 exam_job.sections 是平的抽題列（現在的片段），
+     * 讀取時升成「一個段落包住所有舊列」。
+     */
+    function newSectionId() {
+        return 'sec-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+    }
+
+    function emptySegment(prev) {
+        const last = prev || {};
+        const lastEnd = Number(last.end);
+        const nextStart = (!isNaN(lastEnd) && lastEnd > 0) ? (lastEnd + 1) : 1;
+        return {
+            sheet_id: String(last.sheet_id || ''),
+            meta_file_name: last.meta_file_name || '',
+            meta_file_id: last.meta_file_id || '',
+            range_type: last.range_type || 'page',
+            start: prev ? nextStart : 1,
+            end: prev ? nextStart : 1,
+            count: prev ? 10 : 10,
+            lines_per_page: last.lines_per_page || DEFAULT_LINES_PER_PAGE,
+            layout_profile_id: last.layout_profile_id || '',
+            difficulty: '',
+            include_nums: '',
+            exclude_nums: ''
+        };
+    }
+
+    function emptySection(defaults) {
+        defaults = defaults || {};
+        return {
+            id: defaults.id || newSectionId(),
+            material_folder: defaults.material_folder || '',
+            material_root_kind: defaults.material_root_kind === 'class' ? 'class' : 'teacher',
+            combination_id: defaults.combination_id || '',
+            shuffle: defaults.shuffle !== false,
+            allow_answer_appeal: defaults.allow_answer_appeal !== false,
+            segments: (Array.isArray(defaults.segments) && defaults.segments.length)
+                ? defaults.segments.map(function (g) { return Object.assign({}, g); })
+                : [emptySegment()]
+        };
+    }
+
+    function isNestedExamSection(s) {
+        return !!(s && Array.isArray(s.segments));
+    }
+
+    function defaultSectionProps(defaults) {
+        defaults = defaults || {};
+        return {
+            material_folder: defaults.material_folder || '',
+            material_root_kind: defaults.material_root_kind === 'class' ? 'class' : 'teacher',
+            combination_id: defaults.combination_id || '',
+            shuffle: defaults.shuffle !== false,
+            allow_answer_appeal: defaults.allow_answer_appeal !== false
+        };
+    }
+
+    function normalizeExamSections(rawSections, defaults) {
+        const props = defaultSectionProps(defaults);
+        const list = Array.isArray(rawSections) ? rawSections : [];
+        if (!list.length) return [emptySection(props)];
+        if (list.some(isNestedExamSection)) {
+            return list.map(function (s) {
+                if (isNestedExamSection(s)) {
+                    const segs = (s.segments && s.segments.length)
+                        ? s.segments.map(function (g) { return Object.assign({}, g); })
+                        : [emptySegment()];
+                    return Object.assign({}, emptySection(props), s, { segments: segs });
+                }
+                return emptySection(Object.assign({}, props, { segments: [Object.assign({}, s)] }));
+            });
+        }
+        return [emptySection(Object.assign({}, props, {
+            segments: list.map(function (s) { return Object.assign({}, s); })
+        }))];
+    }
+
+    function flattenExamSegments(sections) {
+        const out = [];
+        (sections || []).forEach(function (sec, si) {
+            (sec && sec.segments ? sec.segments : []).forEach(function (seg, gi) {
+                out.push(Object.assign({}, seg, {
+                    _section_id: sec.id || ('sec-' + si),
+                    _section_index: si,
+                    _segment_index: gi,
+                    _section_folder: sec.material_folder || '',
+                    _section_root_kind: sec.material_root_kind || 'teacher',
+                    _section_shuffle: sec.shuffle !== false,
+                    _section_appeal: sec.allow_answer_appeal !== false
+                }));
+            });
+        });
+        return out;
+    }
+
+    function groupFlatRowsIntoSections(flatRows, defaults) {
+        const props = defaultSectionProps(defaults);
+        const groups = [];
+        const keyToIdx = {};
+        (flatRows || []).forEach(function (row) {
+            if (!row) return;
+            const key = String(row.sheet_id || row.meta_file_name || '') + '::' + String(row.layout_profile_id || '');
+            if (keyToIdx[key] == null) {
+                keyToIdx[key] = groups.length;
+                groups.push(emptySection(Object.assign({}, props, { segments: [] })));
+            }
+            groups[keyToIdx[key]].segments.push(Object.assign({}, row));
+        });
+        if (!groups.length) return [emptySection(props)];
+        groups.forEach(function (g) {
+            if (!g.segments.length) g.segments.push(emptySegment());
+        });
+        return groups;
+    }
+
+    function sumSegmentCounts(segments) {
+        let n = 0;
+        (segments || []).forEach(function (s) {
+            const c = Number(s && s.count);
+            if (!isNaN(c)) n += c;
+        });
+        return n;
+    }
 
     /**
      * 📋「同一班級記住上次出題設定」（2026-08-11 老師要求）：老師出題很雜，每次都要重新設定
@@ -106,8 +246,10 @@ window.FeatureExamJob = (function () {
         job.bank_id = cfg.bank_id || job.bank_id || '';
         job.layout_profile_id = cfg.layout_profile_id || job.layout_profile_id || '';
         if (Array.isArray(cfg.sections) && cfg.sections.length) {
-            // 深拷貝，避免多個任務共用同一份陣列參考互相污染
-            job.sections = cfg.sections.map(function (s) { return Object.assign({}, s); });
+            job.sections = normalizeExamSections(cfg.sections, {
+                material_folder: cfg.material_folder || '',
+                material_root_kind: cfg.root_kind || 'teacher'
+            });
         }
         job.options = Object.assign({}, job.options, cfg.options);
         refreshExamBuilder();
@@ -227,11 +369,205 @@ window.FeatureExamJob = (function () {
     }
 
     function officialPairedMetaOptions(classId, rootKind, materialFolder) {
-        const all = catalogMetaOptionsForFolder(classId, rootKind, materialFolder);
         if (!officialPairingCacheReady()) return [];
-        return all.filter(function (o) {
-            return officialExamTemplateIdsForMeta(rootKind, classId, materialFolder, o.fileName).length > 0;
+        const folder = String(materialFolder || '').trim();
+        if (!folder) return [];
+        const catalog = catalogMetaOptionsForFolder(classId, rootKind, folder);
+        const fcmc = window.FeatureClassMaterialCombinations;
+        const officialStems = (fcmc && typeof fcmc.listOfficialMetaStemsForFolder === 'function')
+            ? (fcmc.listOfficialMetaStemsForFolder(rootKind, classId, folder) || [])
+            : [];
+        const byKey = {};
+        function addOpt(opt) {
+            if (!opt || !opt.fileName) return;
+            const key = String(opt.fileName).replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '').toUpperCase();
+            if (!key) return;
+            if (!byKey[key]) byKey[key] = opt;
+            else if (opt.fileId && !byKey[key].fileId) byKey[key] = opt;
+        }
+        function fileKey(name) {
+            return String(name || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '').toUpperCase();
+        }
+        function asMetaJson(raw) {
+            const s = String(raw || '').trim();
+            if (/\.meta\.json$/i.test(s)) return s;
+            if (/\.meta$/i.test(s)) return s.replace(/\.meta$/i, '.meta.json');
+            return s + '.meta.json';
+        }
+        // 活頁下拉唯一來源：資料庫官方配對的產出 meta。Drive 清單只用來補 fileId／大小寫，不准發明檔名。
+        officialStems.forEach(function (stem) {
+            const raw = String(stem || '').trim();
+            if (!raw) return;
+            const fromCatalog = catalog.find(function (o) { return fileKey(o && o.fileName) === fileKey(raw); });
+            addOpt(fromCatalog || {
+                fileName: asMetaJson(raw),
+                folderName: folder,
+                rootKind: rootKind,
+                fileId: '',
+                label: raw
+            });
         });
+        return Object.keys(byKey).map(function (k) { return byKey[k]; });
+    }
+
+    function isComboId(raw) {
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(raw || '').trim());
+    }
+
+    function listAssignedCombos(classId) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.listAssignedCombosForClass !== 'function') return [];
+        return fcmc.listAssignedCombosForClass(classId) || [];
+    }
+
+    function lookupAssignedCombo(classId, comboId) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.getAssignedComboById !== 'function') return null;
+        return fcmc.getAssignedComboById(classId, comboId);
+    }
+
+    function resolveSectionCombo(classId, sec) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.findAssignedComboForSection !== 'function') return null;
+        const firstSeg = (sec && Array.isArray(sec.segments) && sec.segments[0]) || {};
+        return fcmc.findAssignedComboForSection(classId, {
+            combinationId: sec && sec.combination_id,
+            folderName: sec && sec.material_folder,
+            examTemplateId: firstSeg.layout_profile_id
+        });
+    }
+
+    function applyComboToSection(sec, combo) {
+        if (!sec || !combo) return;
+        sec.combination_id = combo.id;
+        sec.material_folder = combo.folderName || '';
+        sec.material_root_kind = combo.rootKind === 'class' ? 'class' : 'teacher';
+        const metas = Array.isArray(combo.metaFiles) ? combo.metaFiles : [];
+        (sec.segments || []).forEach(function (seg) {
+            if (!seg) return;
+            if (combo.examTemplateId) seg.layout_profile_id = combo.examTemplateId;
+            if (metas.length === 1) {
+                seg.meta_file_name = metas[0];
+                seg.sheet_id = displayStemFromMetaFile(metas[0]);
+                delete seg.available_count;
+                delete seg.meta_missing_page;
+                return;
+            }
+            const cur = String(seg.meta_file_name || seg.sheet_id || '').trim();
+            if (!cur) return;
+            const still = metas.some(function (m) {
+                return String(m).toUpperCase() === cur.toUpperCase()
+                    || stemsLooselyMatch(m, cur);
+            });
+            if (!still) {
+                delete seg.meta_file_name;
+                delete seg.meta_file_id;
+                seg.sheet_id = '';
+                delete seg.available_count;
+                delete seg.meta_missing_page;
+            }
+        });
+    }
+
+    /**
+     * 範圍層開包：把套餐／活頁／起迄寫進考試第一段第一個片段。
+     * 不改其他段落、不發明試卷範本（只吃套餐已認證的 examTemplateId）。
+     */
+    function applyRangePackToExam(examTask, pack) {
+        pack = pack || {};
+        if (!examTask) return;
+        if (!examTask.raw_data) examTask.raw_data = {};
+        const job = ensureNestedExamJob(examTask);
+        const sections = normalizeExamSections(job.sections, {});
+        const sec = sections[0] || emptySection();
+        const combo = pack.combo || null;
+        if (combo) {
+            applyComboToSection(sec, combo);
+            examTask.raw_data.exam_material = {
+                material_folder: combo.folderName || '',
+                root_kind: combo.rootKind === 'class' ? 'class' : 'teacher'
+            };
+        } else {
+            sec.combination_id = '';
+            sec.material_folder = '';
+        }
+        if (!Array.isArray(sec.segments) || !sec.segments.length) {
+            sec.segments = [emptySegment()];
+        }
+        const seg = sec.segments[0] || emptySegment();
+        const metaFile = String(pack.metaFile || '').trim();
+        if (metaFile) {
+            seg.meta_file_name = metaFile;
+            seg.sheet_id = displayStemFromMetaFile(metaFile);
+            delete seg.available_count;
+            delete seg.meta_missing_page;
+        }
+        if (pack.rangeType === 'qnum' || pack.rangeType === 'page') {
+            seg.range_type = pack.rangeType;
+        }
+        if (pack.start !== '' && pack.start != null && !isNaN(Number(pack.start))) {
+            seg.start = Number(pack.start);
+        }
+        if (pack.end !== '' && pack.end != null && !isNaN(Number(pack.end))) {
+            seg.end = Number(pack.end);
+        } else if (pack.start !== '' && pack.start != null && !isNaN(Number(pack.start))) {
+            seg.end = Number(pack.start);
+        }
+        sec.segments[0] = seg;
+        sections[0] = sec;
+        job.sections = sections;
+        examTask.raw_data.exam_job = job;
+    }
+
+    function metaOptionsForCombo(classId, combo) {
+        if (!combo) return [];
+        const folder = String(combo.folderName || '').trim();
+        const kind = combo.rootKind === 'class' ? 'class' : 'teacher';
+        const catalog = catalogMetaOptionsForFolder(classId, kind, folder);
+        const names = Array.isArray(combo.metaFiles) ? combo.metaFiles : [];
+        function fileKey(name) {
+            return String(name || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '').toUpperCase();
+        }
+        return names.map(function (name) {
+            const raw = String(name || '').trim();
+            if (!raw) return null;
+            const hit = catalog.find(function (o) { return fileKey(o && o.fileName) === fileKey(raw); });
+            return hit || {
+                fileName: /\.meta\.json$/i.test(raw) ? raw : (raw + '.meta.json'),
+                folderName: folder,
+                rootKind: kind,
+                fileId: '',
+                label: raw
+            };
+        }).filter(Boolean);
+    }
+
+    function buildExamComboOptionsHtml(classId, section) {
+        const list = officialPairingCacheReady() ? listAssignedCombos(classId) : [];
+        const currentId = String((section && section.combination_id) || '').trim();
+        let matched = !currentId;
+        let html = '<option value="">— 請選擇套餐 —</option>';
+        if (!officialPairingCacheReady()) {
+            if (currentId) {
+                html += '<option value="' + esc(currentId) + '" selected>' + esc((section && section.material_folder) || '目前套餐') + '</option>';
+            }
+            html += '<option value="" disabled>⏳ 載入套餐…</option>';
+            return html;
+        }
+        list.forEach(function (c) {
+            if (!c || !c.id) return;
+            const selected = String(c.id) === currentId;
+            if (selected) matched = true;
+            html += '<option value="' + esc(c.id) + '"' + (selected ? ' selected' : '') + '>' + esc(c.label) + '</option>';
+        });
+        if (!matched && currentId) {
+            const orphan = (section && section.material_folder) ? String(section.material_folder) : currentId;
+            html += '<option value="' + esc(currentId) + '" selected>' + esc(orphan) + '</option>';
+        }
+        if (!list.length) {
+            html += '<option value="" disabled>（這個班還沒有已指派且搭配試卷範本的套餐）</option>';
+        }
+        return html;
     }
 
     function officialExamTemplateDefaultId(rootKind, classId, folderName, sheetHint) {
@@ -348,6 +684,14 @@ window.FeatureExamJob = (function () {
      * 從錄音 material_refs 列（A.meta.json + pp. 1~2）→ exam sections
      * 圖二 meta 列的活頁字母在檔名／label，範圍在 range_spec（常不含字母）
      */
+    function sheetLetterFromRangeSpec(rangeSpec) {
+        const m = String(rangeSpec || '').match(/^\s*([A-Za-z][A-Za-z0-9._-]{0,60})\s+pp?\.?/i);
+        if (!m) return '';
+        const sheet = m[1];
+        if (isPagePrefixMisreadAsSheet(sheet)) return '';
+        return sheet;
+    }
+
     function sectionsFromMaterialRefs(refs, linesPerPage) {
         const lpp = linesPerPage > 0 ? linesPerPage : DEFAULT_LINES_PER_PAGE;
         if (!Array.isArray(refs) || !refs.length) return [];
@@ -355,13 +699,25 @@ window.FeatureExamJob = (function () {
         const seen = {};
         refs.forEach(function (r) {
             if (!r) return;
-            const published = String(r.published_file || r.metaFile || '').trim();
+            let published = String(r.published_file || r.metaFile || '').trim();
             let sheet = '';
             const label = String(r.label || r.stem || '').trim();
-            if (/^[A-Za-z0-9]{1,4}$/i.test(label)) {
+            const rangeSheet = sheetLetterFromRangeSpec(r.range_spec || r.range || '');
+            if (rangeSheet) {
+                sheet = /^[A-Za-z0-9]{1,4}$/i.test(rangeSheet)
+                    ? rangeSheet.toUpperCase()
+                    : displayStemFromMetaFile(rangeSheet);
+            } else if (/^[A-Za-z0-9]{1,4}$/i.test(label)) {
                 sheet = label.toUpperCase();
             } else {
                 sheet = displayStemFromMetaFile(published || label);
+            }
+            if (published && sheet) {
+                const pubStem = displayStemFromMetaFile(published);
+                if (pubStem && pubStem.toUpperCase() !== String(sheet).toUpperCase()
+                    && !stemsLooselyMatch(published, sheet)) {
+                    published = '';
+                }
             }
             const parsed = parseSectionRangeFromSpec(r.range_spec || r.range || '', sheet);
             if (!sheet || !parsed) return;
@@ -797,6 +1153,71 @@ window.FeatureExamJob = (function () {
         return !resolveMetaPageKey(rows);
     }
 
+    function countAvailableFromPageCounts(section, pageCounts) {
+        if (!section || !pageCounts || typeof pageCounts !== 'object') return null;
+        const keys = Object.keys(pageCounts);
+        if (!keys.length) return null;
+        if ((section.range_type || 'page') !== 'page') return null;
+        const pageSet = buildPageSetForSection(section);
+        if (!pageSet) return null;
+        let sum = 0;
+        Object.keys(pageSet).forEach(function (p) {
+            const n = pageCounts[p] != null ? pageCounts[p] : pageCounts[String(p)];
+            if (n != null && !isNaN(Number(n))) sum += Number(n);
+        });
+        return sum;
+    }
+
+    function rangeCoversFullSheet(section, stats) {
+        if (!section || !stats) return false;
+        if ((section.range_type || 'page') !== 'page') return false;
+        if (stats.pageMin == null || stats.pageMax == null || isNaN(stats.pageMin) || isNaN(stats.pageMax)) return false;
+        const lo = Math.min(Number(section.start) || 0, Number(section.end) || 0);
+        const hi = Math.max(Number(section.start) || 0, Number(section.end) || 0);
+        return lo <= stats.pageMin && hi >= stats.pageMax;
+    }
+
+    function lookupComboSheetStats(section, examTask) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.lookupSheetStats !== 'function') return null;
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const folder = (section && section.material_folder)
+            || (examTask && examTask.raw_data && examTask.raw_data.exam_material
+                && examTask.raw_data.exam_material.material_folder)
+            || '';
+        const hint = (section && (section.meta_file_name || section.sheet_id)) || '';
+        return fcmc.lookupSheetStats(classId, folder, hint);
+    }
+
+    function pageCountsFromMetaRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return {};
+        const pageKey = resolveMetaPageKey(rows);
+        const out = {};
+        rows.forEach(function (row) {
+            rowPageNums(row, pageKey).forEach(function (p) {
+                if (isNaN(p)) return;
+                out[p] = (out[p] || 0) + 1;
+            });
+        });
+        return out;
+    }
+
+    function rememberComboPageCounts(section, examTask, rows) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.rememberSheetPageCounts !== 'function') return;
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const folder = (section && section.material_folder)
+            || (examTask && examTask.raw_data && examTask.raw_data.exam_material
+                && examTask.raw_data.exam_material.material_folder)
+            || '';
+        const hint = (section && (section.meta_file_name || section.sheet_id)) || '';
+        const counts = pageCountsFromMetaRows(rows);
+        if (!classId || !folder || !hint || !Object.keys(counts).length) return;
+        fcmc.rememberSheetPageCounts(classId, folder, hint, counts);
+    }
+
     function countAvailableFromMeta(section, examTask) {
         if (!section || !examTask) return null;
         if (section.meta_missing_page) return null;
@@ -811,6 +1232,13 @@ window.FeatureExamJob = (function () {
         }
         const n = countAvailableFromAnyStemRows(byStem, section);
         if (n > 0) return n;
+        const stats = lookupComboSheetStats(section, examTask);
+        const fromPages = countAvailableFromPageCounts(section, stats && stats.pageCounts);
+        if (fromPages != null) return fromPages;
+        if (stats && stats.availableCount != null && !isNaN(stats.availableCount)
+            && rangeCoversFullSheet(section, stats)) {
+            return Number(stats.availableCount);
+        }
         return null;
     }
 
@@ -821,27 +1249,9 @@ window.FeatureExamJob = (function () {
         return false;
     }
 
-    function maybeAutoFetchAvail(pathStr, task, sections) {
-        if (!task || !Array.isArray(sections) || !sections.length) return;
-        const missing = sections.some(function (s) {
-            if (!sectionHasRealMeta(s)) return false;
-            if (isNaN(Number(s.start)) || isNaN(Number(s.end))) return false;
-            return countAvailableFromMeta(s, task) == null;
-        });
-        if (!missing) return;
-        const key = sections.map(function (s) {
-            return [s.meta_file_id || '', s.meta_file_name || '', s.sheet_id || '', s.start, s.end, s.range_type || 'page'].join(':');
-        }).join('|');
-        if (_availAutoFetchKey[pathStr] === key || _availAutoFetchBusy[pathStr]) return;
-        _availAutoFetchKey[pathStr] = key;
-        _availAutoFetchBusy[pathStr] = true;
-        setTimeout(function () {
-            Promise.resolve(inlineRefreshStandaloneMeta(pathStr, { silent: true })).then(function () {
-                _availAutoFetchBusy[pathStr] = false;
-            }, function () {
-                _availAutoFetchBusy[pathStr] = false;
-            });
-        }, 0);
+    function maybeAutoFetchAvail() {
+        // 加片段／重畫不再自動打 Drive／DB。可用題改吃開班時載入的套組統計，
+        // 或缺統計時顯示「需讀取」，由老師按「讀取可用題數」。
     }
 
     /** 範圍內每一頁的實際 meta 列數加總。最後一頁常不滿行，禁止用「頁數 × 每頁行數」。 */
@@ -962,7 +1372,7 @@ window.FeatureExamJob = (function () {
         });
     }
 
-    /** 假活頁 P 清掉；這個資料夾若只有一個 meta，直接帶入。 */
+    /** 假活頁 P 清掉；這個資料夾若只有一個 meta，直接帶入。多份 meta 不准猜。 */
     function healExamSectionSheet(section, metaOpts) {
         if (!section) return;
         if (isPagePrefixMisreadAsSheet(section.sheet_id)) {
@@ -978,6 +1388,41 @@ window.FeatureExamJob = (function () {
             section.meta_file_name = opts[0].fileName;
             section.meta_file_id = opts[0].fileId || '';
             section.sheet_id = displayStemFromMetaFile(opts[0].fileName);
+        }
+    }
+
+    /** 片段還沒選 meta 時，用同層錄音同一頁碼範圍的那一列還原（一個資料夾可有多份 meta）。 */
+    function healSegmentMetaFromAudio(section, audioTask) {
+        if (!section || !audioTask) return;
+        if (String(section.meta_file_name || '').trim()) return;
+        const alreadySheet = String(section.sheet_id || '').trim();
+        const raw = audioTask.raw_data || {};
+        const refs = Array.isArray(raw.material_refs) ? raw.material_refs : [];
+        const start = Number(section.start);
+        const end = Number(section.end);
+        if (!refs.length || isNaN(start) || isNaN(end)) return;
+        let best = null;
+        refs.forEach(function (r) {
+            const published = String((r && (r.published_file || r.metaFile)) || '').trim();
+            if (!published) return;
+            if (alreadySheet) {
+                const pubStem = displayStemFromMetaFile(published);
+                if (!stemsLooselyMatch(published, alreadySheet)
+                    && String(pubStem || '').toUpperCase() !== alreadySheet.toUpperCase()) return;
+            }
+            const parsed = parseSectionRangeFromSpec((r.range_spec || r.range || ''), '');
+            if (!parsed) return;
+            if (start > parsed.end || end < parsed.start) return;
+            const overlap = Math.min(end, parsed.end) - Math.max(start, parsed.start) + 1;
+            if (!best || overlap > best.overlap) {
+                best = { published: published, fileId: r.fileId || r.file_id || '', overlap: overlap };
+            }
+        });
+        if (!best) return;
+        section.meta_file_name = best.published;
+        if (best.fileId) section.meta_file_id = best.fileId;
+        if (!String(section.sheet_id || '').trim()) {
+            section.sheet_id = displayStemFromMetaFile(best.published);
         }
     }
 
@@ -1938,6 +2383,11 @@ window.FeatureExamJob = (function () {
      * 作業編輯器內嵌：考試任務卡片上的出題區段表（對齊 Python 出題列欄位）
      */
     function renderInlineEditorHtml(pathStr, task) {
+        if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.fetchOfficialPairings === 'function') {
+            if (!officialPairingCacheReady()) {
+                window.FeatureClassMaterialCombinations.fetchOfficialPairings(false);
+            }
+        }
         const raw = (task && task.raw_data) || {};
         const job = raw.exam_job || {};
         const jobId = raw.exam_job_id || job.job_id || '';
@@ -1945,24 +2395,15 @@ window.FeatureExamJob = (function () {
         // bank_id：老師反覆回報這個欄位沒用、看不懂放著幹嘛（只是原樣寫進匯出給 Python 排版
         // 系統的 spec_ref.bank_id 標籤，不影響線上卷實際抽哪些題），已拿掉 UI，改成存檔時
         // 固定寫入唯一值（見 syncInlineEditor），這裡不用再算。
-        let sections = Array.isArray(job.sections) ? job.sections.slice() : [];
-
         // 💣 老師按過「🔓 改成獨立教材來源」（exam_force_standalone）之後，就不能再自動從
         // 同層錄音帶入區段了，否則清空的區段下一次重繪又會被這裡偷偷填回去，老師的覆蓋選擇形同沒用。
         const _forcedStandaloneForFill = !!(task.raw_data && task.raw_data.exam_force_standalone);
-        if (!sections.length) {
-            sections = [{
-                sheet_id: '',
-                range_type: 'page',
-                start: 1,
-                end: 1,
-                count: 10,
-                lines_per_page: DEFAULT_LINES_PER_PAGE,
-                difficulty: '',
-                include_nums: '',
-                exclude_nums: ''
-            }];
-        }
+        let sections = normalizeExamSections(job.sections, {
+            material_folder: '',
+            material_root_kind: 'teacher',
+            shuffle: !(job.options && job.options.shuffle === false),
+            allow_answer_appeal: raw.allow_answer_appeal !== false
+        });
         const paperItemCount = (raw.quiz_paper && Array.isArray(raw.quiz_paper.items))
             ? raw.quiz_paper.items.length
             : 0;
@@ -2006,9 +2447,7 @@ window.FeatureExamJob = (function () {
             : ((layoutComboFirstRef && layoutComboFirstRef.materials_root_kind === 'class') ? 'class' : 'teacher');
         const previewFolderForAssign = examMaterialSelf.material_folder || layoutMaterialFolder;
         const folderIsAssigned = !!(previewFolderForAssign && isExamFolderAssignedToClass(currentClassId, previewFolderForAssign));
-        const assignedTemplateId = officialExamTemplateDefaultId(
-            layoutRootKind, currentClassId, layoutMaterialFolder, ''
-        );
+        const assignedTemplateId = '';
         const layoutId = job.layout_profile_id || assignedTemplateId || '';
 
         // 💣 雷區（2026-08-14 老師強烈回報「活頁根本沒有可選 meta，只給一個手打格子」＋
@@ -2039,48 +2478,92 @@ window.FeatureExamJob = (function () {
             materialFolderClassEntry = window.FeatureTimeline.getMetaCatalogEntry(currentClassId, 'class');
         }
         const materialFolderCatalogLoaded = !!(materialFolderTeacherEntry || materialFolderClassEntry);
-        const materialFolderOptsHtml = buildExamMaterialFolderOptionsHtml(effectiveMaterialSelf, materialFolderTeacherEntry, materialFolderClassEntry, currentClassId);
         if (!materialFolderCatalogLoaded) {
             // 渲染函式只回字串，DOM 還沒插入；下一輪事件圈再補抓＋補畫，避免抓到不存在的元素
             setTimeout(function () { ensureExamMaterialFolderCatalog(pathStr, currentClassId, false); }, 0);
         }
         // 選了教材資料夾才能推出「活頁」候選清單；還沒選或清單未載入時 examSheetStems 是空陣列，
         // 退回原本的文字輸入（見下方 rows 組裝），避免顯示一個永遠空的下拉
-        const examSheetMetaOpts = officialPairingCacheReady()
-            ? officialPairedMetaOptions(currentClassId, effectiveRootKind, effectiveMaterialFolder)
-            : [];
-        const folderStageReady = !!(effectiveMaterialFolder && materialFolderCatalogLoaded);
-        if (folderStageReady) {
-            sections = seedSectionsAfterFolderReady(
-                sections,
-                _forcedStandaloneForFill ? null : siblingAudio,
-                examSheetMetaOpts,
-                assignedTemplateId
-            );
-        }
-        sections.forEach(function (s) {
-            healExamSectionSheet(s, examSheetMetaOpts);
-            attachCatalogMetaToSection(currentClassId, effectiveRootKind, effectiveMaterialFolder, s);
-            if (s && (s.sheet_id || s.meta_file_name) && officialPairingCacheReady()) {
-                const officialIds = officialExamTemplateIdsForMeta(
-                    effectiveRootKind, currentClassId, effectiveMaterialFolder,
-                    s.meta_file_name || s.sheet_id
-                );
-                if (!isIdInOfficialList(s.layout_profile_id, officialIds)) {
-                    s.layout_profile_id = officialExamTemplateDefaultId(
-                        effectiveRootKind, currentClassId, effectiveMaterialFolder,
-                        s.meta_file_name || s.sheet_id
-                    );
-                    if (s.layout_profile_id) applyPairedTemplateToSection(s, pathStr, task);
-                }
+        sections.forEach(function (sec) {
+            const resolvedCombo = resolveSectionCombo(currentClassId, sec);
+            if (resolvedCombo) {
+                applyComboToSection(sec, resolvedCombo);
+            } else if (!sec.combination_id && !sec.material_folder && effectiveMaterialFolder) {
+                const guessed = resolveSectionCombo(currentClassId, {
+                    material_folder: effectiveMaterialFolder,
+                    segments: []
+                });
+                if (guessed) applyComboToSection(sec, guessed);
             }
+            const secCombo = resolveSectionCombo(currentClassId, sec);
+            const secFolder = String((secCombo && secCombo.folderName) || sec.material_folder || '').trim();
+            const secKind = (secCombo && secCombo.rootKind === 'class')
+                ? 'class'
+                : (sec.material_root_kind === 'class' ? 'class' : 'teacher');
+            const secMetaOpts = secCombo
+                ? metaOptionsForCombo(currentClassId, secCombo)
+                : ((officialPairingCacheReady() && secFolder)
+                    ? officialPairedMetaOptions(currentClassId, secKind, secFolder)
+                    : []);
+            const secFolderReady = !!secFolder;
+            if (secFolderReady) {
+                sec.segments = seedSectionsAfterFolderReady(
+                    sec.segments,
+                    _forcedStandaloneForFill ? null : siblingAudio,
+                    secMetaOpts,
+                    assignedTemplateId
+                );
+            }
+            (sec.segments || []).forEach(function (s) {
+                healExamSectionSheet(s, secMetaOpts);
+                if (!_forcedStandaloneForFill) healSegmentMetaFromAudio(s, siblingAudio);
+                attachCatalogMetaToSection(currentClassId, secKind, secFolder, s);
+                if (secCombo && secCombo.examTemplateId) {
+                    s.layout_profile_id = secCombo.examTemplateId;
+                    const comboProfile = resolveExamTemplateProfile(secCombo.examTemplateId);
+                    if (comboProfile && Number(comboProfile.lines_per_page) > 0) {
+                        s.lines_per_page = Number(comboProfile.lines_per_page);
+                    }
+                } else if (s && (s.sheet_id || s.meta_file_name) && officialPairingCacheReady()) {
+                    const metaHint = s.meta_file_name || s.sheet_id;
+                    const officialIds = officialExamTemplateIdsForMeta(
+                        secKind, currentClassId, secFolder, metaHint
+                    );
+                    if (!officialIds.length) {
+                        s.layout_profile_id = '';
+                    } else if (!isIdInOfficialList(s.layout_profile_id, officialIds)) {
+                        s.layout_profile_id = officialExamTemplateDefaultId(
+                            secKind, currentClassId, secFolder, metaHint
+                        );
+                        if (s.layout_profile_id) applyPairedTemplateToSection(s, pathStr, task);
+                    }
+                }
+            });
         });
-        if (folderStageReady && task.raw_data && task.raw_data.exam_job) {
+        if (task.raw_data && task.raw_data.exam_job) {
             task.raw_data.exam_job.sections = sections;
         }
 
         let totalCountSum = 0;
-        const rows = sections.map(function (s, idx) {
+        const sectionCardsHtml = sections.map(function (sec, secIdx) {
+            const secCombo = resolveSectionCombo(currentClassId, sec);
+            const secFolder = String((secCombo && secCombo.folderName) || sec.material_folder || effectiveMaterialFolder || '').trim();
+            const secKind = (secCombo && secCombo.rootKind === 'class')
+                ? 'class'
+                : (sec.material_folder
+                    ? (sec.material_root_kind === 'class' ? 'class' : 'teacher')
+                    : effectiveRootKind);
+            const secMetaOpts = secCombo
+                ? metaOptionsForCombo(currentClassId, secCombo)
+                : ((officialPairingCacheReady() && secFolder)
+                    ? officialPairedMetaOptions(currentClassId, secKind, secFolder)
+                    : []);
+            const secFolderReady = !!(secCombo || secFolder);
+            const singleMeta = !!(secCombo && Array.isArray(secCombo.metaFiles) && secCombo.metaFiles.length === 1);
+            const secComboOptsHtml = buildExamComboOptionsHtml(currentClassId, sec);
+            let secCountSum = 0;
+            const rows = (sec.segments || []).map(function (s, segIdx) {
+            const idx = secIdx + '-' + segIdx;
             const rowLayoutId = String(s.layout_profile_id || '').trim();
             const rowProfileForLpp = rowLayoutId ? resolveExamTemplateProfile(rowLayoutId) : null;
             const rowTemplateLpp = (rowProfileForLpp && Number(rowProfileForLpp.lines_per_page) > 0)
@@ -2092,7 +2575,10 @@ window.FeatureExamJob = (function () {
             // 禁止用「頁數 × 每頁行數」充當可用題。
             const availIsEstimate = false;
             const countVal = Number(s.count);
-            if (!isNaN(countVal)) totalCountSum += countVal;
+            if (!isNaN(countVal)) {
+                totalCountSum += countVal;
+                secCountSum += countVal;
+            }
             const cachedRowsEarly = lookupSectionMetaRows((task && task.raw_data && task.raw_data.meta_rows_by_stem) || {}, s);
             const missingPage = !!(s.meta_missing_page) || metaCannotFilterByPage(s, cachedRowsEarly);
             if (missingPage) avail = null;
@@ -2148,36 +2634,36 @@ window.FeatureExamJob = (function () {
                     : '還沒讀到各頁實際題數；選好活頁後會自動讀，或按「🔄 讀取可用題數」');
             const availColor = missingPage ? '#B45309' : ((avail == null) ? '#D97706' : (avail === 0 ? '#B91C1C' : '#0F766E'));
             const refreshAttr = ' onchange="window.FeatureExamJob._inlineRefreshAvail(\'' + pathStr + '\')"';
+            const sheetCellHtml = singleMeta
+                ? ('<td style="padding:4px;"><input type="hidden" id="exam-inline-sheet-' + pathStr + '-' + idx + '" value="'
+                    + esc(s.meta_file_name || (secCombo.metaFiles && secCombo.metaFiles[0]) || '') + '">'
+                    + '<span title="' + esc(s.meta_file_name || '') + '" style="font-weight:800; color:#134E4A;">'
+                    + esc(displayStemFromMetaFile(s.meta_file_name || (secCombo.metaFiles && secCombo.metaFiles[0]) || s.sheet_id || ''))
+                    + '</span></td>')
+                : ('<td style="padding:4px;">'
+                    + '<select id="exam-inline-sheet-' + pathStr + '-' + idx + '" class="form-control" style="min-width:180px; max-width:260px; padding:4px;"'
+                    + ' title="選這個套餐裡的活頁"'
+                    + ' onchange="window.FeatureExamJob._inlineOnSheetSelectChange(\'' + pathStr + '\', ' + secIdx + ', ' + segIdx + ')">'
+                    + buildExamSheetOptionsHtml(secMetaOpts, s, { folderSelected: !!secFolder, catalogLoaded: true, pairingReady: officialPairingCacheReady() })
+                    + '</select>'
+                    + '<input id="exam-inline-sheet-manual-' + pathStr + '-' + idx + '" class="form-control" value="'
+                    + esc(s.meta_file_name || s.sheet_id || '') + '" placeholder="完整 meta 檔名" style="width:180px; padding:4px; margin-top:2px; display:none;"'
+                    + refreshAttr + '>'
+                    + '</td>');
+            const tplLabel = (function () {
+                const profile = rowLayoutId ? resolveExamTemplateProfile(rowLayoutId) : null;
+                if (profile && (profile.label || profile.name)) return profile.label || profile.name;
+                const t = findExamTemplateByAnyId(rowLayoutId);
+                return (t && t.name) || (rowLayoutId ? '（套餐已帶入）' : '（請先選套餐）');
+            })();
+            const layoutCellHtml = '<td style="padding:4px;">'
+                + '<input type="hidden" id="exam-inline-sectionlayout-' + pathStr + '-' + idx + '" value="' + esc(rowLayoutId) + '">'
+                + '<span style="font-size:0.76rem; font-weight:800; color:#1E3A8A;" title="試卷範本由套餐決定">' + esc(tplLabel) + '</span>'
+                + '</td>';
             return `
                 <tr data-exam-inline-row="${idx}">
-                    <td style="padding:4px;">
-                        <select id="exam-inline-sheet-${pathStr}-${idx}" class="form-control" style="min-width:180px; max-width:260px; padding:4px;"
-                            title="選這個教材資料夾裡的 meta"
-                            onchange="window.FeatureExamJob._inlineOnSheetSelectChange('${pathStr}', ${idx})">${buildExamSheetOptionsHtml(examSheetMetaOpts, s, { folderSelected: !!effectiveMaterialFolder, catalogLoaded: materialFolderCatalogLoaded, pairingReady: officialPairingCacheReady() })}</select>
-                        <input id="exam-inline-sheet-manual-${pathStr}-${idx}" class="form-control" value="${esc(s.meta_file_name || s.sheet_id || '')}" placeholder="完整 meta 檔名" style="width:180px; padding:4px; margin-top:2px; display:none;"${refreshAttr}>
-                    </td>
-                    <td style="padding:4px;">
-                        <select id="exam-inline-sectionlayout-${pathStr}-${idx}" class="form-control" style="width:130px; padding:4px;"
-                            title="${(s.sheet_id || s.meta_file_name) ? '只列出此 meta 官方認證的試卷範本' : '請先選活頁 meta'}"
-                            onchange="window.FeatureExamJob._inlineOnLayoutChange && window.FeatureExamJob._inlineOnLayoutChange('${pathStr}')">
-                            ${(function () {
-                                if (!(s.sheet_id || s.meta_file_name)) {
-                                    return '<option value="">請先選活頁 meta</option>';
-                                }
-                                if (!officialPairingCacheReady()) {
-                                    return '<option value="">⏳ 載入官方搭配…</option>';
-                                }
-                                const officialIds = officialExamTemplateIdsForMeta(
-                                    effectiveRootKind, currentClassId, effectiveMaterialFolder,
-                                    s.meta_file_name || s.sheet_id
-                                );
-                                const placeholder = officialIds.length
-                                    ? ('<option value=""' + (rowLayoutId ? '' : ' selected') + '>— 請選擇試卷範本 —</option>')
-                                    : '';
-                                return placeholder + buildExamTemplateSelectOptionsHtml(rowLayoutId, officialIds);
-                            })()}
-                        </select>
-                    </td>
+                    ${sheetCellHtml}
+                    ${layoutCellHtml}
                     <td style="padding:4px;"><input id="exam-inline-lpp-${pathStr}-${idx}" type="number" class="form-control" value="${esc(displayLpp)}" style="width:56px; padding:4px;" title="沿用這一列試卷範本的每頁行數（目前＝${esc(displayLpp)}）"${refreshAttr}></td>
                     <td style="padding:4px;">
                         <select id="exam-inline-rtype-${pathStr}-${idx}" class="form-control" style="padding:4px; min-width:72px;"${refreshAttr}>
@@ -2194,15 +2680,89 @@ window.FeatureExamJob = (function () {
                     <td style="padding:4px;"><input id="exam-inline-count-${pathStr}-${idx}" type="number" class="form-control" value="${esc(s.count)}" style="${countStyle}" title="${esc(countTitle)}"${refreshAttr}></td>
                     <td style="padding:4px; color:${availColor}; font-size:0.78rem; font-weight:800; text-align:center; white-space:nowrap;" title="${esc(availTitle)}">${esc(availStr)}</td>
                     <td style="padding:4px; color:#64748B; font-size:0.75rem; text-align:center; white-space:nowrap;">${esc(pctStr)}</td>
-                    <td style="padding:4px; position:sticky; right:0; background:#F0FDFA; text-align:center;"><button type="button" class="btn" style="padding:4px 8px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; font-weight:800; background:white; line-height:1;" title="刪除這個區段" onclick="window.FeatureExamJob._inlineRemoveSection('${pathStr}', ${idx})">🗑</button></td>
+                    <td style="padding:4px; position:sticky; right:0; background:#F0FDFA; text-align:center;"><button type="button" class="btn" style="padding:4px 8px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; font-weight:800; background:white; line-height:1;" title="刪除這個片段" onclick="window.FeatureExamJob._inlineRemoveSegment('${pathStr}', ${secIdx}, ${segIdx})">🗑</button></td>
                 </tr>
+            `;
+            }).join('');
+            return `
+                <div class="exam-section-card" data-exam-section="${secIdx}" style="margin-top:10px; padding:10px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+                        <strong style="color:#065F46;">段落 ${secIdx + 1}</strong>
+                        <span style="font-weight:800; color:#134E4A;">考題 ${secCountSum}</span>
+                        ${sections.length > 1 ? `
+                        <button type="button" class="btn" style="padding:2px 8px; color:#B91C1C; border:1px solid #FCA5A5; border-radius:4px; background:white; font-weight:800;"
+                            title="刪除這個段落" onclick="window.FeatureExamJob._inlineRemoveExamSection('${pathStr}', ${secIdx})">刪除段落</button>
+                        ` : ''}
+                    </div>
+                    <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:8px 10px; margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                            <strong style="color:#9A3412;">套餐${secIdx === 0 ? (isStandaloneExam ? '（獨立考試）' : '') : ''}</strong>
+                            ${secIdx === 0 ? `
+                            <button type="button" class="btn" style="padding:2px 8px; font-size:0.72rem; background:#FFEDD5; border:1px solid #FDBA74; border-radius:4px; color:#9A3412;"
+                                onclick="window.FeatureExamJob._inlineReloadMaterialFolders('${pathStr}')"
+                                title="剛建立的套餐沒看到就按這個重新整理">🔄 重新整理清單</button>
+                            ` : ''}
+                        </div>
+                        ${(siblingAudio && forcedStandalone && secIdx === 0) ? `
+                        <div style="margin-top:6px; font-size:0.72rem; color:#9A3412;">
+                            （已忽略同層錄音任務「${esc(stripHtml((siblingAudio.title || '')) || '（未命名）')}」，改用下面自訂的教材來源。
+                            <button type="button" class="btn" style="padding:1px 6px; font-size:0.72rem; background:white; border:1px solid #FDBA74; border-radius:4px; color:#9A3412; margin-left:2px;"
+                                onclick="window.FeatureExamJob._inlineToggleForceStandalone('${pathStr}', false)">↩️ 改回沿用同層錄音</button>）
+                        </div>
+                        ` : ''}
+                        <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">套餐
+                            <select id="exam-inline-materialfolder-${pathStr}-${secIdx}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
+                                onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange('${pathStr}', ${secIdx})">${secComboOptsHtml}</select>
+                        </label>
+                        <div id="exam-inline-materialfolder-status-${pathStr}-${secIdx}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${officialPairingCacheReady() ? '' : '⏳ 載入套餐…'}</div>
+                        <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">列出這個班已指派、且已搭配試卷範本的套餐。名稱在教材範本管理自己取。選了套餐，試卷範本會自動帶入；多份活頁再選 A／B／C。</div>
+                    </div>
+                    <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center;">
+                        <label><input id="exam-inline-shuffle-${pathStr}-${secIdx}" type="checkbox" ${sec.shuffle === false ? '' : 'checked'}> 題目洗牌</label>
+                        <label title="學生對錯題可以勾選「申訴答案」。此段可與其他段落不同。">
+                            <input id="exam-inline-allow-appeal-${pathStr}-${secIdx}" type="checkbox" ${sec.allow_answer_appeal === false ? '' : 'checked'}>
+                            🚩 允許申訴答案
+                        </label>
+                    </div>
+                    ${!secFolderReady ? `
+                    <div style="margin-top:8px; color:#9A3412; font-size:0.8rem; font-weight:700;">請先選套餐，活頁片段會接著出現。</div>
+                    ` : `
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:980px;">
+                            <thead>
+                                <tr style="background:#CCFBF1; color:#134E4A; text-align:left;">
+                                    <th style="padding:4px;">活頁</th>
+                                    <th style="padding:4px;" title="由套餐決定，不可在這裡改">試卷範本</th>
+                                    <th style="padding:4px;">每頁行數</th>
+                                    <th style="padding:4px;">基準</th>
+                                    <th style="padding:4px;">起始</th>
+                                    <th style="padding:4px;">結束</th>
+                                    <th style="padding:4px;">難度</th>
+                                    <th style="padding:4px;" title="必考題號：範圍內這些題號一定會出現，剩餘題數才隨機抽">必考#</th>
+                                    <th style="padding:4px;" title="排除題號：範圍內這些題號一定不會出現">排除#</th>
+                                    <th style="padding:4px; white-space:nowrap;">題數</th>
+                                    <th style="padding:4px; white-space:nowrap;">可用題</th>
+                                    <th style="padding:4px; white-space:nowrap;">顯示%</th>
+                                    <th style="padding:4px; position:sticky; right:0; background:#CCFBF1; white-space:nowrap;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="exam-inline-tbody-${pathStr}-${secIdx}">${rows}</tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top:8px;">
+                        <button type="button" class="btn btn-action" style="padding:4px 10px; background:#CCFBF1; color:#0F766E; border:1px solid #99F6E4;"
+                            onclick="window.FeatureExamJob._inlineAddSegment('${pathStr}', ${secIdx})"
+                            title="在此段落再加一個片段（常用於同活頁另一段範圍）">＋ 加片段</button>
+                    </div>
+                    `}
+                </div>
             `;
         }).join('');
 
         const html = `
             <div id="exam-inline-wrap-${pathStr}" style="margin-top:8px; padding:12px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#0F766E;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
-                    <strong>📝 考試出題區段</strong>
+                    <strong>📝 考試出題</strong>
                     <span style="font-size:0.75rem; color:#64748B;">job_id：<code id="exam-inline-jobid-${pathStr}">${esc(jobId || '（儲存作業時產生）')}</code></span>
                 </div>
                 ${(siblingAudio && !forcedStandalone) ? `
@@ -2213,46 +2773,14 @@ window.FeatureExamJob = (function () {
                         onclick="window.FeatureExamJob._inlineToggleForceStandalone('${pathStr}', true)">🔓 改成獨立教材來源</button>
                 </div>
                 ` : ''}
-                <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:8px 10px; margin-bottom:10px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-                        <strong style="color:#9A3412;">🗂 教材資料夾（${isStandaloneExam ? '獨立考試，此作業沒有配對的錄音任務' : '已依同層錄音猜一個，可自己改選'}）</strong>
-                        <button type="button" class="btn" style="padding:2px 8px; font-size:0.72rem; background:#FFEDD5; border:1px solid #FDBA74; border-radius:4px; color:#9A3412;"
-                            onclick="window.FeatureExamJob._inlineReloadMaterialFolders('${pathStr}')"
-                            title="剛發布的教材沒看到就按這個重新整理清單">🔄 重新整理清單</button>
-                    </div>
-                    ${(siblingAudio && forcedStandalone) ? `
-                    <div style="margin-top:6px; font-size:0.72rem; color:#9A3412;">
-                        （已忽略同層錄音任務「${esc(stripHtml((siblingAudio.title || '')) || '（未命名）')}」，改用下面自訂的教材來源。
-                        <button type="button" class="btn" style="padding:1px 6px; font-size:0.72rem; background:white; border:1px solid #FDBA74; border-radius:4px; color:#9A3412; margin-left:2px;"
-                            onclick="window.FeatureExamJob._inlineToggleForceStandalone('${pathStr}', false)">↩️ 改回沿用同層錄音</button>）
-                    </div>
-                    ` : ''}
-                    <label style="font-size:0.78rem; color:#9A3412; font-weight:700; display:block; margin-top:6px;">教材資料夾
-                        <select id="exam-inline-materialfolder-${pathStr}" class="form-control" style="width:100%; padding:6px; margin-top:2px;"
-                            onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange('${pathStr}')">${materialFolderOptsHtml}</select>
-                    </label>
-                    <div id="exam-inline-materialfolder-manual-wrap-${pathStr}" style="display:none; margin-top:6px;">
-                        <input id="exam-inline-materialfolder-manual-${pathStr}" class="form-control" value=""
-                            placeholder="手動輸入教材資料夾名稱" style="width:100%; padding:6px;"
-                            onchange="window.FeatureExamJob._inlineOnExamMaterialChange('${pathStr}')">
-                    </div>
-                    <div id="exam-inline-materialfolder-status-${pathStr}" style="margin-top:4px; min-height:1.1em; font-size:0.72rem; color:#9A3412;">${materialFolderCatalogLoaded ? '' : '⏳ 載入教材資料夾清單…'}</div>
-                    <div style="margin-top:2px; font-size:0.72rem; color:#9A3412;">只列出已官方搭配試卷範本的教材與 meta。選了 meta 之後，試卷範本下拉只列該檔的認證組合。</div>
-                </div>
                 <input type="hidden" id="exam-inline-layout-${pathStr}" value="${esc(layoutId)}">
-                ${!folderStageReady ? `
-                <div style="margin-top:8px; color:#9A3412; font-size:0.8rem; font-weight:700;">請先選好上方教材資料夾（或等清單載入完成），活頁區段會接著出現。</div>
-                ` : ''}
-                ${folderStageReady ? `
                 <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center;">
-                    <label><input id="exam-inline-shuffle-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle === false) ? '' : 'checked'}> 題目洗牌</label>
+                    <label title="打亂段落出現順序。各段題目仍留在自己的段落裡。">
+                        <input id="exam-inline-shuffle-sections-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle_sections) ? 'checked' : ''}> 段落洗牌
+                    </label>
                     <label title="學生交卷後，若有錯題，可自己選擇要不要當下或之後重考一次錯的題目（原題原答案，只能重考一次），交卷後會產生合併正確率的整體報告。">
                         <input id="exam-inline-allow-retake-${pathStr}" type="checkbox" ${raw.allow_wrong_retake ? 'checked' : ''}>
                         🔁 允許重考錯題（僅一次）
-                    </label>
-                    <label title="學生對錯題可以勾選「申訴答案」，送出後老師/助教會在「考試批改」看到待審核清單，可接受／不接受，接受後該答案會加入標準答案並自動重新批改全班。預設開啟，取消勾選才會關閉。">
-                        <input id="exam-inline-allow-appeal-${pathStr}" type="checkbox" ${raw.allow_answer_appeal === false ? '' : 'checked'}>
-                        🚩 允許申訴答案
                     </label>
                 </div>
                 <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center; background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:8px 10px;">
@@ -2277,32 +2805,11 @@ window.FeatureExamJob = (function () {
                             style="width:56px; padding:2px 4px;">
                     </span>
                 </div>
-                <div style="overflow-x:auto;">
-                    <table style="width:100%; border-collapse:collapse; font-size:0.78rem; min-width:980px;">
-                        <thead>
-                            <tr style="background:#CCFBF1; color:#134E4A; text-align:left;">
-                                <th style="padding:4px;">活頁</th>
-                                <th style="padding:4px;" title="已指派資料夾會自動帶入已配對範本；其他可用請在這一欄選">試卷範本</th>
-                                <th style="padding:4px;">每頁行數</th>
-                                <th style="padding:4px;">基準</th>
-                                <th style="padding:4px;">起始</th>
-                                <th style="padding:4px;">結束</th>
-                                <th style="padding:4px;">難度</th>
-                                <th style="padding:4px;" title="必考題號：範圍內這些題號一定會出現，剩餘題數才隨機抽">必考#</th>
-                                <th style="padding:4px;" title="排除題號：範圍內這些題號一定不會出現">排除#</th>
-                                <th style="padding:4px; white-space:nowrap;">題數</th>
-                                <th style="padding:4px; white-space:nowrap;">可用題</th>
-                                <th style="padding:4px; white-space:nowrap;">顯示%</th>
-                                <th style="padding:4px; position:sticky; right:0; background:#CCFBF1; white-space:nowrap;">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="exam-inline-tbody-${pathStr}">${rows}</tbody>
-                    </table>
-                </div>
+                ${sectionCardsHtml}
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center;">
-                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#CCFBF1; color:#0F766E; border:1px solid #99F6E4;"
-                        onclick="window.FeatureExamJob._inlineAddSection('${pathStr}')"
-                        title="在已帶入的基礎上再加一列（常用於同活頁另一段範圍）。日常請先按「從錄音範圍帶入」。">＋ 加區段</button>
+                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#A7F3D0; color:#065F46; border:1px solid #6EE7B7;"
+                        onclick="window.FeatureExamJob._inlineAddExamSection('${pathStr}')"
+                        title="再加一個段落（一段裡面可以有多個片段）">＋ 加段落</button>
                     ${getCachedLastConfigForClass(currentClassId) ? `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#EDE9FE; color:#5B21B6; border:1px solid #DDD6FE;"
                         onclick="window.FeatureExamJob._inlineApplyLastConfig('${pathStr}')"
@@ -2329,106 +2836,159 @@ window.FeatureExamJob = (function () {
                 </div>
                 <div id="exam-inline-gen-status-${pathStr}" style="margin-top:6px; font-size:0.8rem; font-weight:800;"></div>
                 <div id="exam-inline-standalone-status-${pathStr}" style="margin-top:4px; font-size:0.78rem; font-weight:700;"></div>
-                ` : ''}
             </div>
         `;
-        if (folderStageReady) maybeAutoFetchAvail(pathStr, task, sections);
+        maybeAutoFetchAvail(pathStr, task, flattenExamSegments(sections));
         return html;
     }
 
-    function readInlineSections(pathStr) {
-        const rows = document.querySelectorAll('#exam-inline-tbody-' + pathStr + ' tr[data-exam-inline-row]');
-        const task = getBuilderTaskByPath(pathStr);
-        const prevSecs = (task && task.raw_data && task.raw_data.exam_job
-            && Array.isArray(task.raw_data.exam_job.sections))
-            ? task.raw_data.exam_job.sections
-            : [];
-        const sections = [];
-        rows.forEach(function (row) {
-            const idx = row.getAttribute('data-exam-inline-row');
-            const sheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx);
-            let sheet = sheetEl ? sheetEl.value : '';
-            if (sheet === '__manual__') {
-                const sheetManualEl = document.getElementById('exam-inline-sheet-manual-' + pathStr + '-' + idx);
-                sheet = sheetManualEl ? sheetManualEl.value : '';
-            }
-            const lpp = Number((document.getElementById('exam-inline-lpp-' + pathStr + '-' + idx) || {}).value);
-            const rtype = (document.getElementById('exam-inline-rtype-' + pathStr + '-' + idx) || {}).value || 'page';
-            const start = Number((document.getElementById('exam-inline-start-' + pathStr + '-' + idx) || {}).value);
-            const end = Number((document.getElementById('exam-inline-end-' + pathStr + '-' + idx) || {}).value);
-            const count = Number((document.getElementById('exam-inline-count-' + pathStr + '-' + idx) || {}).value);
-            const difficulty = String((document.getElementById('exam-inline-diff-' + pathStr + '-' + idx) || {}).value || '').trim();
-            const include_nums = String((document.getElementById('exam-inline-inc-' + pathStr + '-' + idx) || {}).value || '').trim();
-            const exclude_nums = String((document.getElementById('exam-inline-exc-' + pathStr + '-' + idx) || {}).value || '').trim();
-            const sectionLayoutId = String((document.getElementById('exam-inline-sectionlayout-' + pathStr + '-' + idx) || {}).value || '').trim();
-            const prev = prevSecs[Number(idx)];
-            const bStateForMeta = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
-            const classIdForMeta = (bStateForMeta && bStateForMeta.classId) || '';
-            const examMat = (task && task.raw_data && task.raw_data.exam_material) || {};
-            let folderForMeta = String(examMat.material_folder || '').trim();
-            let kindForMeta = examMat.root_kind || 'teacher';
-            if (!folderForMeta && bStateForMeta) {
-                const audioForMeta = findPreferredAudioTask(bStateForMeta.tasks || [], pathStr);
-                const ref0 = (audioForMeta && audioForMeta.raw_data && Array.isArray(audioForMeta.raw_data.material_refs))
-                    ? audioForMeta.raw_data.material_refs[0] : null;
-                if (ref0 && ref0.material_folder) {
-                    folderForMeta = String(ref0.material_folder || '').trim();
-                    kindForMeta = ref0.materials_root_kind === 'class' ? 'class' : 'teacher';
-                }
-            }
-            const pickedOpt = resolvePickedMetaOption(classIdForMeta, kindForMeta, folderForMeta, sheet, prev);
-            let sheetId = String(sheet).trim();
-            if (pickedOpt) {
-                const sameFile = prev && (
-                    String(prev.meta_file_name || '') === String(pickedOpt.fileName || '')
-                    || String(prev.sheet_id || '').trim() === sheetId
-                );
-                if (sameFile && prev.sheet_id) {
-                    sheetId = String(prev.sheet_id).trim();
-                } else if (/\.meta\.json$/i.test(sheetId) || sheetId === pickedOpt.fileName) {
-                    sheetId = displayStemFromMetaFile(pickedOpt.fileName);
-                }
-            } else if (/\.meta\.json$/i.test(sheetId)) {
-                sheetId = displayStemFromMetaFile(sheetId);
-            }
-            const sec = {
-                sheet_id: sheetId,
-                range_type: rtype,
-                start: start,
-                end: end,
-                count: count,
-                lines_per_page: isNaN(lpp) || lpp <= 0 ? DEFAULT_LINES_PER_PAGE : lpp
+    function readFolderSelectValue(pathStr, secIdx, fallback) {
+        fallback = fallback || {};
+        const selectEl = document.getElementById('exam-inline-materialfolder-' + pathStr + '-' + secIdx)
+            || (secIdx === 0 ? document.getElementById('exam-inline-materialfolder-' + pathStr) : null);
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        if (!selectEl) {
+            return {
+                folder: String(fallback.material_folder || '').trim(),
+                kind: fallback.material_root_kind === 'class' ? 'class' : 'teacher',
+                combinationId: String(fallback.combination_id || '').trim()
             };
-            if (pickedOpt) {
-                sec.meta_file_name = pickedOpt.fileName || '';
-                sec.meta_file_id = pickedOpt.fileId || '';
-            } else if (prev && (prev.meta_file_name || prev.meta_file_id)
-                && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()) {
-                if (prev.meta_file_name) sec.meta_file_name = prev.meta_file_name;
-                if (prev.meta_file_id) sec.meta_file_id = prev.meta_file_id;
+        }
+        const selVal = String(selectEl.value || '');
+        let folder = '';
+        let kind = fallback.material_root_kind === 'class' ? 'class' : 'teacher';
+        let combinationId = '';
+        if (selVal === '__manual__') {
+            const manualEl = document.getElementById('exam-inline-materialfolder-manual-' + pathStr + '-' + secIdx)
+                || document.getElementById('exam-inline-materialfolder-manual-' + pathStr);
+            folder = manualEl ? String(manualEl.value || '').trim() : '';
+        } else if (isComboId(selVal)) {
+            combinationId = selVal;
+            const combo = lookupAssignedCombo(classId, selVal);
+            if (combo) {
+                folder = String(combo.folderName || '').trim();
+                kind = combo.rootKind === 'class' ? 'class' : 'teacher';
+            } else {
+                folder = String(fallback.material_folder || '').trim();
             }
-            if (difficulty) sec.difficulty = difficulty;
-            if (include_nums) sec.include_nums = include_nums;
-            if (exclude_nums) sec.exclude_nums = exclude_nums;
-            // 同一活頁可以在不同區段套用不同 layout（例如同一份 meta 同時要「整句翻譯」＋「單字無圖」）；
-            // 空字串＝沿用 exam_job.layout_profile_id 這個上層預設，不寫進 sec（保持既有匯出格式最小變動）
-            if (sectionLayoutId) sec.layout_profile_id = sectionLayoutId;
-            if (prev && prev.available_count != null
-                && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
-                && Number(prev.start) === start && Number(prev.end) === end) {
-                sec.available_count = prev.available_count;
+        } else if (selVal) {
+            const sep = selVal.indexOf('::');
+            if (sep >= 0) {
+                kind = selVal.slice(0, sep) === 'class' ? 'class' : 'teacher';
+                folder = selVal.slice(sep + 2).trim();
             }
-            // 起迄未改時保留不連續 pages/items（來自 range_spec）
-            if (prev
-                && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
-                && (prev.range_type || 'page') === rtype
-                && Number(prev.start) === start
-                && Number(prev.end) === end) {
-                if (Array.isArray(prev.pages) && prev.pages.length) sec.pages = prev.pages.slice();
-                if (Array.isArray(prev.items) && prev.items.length) sec.items = prev.items.slice();
-                if (prev.range_spec) sec.range_spec = prev.range_spec;
+        }
+        return { folder: folder, kind: kind, combinationId: combinationId };
+    }
+
+    function readInlineSegmentFromDom(pathStr, idx, prev, folderForMeta, kindForMeta) {
+        const task = getBuilderTaskByPath(pathStr);
+        const sheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx);
+        let sheet = sheetEl ? sheetEl.value : '';
+        if (sheet === '__manual__') {
+            const sheetManualEl = document.getElementById('exam-inline-sheet-manual-' + pathStr + '-' + idx);
+            sheet = sheetManualEl ? sheetManualEl.value : '';
+        }
+        const lpp = Number((document.getElementById('exam-inline-lpp-' + pathStr + '-' + idx) || {}).value);
+        const rtype = (document.getElementById('exam-inline-rtype-' + pathStr + '-' + idx) || {}).value || 'page';
+        const start = Number((document.getElementById('exam-inline-start-' + pathStr + '-' + idx) || {}).value);
+        const end = Number((document.getElementById('exam-inline-end-' + pathStr + '-' + idx) || {}).value);
+        const count = Number((document.getElementById('exam-inline-count-' + pathStr + '-' + idx) || {}).value);
+        const difficulty = String((document.getElementById('exam-inline-diff-' + pathStr + '-' + idx) || {}).value || '').trim();
+        const include_nums = String((document.getElementById('exam-inline-inc-' + pathStr + '-' + idx) || {}).value || '').trim();
+        const exclude_nums = String((document.getElementById('exam-inline-exc-' + pathStr + '-' + idx) || {}).value || '').trim();
+        const sectionLayoutId = String((document.getElementById('exam-inline-sectionlayout-' + pathStr + '-' + idx) || {}).value || '').trim();
+        const bStateForMeta = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classIdForMeta = (bStateForMeta && bStateForMeta.classId) || '';
+        const pickedOpt = resolvePickedMetaOption(classIdForMeta, kindForMeta, folderForMeta, sheet, prev);
+        let sheetId = String(sheet).trim();
+        if (pickedOpt) {
+            const sameFile = prev && (
+                String(prev.meta_file_name || '') === String(pickedOpt.fileName || '')
+                || String(prev.sheet_id || '').trim() === sheetId
+            );
+            if (sameFile && prev.sheet_id) {
+                sheetId = String(prev.sheet_id).trim();
+            } else if (/\.meta\.json$/i.test(sheetId) || sheetId === pickedOpt.fileName) {
+                sheetId = displayStemFromMetaFile(pickedOpt.fileName);
             }
-            sections.push(sec);
+        } else if (/\.meta\.json$/i.test(sheetId)) {
+            sheetId = displayStemFromMetaFile(sheetId);
+        }
+        const sec = {
+            sheet_id: sheetId,
+            range_type: rtype,
+            start: start,
+            end: end,
+            count: count,
+            lines_per_page: isNaN(lpp) || lpp <= 0 ? DEFAULT_LINES_PER_PAGE : lpp
+        };
+        if (pickedOpt) {
+            sec.meta_file_name = pickedOpt.fileName || '';
+            sec.meta_file_id = pickedOpt.fileId || '';
+        } else if (/\.meta\.json$/i.test(String(sheet || '').trim())) {
+            sec.meta_file_name = String(sheet).trim();
+        } else if (prev && (prev.meta_file_name || prev.meta_file_id)
+            && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()) {
+            if (prev.meta_file_name) sec.meta_file_name = prev.meta_file_name;
+            if (prev.meta_file_id) sec.meta_file_id = prev.meta_file_id;
+        }
+        if (difficulty) sec.difficulty = difficulty;
+        if (include_nums) sec.include_nums = include_nums;
+        if (exclude_nums) sec.exclude_nums = exclude_nums;
+        if (sectionLayoutId) sec.layout_profile_id = sectionLayoutId;
+        if (prev && prev.available_count != null
+            && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
+            && Number(prev.start) === start && Number(prev.end) === end) {
+            sec.available_count = prev.available_count;
+        }
+        if (prev
+            && String(prev.sheet_id || '').toUpperCase() === String(sec.sheet_id || '').toUpperCase()
+            && (prev.range_type || 'page') === rtype
+            && Number(prev.start) === start
+            && Number(prev.end) === end) {
+            if (Array.isArray(prev.pages) && prev.pages.length) sec.pages = prev.pages.slice();
+            if (Array.isArray(prev.items) && prev.items.length) sec.items = prev.items.slice();
+            if (prev.range_spec) sec.range_spec = prev.range_spec;
+        }
+        return sec;
+    }
+
+    function readInlineSections(pathStr) {
+        const task = getBuilderTaskByPath(pathStr);
+        const prevJob = (task && task.raw_data && task.raw_data.exam_job) || {};
+        const prevSecs = normalizeExamSections(prevJob.sections, {
+            material_folder: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+            material_root_kind: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+        });
+        const cards = document.querySelectorAll('#exam-inline-wrap-' + pathStr + ' .exam-section-card');
+        if (!cards.length) return prevSecs;
+        const sections = [];
+        cards.forEach(function (card) {
+            const secIdx = Number(card.getAttribute('data-exam-section'));
+            const prevSec = prevSecs[secIdx] || emptySection();
+            const folderInfo = readFolderSelectValue(pathStr, secIdx, prevSec);
+            const shuffleEl = document.getElementById('exam-inline-shuffle-' + pathStr + '-' + secIdx);
+            const appealEl = document.getElementById('exam-inline-allow-appeal-' + pathStr + '-' + secIdx);
+            const rows = card.querySelectorAll('tr[data-exam-inline-row]');
+            const segments = [];
+            rows.forEach(function (row) {
+                const idx = row.getAttribute('data-exam-inline-row');
+                const parts = String(idx || '').split('-');
+                const segIdx = Number(parts[parts.length - 1]);
+                const prevSeg = (prevSec.segments || [])[segIdx];
+                segments.push(readInlineSegmentFromDom(pathStr, idx, prevSeg, folderInfo.folder, folderInfo.kind));
+            });
+            sections.push({
+                id: prevSec.id || newSectionId(),
+                material_folder: folderInfo.folder,
+                material_root_kind: folderInfo.kind,
+                combination_id: folderInfo.combinationId || prevSec.combination_id || '',
+                shuffle: shuffleEl ? !!shuffleEl.checked : prevSec.shuffle !== false,
+                allow_answer_appeal: appealEl ? !!appealEl.checked : prevSec.allow_answer_appeal !== false,
+                segments: segments.length ? segments : [emptySegment()]
+            });
         });
         return sections;
     }
@@ -2449,35 +3009,35 @@ window.FeatureExamJob = (function () {
             : ['online'];
         if (outputs.indexOf('online') === -1) outputs.unshift('online');
 
-        const tbody = document.getElementById('exam-inline-tbody-' + pathStr);
-        const sections = tbody
+        const hasCards = !!document.querySelector('#exam-inline-wrap-' + pathStr + ' .exam-section-card');
+        const sections = hasCards
             ? readInlineSections(pathStr)
-            : (Array.isArray(prevJob.sections) ? prevJob.sections : []);
-        const shuffleEl = document.getElementById('exam-inline-shuffle-' + pathStr);
-        const shuffle = shuffleEl ? !!shuffleEl.checked : !(prevJob.options && prevJob.options.shuffle === false);
-        // 💣 老師強烈要求拿掉 bank_id 這個 UI（只是原樣寫進匯出給 Python 排版系統的標籤，
-        // 不影響線上卷實際抽題，目前題庫清單也只有一個選項），不再讓老師選，固定寫入唯一值即可。
+            : normalizeExamSections(prevJob.sections, {
+                material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+                material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+            });
+        const shuffleSectionsEl = document.getElementById('exam-inline-shuffle-sections-' + pathStr);
+        const shuffleSections = shuffleSectionsEl
+            ? !!shuffleSectionsEl.checked
+            : !!(prevJob.options && prevJob.options.shuffle_sections);
         const payload = {
             job_id: jobId,
             bank_id: prevJob.bank_id || (BANK_CATALOG[0] ? BANK_CATALOG[0].id : ''),
             layout_profile_id: layoutEl ? layoutEl.value : '',
             sections: sections,
             outputs: outputs,
-            options: { shuffle: shuffle, force_qnum: true, separate_pages: false }
+            options: { shuffle_sections: shuffleSections, force_qnum: true, separate_pages: false }
         };
         if (!payload.layout_profile_id) {
-            const firstSecLayout = sections.find(function (s) { return s && s.layout_profile_id; });
-            if (firstSecLayout) payload.layout_profile_id = firstSecLayout.layout_profile_id;
+            const firstSeg = flattenExamSegments(sections).find(function (s) { return s && s.layout_profile_id; });
+            if (firstSeg) payload.layout_profile_id = firstSeg.layout_profile_id;
         }
         task.raw_data.exam_job_id = jobId;
         task.raw_data.exam_title = String(task.title || '').replace(/<[^>]*>?/gm, '').trim() || task.raw_data.exam_title || '';
         task.raw_data.exam_job = payload;
         const allowRetakeEl = document.getElementById('exam-inline-allow-retake-' + pathStr);
         if (allowRetakeEl) task.raw_data.allow_wrong_retake = !!allowRetakeEl.checked;
-        // 💣 雷區：跟 allow_wrong_retake 預設方向相反——這個預設「開」，只有明確取消勾選
-        // 才要寫 false；沒讀到這個 checkbox（畫面還沒渲染）時完全不要動這個欄位。
-        const allowAppealEl = document.getElementById('exam-inline-allow-appeal-' + pathStr);
-        if (allowAppealEl) task.raw_data.allow_answer_appeal = !!allowAppealEl.checked;
+        task.raw_data.allow_answer_appeal = sections.some(function (s) { return s && s.allow_answer_appeal !== false; });
         // ✍️ 輸入練習／🔧 輸入改正：整份考卷設定，見 docs 對話紀錄「逐字要求完全一致」。
         const inputPracticeEl = document.getElementById('exam-inline-input-practice-' + pathStr);
         if (inputPracticeEl) task.raw_data.input_practice_enabled = !!inputPracticeEl.checked;
@@ -2490,24 +3050,11 @@ window.FeatureExamJob = (function () {
         const jobIdEl = document.getElementById('exam-inline-jobid-' + pathStr);
         if (jobIdEl) jobIdEl.textContent = jobId;
 
-        // 獨立考試（無同層錄音）自選的教材資料夾；有渲染才讀，不覆蓋 combo 情境
-        const materialFolderSelectEl = document.getElementById('exam-inline-materialfolder-' + pathStr);
-        if (materialFolderSelectEl) {
-            const selVal = String(materialFolderSelectEl.value || '');
-            let folder = '';
-            const teacherRootDefaultForExam = (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class') ? 'class' : 'teacher';
-            let kind = (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || teacherRootDefaultForExam;
-            if (selVal === '__manual__') {
-                const manualEl = document.getElementById('exam-inline-materialfolder-manual-' + pathStr);
-                folder = manualEl ? String(manualEl.value || '').trim() : '';
-            } else if (selVal) {
-                const sep = selVal.indexOf('::');
-                if (sep >= 0) {
-                    kind = selVal.slice(0, sep) === 'class' ? 'class' : 'teacher';
-                    folder = selVal.slice(sep + 2).trim();
-                }
-            }
-            task.raw_data.exam_material = { material_folder: folder, root_kind: kind };
+        if (sections[0] && sections[0].material_folder) {
+            task.raw_data.exam_material = {
+                material_folder: sections[0].material_folder,
+                root_kind: sections[0].material_root_kind === 'class' ? 'class' : 'teacher'
+            };
         }
         return payload;
     }
@@ -2552,50 +3099,92 @@ window.FeatureExamJob = (function () {
         return label;
     }
 
-    function inlineAddSection(pathStr) {
+    function ensureNestedExamJob(task) {
+        if (!task.raw_data) task.raw_data = {};
+        if (!task.raw_data.exam_job) task.raw_data.exam_job = {};
+        const job = task.raw_data.exam_job;
+        const mat = task.raw_data.exam_material || {};
+        job.sections = normalizeExamSections(job.sections, {
+            material_folder: mat.material_folder || '',
+            material_root_kind: mat.root_kind || 'teacher'
+        });
+        return job;
+    }
+
+    function inlineAddExamSection(pathStr) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         syncInlineEditor(pathStr, task);
-        const job = task.raw_data.exam_job || { sections: [] };
-        if (!Array.isArray(job.sections)) job.sections = [];
-
-        // 日常應先「從錄音範圍帶入」；加區段＝同一活頁再拆一列（例：同活頁另一頁碼／題號範圍）
+        const job = ensureNestedExamJob(task);
         const last = job.sections.length ? job.sections[job.sections.length - 1] : null;
-        job.sections.push({
-            sheet_id: last ? String(last.sheet_id || '') : '',
-            range_type: (last && last.range_type) || 'page',
-            start: last ? Number(last.end) + 1 || 1 : 1,
-            end: last ? Number(last.end) + 1 || 1 : 1,
-            count: 10,
-            lines_per_page: (last && last.lines_per_page) || examJobTemplateLpp(task),
-            layout_profile_id: last ? String(last.layout_profile_id || '') : '',
-            difficulty: '',
-            include_nums: '',
-            exclude_nums: ''
-        });
+        job.sections.push(emptySection({
+            material_folder: last ? last.material_folder : '',
+            material_root_kind: last ? last.material_root_kind : 'teacher',
+            shuffle: last ? last.shuffle !== false : true,
+            allow_answer_appeal: last ? last.allow_answer_appeal !== false : true,
+            segments: [emptySegment(last && last.segments && last.segments[0])]
+        }));
+        task.raw_data.exam_job = job;
+        refreshExamBuilder();
+        window.showFlash('已加一個段落', 'success');
+    }
+
+    function inlineRemoveExamSection(pathStr, secIdx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        syncInlineEditor(pathStr, task);
+        const job = ensureNestedExamJob(task);
+        if (job.sections.length <= 1) {
+            return window.showFlash('至少要保留一個段落', 'warning');
+        }
+        job.sections.splice(secIdx, 1);
+        refreshExamBuilder();
+    }
+
+    function inlineAddSegment(pathStr, secIdx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
+        const task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        syncInlineEditor(pathStr, task);
+        const job = ensureNestedExamJob(task);
+        const sec = job.sections[secIdx];
+        if (!sec) return;
+        if (!Array.isArray(sec.segments)) sec.segments = [];
+        const last = sec.segments.length ? sec.segments[sec.segments.length - 1] : null;
+        sec.segments.push(emptySegment(last));
         task.raw_data.exam_job = job;
         refreshExamBuilder();
         window.showFlash(
             last && last.sheet_id
-                ? ('已加一列（預填活頁 ' + last.sheet_id + '，請改起迄／題數；若這列要套用不同試卷範本，請在「試卷範本」欄另選）')
-                : '已加空白區段：請先「從錄音範圍帶入」，或自行填活頁字母',
+                ? ('已加一個片段（預填活頁 ' + last.sheet_id + '，請改起迄／題數）')
+                : '已加空白片段：請選活頁',
             last && last.sheet_id ? 'success' : 'warning'
         );
     }
 
-    function inlineRemoveSection(pathStr, idx) {
+    function inlineRemoveSegment(pathStr, secIdx, segIdx) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         syncInlineEditor(pathStr, task);
-        const job = task.raw_data.exam_job;
-        if (!job || !Array.isArray(job.sections)) return;
-        if (job.sections.length <= 1) {
-            return window.showFlash('至少要保留一個區段（可以改內容，但不能刪到 0 個）', 'warning');
+        const job = ensureNestedExamJob(task);
+        const sec = job.sections[secIdx];
+        if (!sec || !Array.isArray(sec.segments)) return;
+        if (sec.segments.length <= 1) {
+            return window.showFlash('每個段落至少要保留一個片段', 'warning');
         }
-        job.sections.splice(idx, 1);
+        sec.segments.splice(segIdx, 1);
         refreshExamBuilder();
+    }
+
+    function inlineAddSection(pathStr) {
+        inlineAddExamSection(pathStr);
+    }
+
+    function inlineRemoveSection(pathStr, idx) {
+        inlineRemoveExamSection(pathStr, idx);
     }
 
     function clampTotalInput(el) {
@@ -2622,11 +3211,20 @@ window.FeatureExamJob = (function () {
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         syncInlineEditor(pathStr, task);
-        const job = task.raw_data.exam_job;
-        if (!job || !job.sections || !job.sections.length) return;
-        job.sections = distributeTotalCount(job.sections, total);
+        const job = ensureNestedExamJob(task);
+        const flat = flattenExamSegments(job.sections);
+        const distributed = distributeTotalCount(flat, total);
+        let i = 0;
+        job.sections.forEach(function (sec) {
+            (sec.segments || []).forEach(function (seg) {
+                if (distributed[i]) {
+                    seg.count = distributed[i].count;
+                }
+                i++;
+            });
+        });
         refreshExamBuilder();
-        window.showFlash('已將 ' + total + ' 題均分到各區段（可再逐列修改）', 'success');
+        window.showFlash('已將 ' + total + ' 題均分到各片段（可再逐列修改）', 'success');
     }
 
     function mergeMaterialRefsPreserveMeta(domRefs, existingRefs) {
@@ -2723,7 +3321,17 @@ window.FeatureExamJob = (function () {
         });
 
         if (!task.raw_data.exam_job) task.raw_data.exam_job = {};
-        task.raw_data.exam_job.sections = sections;
+        const importFolder = (sourceRefs[0] && sourceRefs[0].material_folder)
+            || ((task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '');
+        const importKind = (sourceRefs[0] && sourceRefs[0].materials_root_kind === 'class')
+            ? 'class'
+            : ((task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || rootKind || 'teacher');
+        task.raw_data.exam_job.sections = groupFlatRowsIntoSections(sections, {
+            material_folder: importFolder,
+            material_root_kind: importKind,
+            shuffle: true,
+            allow_answer_appeal: true
+        });
         if (audio && sourceRefs.length) {
             if (!audio.raw_data) audio.raw_data = {};
             audio.raw_data.material_refs = sourceRefs;
@@ -2797,14 +3405,35 @@ window.FeatureExamJob = (function () {
     }
 
     /** 獨立考試「活頁」下拉選了「✏️ 其他（手動輸入）」才顯示手動輸入框 */
-    function inlineOnSheetSelectChange(pathStr, idx) {
+    function inlineOnSheetSelectChange(pathStr, secIdx, segIdx) {
+        const idx = (segIdx == null) ? String(secIdx) : (secIdx + '-' + segIdx);
         const selectEl = document.getElementById('exam-inline-sheet-' + pathStr + '-' + idx);
         const manualEl = document.getElementById('exam-inline-sheet-manual-' + pathStr + '-' + idx);
         if (manualEl) manualEl.style.display = (selectEl && selectEl.value === '__manual__') ? 'block' : 'none';
-        if (selectEl && selectEl.value === '__manual__') return; // 手動輸入還沒填完，先不重算可用題
+        if (selectEl && selectEl.value === '__manual__') return;
         const task = getBuilderTaskByPath(pathStr);
         const sheetVal = selectEl ? selectEl.value : '';
-        const tplId = task ? lookupPairedExamTemplateId(pathStr, task, sheetVal) : '';
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const jobForCombo = task ? ensureNestedExamJob(task) : null;
+        const secForCombo = jobForCombo && jobForCombo.sections && jobForCombo.sections[secIdx];
+        const combo = resolveSectionCombo(classId, secForCombo);
+        const tplId = (combo && combo.examTemplateId)
+            ? combo.examTemplateId
+            : (task ? lookupPairedExamTemplateId(pathStr, task, sheetVal) : '');
+        if (task && sheetVal) {
+            const job = jobForCombo;
+            const sec = secForCombo;
+            const seg = sec && sec.segments && sec.segments[segIdx == null ? 0 : segIdx];
+            if (seg) {
+                seg.meta_file_name = sheetVal;
+                seg.sheet_id = displayStemFromMetaFile(sheetVal);
+                delete seg.meta_file_id;
+                delete seg.available_count;
+                delete seg.meta_missing_page;
+                if (tplId) seg.layout_profile_id = tplId;
+            }
+        }
         const layoutEl = document.getElementById('exam-inline-sectionlayout-' + pathStr + '-' + idx);
         if (layoutEl) layoutEl.value = tplId || '';
         if (tplId) {
@@ -2814,11 +3443,19 @@ window.FeatureExamJob = (function () {
                 lppEl.value = String(profile.lines_per_page);
             }
         }
+        if (selectEl && selectEl.value && task) {
+            const job = ensureNestedExamJob(task);
+            const sec = job.sections && job.sections[secIdx];
+            const seg = sec && sec.segments && sec.segments[segIdx == null ? 0 : segIdx];
+            if (seg && countAvailableFromMeta(seg, task) == null) {
+                inlineRefreshStandaloneMeta(pathStr, { silent: true });
+                return;
+            }
+        }
         inlineRefreshAvail(pathStr);
-        if (selectEl && selectEl.value) inlineRefreshStandaloneMeta(pathStr);
     }
 
-    function inlineGeneratePaperNow(pathStr) {
+    async function inlineGeneratePaperNow(pathStr) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
@@ -2832,9 +3469,10 @@ window.FeatureExamJob = (function () {
             && Array.isArray(task.raw_data.quiz_paper.items)
             && task.raw_data.quiz_paper.items.length);
         if (hasPaper) {
-            const ok = window.confirm(
-                '「產生試卷」會重新抽題，覆蓋現有卷。\n'
-                + '若只是改了試卷範本／標準答案、題目要維持不變，請改按「重新批改」。\n'
+            const ok = await window.ModalOverlay.confirm(
+                '「產生試卷」會為【目前這份作業】重新抽題，覆蓋這份作業現有的卷。\n'
+                + '只會寫進現在正在編輯的這份作業，不會改到其他已出過的作業（含你套用的那份歷史作業）。\n'
+                + '若這份作業已經有卷，而且只是改了試卷範本／標準答案、題目要維持不變，請改按「重新批改」。\n'
                 + '確定要重新出卷？'
             );
             if (!ok) return;
@@ -2917,10 +3555,16 @@ window.FeatureExamJob = (function () {
         return sheetIds;
     }
 
+    function collectLayoutProfileIds(examJob) {
+        const ids = [examJob && examJob.layout_profile_id];
+        flattenExamSegments(normalizeExamSections((examJob && examJob.sections) || [], {})).forEach(function (s) {
+            if (s && s.layout_profile_id) ids.push(s.layout_profile_id);
+        });
+        return ids.filter(Boolean);
+    }
+
     function buildEnrichedProfiles(examJob) {
-        const idsNeeded = [examJob && examJob.layout_profile_id].concat(
-            (examJob && Array.isArray(examJob.sections) ? examJob.sections : []).map(function (sec) { return sec && sec.layout_profile_id; })
-        ).filter(Boolean);
+        const idsNeeded = collectLayoutProfileIds(examJob);
         const seenIds = {};
         const profiles = [];
         idsNeeded.forEach(function (pid) {
@@ -2951,7 +3595,7 @@ window.FeatureExamJob = (function () {
         if (src.material_folder) {
             return {
                 refs: [],
-                materialFolder: String(src.material_folder).trim(),
+                materialFolder: resolveStoredFolderName(src.material_folder),
                 rootKind: String(src.materials_root_kind || 'teacher').toLowerCase() === 'class' ? 'class' : 'teacher',
                 schemaId: String(src.schema_id || ''),
                 audioPath: '',
@@ -3151,13 +3795,14 @@ window.FeatureExamJob = (function () {
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         const payload = syncInlineEditor(pathStr, task);
-        if (!payload || !payload.sections || !payload.sections.length) {
-            window.showFlash('請至少填一個區段', 'error');
+        const pickRows = flattenExamSegments(normalizeExamSections((payload && payload.sections) || [], {}));
+        if (!pickRows.length) {
+            window.showFlash('請至少填一個片段', 'error');
             return;
         }
-        for (let i = 0; i < payload.sections.length; i++) {
-            if (!payload.sections[i].sheet_id) {
-                window.showFlash('區段 ' + (i + 1) + ' 缺少活頁 sheet_id', 'error');
+        for (let i = 0; i < pickRows.length; i++) {
+            if (!pickRows[i].sheet_id) {
+                window.showFlash('段落 ' + (pickRows[i]._section_index + 1) + ' 片段 ' + (pickRows[i]._segment_index + 1) + ' 缺少活頁', 'error');
                 return;
             }
         }
@@ -3176,7 +3821,7 @@ window.FeatureExamJob = (function () {
             rootKind = (window.TeacherPrefs && window.TeacherPrefs.getCachedSync().default_materials_root_kind === 'class') ? 'class' : 'teacher';
         }
         return {
-            material_folder: String(em.material_folder || '').trim(),
+            material_folder: resolveStoredFolderName(em.material_folder),
             root_kind: rootKind
         };
     }
@@ -3270,6 +3915,9 @@ window.FeatureExamJob = (function () {
         });
 
         let html = '<option value="">— 請選擇教材資料夾 —</option>';
+        if (!matchedCurrent && examMaterialSelf.material_folder) {
+            html += optionHtml(examMaterialSelf.root_kind || 'teacher', examMaterialSelf.material_folder);
+        }
         html += '<optgroup label="已指派給本班">'
             + (assignedOpts.length ? assignedOpts.join('') : '<option value="" disabled>（尚未指派教材給這個班級）</option>')
             + '</optgroup>';
@@ -3284,7 +3932,7 @@ window.FeatureExamJob = (function () {
 
     function catalogMetaOptionsForFolder(classId, rootKind, materialFolder) {
         if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return [];
-        const folder = String(materialFolder || '').trim();
+        const folder = resolveStoredFolderName(materialFolder);
         if (!folder) return [];
         const folderU = folder.toUpperCase();
         const kinds = rootKind === 'class' ? ['class', 'teacher'] : ['teacher', 'class'];
@@ -3312,10 +3960,31 @@ window.FeatureExamJob = (function () {
         if (!sid) return null;
         const opts = catalogMetaOptionsForFolder(classId, rootKind, materialFolder);
         if (!opts.length) return null;
-        const wantFile = /\.meta\.json$/i.test(sid) ? sid : (sid.replace(/\.meta\.json$/i, '') + '.meta.json');
-        const exactFile = opts.find(function (o) { return String(o.fileName).toUpperCase() === wantFile.toUpperCase(); });
-        if (exactFile) return exactFile;
-        const coreHits = opts.filter(function (o) { return stemsLooselyMatch(o.fileName, sid); });
+        if (/\.meta\.json$/i.test(sid)) {
+            return opts.find(function (o) {
+                return String(o.fileName).toUpperCase() === sid.toUpperCase();
+            }) || null;
+        }
+        const candidates = [sid];
+        if (window.MaterialNameMap && typeof window.MaterialNameMap.lookupKeys === 'function') {
+            window.MaterialNameMap.lookupKeys('meta_file', sid).forEach(function (k) {
+                if (candidates.indexOf(k) === -1) candidates.push(k);
+            });
+            window.MaterialNameMap.lookupKeys('sheet_stem', sid).forEach(function (k) {
+                if (candidates.indexOf(k) === -1) candidates.push(k);
+            });
+        }
+        for (let c = 0; c < candidates.length; c++) {
+            const want = candidates[c];
+            const wantFile = /\.meta\.json$/i.test(want) ? want : (want.replace(/\.meta\.json$/i, '') + '.meta.json');
+            const exactFile = opts.find(function (o) { return String(o.fileName).toUpperCase() === wantFile.toUpperCase(); });
+            if (exactFile) return exactFile;
+        }
+        const wantStem = displayStemFromMetaFile(sid).toUpperCase();
+        const coreHits = opts.filter(function (o) {
+            if (!candidates.some(function (want) { return stemsLooselyMatch(o.fileName, want); })) return false;
+            return displayStemFromMetaFile(o.fileName).toUpperCase() === wantStem;
+        });
         if (coreHits.length === 1) return coreHits[0];
         if (coreHits.length > 1) {
             coreHits.sort(function (a, b) { return String(a.fileName).length - String(b.fileName).length; });
@@ -3343,7 +4012,32 @@ window.FeatureExamJob = (function () {
 
     function attachCatalogMetaToSection(classId, rootKind, materialFolder, sec) {
         if (!sec) return sec;
-        const opt = catalogMetaOptionForSheet(classId, rootKind, materialFolder, sec.meta_file_name || sec.sheet_id);
+        const wantFile = String(sec.meta_file_name || '').trim();
+        const sheet = String(sec.sheet_id || '').trim();
+        if (wantFile && /\.meta\.json$/i.test(wantFile)) {
+            const fileStem = displayStemFromMetaFile(wantFile);
+            const sheetStem = sheet ? displayStemFromMetaFile(sheet) : '';
+            if (sheetStem && fileStem
+                && fileStem.toUpperCase() !== sheetStem.toUpperCase()
+                && !stemsLooselyMatch(wantFile, sheet)) {
+                const bySheet = catalogMetaOptionForSheet(classId, rootKind, materialFolder, sheet);
+                if (bySheet) {
+                    sec.meta_file_name = bySheet.fileName;
+                    if (bySheet.fileId) sec.meta_file_id = bySheet.fileId;
+                } else {
+                    delete sec.meta_file_name;
+                    delete sec.meta_file_id;
+                }
+                return sec;
+            }
+            const exact = catalogMetaOptionForSheet(classId, rootKind, materialFolder, wantFile);
+            if (exact) {
+                sec.meta_file_name = exact.fileName;
+                if (exact.fileId) sec.meta_file_id = exact.fileId;
+            }
+            return sec;
+        }
+        const opt = catalogMetaOptionForSheet(classId, rootKind, materialFolder, wantFile || sheet);
         if (opt) {
             sec.meta_file_name = opt.fileName || sec.meta_file_name || '';
             if (opt.fileId) sec.meta_file_id = opt.fileId;
@@ -3410,26 +4104,44 @@ window.FeatureExamJob = (function () {
         const map = rowsByStem || {};
         const sid = String(sheetId || '').trim();
         if (!sid) return null;
-        if (Array.isArray(map[sid]) && map[sid].length) return map[sid];
-        const upper = sid.toUpperCase();
-        if (Array.isArray(map[upper]) && map[upper].length) return map[upper];
-        const keys = Object.keys(map);
-        for (let i = 0; i < keys.length; i++) {
-            const k = keys[i];
-            if (k.toUpperCase() === upper && Array.isArray(map[k]) && map[k].length) return map[k];
+        const candidates = [sid];
+        if (window.MaterialNameMap && typeof window.MaterialNameMap.lookupKeys === 'function') {
+            window.MaterialNameMap.lookupKeys('sheet_stem', sid).forEach(function (k) {
+                if (candidates.indexOf(k) === -1) candidates.push(k);
+            });
+            window.MaterialNameMap.lookupKeys('meta_file', sid).forEach(function (k) {
+                if (candidates.indexOf(k) === -1) candidates.push(k);
+            });
         }
-        const prefixHits = keys.filter(function (k) {
-            const u = k.toUpperCase();
-            return (u === upper || u.indexOf(upper + '.') === 0) && Array.isArray(map[k]) && map[k].length;
-        });
-        if (prefixHits.length === 1) return map[prefixHits[0]];
-        const coreHits = keys.filter(function (k) {
-            return Array.isArray(map[k]) && map[k].length && stemsLooselyMatch(k, sid);
-        });
-        if (coreHits.length === 1) return map[coreHits[0]];
-        if (coreHits.length > 1) {
-            coreHits.sort(function (a, b) { return String(a).length - String(b).length; });
-            return map[coreHits[0]];
+        const keys = Object.keys(map);
+        for (let c = 0; c < candidates.length; c++) {
+            const want = String(candidates[c] || '').trim();
+            if (!want) continue;
+            if (Array.isArray(map[want]) && map[want].length) return map[want];
+            const upper = want.toUpperCase();
+            if (Array.isArray(map[upper]) && map[upper].length) return map[upper];
+            for (let i = 0; i < keys.length; i++) {
+                const k = keys[i];
+                if (k.toUpperCase() === upper && Array.isArray(map[k]) && map[k].length) return map[k];
+            }
+        }
+        for (let c = 0; c < candidates.length; c++) {
+            const want = String(candidates[c] || '').trim();
+            if (!want) continue;
+            const upper = want.toUpperCase();
+            const prefixHits = keys.filter(function (k) {
+                const u = k.toUpperCase();
+                return (u === upper || u.indexOf(upper + '.') === 0) && Array.isArray(map[k]) && map[k].length;
+            });
+            if (prefixHits.length === 1) return map[prefixHits[0]];
+            const coreHits = keys.filter(function (k) {
+                return Array.isArray(map[k]) && map[k].length && stemsLooselyMatch(k, want);
+            });
+            if (coreHits.length === 1) return map[coreHits[0]];
+            if (coreHits.length > 1) {
+                coreHits.sort(function (a, b) { return String(a).length - String(b).length; });
+                return map[coreHits[0]];
+            }
         }
         return null;
     }
@@ -3451,13 +4163,20 @@ window.FeatureExamJob = (function () {
         const fileName = String(opt.fileName);
         const fileU = fileName.toUpperCase();
         const wantFile = String((section && section.meta_file_name) || '').trim();
+        const sheet = String((section && section.sheet_id) || '').trim();
+        const fileStem = displayStemFromMetaFile(fileName);
+        const wantStem = wantFile ? displayStemFromMetaFile(wantFile) : '';
+        const sheetStem = sheet ? displayStemFromMetaFile(sheet) : '';
+        if (wantStem && sheetStem && wantStem.toUpperCase() !== sheetStem.toUpperCase()) {
+            if (fileStem.toUpperCase() === sheetStem.toUpperCase() || stemsLooselyMatch(fileName, sheet)) return true;
+            return false;
+        }
         if (wantFile) {
             const wantU = wantFile.toUpperCase();
             if (fileName === wantFile || fileU === wantU) return true;
             if (fileU === (wantFile.replace(/\.meta\.json$/i, '') + '.META.JSON')) return true;
             if (stemsLooselyMatch(fileName, wantFile)) return true;
         }
-        const sheet = String((section && section.sheet_id) || '').trim();
         if (!sheet) return false;
         if (fileU === sheet.toUpperCase()) return true;
         if (fileU === (sheet.replace(/\.meta\.json$/i, '') + '.META.JSON')) return true;
@@ -3471,9 +4190,19 @@ window.FeatureExamJob = (function () {
             return '<option value="">— 請先選教材資料夾 —</option>';
         }
         if (!flags.catalogLoaded && !(metaOpts || []).length) {
+            const cur = String((section && (section.meta_file_name || section.sheet_id)) || '').trim();
+            if (cur) {
+                return '<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>'
+                    + '<option value="" disabled>⏳ 載入活頁清單…</option>';
+            }
             return '<option value="">⏳ 載入活頁清單…</option>';
         }
         if (!flags.pairingReady) {
+            const cur = String((section && (section.meta_file_name || section.sheet_id)) || '').trim();
+            if (cur) {
+                return '<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>'
+                    + '<option value="" disabled>⏳ 載入官方搭配…</option>';
+            }
             return '<option value="">⏳ 載入官方搭配…</option>';
         }
         const sec = section || {};
@@ -3481,15 +4210,36 @@ window.FeatureExamJob = (function () {
         const curSheet = String(sec.sheet_id || '').trim();
         const hits = (metaOpts || []).filter(function (opt) { return optionMatchesExamSection(opt, sec); });
         hits.sort(function (a, b) { return String(a.fileName).length - String(b.fileName).length; });
-        const chosenName = hits.length ? hits[0].fileName : '';
+        let chosenName = '';
+        if (curFile) {
+            const exactFile = (metaOpts || []).find(function (o) {
+                return String(o && o.fileName) === curFile;
+            });
+            if (exactFile) chosenName = exactFile.fileName;
+        }
+        if (!chosenName && hits.length) {
+            const preferSheet = curSheet
+                ? hits.find(function (o) {
+                    return displayStemFromMetaFile(o.fileName).toUpperCase() === displayStemFromMetaFile(curSheet).toUpperCase();
+                })
+                : null;
+            chosenName = (preferSheet && preferSheet.fileName) || hits[0].fileName;
+        }
+        const listed = {};
         let html = '<option value="">— 選活頁（meta）—</option>';
         html += (metaOpts || []).map(function (opt) {
             const name = opt && opt.fileName;
             if (!name) return '';
+            listed[String(name).replace(/\.meta\.json$/i, '').toUpperCase()] = true;
             const isCur = !!chosenName && name === chosenName;
             return '<option value="' + esc(name) + '"' + (isCur ? ' selected' : '') + '>' + esc(name) + '</option>';
         }).join('');
-        if (!(metaOpts || []).length) {
+        const orphan = curFile || curSheet;
+        if (orphan && !listed[String(orphan).replace(/\.meta\.json$/i, '').toUpperCase()]) {
+            html += '<option value="' + esc(orphan) + '" selected>' + esc(orphan) + '</option>';
+            chosenName = orphan;
+        }
+        if (!(metaOpts || []).length && !orphan) {
             html += '<option value="" disabled>（這個資料夾沒有已搭配試卷範本的 meta）</option>';
         }
         return html;
@@ -3501,78 +4251,22 @@ window.FeatureExamJob = (function () {
      */
     function ensureExamMaterialFolderCatalog(pathStr, classId, force) {
         if (!window.FeatureTimeline || typeof window.FeatureTimeline.ensureMetaCatalog !== 'function') return;
-        const statusEl = document.getElementById('exam-inline-materialfolder-status-' + pathStr);
-        if (statusEl) { statusEl.textContent = '⏳ 載入資料夾清單…'; statusEl.style.color = '#9A3412'; }
+        const statusEl = document.getElementById('exam-inline-materialfolder-status-' + pathStr + '-0')
+            || document.getElementById('exam-inline-materialfolder-status-' + pathStr);
+        if (statusEl && !String(statusEl.textContent || '').trim()) {
+            statusEl.textContent = '背景更新資料夾清單…';
+            statusEl.style.color = '#9A3412';
+        }
         const opts = force ? { force: true } : undefined;
         Promise.all([
             window.FeatureTimeline.ensureMetaCatalog(classId, 'teacher', opts).catch(function () { return null; }),
             window.FeatureTimeline.ensureMetaCatalog(classId, 'class', opts).catch(function () { return null; })
         ]).then(function () {
-            const selectEl = document.getElementById('exam-inline-materialfolder-' + pathStr);
-            const task = getBuilderTaskByPath(pathStr);
-            if (!selectEl || !task) return;
-            const self = getExamMaterialSelf(task);
-            const teacherEntry = window.FeatureTimeline.getMetaCatalogEntry(classId, 'teacher');
-            const classEntry = window.FeatureTimeline.getMetaCatalogEntry(classId, 'class');
-            const prevValue = selectEl.value;
-            selectEl.innerHTML = buildExamMaterialFolderOptionsHtml(self, teacherEntry, classEntry, classId);
-            // 使用者若正在手動輸入模式，重新整理清單不應打斷他
-            if (prevValue === '__manual__') selectEl.value = '__manual__';
-            const teacherCount = (teacherEntry && teacherEntry.options) ? uniqueFolderNamesFromEntry(teacherEntry).length : 0;
-            const classCount = (classEntry && classEntry.options) ? uniqueFolderNamesFromEntry(classEntry).length : 0;
-            const st = document.getElementById('exam-inline-materialfolder-status-' + pathStr);
-            if (st) {
-                // 2026-08-06：這裡跟 feature-material-layout-pairing.js 的教材資料夾下拉共用
-                // window.MaterialFolderPicker 的重試按鈕外觀＋綁定，不要自己刻一份（以前這裡完全
-                // 沒有重試按鈕，失敗或清單真的是空的都只能改手動輸入，逼老師記資料夾全名）
-                const failedTeacher = teacherEntry && teacherEntry.ok === false;
-                const failedClass = classEntry && classEntry.ok === false;
-                const bothEmpty = !failedTeacher && !failedClass && teacherCount === 0 && classCount === 0;
-                const retryBtnId = 'exam-materialfolder-retry-' + pathStr;
-                const retryHtml = (window.MaterialFolderPicker && typeof window.MaterialFolderPicker.retryButtonHtml === 'function')
-                    ? window.MaterialFolderPicker.retryButtonHtml(retryBtnId)
-                    : '';
-                if (failedTeacher && failedClass) {
-                    st.innerHTML = '⚠️ 資料夾清單載入失敗，可按「其他」手動輸入' + retryHtml;
-                    st.style.color = '#D97706';
-                } else if (bothEmpty) {
-                    st.innerHTML = '⚠️ 這個帳號目前抓不到任何教材資料夾（不是連線錯誤）' + retryHtml;
-                    st.style.color = '#D97706';
-                } else {
-                    st.textContent = '已載入 老師個人 ' + teacherCount + ' 個／班級資源 ' + classCount + ' 個資料夾';
-                    st.style.color = '#9A3412';
-                }
-                if ((failedTeacher && failedClass) || bothEmpty) {
-                    if (window.MaterialFolderPicker && typeof window.MaterialFolderPicker.bindRetryButton === 'function') {
-                        window.MaterialFolderPicker.bindRetryButton(retryBtnId, function () { ensureExamMaterialFolderCatalog(pathStr, classId, true); });
-                    }
-                }
-            }
-            // 清單剛載入才第一次有資料：若目前「活頁」欄還是文字輸入（渲染時清單未就緒），
-            // 且現在已經能推出候選 stem，整體重繪一次讓它升級成下拉，不用等老師手動換一次資料夾
-            // combo（有同層錄音）情況老師通常沒有明確選過 exam_material，這裡的 self.material_folder
-            // 會是空的；改成同時看同層錄音猜的資料夾，兩種情況都能在清單載入完成後自動升級成下拉。
-            let guessFolder = self.material_folder;
-            let guessRootKind = self.root_kind;
-            if (!guessFolder && window.BuilderStore && typeof window.BuilderStore.getState === 'function') {
-                const audio = findPreferredAudioTask((window.BuilderStore.getState().tasks) || [], pathStr);
-                const ref0 = (audio && audio.raw_data && Array.isArray(audio.raw_data.material_refs)) ? audio.raw_data.material_refs[0] : null;
-                if (ref0 && ref0.material_folder) {
-                    guessFolder = ref0.material_folder;
-                    guessRootKind = ref0.materials_root_kind === 'class' ? 'class' : 'teacher';
-                }
-            }
-            if (guessFolder) {
-                const firstSheetEl = document.getElementById('exam-inline-sheet-' + pathStr + '-0');
-                const html = firstSheetEl ? String(firstSheetEl.innerHTML || '') : '';
-                const needsUpgrade = !firstSheetEl
-                    || html.indexOf('載入活頁清單') !== -1
-                    || html.indexOf('清單中找不到') !== -1
-                    || html.indexOf('還沒載入到 meta') !== -1
-                    || html.indexOf('請先選教材資料夾') !== -1
-                    || (firstSheetEl && firstSheetEl.options.length <= 2);
-                if (needsUpgrade) refreshExamBuilder();
-            }
+            // 段落／片段 DOM id 已改成 path-secIdx／path-secIdx-segIdx；
+            // 清單回來後一定整卡重畫，不能再找舊 id 然後直接 return（會永遠停在載入中）。
+            refreshExamBuilder();
+        }).catch(function () {
+            refreshExamBuilder();
         });
     }
 
@@ -3620,10 +4314,23 @@ window.FeatureExamJob = (function () {
                 audioPath: ''
             };
         }
-        throw new Error('尚未設定教材來源：同層沒有已選 meta 的錄音，也還沒在上方「教材資料夾」填入');
+        const nested = examTask && examTask.raw_data && examTask.raw_data.exam_job
+            ? normalizeExamSections(examTask.raw_data.exam_job.sections, {})
+            : [];
+        if (nested[0] && nested[0].material_folder) {
+            return {
+                refs: [],
+                materialFolder: nested[0].material_folder,
+                rootKind: nested[0].material_root_kind === 'class' ? 'class' : 'teacher',
+                schemaId: '',
+                audioPath: ''
+            };
+        }
+        throw new Error('尚未設定教材來源：同層沒有已選 meta 的錄音，也還沒在段落裡選「教材資料夾」');
     }
 
     async function readMaterialFileWithFallback(folderIdTeacher, folderIdClass, materialFolder, fileName, preferredKind) {
+        const folder = resolveStoredFolderName(materialFolder);
         const order = preferredKind === 'class' ? ['class', 'teacher'] : ['teacher', 'class'];
         let lastErr = null;
         for (let i = 0; i < order.length; i++) {
@@ -3632,15 +4339,15 @@ window.FeatureExamJob = (function () {
             if (!folderId) continue;
             try {
                 const fileResult = await window.GasService.readMaterialFile(
-                    folderId, materialFolder, fileName, kind
+                    folderId, folder, fileName, kind
                 );
                 return { fileResult: fileResult, rootKind: kind, folderId: folderId };
             } catch (err) {
                 lastErr = err;
             }
         }
-        throw new Error(
-            'GAS 無法讀取「' + materialFolder + '/' + fileName + '」：'
+                throw new Error(
+            'GAS 無法讀取「' + folder + '/' + fileName + '」：'
             + ((lastErr && lastErr.message) ? lastErr.message : lastErr)
             + '（已試老師／班級根目錄）'
         );
@@ -3718,7 +4425,7 @@ window.FeatureExamJob = (function () {
                 const resolvedId = fileId || fileIdByStem[sid] || fileIdByStem[stemKey] || '';
                 if (!resolvedName && !resolvedId) return;
                 needRemote.push({
-                    materialFolder: ctx.materialFolder,
+                    materialFolder: resolveStoredFolderName(ctx.materialFolder),
                     fileName: resolvedName,
                     fileId: resolvedId,
                     sheetId: sid
@@ -3726,7 +4433,7 @@ window.FeatureExamJob = (function () {
             }
         });
         needRemote.push({
-            materialFolder: ctx.materialFolder,
+            materialFolder: resolveStoredFolderName(ctx.materialFolder),
             fileName: '_layout.json',
             fileId: '',
             sheetId: '__LAYOUT__'
@@ -3887,14 +4594,23 @@ window.FeatureExamJob = (function () {
             return JSON.stringify({
                 bank_id: examJob.bank_id || '',
                 layout_profile_id: examJob.layout_profile_id || '',
-                shuffle: !(examJob.options && examJob.options.shuffle === false),
-                sections: (examJob.sections || []).map(function (s) {
-                    s = s || {};
+                shuffle_sections: !!(examJob.options && examJob.options.shuffle_sections),
+                sections: normalizeExamSections(examJob.sections, {}).map(function (sec) {
+                    sec = sec || {};
                     return {
-                        sheet_id: s.sheet_id || '', layout_profile_id: s.layout_profile_id || '',
-                        range_type: s.range_type || '', start: s.start != null ? s.start : '', end: s.end != null ? s.end : '',
-                        count: s.count != null ? s.count : '', lines_per_page: s.lines_per_page || '',
-                        difficulty: s.difficulty || '', include_nums: s.include_nums || '', exclude_nums: s.exclude_nums || ''
+                        id: sec.id || '',
+                        material_folder: sec.material_folder || '',
+                        shuffle: sec.shuffle !== false,
+                        allow_answer_appeal: sec.allow_answer_appeal !== false,
+                        segments: (sec.segments || []).map(function (s) {
+                            s = s || {};
+                            return {
+                                sheet_id: s.sheet_id || '', layout_profile_id: s.layout_profile_id || '',
+                                range_type: s.range_type || '', start: s.start != null ? s.start : '', end: s.end != null ? s.end : '',
+                                count: s.count != null ? s.count : '', lines_per_page: s.lines_per_page || '',
+                                difficulty: s.difficulty || '', include_nums: s.include_nums || '', exclude_nums: s.exclude_nums || ''
+                            };
+                        })
                     };
                 })
             });
@@ -3904,7 +4620,9 @@ window.FeatureExamJob = (function () {
     /** 這個考試任務的區段設定是否「填得夠完整、值得嘗試產生」（至少一個區段填了活頁 sheet_id）。 */
     function examJobLooksReady(examJob) {
         if (!examJob || !Array.isArray(examJob.sections) || !examJob.sections.length) return false;
-        return examJob.sections.some(function (s) { return s && String(s.sheet_id || '').trim(); });
+        return flattenExamSegments(normalizeExamSections(examJob.sections, {})).some(function (s) {
+            return s && String(s.sheet_id || '').trim();
+        });
     }
 
     /**
@@ -4035,12 +4753,18 @@ window.FeatureExamJob = (function () {
         // 這個考試節點若目前沒展開（手風琴收合），DOM 讀不到值，syncInlineEditor 會直接回
         // undefined——這時退回讀 task.raw_data.exam_job（上次它有展開、有編輯時就已經同步過）。
         const examJob = syncInlineEditor(pathStr, task) || task.raw_data.exam_job;
-        if (!examJob || !examJob.sections || !examJob.sections.length) {
-            return fail('請至少填一個區段');
+        if (!examJob) return fail('請至少填一個段落');
+        examJob.sections = normalizeExamSections(examJob.sections, {
+            material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+            material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+        });
+        const pickRows = flattenExamSegments(examJob.sections);
+        if (!pickRows.length) {
+            return fail('請至少填一個片段');
         }
-        for (let i = 0; i < examJob.sections.length; i++) {
-            if (!examJob.sections[i].sheet_id) {
-                return fail('區段 ' + (i + 1) + ' 缺少 sheet_id');
+        for (let i = 0; i < pickRows.length; i++) {
+            if (!pickRows[i].sheet_id) {
+                return fail('段落 ' + (pickRows[i]._section_index + 1) + ' 片段 ' + (pickRows[i]._segment_index + 1) + ' 缺少 sheet_id');
             }
         }
 
@@ -4064,7 +4788,7 @@ window.FeatureExamJob = (function () {
                 : Object.assign({}, (task.raw_data && task.raw_data.meta_rows_by_stem) || {});
 
             const sheetIds = [];
-            (examJob.sections || []).forEach(function (sec) {
+            pickRows.forEach(function (sec) {
                 const sid = String(sec.sheet_id || '').trim();
                 if (sid && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
             });
@@ -4076,8 +4800,10 @@ window.FeatureExamJob = (function () {
                     await window.FeatureTimeline.ensureMetaCatalog(bState.classId, (ctx.rootKind === 'class') ? 'teacher' : 'class', { force: true });
                 } catch (_catErr) {}
             }
-            (examJob.sections || []).forEach(function (sec) {
-                attachCatalogMetaToSection(bState.classId, ctx.rootKind, ctx.materialFolder, sec);
+            pickRows.forEach(function (sec) {
+                const folder = sec._section_folder || ctx.materialFolder;
+                const kind = sec._section_root_kind || ctx.rootKind;
+                attachCatalogMetaToSection(bState.classId, kind, folder, sec);
             });
             if (task.raw_data && task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
 
@@ -4085,22 +4811,26 @@ window.FeatureExamJob = (function () {
             if (fcmcPair && typeof fcmcPair.fetchOfficialPairings === 'function') {
                 await fcmcPair.fetchOfficialPairings(false);
             }
-            for (let pi = 0; pi < (examJob.sections || []).length; pi++) {
-                const psec = examJob.sections[pi];
+            for (let pi = 0; pi < pickRows.length; pi++) {
+                const psec = pickRows[pi];
                 const hint = (psec && (psec.meta_file_name || psec.sheet_id)) || '';
+                const folder = (psec && psec._section_folder) || ctx.materialFolder;
+                const kind = (psec && psec._section_root_kind) || ctx.rootKind;
                 const officialIds = officialExamTemplateIdsForMeta(
-                    ctx.rootKind, bState.classId, ctx.materialFolder, hint
+                    kind, bState.classId, folder, hint
                 );
                 if (!officialIds.length) {
-                    throw new Error('區段 ' + (pi + 1) + ' 的 meta「' + (hint || '（未選）') + '」尚未官方搭配試卷範本，無法出卷');
+                    throw new Error('段落 ' + (psec._section_index + 1) + ' 片段 ' + (psec._segment_index + 1)
+                        + ' 的 meta「' + (hint || '（未選）') + '」尚未官方搭配試卷範本，無法出卷');
                 }
                 if (!isIdInOfficialList(psec && psec.layout_profile_id, officialIds)) {
-                    throw new Error('區段 ' + (pi + 1) + ' 請從官方認證的試卷範本裡選擇');
+                    throw new Error('段落 ' + (psec._section_index + 1) + ' 片段 ' + (psec._segment_index + 1)
+                        + ' 請從官方認證的試卷範本裡選擇');
                 }
             }
 
             setGenerateStatus(pathStr, '⏳ 讀取 Drive meta…', 'busy');
-            ctx.sections = examJob.sections || [];
+            ctx.sections = pickRows;
             const fetched = await fetchLayoutAndMetaForSheets(
                 bState.classId, ctx, sheetIds, localRowsByStem, { forceRefreshMeta: forceRefreshMeta }
             );
@@ -4124,9 +4854,7 @@ window.FeatureExamJob = (function () {
                  * uuid）／舊字串（legacy_profile_id）／'tpl:xxx'（擷取範本唯讀相容層）三種來源，
                  * 不要再各寫一次，否則之後改一邊漏一邊、排版又壞掉。
                  */
-                const idsNeeded = [examJob.layout_profile_id].concat(
-                    (Array.isArray(examJob.sections) ? examJob.sections : []).map(function (sec) { return sec && sec.layout_profile_id; })
-                ).filter(Boolean);
+                const idsNeeded = collectLayoutProfileIds(examJob);
                 const seenIds = {};
                 const profiles = [];
                 idsNeeded.forEach(function (pid) {
@@ -4159,7 +4887,7 @@ window.FeatureExamJob = (function () {
                     const sid = String(sheetId || '').trim();
                     let rows = lookupRowsBySheetId(localRowsByStem, sid);
                     if (!(Array.isArray(rows) && rows.length)) {
-                        const secHit = (examJob.sections || []).find(function (s) {
+                        const secHit = flattenExamSegments(examJob.sections || []).find(function (s) {
                             return String((s && s.sheet_id) || '').toUpperCase() === sid.toUpperCase();
                         });
                         const remoteName = (secHit && secHit.meta_file_name)
@@ -4207,14 +4935,7 @@ window.FeatureExamJob = (function () {
                 root_kind: ctx.rootKind || '',
                 bank_id: examJob.bank_id || '',
                 layout_profile_id: examJob.layout_profile_id || '',
-                sections: (examJob.sections || []).map(function (s) {
-                    return {
-                        sheet_id: s.sheet_id, layout_profile_id: s.layout_profile_id || '',
-                        range_type: s.range_type, start: s.start, end: s.end, count: s.count,
-                        lines_per_page: s.lines_per_page, difficulty: s.difficulty || '',
-                        include_nums: s.include_nums || '', exclude_nums: s.exclude_nums || ''
-                    };
-                }),
+                sections: examJob.sections,
                 options: examJob.options || {}
             }).catch(function () {});
 
@@ -4265,7 +4986,7 @@ window.FeatureExamJob = (function () {
     }
 
     /** 獨立考試：教材資料夾輸入變更時，先存進 task.raw_data（不重抓，等老師按「讀取可用題數」） */
-    function inlineOnExamMaterialChange(pathStr) {
+    function inlineOnExamMaterialChange(pathStr, secIdx) {
         const task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         syncInlineEditor(pathStr, task);
@@ -4310,34 +5031,55 @@ window.FeatureExamJob = (function () {
      * 換教材資料夾＝可選的「活頁」清單整個換了，所以要整體重繪（refreshExamBuilder），
      * 不能只 sync 狀態，否則各區段的活頁下拉還停在舊資料夾的清單。
      */
-    function inlineOnExamMaterialFolderSelectChange(pathStr) {
-        const selectEl = document.getElementById('exam-inline-materialfolder-' + pathStr);
-        const manualWrap = document.getElementById('exam-inline-materialfolder-manual-wrap-' + pathStr);
-        if (manualWrap) manualWrap.style.display = (selectEl && selectEl.value === '__manual__') ? 'block' : 'none';
-        if (selectEl && selectEl.value === '__manual__') {
-            // 手動輸入模式：資料夾名稱還沒填，先不重繪（重繪只是浪費且會清空焦點）
-            inlineOnExamMaterialChange(pathStr);
-            return;
-        }
+    function inlineOnExamMaterialFolderSelectChange(pathStr, secIdx) {
+        const suffix = (secIdx == null) ? '' : ('-' + secIdx);
+        const selectEl = document.getElementById('exam-inline-materialfolder-' + pathStr + suffix)
+            || document.getElementById('exam-inline-materialfolder-' + pathStr);
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') window.BuilderStore.sync();
         const task = getBuilderTaskByPath(pathStr);
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
         if (task) {
             syncInlineEditor(pathStr, task);
-            if (task.raw_data && task.raw_data.exam_job) {
-                task.raw_data.exam_job.layout_profile_id = '';
-                (task.raw_data.exam_job.sections || []).forEach(function (sec) {
-                    if (sec) delete sec.layout_profile_id;
-                });
+            const job = task.raw_data && task.raw_data.exam_job;
+            if (job) {
+                const sections = normalizeExamSections(job.sections, {});
+                const target = (secIdx != null && sections[secIdx]) ? sections[secIdx] : null;
+                const comboId = selectEl ? String(selectEl.value || '').trim() : '';
+                const combo = isComboId(comboId) ? lookupAssignedCombo(classId, comboId) : null;
+                if (target && combo) {
+                    applyComboToSection(target, combo);
+                } else if (target && !comboId) {
+                    target.combination_id = '';
+                    target.material_folder = '';
+                    (target.segments || []).forEach(function (seg) {
+                        if (!seg) return;
+                        delete seg.layout_profile_id;
+                        delete seg.meta_file_name;
+                        delete seg.meta_file_id;
+                        seg.sheet_id = '';
+                    });
+                }
+                job.sections = sections;
             }
         }
         delete _availAutoFetchKey[pathStr];
         refreshExamBuilder();
     }
 
-    /** 「🔄 重新整理清單」：強制重打 GAS 抓最新的老師個人／班級資源資料夾清單 */
+    /** 「🔄 重新整理清單」：重載官方套餐＋教材資料夾清單 */
     function inlineReloadMaterialFolders(pathStr) {
         const bState = window.BuilderStore && window.BuilderStore.getState();
         if (!bState) return;
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (fcmc && typeof fcmc.fetchOfficialPairings === 'function') {
+            fcmc.fetchOfficialPairings(true).then(function () {
+                ensureExamMaterialFolderCatalog(pathStr, bState.classId, true);
+            }).catch(function () {
+                ensureExamMaterialFolderCatalog(pathStr, bState.classId, true);
+            });
+            return;
+        }
         ensureExamMaterialFolderCatalog(pathStr, bState.classId, true);
     }
 
@@ -4352,14 +5094,20 @@ window.FeatureExamJob = (function () {
         const bState = window.BuilderStore && window.BuilderStore.getState();
         if (!task || !bState) return;
         const examJob = syncInlineEditor(pathStr, task);
-        if (!examJob || !examJob.sections || !examJob.sections.length) {
+        if (!examJob) {
             if (opts.silent) return;
-            return window.showFlash('請至少填一個區段（活頁）', 'error');
+            return window.showFlash('請至少填一個片段（活頁）', 'error');
         }
+        examJob.sections = normalizeExamSections(examJob.sections, {
+            material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+            material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+        });
         const sheetIds = [];
         examJob.sections.forEach(function (sec) {
-            const sid = String(sec.sheet_id || '').trim();
-            if (sid && !isPagePrefixMisreadAsSheet(sid) && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
+            (sec.segments || []).forEach(function (seg) {
+                const sid = String(seg.sheet_id || '').trim();
+                if (sid && !isPagePrefixMisreadAsSheet(sid) && sheetIds.indexOf(sid) === -1) sheetIds.push(sid);
+            });
         });
         if (!sheetIds.length) {
             if (opts.silent) return;
@@ -4384,14 +5132,18 @@ window.FeatureExamJob = (function () {
                 } catch (_catErr) {}
             }
             (examJob.sections || []).forEach(function (sec) {
-                attachCatalogMetaToSection(bState.classId, ctx.rootKind, ctx.materialFolder, sec);
+                const folder = sec.material_folder || ctx.materialFolder;
+                const kind = sec.material_root_kind || ctx.rootKind;
+                (sec.segments || []).forEach(function (seg) {
+                    attachCatalogMetaToSection(bState.classId, kind, folder, seg);
+                });
             });
             if (task.raw_data && task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
             const forceRefreshMeta = !opts.silent;
             const localRowsByStem = forceRefreshMeta
                 ? {}
                 : ((task.raw_data && task.raw_data.meta_rows_by_stem) || {});
-            ctx.sections = examJob.sections || [];
+            ctx.sections = flattenExamSegments(examJob.sections || []);
             const fetched = await fetchLayoutAndMetaForSheets(
                 bState.classId, ctx, sheetIds, localRowsByStem, { forceRefreshMeta: forceRefreshMeta }
             );
@@ -4403,58 +5155,61 @@ window.FeatureExamJob = (function () {
             let anyInRange = false;
             let anyMissingPage = false;
             (examJob.sections || []).forEach(function (sec) {
-                const rowsForSec = lookupSectionMetaRows(task.raw_data.meta_rows_by_stem, sec)
-                    || lookupRowsBySheetId(fetched.rowsByStem, sec.sheet_id)
-                    || lookupRowsBySheetId(fetched.rowsByStem, sec.meta_file_name);
-                if (Array.isArray(rowsForSec) && rowsForSec.length) {
-                    rememberMetaRows(task.raw_data.meta_rows_by_stem, sec, rowsForSec);
-                    if (metaCannotFilterByPage(sec, rowsForSec)) {
-                        delete sec.available_count;
-                        sec.meta_missing_page = true;
-                        anyMissingPage = true;
-                        const keys = describeMetaRowKeys(rowsForSec);
-                        availNotes.push(
-                            (sec.meta_file_name || sec.sheet_id || '活頁')
-                            + ' 有 ' + rowsForSec.length + ' 列，但沒有 page 欄（現有：'
-                            + (keys || '—')
-                            + '）。請到教材發布把 Excel 頁碼欄對成 page 後重新上傳'
-                        );
+                (sec.segments || []).forEach(function (seg) {
+                    const rowsForSec = lookupSectionMetaRows(task.raw_data.meta_rows_by_stem, seg)
+                        || lookupRowsBySheetId(fetched.rowsByStem, seg.sheet_id)
+                        || lookupRowsBySheetId(fetched.rowsByStem, seg.meta_file_name);
+                    if (Array.isArray(rowsForSec) && rowsForSec.length) {
+                        rememberMetaRows(task.raw_data.meta_rows_by_stem, seg, rowsForSec);
+                        rememberComboPageCounts(seg, task, rowsForSec);
+                        if (metaCannotFilterByPage(seg, rowsForSec)) {
+                            delete seg.available_count;
+                            seg.meta_missing_page = true;
+                            anyMissingPage = true;
+                            const keys = describeMetaRowKeys(rowsForSec);
+                            availNotes.push(
+                                (seg.meta_file_name || seg.sheet_id || '活頁')
+                                + ' 有 ' + rowsForSec.length + ' 列，但沒有 page 欄（現有：'
+                                + (keys || '—')
+                                + '）。請到教材發布把 Excel 頁碼欄對成 page 後重新上傳'
+                            );
+                        } else {
+                            delete seg.meta_missing_page;
+                            const n = countAvailableFromMetaRows(seg, rowsForSec);
+                            seg.available_count = (n == null ? 0 : n);
+                            if (seg.available_count > 0) anyInRange = true;
+                            const pages = summarizeMetaPages(rowsForSec);
+                            availNotes.push(
+                                (seg.meta_file_name || seg.sheet_id || '活頁')
+                                + ' 範圍內 ' + seg.available_count + ' 題'
+                                + (pages ? '（檔內頁碼 ' + pages + '）' : '')
+                            );
+                        }
                     } else {
-                        delete sec.meta_missing_page;
-                        const n = countAvailableFromMetaRows(sec, rowsForSec);
-                        sec.available_count = (n == null ? 0 : n);
-                        if (sec.available_count > 0) anyInRange = true;
-                        const pages = summarizeMetaPages(rowsForSec);
-                        availNotes.push(
-                            (sec.meta_file_name || sec.sheet_id || '活頁')
-                            + ' 範圍內 ' + sec.available_count + ' 題'
-                            + (pages ? '（檔內頁碼 ' + pages + '）' : '')
-                        );
+                        delete seg.available_count;
+                        delete seg.meta_missing_page;
+                        availNotes.push((seg.meta_file_name || seg.sheet_id || '活頁') + ' 讀到的檔沒有列');
                     }
-                } else {
-                    delete sec.available_count;
-                    delete sec.meta_missing_page;
-                    availNotes.push((sec.meta_file_name || sec.sheet_id || '活頁') + ' 讀到的檔沒有列');
-                }
+                });
             });
             if (task.raw_data.exam_job) task.raw_data.exam_job.sections = examJob.sections;
             refreshExamBuilder();
             if (fetched.missingMeta && fetched.missingMeta.length) {
                 const msg = '部分活頁讀不到 meta：' + fetched.missingMeta.join('/') + '（請重選該列的 .meta.json，不要只選資料夾）';
                 if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#D97706'; }
-                window.showFlash(msg, 'warning');
+                if (!opts.silent) window.showFlash(msg, 'warning');
             } else if (anyMissingPage) {
                 const msg = availNotes.join('；');
                 if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#B45309'; }
-                window.showFlash(msg, 'warning');
+                if (!opts.silent) window.showFlash(msg, 'warning');
             } else if (!anyInRange) {
                 const msg = '檔有讀到，但這個範圍沒有題：' + availNotes.join('；');
                 if (statusEl) { statusEl.textContent = '⚠️ ' + msg; statusEl.style.color = '#D97706'; }
-                window.showFlash(msg, 'warning');
+                if (!opts.silent) window.showFlash(msg, 'warning');
             } else {
                 const msg = '可用題：' + availNotes.join('；');
                 if (statusEl) { statusEl.textContent = '✅ ' + msg; statusEl.style.color = '#059669'; }
-                window.showFlash(msg, 'success');
+                if (!opts.silent) window.showFlash(msg, 'success');
             }
         } catch (err) {
             if (statusEl) { statusEl.textContent = '❌ ' + (err.message || err); statusEl.style.color = '#B91C1C'; }
@@ -4483,6 +5238,10 @@ window.FeatureExamJob = (function () {
         _newJobId: rotateJobId,
         _inlineAddSection: inlineAddSection,
         _inlineRemoveSection: inlineRemoveSection,
+        _inlineAddExamSection: inlineAddExamSection,
+        _inlineRemoveExamSection: inlineRemoveExamSection,
+        _inlineAddSegment: inlineAddSegment,
+        _inlineRemoveSegment: inlineRemoveSegment,
         _inlineDistribute: inlineDistribute,
         _inlineImportFromSiblingAudio: inlineImportFromSiblingAudio,
         _inlineRefreshAvail: inlineRefreshAvail,
@@ -4493,6 +5252,7 @@ window.FeatureExamJob = (function () {
         refreshTaskPaperFromTemplate: refreshTaskPaperFromTemplate,
         _refreshAfterAudioSnapshot: refreshAfterAudioSnapshot,
         getSiblingAudioRangeLabel: getSiblingAudioRangeLabel,
+        applyRangePackToExam: applyRangePackToExam,
         _inlineExport: inlineExport,
         _inlineGeneratePaper: inlineGeneratePaper,
         /** 手動逃生口：只在 needsExamRegeneration 為 true 時才會出現的按鈕用（見上方雷區說明） */
@@ -4571,4 +5331,8 @@ window.FeatureExamJob = (function () {
             return '';
         }
     };
+    } catch (loadErr) {
+        console.error('[FeatureExamJob] 載入失敗', loadErr);
+        return { _loadError: (loadErr && loadErr.message) ? loadErr.message : String(loadErr) };
+    }
 })();

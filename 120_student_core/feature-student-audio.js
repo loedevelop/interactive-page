@@ -18,6 +18,7 @@ window.FeatureStudentAudio = (function() {
     let studioPages = [];
     let studioPageIndex = 0;
     let studioSubmittedKeys = {};
+    let fallbackTranscript = '';
 
     // --- 🚀 核心武裝：前端純 JS 轉碼引擎 (轉為 WAV 16kHz Mono) ---
     async function convertToWav(blob) {
@@ -201,6 +202,32 @@ window.FeatureStudentAudio = (function() {
         return String(unit.label || unit.unit_key || ('第 ' + (idx + 1) + ' 頁'));
     }
 
+    function escapeTranscriptHtml(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/\n/g, '<br>');
+    }
+
+    function currentTranscriptText() {
+        const page = currentStudioPage();
+        const perPage = page && String(page.student_display || page.original_script || '').trim();
+        if (perPage) return String(page.student_display || page.original_script);
+        if (studioPages.length > 1) return '';
+        return fallbackTranscript;
+    }
+
+    function updateTranscript() {
+        const box = document.getElementById('audio-studio-transcript');
+        if (!box) return;
+        const text = currentTranscriptText();
+        box.innerHTML = text
+            ? escapeTranscriptHtml(text)
+            : '<span style="color:#94A3B8;font-style:italic;">（這一頁沒有文稿）</span>';
+    }
+
     function renderPagePicker() {
         const box = document.getElementById('audio-page-picker');
         if (!box) return;
@@ -211,7 +238,8 @@ window.FeatureStudentAudio = (function() {
         }
         const opts = studioPages.map(function (u, i) {
             const key = String((u && u.unit_key) || '').trim();
-            const done = !!(key && studioSubmittedKeys[key]);
+            const pageKey = (u && u.page != null && u.page !== '') ? ('range:' + Number(u.page)) : '';
+            const done = !!(key && studioSubmittedKeys[key]) || !!(pageKey && studioSubmittedKeys[pageKey]);
             const sel = i === studioPageIndex ? ' selected' : '';
             return '<option value="' + i + '"' + sel + '>'
                 + (i + 1) + '/' + studioPages.length + '　' + pageLabel(u, i)
@@ -224,11 +252,11 @@ window.FeatureStudentAudio = (function() {
             + opts + '</select>';
         const sel = document.getElementById('audio-page-select');
         if (sel) {
-            sel.addEventListener('change', function () {
+            sel.addEventListener('change', async function () {
                 const next = Number(sel.value);
                 if (next === studioPageIndex) return;
                 if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                    if (!window.confirm('正在錄音中，要改錄另一頁嗎？目前這段不會繳交。')) {
+                    if (!(await window.ModalOverlay.confirm('正在錄音中，要改錄另一頁嗎？目前這段不會繳交。'))) {
                         sel.value = String(studioPageIndex);
                         return;
                     }
@@ -240,8 +268,10 @@ window.FeatureStudentAudio = (function() {
                 }
                 studioPageIndex = next;
                 resetStudio();
+                updateTranscript();
             });
         }
+        updateTranscript();
     }
 
     function formatTime(seconds) {
@@ -405,6 +435,7 @@ window.FeatureStudentAudio = (function() {
         studioPages = [];
         studioPageIndex = 0;
         studioSubmittedKeys = {};
+        fallbackTranscript = '';
     }
 
     async function submitAudio() {
@@ -428,7 +459,11 @@ window.FeatureStudentAudio = (function() {
                 else if (window.UtilsDate) getIsoTs = window.UtilsDate.getTaiwanIsoTimestamp;
                 
                 const timestamp = String(getIsoTs()).replace(/[:.]/g, '-');
-                const fileName = `Audio_${timestamp}.${ext}`;
+                const page = currentStudioPage();
+                const pageTag = (page && page.page != null && page.page !== '')
+                    ? ('p.' + page.page)
+                    : (page && page.unit_key ? String(page.unit_key).replace(/[^\w.-]+/g, '_') : 'page');
+                const fileName = `Audio_${pageTag}_${timestamp}.${ext}`;
                 
                 let isFunc = false;
                 if (typeof onSubmitCallback === 'function') isFunc = true;
@@ -478,8 +513,12 @@ window.FeatureStudentAudio = (function() {
             studioSubmittedKeys = studioOpts.submittedKeys && typeof studioOpts.submittedKeys === 'object'
                 ? Object.assign({}, studioOpts.submittedKeys)
                 : {};
-            
-            const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(transcriptText, taskTitle, materialUrl, materialRange);
+            fallbackTranscript = String(transcriptText || '');
+            const initialPage = studioPages[studioPageIndex];
+            const initialText = (initialPage && String(initialPage.student_display || initialPage.original_script || '').trim())
+                ? String(initialPage.student_display || initialPage.original_script)
+                : (studioPages.length > 1 ? '' : fallbackTranscript);
+            const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(initialText, taskTitle, materialUrl, materialRange);
             document.body.insertAdjacentHTML('beforeend', htmlString);
             
             initDOM();

@@ -62,6 +62,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     let _excelSheetColumnsCache = {};
     /** @type {Object<string, Array<Array<*>>>} 活頁名稱 → 逐列矩陣（供「設計 Template」卡片內的即時 meta 預覽用，跟套用到教材各自 appId 的快取分開） */
     let _excelSegPreviewMatrixCache = {};
+    let _metaPublishBusy = false;
 
     function ensureExcelSegments() {
         if (!_excelSegments.length) _excelSegments = [newExcelSegment()];
@@ -194,6 +195,18 @@ window.FeatureMaterialLayoutPairing = (function () {
         return (Array.isArray(columns) ? columns : []).filter(function (c) { return c && c.is_answer; }).length;
     }
 
+    function countSpeakColsFromColumns(columns) {
+        return (Array.isArray(columns) ? columns : []).filter(function (c) { return c && c.is_ai_ref; }).length;
+    }
+
+    function templateExamGradingOpts(st) {
+        return {
+            gateByExamRole: true,
+            examRoleOn: !!(st && st.isExamRole),
+            speakColsOn: countSpeakColsFromColumns(st && st.columns) > 0
+        };
+    }
+
     /**
      * 「答案批改標準」＋「口說答案批改標準」共用設定區塊。cfg 需要有 answerMode／answerCombineNote／
      * speakMode／speakFormula 四個欄位（Excel 小工具的 seg 或 Template 編輯器的 _templateEditorState
@@ -208,12 +221,14 @@ window.FeatureMaterialLayoutPairing = (function () {
         const gateByExamRole = !!(opts && opts.gateByExamRole);
         const examRoleOn = !!(opts && opts.examRoleOn);
         const gradingLocked = gateByExamRole && !examRoleOn;
+        const speakLocked = gradingLocked || (gateByExamRole && !(opts && opts.speakColsOn));
         const lockAttr = gradingLocked ? ' disabled' : '';
+        const speakLockAttr = speakLocked ? ' disabled' : '';
         const answerMode = cfg.answerMode === 'separate' ? 'separate' : 'combine';
         const speakMode = normalizeSpeakMode(cfg.speakMode);
         const writtenGradingBlock = aCount > 1 ? `
                 <div style="margin-bottom:10px;">
-                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">📝 書寫答案批改標準（共 ${aCount} 欄）</div>
+                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">書寫 批改標準（共 ${aCount} 欄）</div>
                     <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="separate" ${answerMode === 'separate' ? 'checked' : ''}${lockAttr}>
                         分開比對（每欄各自獨立比對，例如 AN、AO 各一個空格分開判定）
@@ -224,30 +239,35 @@ window.FeatureMaterialLayoutPairing = (function () {
                     </label>
                     <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='結合公式，照欄位代號寫，例如 AO&amp;" "&amp;AP' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};"${lockAttr}>
                 </div>` : `
-                <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">📝 書寫答案批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
+                <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">書寫 批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
+        const speakHint = gradingLocked
+            ? '（未勾試卷範本，不使用）'
+            : (speakLocked ? '（要勾選🎤口說答案才可設定）' : '');
         return `
-            <div style="background:${gradingLocked ? '#F1F5F9' : '#FFF7ED'}; border:1px solid ${gradingLocked ? '#CBD5E1' : '#FED7AA'}; border-radius:8px; padding:10px 12px; margin-top:10px; opacity:${gradingLocked ? '0.55' : '1'}; pointer-events:${gradingLocked ? 'none' : 'auto'};">
-                <div style="font-size:0.76rem; font-weight:800; color:${gradingLocked ? '#94A3B8' : '#B45309'}; margin-bottom:8px;">⚖️ 批改標準${gradingLocked ? '（未勾試卷範本，不使用）' : ''}</div>
+            <div style="background:${gradingLocked ? '#F1F5F9' : '#FFF7ED'}; border:1px solid ${gradingLocked ? '#CBD5E1' : '#FED7AA'}; border-radius:8px; padding:10px 12px; margin-top:10px; opacity:${gradingLocked ? '0.55' : '1'};">
+                <div style="font-size:0.76rem; font-weight:800; color:${gradingLocked ? '#94A3B8' : '#B45309'}; margin-bottom:8px;">批改標準${gradingLocked ? '（未勾試卷範本，不使用）' : ''}</div>
+                <div style="pointer-events:${gradingLocked ? 'none' : 'auto'};">
                 ${writtenGradingBlock}
-                <div>
-                    <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">🎤 口說答案批改標準</div>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="direct" ${speakMode === 'direct' ? 'checked' : ''}${lockAttr}>
+                </div>
+                <div style="opacity:${speakLocked ? '0.55' : '1'}; pointer-events:${speakLocked ? 'none' : 'auto'};">
+                    <div style="font-size:0.74rem; font-weight:800; color:${speakLocked ? '#94A3B8' : '#475569'}; margin-bottom:4px;">口說 批改標準${speakHint}</div>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${speakLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="direct" ${speakMode === 'direct' ? 'checked' : ''}${speakLockAttr}>
                         比對口說答案（直接取已勾的口說答案欄）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="formula" ${speakMode === 'formula' ? 'checked' : ''}${lockAttr}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${speakLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="formula" ${speakMode === 'formula' ? 'checked' : ''}${speakLockAttr}>
                         帶入公式（可再逐列個別修正）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="complex" ${speakMode === 'complex' ? 'checked' : ''}${lockAttr}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${speakLocked ? 'not-allowed' : 'pointer'}; margin-bottom:3px;">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="complex" ${speakMode === 'complex' ? 'checked' : ''}${speakLockAttr}>
                         之後會寫複雜規則（規則還沒定，先整批留白讓老師逐列輸入／修正）
                     </label>
-                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'};">
-                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="paste" ${speakMode === 'paste' ? 'checked' : ''}${lockAttr}>
+                    <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${speakLocked ? 'not-allowed' : 'pointer'};">
+                        <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="paste" ${speakMode === 'paste' ? 'checked' : ''}${speakLockAttr}>
                         直接貼上多筆資料（標注起始題號，可再逐列個別修正）
                     </label>
-                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};"${lockAttr}>
+                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};"${speakLockAttr}>
                 </div>
                 <div style="font-size:0.68rem; color:${gradingLocked ? '#94A3B8' : '#92400E'}; margin-top:8px;">${gradingLocked ? '批改屬於試卷範本。只勾擷取時這裡不能用。' : '💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到「⚡ 快速套用」產生預覽後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。'}</div>
             </div>
@@ -462,20 +482,15 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     /**
-     * 存進 material_sheets／實際使用卡的活頁名：Drive 上已有的 meta，或 _Publish.output_meta。
-     * 禁止把 Excel 分頁碼（vBK-2）當成 meta 檔名寫出去。
+     * 產生／預覽用的活頁清單＝老師勾選的 Excel 分頁，原樣保留。
+     * 禁止用資料夾裡已有的全部 meta、_Publish 全表、或資料夾名蓋掉勾選
+     * （2026-08-17：勾 Jessie-vBK-VerbIrregular-3 卻產出 Jessie-vBK-2，就是這裡把勾選換成資料夾舊檔）。
+     * 上傳後真正落地的 stem 由 g.finalStem／defaultOutputNames 決定，不在這裡猜。
      */
     function resolveCanonicalSheetIds(excelSheetNames, folderName) {
-        const folder = String(folderName || '').trim();
-        const contentSheets = (excelSheetNames || []).filter(function (n) {
+        return (excelSheetNames || []).filter(function (n) {
             return String(n || '').trim() && !isSetupOrSystemSheet(n);
         });
-        const drive = folder ? (sheetStemsForFolder('', 'teacher', folder) || []) : [];
-        if (drive.length) return drive.slice();
-        const published = publishOutputStemsFromWorkbook(_excelWb);
-        if (published.length) return published.slice();
-        if (folder && contentSheets.length === 1) return [folder];
-        return contentSheets;
     }
 
     function currentSheetNames() {
@@ -577,7 +592,16 @@ window.FeatureMaterialLayoutPairing = (function () {
         const rootKind = (a && a.root_kind === 'class') ? 'class' : 'teacher';
         const classId = rootKind === 'class' ? String((a && a.class_id) || '') : '';
         const folder = String((a && a.material_folder) || '').trim().toUpperCase();
-        const tplKey = (a && a.template_id) ? ('id:' + a.template_id) : ('name:' + String((a && a.template_name) || '').trim().toUpperCase());
+        let tplKey;
+        if (a && a.template_id) {
+            tplKey = 'id:' + a.template_id;
+        } else {
+            const rawName = String((a && a.template_name) || '').trim();
+            const mappedId = (rawName && window.MaterialNameMap && typeof window.MaterialNameMap.resolveTemplateId === 'function')
+                ? window.MaterialNameMap.resolveTemplateId(rawName)
+                : '';
+            tplKey = mappedId ? ('id:' + mappedId) : ('name:' + rawName.toUpperCase());
+        }
         return [rootKind, classId, folder, tplKey].join('|');
     }
 
@@ -685,6 +709,9 @@ window.FeatureMaterialLayoutPairing = (function () {
         _appLoadPromise = (async function () {
             const userId = await getCurrentUserId();
             if (!userId) { _appCache = []; return _appCache; }
+            if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+                window.MaterialNameMap.ensureLoaded(false).catch(function () {});
+            }
             const { data, error } = await window.supabaseClient
                 .from('material_sheets')
                 .select(`
@@ -773,6 +800,27 @@ window.FeatureMaterialLayoutPairing = (function () {
             if (!existingSheetsByFolder[s.material_folder_id]) existingSheetsByFolder[s.material_folder_id] = {};
             existingSheetsByFolder[s.material_folder_id][String(s.sheet_stem || '').trim().toUpperCase()] = s.id;
         });
+        if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+            await window.MaterialNameMap.ensureLoaded(false);
+        }
+
+        function existingSheetIdForStem(folderId, stem) {
+            const map = existingSheetsByFolder[folderId] || {};
+            const keys = (window.MaterialNameMap && typeof window.MaterialNameMap.lookupKeys === 'function')
+                ? window.MaterialNameMap.lookupKeys('sheet_stem', stem)
+                : [stem];
+            for (let i = 0; i < keys.length; i++) {
+                const id = map[String(keys[i] || '').trim().toUpperCase()];
+                if (id) return id;
+            }
+            const hit = window.MaterialNameMap && window.MaterialNameMap.resolve
+                ? window.MaterialNameMap.resolve('sheet_stem', stem)
+                : null;
+            if (hit && hit.materialSheetId && String(hit.materialFolderId) === String(folderId)) {
+                return hit.materialSheetId;
+            }
+            return null;
+        }
 
         const templates = await fetchFieldTemplates(false);
         const touchedSheetIds = {};
@@ -790,14 +838,19 @@ window.FeatureMaterialLayoutPairing = (function () {
 
             let extractionTemplateId = isUuidLike(d.template_id) ? d.template_id : null;
             if (!extractionTemplateId && d.template_name) {
-                const byName = templates.find(function (t) { return String(t.name || '').trim() === String(d.template_name).trim(); });
+                const wantName = String(d.template_name).trim();
+                const mappedId = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveTemplateId === 'function')
+                    ? window.MaterialNameMap.resolveTemplateId(wantName)
+                    : '';
+                const byName = templates.find(function (t) { return String(t.id) === String(mappedId); })
+                    || templates.find(function (t) { return String(t.name || '').trim() === wantName; });
                 if (byName) extractionTemplateId = byName.id;
             }
             const legacyTemplateName = extractionTemplateId ? null : (String(d.template_name || '').trim() || null);
 
             for (const stem of sheetStems) {
                 const upperStem = stem.toUpperCase();
-                const existingId = existingSheetsByFolder[materialFolderId][upperStem];
+                const existingId = existingSheetIdForStem(materialFolderId, stem);
                 const payload = {
                     material_folder_id: materialFolderId,
                     extraction_template_id: extractionTemplateId,
@@ -810,8 +863,19 @@ window.FeatureMaterialLayoutPairing = (function () {
                     updated_at: new Date().toISOString()
                 };
                 if (existingId) {
+                    const before = beforeSheets.find(function (s) { return String(s.id) === String(existingId); });
                     const { error } = await window.supabaseClient.from('material_sheets').update(payload).eq('id', existingId);
                     if (error) throw error;
+                    if (before && String(before.sheet_stem || '').trim().toUpperCase() !== upperStem
+                        && window.MaterialNameMap && typeof window.MaterialNameMap.recordSheetRename === 'function') {
+                        await window.MaterialNameMap.recordSheetRename({
+                            folderId: materialFolderId,
+                            sheetId: existingId,
+                            oldStem: before.sheet_stem,
+                            newStem: stem
+                        });
+                    }
+                    existingSheetsByFolder[materialFolderId][upperStem] = existingId;
                     touchedSheetIds[String(existingId)] = true;
                 } else {
                     const { data: inserted, error } = await window.supabaseClient
@@ -1722,12 +1786,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!window.FeatureClassMaterialCombinations || typeof window.FeatureClassMaterialCombinations.summarizeUsageByTemplate !== 'function') {
             return Promise.resolve();
         }
-        const catalogReady = (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function')
-            ? window.FeatureTimeline.ensureMetaCatalog('', 'teacher')
-            : Promise.resolve();
-        return catalogReady.then(function () {
-            return window.FeatureClassMaterialCombinations.summarizeUsageByTemplate();
-        }).then(function () {
+        return window.FeatureClassMaterialCombinations.summarizeUsageByTemplate().then(function () {
             renderTemplateList();
             if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
                 window.FeatureExamTemplateEditor.render();
@@ -2365,9 +2424,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.recordApplyFromExcel === 'function' && matchedTpl) {
             await window.FeatureClassMaterialCombinations.recordApplyFromExcel({
                 folderName: (appRecord && appRecord.material_folder) || _excelMaterialFolder || '',
-                templateId: matchedTpl.id,
-                includeExam: includeExam,
-                classIds: selectedQuickApplyClassIds(seg)
+                templateId: matchedTpl.id
             });
         }
     }
@@ -2423,7 +2480,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 root_kind: 'teacher',
                 class_id: '',
                 material_folder: _excelMaterialFolder || '',
-                sheet_ids: resolveCanonicalSheetIds(sheetNames, _excelMaterialFolder),
+                sheet_ids: sheetNames.slice(),
                 row_start: driveMode ? '' : rowStart,
                 row_end: driveMode ? '' : (seg.quickApplyRowEnd || '').trim(),
                 source_kind: driveMode ? 'drive' : 'local',
@@ -2456,16 +2513,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             highlightNewRow(newRow);
             // 歸屬檔案／活頁／行數起迄都已經確定，直接自動跑一次「產生預覽」，不用老師再多按一次
             handleGeneratePreview(newRow, newApp.id);
-            if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 已產生預覽，正在寫入教材與範本組合…'; }
-            persistApplyComboRecord(seg, newApp, matchedTpl).then(function () {
-                if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = '✅ 已產生預覽並寫入資料庫（見下方），確認無誤後按「☁️ 確認上傳到 Drive」即可'; }
-                refreshComboUsageForSeg(seg, cardEl);
-                refreshTemplateUsageCache();
-            }).catch(function (persistErr) {
-                console.error('[FeatureMaterialLayoutPairing] 寫入教材與範本組合失敗', persistErr);
-                if (msgEl) { msgEl.style.color = '#B45309'; msgEl.textContent = '✅ 已產生預覽，但寫入組合失敗：' + (persistErr.message || persistErr); }
-            });
-            window.showFlash && window.showFlash('已套用「' + templateName + '」，請確認下方預覽內容後上傳', 'success');
+            if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 已產生預覽。確認無誤後按「☁️ 確認上傳到 Drive」會蓋過資料夾裡已有的同名 meta.json'; }
+            window.showFlash && window.showFlash('已套用「' + templateName + '」，請確認下方預覽後上傳（會蓋過現有 meta）', 'success');
         } catch (err) {
             console.error('[FeatureMaterialLayoutPairing] 套用現成擷取範本失敗', err);
             window.showFlash && window.showFlash('❌ 套用失敗：' + (err.message || err), 'error');
@@ -2480,9 +2529,16 @@ window.FeatureMaterialLayoutPairing = (function () {
         const n = String(name || '').trim();
         if (!n) return null;
         const all = getAllTemplatesForApply();
-        return all.find(function (t) { return String(t.id) === n; })
-            || all.find(function (t) { return String(t.name || '').trim() === n; })
-            || null;
+        const byId = all.find(function (t) { return String(t.id) === n; });
+        if (byId) return byId;
+        const byName = all.find(function (t) { return String(t.name || '').trim() === n; });
+        if (byName) return byName;
+        const mappedId = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveTemplateId === 'function')
+            ? window.MaterialNameMap.resolveTemplateId(n)
+            : '';
+        return mappedId
+            ? (all.find(function (t) { return String(t.id) === String(mappedId); }) || null)
+            : null;
     }
 
     function findApplyTemplateForSeg(seg) {
@@ -2496,25 +2552,12 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function renderComboUsageInnerHtml(seg, usage) {
         const usedNames = (usage && usage.classNames) ? usage.classNames : [];
-        const usedIdSet = {};
-        ((usage && usage.classIds) || []).forEach(function (id) { usedIdSet[String(id)] = true; });
-        const classes = allClasses();
-        const classChecks = classes.map(function (c) {
-            const id = String(c.id || '');
-            const checked = !!(seg.quickApplyClassIds && seg.quickApplyClassIds[id]) || !!usedIdSet[id];
-            return '<label style="display:inline-flex; align-items:center; gap:4px; font-size:0.76rem; font-weight:700; color:#334155; margin-right:10px; margin-bottom:4px; cursor:pointer;">'
-                + '<input type="checkbox" class="mlp-excel-quickapply-class" data-class-id="' + esc(id) + '" ' + (checked ? 'checked' : '') + '>'
-                + esc(c.name || id)
-                + (usedIdSet[id] ? ' <span style="color:#047857; font-weight:800;">（已在用）</span>' : '')
-                + '</label>';
-        }).join('');
-        return '<div style="font-size:0.76rem; color:#334155; margin-bottom:6px;">目前這個教材＋範本組合'
+        return '<div style="font-size:0.76rem; color:#334155; margin-bottom:4px;">目前這個教材＋範本'
             + (usedNames.length
-                ? ('已有這些班級使用：<b>' + usedNames.map(esc).join('、') + '</b>')
+                ? ('已指派給：<b>' + usedNames.map(esc).join('、') + '</b>')
                 : '尚未指派給任何班級')
             + '</div>'
-            + '<div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">指派給班級（可複選，確認後會寫進資料庫）</div>'
-            + (classChecks || '<div style="font-size:0.76rem; color:#94A3B8;">目前沒有班級可指派</div>');
+            + '<div style="font-size:0.74rem; color:#64748B; font-weight:700;">要改套餐名稱、試卷範本或採用班級，請到下方「📁 教材區」儲存。</div>';
     }
 
     function driveTargetSheetNames(seg) {
@@ -2743,7 +2786,16 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!window.GasService || typeof window.GasService.uploadMaterialFile !== 'function') {
             throw new Error('GasService.uploadMaterialFile 尚未載入');
         }
+        if (_metaPublishBusy) throw new Error('正在上傳，請等這次結束');
+        _metaPublishBusy = true;
+        try {
         const folderId = await resolveOrCreateDesignFolderId(folderName);
+        const overwriteTargets = (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.listOverwriteTargets === 'function')
+            ? await window.FeatureClassMaterialCombinations.listOverwriteTargets(folderName, null)
+            : [];
+        let existingFieldCount = null;
+        let newFieldCount = null;
+        let askedFieldCount = false;
         const uploaded = [];
         const stems = [];
         for (let i = 0; i < sheetIds.length; i++) {
@@ -2751,7 +2803,20 @@ window.FeatureMaterialLayoutPairing = (function () {
             const result = generateMetaForDesignSheet(seg, sheetName);
             if (!result.ok) throw new Error(sheetName + '：' + (result.error || '產生失敗'));
             if (!result.rows || !result.rows.length) throw new Error(sheetName + '：產出 0 列，無法上傳');
-            const names = defaultOutputNames(sheetName, templateName, folderName, sheetIds.length);
+            if (newFieldCount == null) newFieldCount = publicFieldCount(result.rows[0]);
+            const hit = matchOverwriteTarget(sheetName, overwriteTargets);
+            const names = hit
+                ? { meta: hit.meta, script: hit.script || String(hit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt' }
+                : defaultOutputNames(sheetName, templateName, folderName, sheetIds.length);
+            if (hit && existingFieldCount == null) {
+                existingFieldCount = await readExistingMetaFieldCount(folderId, folderName, names.meta);
+            }
+            if (!askedFieldCount && hit && existingFieldCount != null && newFieldCount != null && existingFieldCount !== newFieldCount) {
+                askedFieldCount = true;
+                if (!await confirmFieldCountMismatch(existingFieldCount, newFieldCount)) {
+                    throw new Error('已取消上傳（欄位數不同）');
+                }
+            }
             const metaJson = JSON.stringify(result.rows, null, 2);
             const scriptTxt = (result.scriptLines || []).join('\n') + ((result.scriptLines && result.scriptLines.length) ? '\n' : '');
             const metaRes = await window.GasService.uploadMaterialFile(utf8ToBase64(metaJson), names.meta, 'application/json', folderId);
@@ -2775,6 +2840,9 @@ window.FeatureMaterialLayoutPairing = (function () {
             } catch (_e) { /* 上傳已成功，清單刷新失敗不擋 */ }
         }
         return { uploaded: uploaded, stems: stems };
+        } finally {
+            _metaPublishBusy = false;
+        }
     }
 
     /**
@@ -2855,7 +2923,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const sig = templateContentSignature(record);
                 const dup = templates.find(function (t) { return templateContentSignature(t) === sig; }) || null;
                 if (dup) {
-                    const wantOverwrite = window.confirm(
+                    const wantOverwrite = await window.ModalOverlay.confirm(
                         '這份欄位設定跟既有範本「' + dup.name + '」內容完全相同。\n\n'
                         + '按「確定」＝視為同一份，改名蓋過「' + dup.name + '」（原本套用它的班級／組合都會沿用）。\n'
                         + '按「取消」＝當成新的一筆分開存，不動「' + dup.name + '」。'
@@ -2882,7 +2950,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     root_kind: 'teacher',
                     class_id: '',
                     material_folder: _excelMaterialFolder,
-                    sheet_ids: resolveCanonicalSheetIds(sheetIds, _excelMaterialFolder),
+                    sheet_ids: sheetIds.slice(),
                     row_start: seg.rowStart || (seg.mapping && seg.mapping.rowStart) || '',
                     row_end: seg.rowEnd || (seg.mapping && seg.mapping.rowEnd) || '',
                     source_kind: isDriveSource() ? 'drive' : 'local',
@@ -2961,7 +3029,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     // ------------------------------------------------------------------
 
     function openTemplateEditorForNew() {
-        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'direct', speakFormula: '', linesPerPage: 10, fields: '' };
+        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'direct', speakFormula: '', linesPerPage: 10, fields: '', quizPrompt: '', isExtractionRole: true, isExamRole: false };
         renderTemplateEditor();
         renderTemplateList();
         const editorEl = document.getElementById('mlp-template-editor');
@@ -2994,14 +3062,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             linesPerPage: (t && t.lines_per_page) || 10,
             // 2026-08-14（老師四次強調）：題目排版也是每個擷取範本本來就該有、老師能直接改的值，不是
             // 只有勾了考卷範本才算得出來的唯讀預覽——跟每頁行數一樣放在編輯表單裡，直接讀寫 fields 欄位。
-            fields: (function () {
-                const raw = String((t && t.fields) || '').trim();
-                if (!raw || /^STACK\(\s*vBK_name\s*,\s*page\s*\)\s*,\s*display_zh$/i.test(raw)) {
-                    return 'vBK_name&" - "&page&" - "&item_no';
-                }
-                return raw;
-            })(),
-            quizPrompt: String((t && t.quiz_prompt) || '').trim() || 'display_zh',
+            fields: String((t && t.fields) || ''),
+            quizPrompt: String((t && t.quiz_prompt) || ''),
             // 2026-08-15（老師回報意外刪除事件後要求）：角色勾選（擷取範本／考卷範本）只在編輯表單
             // 裡才能改，不放在清單上，見 renderTemplateEditor() 的角色勾選那一行。
             isExtractionRole: t && t.is_extraction_role !== false,
@@ -3047,15 +3109,6 @@ window.FeatureMaterialLayoutPairing = (function () {
                     </label>
                 </div>
                 ${roleRowHtml}
-                <div style="margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid ${st.isExamRole ? '#C7D2FE' : '#CBD5E1'}; background:${st.isExamRole ? '#F8FAFC' : '#F1F5F9'}; opacity:${st.isExamRole ? '1' : '0.55'}; pointer-events:${st.isExamRole ? 'auto' : 'none'};">
-                    <div style="font-size:0.76rem; font-weight:800; color:${st.isExamRole ? '#4338CA' : '#94A3B8'}; margin-bottom:8px;">排版${st.isExamRole ? '' : '（未勾試卷範本，不使用）'}</div>
-                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">排版訊息（訊息列公式，例如 vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no）
-                        <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no' ${st.isExamRole ? '' : 'disabled'}>${esc(st.fields)}</textarea>
-                    </label>
-                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">排版題目（題目公式，例如 display_zh 或 pos&amp;" "&amp;display_zh）
-                        <textarea id="mlp-tpl-quiz-prompt" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='display_zh' ${st.isExamRole ? '' : 'disabled'}>${esc(st.quizPrompt || '')}</textarea>
-                    </label>
-                </div>
                 <div style="margin-top:12px;">
                     <div style="font-size:0.78rem; font-weight:800; color:#475569; margin-bottom:6px;">欄位設定（欄位代號自己打，可自由新增／刪除列）</div>
                     <div id="mlp-tpl-cols"></div>
@@ -3064,7 +3117,16 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <button type="button" id="mlp-tpl-clear-airef" class="btn" style="padding:5px 12px; font-size:0.78rem; font-weight:800; background:white; color:#6D28D9; border:1px solid #DDD6FE; border-radius:6px;">✕ 清除所有已選的口說答案欄（允許不指定）</button>
                     </div>
                 </div>
-                <div class="mlp-tpl-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-tpl', st, countAnswerColsFromColumns(st.columns), { gateByExamRole: true, examRoleOn: !!st.isExamRole })}</div>
+                <div style="margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid ${st.isExamRole ? '#C7D2FE' : '#CBD5E1'}; background:${st.isExamRole ? '#F8FAFC' : '#F1F5F9'}; opacity:${st.isExamRole ? '1' : '0.55'}; pointer-events:${st.isExamRole ? 'auto' : 'none'};">
+                    <div style="font-size:0.76rem; font-weight:800; color:${st.isExamRole ? '#4338CA' : '#94A3B8'}; margin-bottom:8px;">特殊排版${st.isExamRole ? '' : '（未勾試卷範本，不使用）'}</div>
+                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">訊息 特殊排版
+                        <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="（預設空白）" ${st.isExamRole ? '' : 'disabled'}>${esc(st.fields || '')}</textarea>
+                    </label>
+                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">題目 特殊排版
+                        <textarea id="mlp-tpl-quiz-prompt" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="（預設空白）" ${st.isExamRole ? '' : 'disabled'}>${esc(st.quizPrompt || '')}</textarea>
+                    </label>
+                </div>
+                <div class="mlp-tpl-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-tpl', st, countAnswerColsFromColumns(st.columns), templateExamGradingOpts(st))}</div>
                 <div style="margin-top:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button type="button" id="mlp-tpl-save" class="btn btn-primary" style="padding:7px 16px; font-weight:800;">💾 儲存這個 Template</button>
                     <button type="button" id="mlp-tpl-cancel" class="btn" style="padding:7px 16px; font-weight:800; background:white; border:1px solid #CBD5E1; color:#475569;">取消</button>
@@ -3134,18 +3196,22 @@ window.FeatureMaterialLayoutPairing = (function () {
             const aEl = rowEl.querySelector('.mlp-tpl-col-answer');
             if (aEl) aEl.addEventListener('change', function () {
                 col.is_answer = this.checked;
-                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns), { gateByExamRole: true, examRoleOn: !!_templateEditorState.isExamRole });
+                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns), templateExamGradingOpts(_templateEditorState));
             });
             const iEl = rowEl.querySelector('.mlp-tpl-col-info');
             if (iEl) iEl.addEventListener('change', function () { col.is_info = this.checked; });
             // 🎤 口說答案：checkbox＝可複選（老師 2026-08-08 再次明確強調不能互斥）。
             // 只切換自己這一欄，不動其他列的 is_ai_ref（跟 Excel 小工具同一份邏輯）。
             const airefEl = rowEl.querySelector('.mlp-tpl-col-airef');
-            if (airefEl) airefEl.addEventListener('change', function () { col.is_ai_ref = this.checked; });
+            if (airefEl) airefEl.addEventListener('change', function () {
+                col.is_ai_ref = this.checked;
+                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns), templateExamGradingOpts(_templateEditorState));
+            });
             const removeBtn = rowEl.querySelector('.mlp-tpl-col-remove');
             if (removeBtn) removeBtn.addEventListener('click', function () {
                 _templateEditorState.columns.splice(idx, 1);
                 renderTemplateEditorCols();
+                refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns), templateExamGradingOpts(_templateEditorState));
             });
         });
     }
@@ -3168,6 +3234,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (clearAirefBtn) clearAirefBtn.addEventListener('click', function () {
             _templateEditorState.columns.forEach(function (c) { c.is_ai_ref = false; });
             renderTemplateEditorCols();
+            refreshAnswerGradingBlock(document.getElementById('mlp-template-editor'), 'mlp-tpl', _templateEditorState, countAnswerColsFromColumns(_templateEditorState.columns), templateExamGradingOpts(_templateEditorState));
         });
         const saveBtn = document.getElementById('mlp-tpl-save');
         if (saveBtn) saveBtn.addEventListener('click', handleSaveTemplateFromEditor);
@@ -3223,7 +3290,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         : (role === 'extraction'
                             ? '確定要把這筆從擷取範本移除嗎？試卷範本角色不受影響，之後仍可在試卷範本清單看到。'
                             : '確定要取消這筆範本的「試卷範本」角色嗎？若沒有其他地方在用，考題排版公式會一併清除。擷取範本那一側不受影響。');
-                    if (!window.confirm(confirmText)) {
+                    if (!(await window.ModalOverlay.confirm(confirmText))) {
                         cb.checked = true;
                         cb.disabled = false;
                         return;
@@ -3237,7 +3304,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                     flashText = '已取消' + roleLabel + '角色';
                 }
                 await fetchFieldTemplates(true);
-                window.FeatureExamJob && window.FeatureExamJob.fetchExamTemplates && window.FeatureExamJob.fetchExamTemplates(true).catch(function () {});
+                if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
+                    window.FeatureExamTemplateEditor.render();
+                }
                 if (leftExtractionList) {
                     _templateEditorState = null;
                     renderTemplateEditor();
@@ -3332,7 +3401,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     async function handleDeleteTemplate(id) {
         const templates = getFieldTemplatesCachedSync();
         const t = templates.find(function (x) { return x.id === id; });
-        if (!window.confirm('確定要刪除擷取範本「' + (t ? t.name : '') + '」嗎？此動作無法復原（已套用到教材產生的 meta.json／script.txt 檔案不會自動跟著刪除）。')) return;
+        if (!(await window.ModalOverlay.confirm('確定要刪除擷取範本「' + (t ? t.name : '') + '」嗎？此動作無法復原（已套用到教材產生的 meta.json／script.txt 檔案不會自動跟著刪除）。'))) return;
         try {
             // 💣 雷區（2026-08-15 老師回報「網頁延遲，範本意外被刪除」）：以前是「抓整份清單→濾掉這一筆
             // →整份丟給 saveFieldTemplates 做差集刪除」，fetchFieldTemplates(true) 一旦因網路延遲拿到
@@ -3355,7 +3424,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!wrap) return;
         const templates = getFieldTemplatesCachedSync();
         if (!templates.length) {
-            wrap.innerHTML = '<div style="font-size:0.8rem; color:#94A3B8; padding:8px 0;">尚未建立任何擷取範本，按上面「＋ 新增 Template」開始，或用下面「從本機 Excel 讀取活頁／欄位」小工具設計。</div>';
+            wrap.innerHTML = '<div style="font-size:0.8rem; color:#94A3B8; padding:8px 0;">尚未建立任何擷取範本，按上面「新增範本」開始，或用下面「從本機 Excel 讀取活頁／欄位」小工具設計。</div>';
             return;
         }
         wrap.innerHTML = '<ul style="margin:0; padding:0; list-style:none;">'
@@ -3429,14 +3498,18 @@ window.FeatureMaterialLayoutPairing = (function () {
                 // 排在書寫批改上面；每一筆擷取範本都要有這一行，且是真的存在 fields 欄位裡、老師到上面
                 // 「✏️ 編輯」表單就能直接改的值（跟每頁行數同一個位置），不是只有勾考卷範本才算得出來的
                 // 唯讀預覽——老師明確要求「不要有只能系統算、老師不能改」的內容。
-                const rowFields = '<div style="font-size:0.8rem; color:#334155; margin-top:2px;">題目排版：' + esc(t.fields || '尚無') + '</div>';
-                // 2026-08-14（老師四次強調：每個範本都要有）：書寫批改不再因為書寫答案欄數≤1 就整行藏起來
-                // ——欄數≤1 沒有「多欄合併／分開比對」的選擇，但這一行本身要一直在，用「—」表示目前不適用。
-                const row3 = '<div style="font-size:0.8rem; color:#334155; margin-top:2px;">書寫批改：' + (aCount > 1 ? (t.answer_mode === 'separate' ? '分開比對' : '結合') : '—（書寫答案欄數≤1）') + '</div>';
-                const row4 = '<div style="font-size:0.8rem; color:#334155; margin-top:2px;">口說批改：' + speakModeLabel + '</div>';
+                const examOn = !!t.is_exam_role;
+                const announceColor = examOn ? '#334155' : '#94A3B8';
+                const announceLine = function (label, value) {
+                    return '<div style="font-size:0.8rem; color:' + announceColor + '; margin-top:2px;">' + label + '：' + esc(value) + '</div>';
+                };
+                const rowFields = announceLine('訊息 特殊排版', t.fields || '尚無');
+                const rowQuiz = announceLine('題目 特殊排版', t.quiz_prompt || '尚無');
+                const row3 = announceLine('書寫 批改標準', aCount > 1 ? (t.answer_mode === 'separate' ? '分開比對' : '結合') : '—（書寫答案欄數≤1）');
+                const row4 = announceLine('口說 批改標準', speakModeLabel);
                 const rowUsage = templateUsageHtml(t);
                 return '<li data-id="' + esc(t.id) + '" style="' + liStyle + '">'
-                    + row1 + row2 + rowFields + row3 + row4 + rowUsage
+                    + row1 + row2 + rowFields + rowQuiz + row3 + row4 + rowUsage
                     + '</li>';
             }).join('')
             + '</ul>';
@@ -3466,7 +3539,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                     await window.FeatureTemplateLibrary.moveTemplateInVisibleList(btn.getAttribute('data-id'), direction, templates);
                     await fetchFieldTemplates(true);
                     renderTemplateList();
-                    window.FeatureExamJob && window.FeatureExamJob.fetchExamTemplates && window.FeatureExamJob.fetchExamTemplates(true).catch(function () {});
+                    if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
+                        window.FeatureExamTemplateEditor.render();
+                    }
                 } catch (err) {
                     window.alert('調整順序失敗：' + (err.message || err));
                     btn.disabled = false;
@@ -4141,10 +4216,9 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function defaultOutputNames(sheetName, templateName, folderName, selectedCount) {
         const layoutPart = sanitizeForFileNamePart(templateName || '');
-        let sheetPart = stripTemplateSuffixFromStem(sheetName, templateName) || 'output';
-        const folder = String(folderName || '').trim();
-        // 單活頁 Excel：分頁名常是版本碼（vBK-2），真正的教材身分是目標資料夾
-        if (folder && Number(selectedCount) === 1) sheetPart = folder;
+        // 檔名活頁段＝老師勾的那一頁。禁止「只勾一頁就把活頁名換成資料夾名」
+        // （勾 VerbIrregular-3、資料夾叫 Jessie-vBK-2 時會產成錯的 Jessie-vBK-2.vocab-word）。
+        const sheetPart = stripTemplateSuffixFromStem(sheetName, templateName) || 'output';
         const base = layoutPart ? (sheetPart + '.' + layoutPart) : sheetPart;
         return { meta: base + '.meta.json', script: base + '.script.txt' };
     }
@@ -4164,6 +4238,80 @@ window.FeatureMaterialLayoutPairing = (function () {
     /** 從 meta 檔名換算「stem」（跟其他地方統一：examSheetStemsForFolder／metaStemFromFileName 都是去掉 .meta.json 尾巴） */
     function stemFromMetaFileName(fileName) {
         return String(fileName || '').trim().replace(/\.meta\.json$/i, '');
+    }
+
+    function publicFieldCount(row) {
+        if (!row || typeof row !== 'object') return 0;
+        return Object.keys(row).filter(function (k) {
+            return k && String(k).charAt(0) !== '_';
+        }).length;
+    }
+
+    function sheetMatchKey(name) {
+        let s = String(name || '').trim().replace(/\.meta\.json$/i, '');
+        if (!s) return '';
+        const dot = s.indexOf('.');
+        if (dot > 0) s = s.slice(0, dot);
+        return s.toUpperCase();
+    }
+
+    function matchOverwriteTarget(excelSheetName, targets) {
+        const key = sheetMatchKey(excelSheetName);
+        if (!key) return null;
+        for (let i = 0; i < (targets || []).length; i++) {
+            const t = targets[i];
+            if (sheetMatchKey(t.stem) === key || sheetMatchKey(t.meta) === key) return t;
+        }
+        return null;
+    }
+
+    async function readExistingMetaFieldCount(folderId, folderName, metaFileName) {
+        if (!window.GasService || typeof window.GasService.readMaterialFiles !== 'function') return null;
+        if (!folderId || !metaFileName) return null;
+        try {
+            const files = await window.GasService.readMaterialFiles(folderId, [{
+                materialFolder: folderName,
+                fileName: metaFileName
+            }], 'teacher');
+            const hit = (files || []).find(function (f) { return f && f.ok && f.content; });
+            if (!hit) return null;
+            let rows = [];
+            if (window.MaterialSnapshot && typeof window.MaterialSnapshot.parseMetaContent === 'function') {
+                rows = window.MaterialSnapshot.parseMetaContent(hit.content) || [];
+            } else {
+                const parsed = JSON.parse(hit.content);
+                rows = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.rows) ? parsed.rows : []);
+            }
+            return rows[0] ? publicFieldCount(rows[0]) : null;
+        } catch (_e) {
+            return null;
+        }
+    }
+
+    async function confirmFieldCountMismatch(oldCount, newCount) {
+        return window.ModalOverlay.confirm(
+            '這次產出的欄位數是 ' + newCount + '，現有 meta.json 是 ' + oldCount + ' 欄。\n\n'
+            + '欄位數不同。按「確定」會蓋過現有檔案；按「取消」則不上傳。'
+        );
+    }
+
+    async function refreshStatsAfterPublish(folderName, templateId) {
+        if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.invalidateDisplayCaches === 'function') {
+            window.FeatureClassMaterialCombinations.invalidateDisplayCaches();
+        }
+        const usage = (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.lookupUsage === 'function')
+            ? await window.FeatureClassMaterialCombinations.lookupUsage(folderName, templateId)
+            : { classIds: [] };
+        const ids = (usage && usage.classIds) || [];
+        if (window.FeatureReviewCatalog && typeof window.FeatureReviewCatalog.refreshForClass === 'function') {
+            for (let i = 0; i < ids.length; i++) {
+                try { await window.FeatureReviewCatalog.refreshForClass(ids[i]); } catch (_e) { /* 統計表更新失敗不擋已完成的上傳 */ }
+            }
+        }
+        if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.invalidateDisplayCaches === 'function') {
+            window.FeatureClassMaterialCombinations.invalidateDisplayCaches();
+        }
+        await refreshTemplateUsageCache();
     }
 
     /** JS 字串（含中文）轉 base64，供 GAS upload_file 的 fileData（Utilities.base64Decode 之後寫檔）使用 */
@@ -4583,7 +4731,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             return;
         }
         if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 預覽已更新，請確認內容無誤後再上傳'; }
-        refreshAppGenArea(rowEl, appId);
+        renderAppGenAreaOnly(rowEl, appId);
     }
 
     /** 找不到既有 folderId 就用 GAS create_folder（getOrCreateSubFolder 天生 idempotent）現場建一個，順帶把新 folderId 補回本機 meta 快取供下一輪重用 */
@@ -4613,6 +4761,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     async function handleConfirmUpload(rowEl, appId) {
+        if (_metaPublishBusy) return;
         const state = ensureAppRowState(appId);
         // 💣 雷區：msgEl／uploadBtn 不能只在函式開頭查一次就整個 async 流程沿用同一個參考——
         // 迴圈裡每上傳完一個活頁就會呼叫 refreshAppGenArea() 重寫 .mlp-app-gen-area 的 innerHTML，
@@ -4639,12 +4788,45 @@ window.FeatureMaterialLayoutPairing = (function () {
                 refreshAppGenArea(rowEl, appId);
                 return;
             }
-            refreshAppGenArea(rowEl, appId);
+            renderAppGenAreaOnly(rowEl, appId);
         }
+        _metaPublishBusy = true;
         if (getUploadBtn()) { getUploadBtn().disabled = true; getUploadBtn().textContent = '⏳ 上傳中…'; }
         if (getMsgEl()) { getMsgEl().style.color = '#0F766E'; getMsgEl().textContent = '⏳ 正在確認教材資料夾…'; }
         try {
             const folderId = await resolveOrCreateAppFolderId(rowEl);
+            const folderSelectEl = rowEl.querySelector('.mlp-app-folder');
+            const folderName = folderSelectEl
+                ? ((folderSelectEl.value === '__manual__' ? (rowEl.querySelector('.mlp-app-folder-manual') || {}).value : folderSelectEl.value) || '').trim()
+                : (_excelMaterialFolder || '');
+            const currentTemplate = getCurrentAppTemplate(rowEl);
+            const overwriteTargets = (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.listOverwriteTargets === 'function')
+                ? await window.FeatureClassMaterialCombinations.listOverwriteTargets(folderName, currentTemplate && currentTemplate.id)
+                : [];
+            let existingFieldCount = null;
+            let newFieldCount = null;
+            let overwriteCount = 0;
+            for (let i = 0; i < sheetNames.length; i++) {
+                const name = sheetNames[i];
+                const g = state.gen[name];
+                if (!g) continue;
+                const hit = matchOverwriteTarget(name, overwriteTargets);
+                if (hit) {
+                    overwriteCount += 1;
+                    g.outputMeta = hit.meta;
+                    g.outputScript = hit.script || String(hit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt';
+                    if (existingFieldCount == null) {
+                        existingFieldCount = await readExistingMetaFieldCount(folderId, folderName, hit.meta);
+                    }
+                }
+                if (newFieldCount == null && g.rows && g.rows[0]) newFieldCount = publicFieldCount(g.rows[0]);
+            }
+            if (overwriteCount && existingFieldCount != null && newFieldCount != null && existingFieldCount !== newFieldCount) {
+                if (!await confirmFieldCountMismatch(existingFieldCount, newFieldCount)) {
+                    if (getMsgEl()) { getMsgEl().style.color = '#B45309'; getMsgEl().textContent = '已取消上傳（欄位數不同）'; }
+                    return;
+                }
+            }
             for (let i = 0; i < sheetNames.length; i++) {
                 const name = sheetNames[i];
                 const g = state.gen[name];
@@ -4665,8 +4847,13 @@ window.FeatureMaterialLayoutPairing = (function () {
                     const scriptNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-scriptname') : null;
                     const currentTemplateName = (rowEl.querySelector('.mlp-app-template') || {}).value || '';
                     const defaults = resolveOutputNames(name, currentTemplateName, _excelMaterialFolder, sheetNames.length, g);
-                    const finalMetaName = (metaNameInput && metaNameInput.value.trim()) || defaults.meta;
-                    const finalScriptName = (scriptNameInput && scriptNameInput.value.trim()) || defaults.script;
+                    const overwriteHit = matchOverwriteTarget(name, overwriteTargets);
+                    const finalMetaName = overwriteHit
+                        ? overwriteHit.meta
+                        : ((metaNameInput && metaNameInput.value.trim()) || defaults.meta);
+                    const finalScriptName = overwriteHit
+                        ? (overwriteHit.script || String(overwriteHit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt')
+                        : ((scriptNameInput && scriptNameInput.value.trim()) || defaults.script);
                     g.outputMeta = finalMetaName;
                     g.outputScript = finalScriptName;
 
@@ -4757,7 +4944,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                             const tpl = findApplyTemplateByName(appRecord.template_name)
                                 || getAllTemplatesForApply().find(function (t) { return String(t.id) === String(appRecord.template_id); })
                                 || null;
-                            persistApplyComboRecord(segForApp, appRecord, tpl).catch(function (comboErr) {
+                            persistApplyComboRecord(segForApp, appRecord, tpl).then(function () {
+                                return refreshStatsAfterPublish(appRecord.material_folder, appRecord.template_id);
+                            }).catch(function (comboErr) {
                                 console.error('[FeatureMaterialLayoutPairing] 上傳後寫入教材與範本組合失敗', comboErr);
                             });
                         }
@@ -4790,6 +4979,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         } catch (err) {
             if (getMsgEl()) { getMsgEl().style.color = '#DC2626'; getMsgEl().textContent = '❌ ' + (err.message || err); }
         } finally {
+            _metaPublishBusy = false;
             const finalBtn = getUploadBtn();
             if (finalBtn) { finalBtn.disabled = !canConfirmUpload(state, sheetNames); finalBtn.textContent = '☁️ 確認上傳到 Drive'; }
         }
@@ -4835,7 +5025,7 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     /** 一鍵清掉失效套用紀錄：不只從畫面移除，直接打進資料庫真正刪除，不用再多按一次「儲存」 */
     async function handleRemoveOrphanedAppRow(rowEl, appId) {
-        const ok = window.confirm('這筆套用紀錄指向的擷取範本已經找不到（可能是舊流程留下的資料，或 Template 已被刪除／改名），確定要直接刪除這筆紀錄嗎？\n\n（只刪這筆「套用紀錄」，不會動到 Drive 上已經上傳的 meta.json／script.txt 檔案本身）');
+        const ok = await window.ModalOverlay.confirm('這筆套用紀錄指向的擷取範本已經找不到（可能是舊流程留下的資料，或 Template 已被刪除／改名），確定要直接刪除這筆紀錄嗎？\n\n（只刪這筆「套用紀錄」，不會動到 Drive 上已經上傳的 meta.json／script.txt 檔案本身）');
         if (!ok) return;
         try {
             const latest = await fetchTemplateApplications(true);
@@ -5252,7 +5442,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const classId = blockEl.getAttribute('data-class-id') || '';
         const rootKind = blockEl.getAttribute('data-root-kind') === 'class' ? 'class' : 'teacher';
         const folder = blockEl.getAttribute('data-folder') || '';
-        const ok = window.confirm('確定要刪除「' + folder + '／' + stem + '」的 meta.json／script.txt 嗎？\n\n會送進 Google Drive 垂圾桶（30 天內可還原），但任何已經套用這個活頁的作業／考試之後會抓不到 meta。');
+        const ok = await window.ModalOverlay.confirm('確定要刪除「' + folder + '／' + stem + '」的 meta.json／script.txt 嗎？\n\n會送進 Google Drive 垂圾桶（30 天內可還原），但任何已經套用這個活頁的作業／考試之後會抓不到 meta。');
         if (!ok) return;
         try {
             if (!window.FeatureTimeline || typeof window.FeatureTimeline.resolveMaterialsRootFolderId !== 'function') {
@@ -5379,6 +5569,13 @@ window.FeatureMaterialLayoutPairing = (function () {
             const t = getFieldTemplatesCachedSync().find(function (x) { return x.id === a.template_id; });
             if (t) return { name: t.name || '（未命名）', missing: false };
             return { name: (a.template_name || '（未選 Template）') + '（已刪除）', missing: true };
+        }
+        const mappedId = (a && a.template_name && window.MaterialNameMap && typeof window.MaterialNameMap.resolveTemplateId === 'function')
+            ? window.MaterialNameMap.resolveTemplateId(a.template_name)
+            : '';
+        if (mappedId) {
+            const t = getFieldTemplatesCachedSync().find(function (x) { return String(x.id) === String(mappedId); });
+            if (t) return { name: t.name || '（未命名）', missing: false };
         }
         return { name: (a && a.template_name) || '（未選 Template）', missing: false };
     }
@@ -5681,8 +5878,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             ${renderOverviewHtml(pairs, apps)}
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
-                    <h3 style="margin:0; color:var(--primary-dark);">📚 範本庫 — 擷取範本（欄位對應範本，可重複套用）</h3>
-                    <button type="button" id="mlp-tpl-add-new" class="btn btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE;">＋ 新增 Template</button>
+                    <h3 style="margin:0; color:var(--primary-dark);">📚 範本庫 — 擷取範本／試卷範本</h3>
+                    <button type="button" id="mlp-tpl-add-new" class="btn btn-action" style="background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE;">新增範本</button>
                 </div>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0;">
                     Template 是獨立於任何檔案的「規則」：名稱＋一組欄位設定（欄位代號、資料項名稱、題目／答案／訊息）。

@@ -9,9 +9,7 @@
  *           自動把擷取範本當考卷範本，見 2026-08-14「分離擷取範本與考卷範本」）
  *   Step 3：指派給班級（class_material_combinations）
  *
- * 這是全新概念，資料庫裡沒有對應的舊 JSON 可以 backfill（見
- * supabase/migrations/20260814150000_material_relations_normalize.sql 的說明），
- * 老師需要在這裡手動建立指派紀錄。
+ * 套餐（名稱／試卷範本／採用班級）只在教材區編輯並存檔，其他畫面只讀、不准另開一條寫入。
  *
  * 只做資料庫層的組合＋指派，不影響「產生線上卷」本身讀取教材的路徑（那條路徑仍然是
  * feature-exam-job.js 直接讀 material_folder 字串＋Drive meta）。
@@ -20,6 +18,10 @@
  */
 window.FeatureClassMaterialCombinations = (function () {
     'use strict';
+
+    if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+        window.MaterialNameMap.ensureLoaded(false).catch(function () {});
+    }
 
     function esc(v) {
         return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
@@ -321,8 +323,8 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function examTemplatesList() {
-        return (window.FeatureExamJob && typeof window.FeatureExamJob.getExamTemplatesCachedSync === 'function')
-            ? window.FeatureExamJob.getExamTemplatesCachedSync()
+        return (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.getExamTemplates === 'function')
+            ? window.FeatureTemplateLibrary.getExamTemplates()
             : [];
     }
 
@@ -332,15 +334,11 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function templateNameById(id) {
-        if (!id) return '';
-        if (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.getTemplatesCachedSync === 'function') {
-            const t = window.FeatureTemplateLibrary.getTemplatesCachedSync().find(function (x) {
-                return String(x.id) === String(id);
-            });
-            if (t && t.name) return String(t.name).trim();
-        }
-        const t2 = examTemplatesList().find(function (x) { return String(x.id) === String(id); });
-        return t2 && t2.name ? String(t2.name).trim() : '';
+        if (!id || !window.FeatureTemplateLibrary || typeof window.FeatureTemplateLibrary.getTemplatesCachedSync !== 'function') return '';
+        const t = window.FeatureTemplateLibrary.getTemplatesCachedSync().find(function (x) {
+            return String(x.id) === String(id);
+        });
+        return t && t.name ? String(t.name).trim() : '';
     }
 
     /**
@@ -394,11 +392,14 @@ window.FeatureClassMaterialCombinations = (function () {
         const { data, error } = await window.supabaseClient
             .from('material_sheets')
             .select(`
+                id,
                 sheet_stem,
+                meta_file_name,
+                script_file_name,
                 extraction_template_id,
                 source_kind,
                 source_file_name,
-                material_folders!inner ( folder_name, teacher_id ),
+                material_folders!inner ( id, folder_name, teacher_id ),
                 material_templates ( name )
             `)
             .eq('material_folders.teacher_id', userId)
@@ -427,24 +428,35 @@ window.FeatureClassMaterialCombinations = (function () {
 
     /** 已經建立好的組合＋目前搭配的考卷範本＋目前指派到哪些班級 */
     async function loadCombinations(userId) {
-        const { data, error } = await window.supabaseClient
-            .from('material_combinations')
-            .select(`
+        const selectBody = function (withSourceLabels) {
+            return `
                 id,
                 label,
+                ${withSourceLabels ? 'source_labels,' : ''}
                 material_folder_id,
                 extraction_template_id,
                 created_at,
                 material_folders!inner ( id, root_kind, class_id, folder_name, teacher_id ),
                 material_templates ( id, name ),
-                material_combination_sheets ( material_sheet_id, material_sheets ( id, sheet_stem, meta_file_name ) ),
+                material_combination_sheets ( material_sheet_id, material_sheets ( id, sheet_stem, meta_file_name, script_file_name ) ),
                 material_combination_exam_templates ( id, exam_template_id, is_default ),
                 class_material_combinations ( id, class_id, assigned_at )
-            `)
+            `;
+        };
+        let result = await window.supabaseClient
+            .from('material_combinations')
+            .select(selectBody(true))
             .eq('material_folders.teacher_id', userId)
             .order('created_at', { ascending: false });
-        if (error) throw error;
-        return data || [];
+        if (result.error && /source_labels/i.test(result.error.message || '')) {
+            result = await window.supabaseClient
+                .from('material_combinations')
+                .select(selectBody(false))
+                .eq('material_folders.teacher_id', userId)
+                .order('created_at', { ascending: false });
+        }
+        if (result.error) throw result.error;
+        return result.data || [];
     }
 
     function groupKeyOf(g) { return g.material_folder_id + '|' + g.extraction_template_id; }
@@ -556,20 +568,36 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     // ------------------------------------------------------------------
-    // 官方配對：老師在「🏫 班級教材組合」Step 2 明確勾選的
-    // material_combination_exam_templates。出題下拉只能列這些，一個 meta 可對多個試卷範本。
+    // 官方配對：老師在教材區勾選的 material_combination_exam_templates。
+    // 出題下拉只能列這些。套餐設定不准在別處另寫一筆。
     // ------------------------------------------------------------------
     let _suggestionCache = null;
     let _suggestionLoadPromise = null;
+    /** folderKey → 真正的產出 meta 檔名（禁止把 Excel 活頁名 vBK-2 當成 vBK-2.meta.json） */
+    let _officialMetaFilesByFolderKey = {};
     /** classId → [{ folderName, rootKind, examTemplateId }] 已指派給該班、且已知考卷範本 */
     let _assignedFoldersByClass = {};
+    /** classId → 已指派且已搭配試卷範本的套餐（出題第一層） */
+    let _assignedCombosByClass = {};
+
+    function comboDisplayLabel(label, folderName, tplName) {
+        const named = String(label || '').trim();
+        if (named) return named;
+        const folder = String(folderName || '').trim();
+        const tpl = String(tplName || '').trim();
+        if (folder && tpl) return folder + ' ' + tpl;
+        return folder || tpl || '（未命名套餐）';
+    }
 
     function folderKeyFor(rootKind, classId, folderName) {
         return [(rootKind === 'class' ? 'class' : 'teacher'), classId || '', String(folderName || '').trim().toUpperCase()].join('|');
     }
 
     function normalizePairStem(raw) {
-        return String(raw || '').trim().replace(/\.meta\.json$/i, '').toUpperCase();
+        return String(raw || '').trim()
+            .replace(/\.meta\.json$/i, '')
+            .replace(/\.meta$/i, '')
+            .toUpperCase();
     }
 
     function addOfficialLinks(bucket, stemKey, links) {
@@ -593,23 +621,53 @@ window.FeatureClassMaterialCombinations = (function () {
         _suggestionLoadPromise = (async function () {
             const userId = await getCurrentUserId();
             if (!userId) { _suggestionCache = {}; return _suggestionCache; }
-            const { data, error } = await window.supabaseClient
+            const comboRes = await window.supabaseClient
                 .from('material_combinations')
                 .select(`
                     id,
+                    label,
+                    extraction_template_id,
+                    material_folder_id,
                     material_folders!inner ( root_kind, class_id, folder_name, teacher_id ),
+                    material_templates ( name ),
                     material_combination_sheets ( material_sheets ( sheet_stem, meta_file_name ) ),
                     material_combination_exam_templates ( exam_template_id, is_default ),
                     class_material_combinations ( class_id )
                 `)
                 .eq('material_folders.teacher_id', userId);
-            if (error) {
-                console.warn('[FeatureClassMaterialCombinations] 讀取官方試卷配對失敗', error);
+            if (comboRes.error) {
+                console.warn('[FeatureClassMaterialCombinations] 讀取官方試卷配對失敗', comboRes.error);
                 _suggestionCache = _suggestionCache || {};
                 return _suggestionCache;
             }
+            const data = comboRes.data;
+            const applyByTplFolder = {};
+            try {
+                const applyRes = await window.supabaseClient
+                    .from('material_sheets')
+                    .select(`
+                        sheet_stem,
+                        meta_file_name,
+                        extraction_template_id,
+                        material_folders!inner ( folder_name, teacher_id )
+                    `)
+                    .eq('material_folders.teacher_id', userId)
+                    .not('extraction_template_id', 'is', null);
+                if (!applyRes.error) {
+                    (applyRes.data || []).forEach(function (row) {
+                        const folderName = String((row.material_folders && row.material_folders.folder_name) || '').trim().toUpperCase();
+                        const tplId = String(row.extraction_template_id || '');
+                        if (!folderName || !tplId) return;
+                        const key = tplId + '|' + folderName;
+                        if (!applyByTplFolder[key]) applyByTplFolder[key] = [];
+                        applyByTplFolder[key].push(row);
+                    });
+                }
+            } catch (_applyErr) {}
             const map = {};
             const assigned = {};
+            const combosByClass = {};
+            const metaFiles = {};
             (data || []).forEach(function (combo) {
                 const links = Array.isArray(combo.material_combination_exam_templates) ? combo.material_combination_exam_templates : [];
                 if (!links.length) return;
@@ -638,27 +696,65 @@ window.FeatureClassMaterialCombinations = (function () {
                     }
                 });
                 const sheets = Array.isArray(combo.material_combination_sheets) ? combo.material_combination_sheets : [];
-                const stemKeys = [];
+                const tplName = (combo.material_templates && combo.material_templates.name)
+                    || templateNameById(combo.extraction_template_id)
+                    || '';
+                const publishedNames = [];
+                function pushPublished(fileName) {
+                    const published = String(fileName || '').trim();
+                    if (!published) return;
+                    if (publishedNames.indexOf(published) === -1) publishedNames.push(published);
+                }
                 sheets.forEach(function (cs) {
                     const sh = cs.material_sheets || {};
-                    const stem = normalizePairStem(sh.sheet_stem);
-                    const meta = normalizePairStem(sh.meta_file_name);
-                    if (stem && stemKeys.indexOf(stem) === -1) stemKeys.push(stem);
-                    if (meta && stemKeys.indexOf(meta) === -1) stemKeys.push(meta);
+                    pushPublished(publishedMetaNameFromSheet(sh.sheet_stem, sh.meta_file_name, tplName));
+                });
+                const applyKey = String(combo.extraction_template_id || '') + '|'
+                    + String(folderName || '').trim().toUpperCase();
+                (applyByTplFolder[applyKey] || []).forEach(function (row) {
+                    pushPublished(publishedMetaNameFromSheet(row.sheet_stem, row.meta_file_name, tplName));
                 });
                 keys.forEach(function (fKey) {
                     if (!map[fKey]) map[fKey] = {};
-                    if (!stemKeys.length) {
+                    if (!metaFiles[fKey]) metaFiles[fKey] = [];
+                    if (!publishedNames.length) {
                         addOfficialLinks(map[fKey], '*', links);
                         return;
                     }
-                    stemKeys.forEach(function (stem) {
-                        addOfficialLinks(map[fKey], stem, links);
+                    publishedNames.forEach(function (fileName) {
+                        addOfficialLinks(map[fKey], normalizePairStem(fileName), links);
+                        if (!metaFiles[fKey].some(function (x) { return normalizePairStem(x) === normalizePairStem(fileName); })) {
+                            metaFiles[fKey].push(fileName);
+                        }
                     });
+                });
+                const comboRec = {
+                    id: String(combo.id || ''),
+                    label: comboDisplayLabel(combo.label, folderName, tplName),
+                    rawLabel: String(combo.label || '').trim(),
+                    folderName: folderName,
+                    rootKind: rootKind,
+                    extractionTemplateId: String(combo.extraction_template_id || ''),
+                    extractionTemplateName: tplName,
+                    sheetStems: publishedNames.map(function (n) {
+                        return String(n || '').replace(/\.meta\.json$/i, '');
+                    }),
+                    metaFiles: publishedNames.slice(),
+                    examTemplateId: String(chosen.exam_template_id)
+                };
+                (combo.class_material_combinations || []).forEach(function (a) {
+                    if (!a.class_id || !comboRec.id) return;
+                    const cid = String(a.class_id);
+                    if (!combosByClass[cid]) combosByClass[cid] = [];
+                    if (!combosByClass[cid].some(function (x) { return x.id === comboRec.id; })) {
+                        combosByClass[cid].push(comboRec);
+                    }
                 });
             });
             _suggestionCache = map;
+            _officialMetaFilesByFolderKey = metaFiles;
             _assignedFoldersByClass = assigned;
+            _assignedCombosByClass = combosByClass;
             return _suggestionCache;
         })().finally(function () { _suggestionLoadPromise = null; });
         return _suggestionLoadPromise;
@@ -751,6 +847,49 @@ window.FeatureClassMaterialCombinations = (function () {
         return (_assignedFoldersByClass[String(classId || '')] || []).slice();
     }
 
+    function listAssignedCombosForClass(classId) {
+        ensureOfficialCacheLoading();
+        return (_assignedCombosByClass[String(classId || '')] || []).slice();
+    }
+
+    function getAssignedComboById(classId, comboId) {
+        const want = String(comboId || '').trim();
+        if (!want) return null;
+        return listAssignedCombosForClass(classId).find(function (c) {
+            return String(c.id) === want;
+        }) || null;
+    }
+
+    function findAssignedComboForSection(classId, hint) {
+        hint = hint || {};
+        const list = listAssignedCombosForClass(classId);
+        const wantId = String(hint.combinationId || hint.combination_id || '').trim();
+        if (wantId) {
+            const byId = list.find(function (c) { return String(c.id) === wantId; });
+            if (byId) return byId;
+        }
+        const rawFolder = String(hint.folderName || hint.material_folder || '').trim();
+        const folder = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function'
+            ? window.MaterialNameMap.resolveFolderName(rawFolder) : rawFolder).toUpperCase();
+        if (!folder) return null;
+        const matches = list.filter(function (c) {
+            const name = String(c.folderName || '').trim();
+            const resolved = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+                ? window.MaterialNameMap.resolveFolderName(name) : name;
+            return String(resolved || '').toUpperCase() === folder;
+        });
+        const tplId = String(hint.examTemplateId || hint.layout_profile_id || '').trim();
+        if (tplId) {
+            const byTpl = matches.filter(function (c) {
+                return String(c.examTemplateId || '') === tplId;
+            });
+            if (byTpl.length === 1) return byTpl[0];
+            if (byTpl.length > 1) return byTpl[0];
+        }
+        if (matches.length === 1) return matches[0];
+        return null;
+    }
+
     function isFolderAssignedToClass(classId, folderName) {
         const want = String(folderName || '').trim().toUpperCase();
         if (!want) return false;
@@ -759,11 +898,40 @@ window.FeatureClassMaterialCombinations = (function () {
         });
     }
 
-    function invalidateSuggestionCache() { _suggestionCache = null; _assignedFoldersByClass = {}; }
+    let _materialZoneRowsCache = null;
+
+    function invalidateSuggestionCache() {
+        _suggestionCache = null;
+        _officialMetaFilesByFolderKey = {};
+        _assignedFoldersByClass = {};
+        _assignedCombosByClass = {};
+        _materialZoneRowsCache = null;
+    }
 
     function isOfficialPairingCacheReady() { return _suggestionCache !== null; }
 
     function fetchOfficialPairings(force) { return fetchSuggestionMap(!!force); }
+
+    /**
+     * 這個教材資料夾裡、已有官方試卷搭配的全部 meta stem（一個資料夾可以有多份）。
+     * 不含萬用 *。出題活頁下拉必須用這份，不能只靠 Drive 當下掃到的檔。
+     */
+    function listOfficialMetaStemsForFolder(rootKind, classId, folderName) {
+        ensureOfficialCacheLoading();
+        if (!folderName) return [];
+        const keys = folderLookupKeys(rootKind, classId, folderName);
+        const seen = {};
+        const out = [];
+        keys.forEach(function (k) {
+            (_officialMetaFilesByFolderKey[k] || []).forEach(function (fileName) {
+                const u = normalizePairStem(fileName);
+                if (!u || seen[u]) return;
+                seen[u] = true;
+                out.push(fileName);
+            });
+        });
+        return out;
+    }
 
     /** 這個教材資料夾是否有任何官方試卷配對（含整夾萬用 *）。 */
     function folderHasOfficialExamPairing(rootKind, classId, folderName) {
@@ -790,6 +958,20 @@ window.FeatureClassMaterialCombinations = (function () {
             return '<label style="display:inline-flex; align-items:center; gap:4px; margin:2px 10px 2px 0; font-size:0.78rem; ' + (disabled ? 'color:#94A3B8;' : 'color:#334155;') + '">'
                 + '<input type="checkbox" class="' + prefix + '-class-cb" value="' + esc(c.id) + '" ' + (disabled ? 'disabled checked' : '') + '>'
                 + esc(c.name || c.id) + (disabled ? '（已指派）' : '')
+                + '</label>';
+        }).join('');
+    }
+
+    /** 教材區設定用：已指派的可取消，未指派的可勾選 */
+    function classEditorCheckboxesHtml(assignedClassIds) {
+        const assigned = (assignedClassIds || []).map(String);
+        const classes = allClasses();
+        if (!classes.length) return '<div style="color:#94A3B8; font-size:0.78rem;">目前沒有任何班級</div>';
+        return classes.map(function (c) {
+            const checked = assigned.indexOf(String(c.id)) !== -1;
+            return '<label style="display:inline-flex; align-items:center; gap:4px; margin:2px 10px 2px 0; font-size:0.78rem; color:#334155;">'
+                + '<input type="checkbox" class="mz-class-cb" value="' + esc(c.id) + '"' + (checked ? ' checked' : '') + '>'
+                + esc(c.name || c.id)
                 + '</label>';
         }).join('');
     }
@@ -825,8 +1007,8 @@ window.FeatureClassMaterialCombinations = (function () {
             + '<button type="button" class="cmc-group-assign-btn btn" data-idx="' + idx + '" style="padding:4px 10px; font-size:0.76rem; font-weight:800; background:#EEF2FF; color:#4338CA; border:1px solid #C7D2FE; border-radius:6px;">➕ 建立教材組合</button>'
             + '</div>'
             + '<div class="cmc-group-assign-form" data-idx="' + idx + '" style="display:none; margin-top:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:6px; padding:10px;">'
-            + '<label style="font-size:0.76rem; font-weight:800; color:#475569; display:block; margin-bottom:6px;">組合名稱（選填，方便日後辨識）'
-            + '<input type="text" class="form-control cmc-group-label" placeholder="例如「GEPT-2 全冊」" style="width:260px; padding:5px; margin-top:2px; display:block;">'
+            + '<label style="font-size:0.76rem; font-weight:800; color:#475569; display:block; margin-bottom:6px;">套餐名稱（建議填，出題下拉會顯示這個名字）'
+            + '<input type="text" class="form-control cmc-group-label" placeholder="例如「GEPT-2 整句翻譯」" style="width:260px; padding:5px; margin-top:2px; display:block;">'
             + '</label>'
             + '<div style="border-top:1px dashed #CBD5E1; margin:8px 0; padding-top:8px;">'
             + '<div style="font-size:0.76rem; font-weight:800; color:#7C3AED; margin-bottom:4px;">Step 2：套用試卷範本（至少勾選一個，這是「明確搭配」，不是自動繼承）</div>'
@@ -884,143 +1066,844 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function paint(wrap, groups, combos) {
-        const comboClassIdsByGroupKey = {};
-        combos.forEach(function (c) {
-            const key = c.material_folder_id + '|' + c.extraction_template_id;
-            comboClassIdsByGroupKey[key] = (Array.isArray(c.class_material_combinations) ? c.class_material_combinations : [])
-                .map(function (a) { return String(a.class_id); });
-        });
-
-        wrap.innerHTML = `
-            ${renderClassReviewDeskHtml(combos)}
-            <div style="background:#F8FAFC; padding:20px; border-radius:12px; border:2px solid #CBD5E1; margin-top:16px;">
-                <h3 style="margin:0 0 4px 0; color:var(--primary-dark);">🏫 班級教材組合：把「套用到教材」的組合搭配試卷範本後指派給班級</h3>
-                <p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">下面每一列都是上面「📎 套用到教材」已經有的（教材資料夾＋擷取範本）組合。選一組 → 勾選要搭配的試卷範本（Step 2，至少一個）→ 選要指派的班級（Step 3），三步驟一次完成；之後可以在資料庫查到「這個班級用了哪個教材組合、搭配哪個試卷範本」。只是額外記錄關聯，不影響出題與 Drive 上的檔案。</p>
-                <div id="cmc-groups-list">${groups.length ? groups.map(function (g, idx) { return renderGroupRowHtml(g, idx, comboClassIdsByGroupKey[groupKeyOf(g)] || []); }).join('') : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有任何「套用到教材」的紀錄，請先到上面「📎 套用到教材」建立至少一組。</div>'}</div>
-
-                <h4 style="margin:16px 0 6px 0; color:#15803D;">已建立的班級教材組合</h4>
-                <div id="cmc-combos-list">${combos.length ? combos.map(renderComboCardHtml).join('') : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">尚未指派任何班級教材組合。</div>'}</div>
-            </div>
-        `;
-
-        wrap.querySelectorAll('.cmc-group-assign-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                const idx = btn.getAttribute('data-idx');
-                const form = wrap.querySelector('.cmc-group-assign-form[data-idx="' + idx + '"]');
-                if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
-            });
-        });
-
-        wrap.querySelectorAll('.cmc-group-new-exam-tpl-btn').forEach(function (btn) {
-            btn.addEventListener('click', openNewExamTemplateShortcut);
-        });
-        wrap.querySelectorAll('.cmc-combo-new-exam-tpl-btn').forEach(function (btn) {
-            btn.addEventListener('click', openNewExamTemplateShortcut);
-        });
-
-        wrap.querySelectorAll('.cmc-group-confirm-btn').forEach(function (btn) {
-            btn.addEventListener('click', async function () {
-                const idx = parseInt(btn.getAttribute('data-idx'), 10);
-                const group = groups[idx];
-                const form = wrap.querySelector('.cmc-group-assign-form[data-idx="' + idx + '"]');
-                const msgEl = wrap.querySelector('.cmc-group-msg[data-idx="' + idx + '"]');
-                const labelEl = form.querySelector('.cmc-group-label');
-                const checkedExamTemplateIds = Array.from(form.querySelectorAll('.cmc-group-exam-tpl-cb:checked')).map(function (cb) { return cb.value; });
-                if (!checkedExamTemplateIds.length) {
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個試卷範本（Step 2）'; }
-                    return;
-                }
-                const checkedClassIds = Array.from(form.querySelectorAll('.cmc-group-class-cb:checked:not(:disabled)')).map(function (cb) { return cb.value; });
-                if (!checkedClassIds.length) {
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個尚未指派的班級（Step 3）'; }
-                    return;
-                }
-                btn.disabled = true;
-                if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 建立中…'; }
-                try {
-                    const userId = await getCurrentUserId();
-                    if (!userId) throw new Error('尚未登入');
-                    const comboId = await ensureCombination(userId, group, (labelEl && labelEl.value.trim()) || '');
-                    await setComboExamTemplates(comboId, checkedExamTemplateIds);
-                    await assignToClasses(comboId, checkedClassIds, userId);
-                    invalidateSuggestionCache();
-                    window.showFlash && window.showFlash('✅ 已建立組合並指派給 ' + checkedClassIds.length + ' 個班級');
-                    render();
-                } catch (err) {
-                    console.error('[FeatureClassMaterialCombinations] 建立/指派失敗', err);
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 失敗：' + (err.message || err); }
-                    btn.disabled = false;
-                }
-            });
-        });
-
-        wrap.querySelectorAll('.cmc-combo-edit-exam-tpl-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                const idx = btn.getAttribute('data-idx');
-                const form = wrap.querySelector('.cmc-combo-exam-tpl-edit-form[data-idx="' + idx + '"]');
-                if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
-            });
-        });
-
-        wrap.querySelectorAll('.cmc-combo-save-exam-tpl-btn').forEach(function (btn) {
-            btn.addEventListener('click', async function () {
-                const idx = parseInt(btn.getAttribute('data-idx'), 10);
-                const combo = combos[idx];
-                const form = wrap.querySelector('.cmc-combo-exam-tpl-edit-form[data-idx="' + idx + '"]');
-                const msgEl = wrap.querySelector('.cmc-combo-exam-tpl-msg[data-idx="' + idx + '"]');
-                const checkedExamTemplateIds = Array.from(form.querySelectorAll('.cmc-combo-' + idx + '-exam-tpl-cb:checked')).map(function (cb) { return cb.value; });
-                if (!checkedExamTemplateIds.length) {
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請至少勾選一個試卷範本'; }
-                    return;
-                }
-                btn.disabled = true;
-                if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 儲存中…'; }
-                try {
-                    await setComboExamTemplates(combo.id, checkedExamTemplateIds);
-                    invalidateSuggestionCache();
-                    window.showFlash && window.showFlash('✅ 已更新試卷範本搭配', 'success');
-                    render();
-                } catch (err) {
-                    console.error('[FeatureClassMaterialCombinations] 更新考卷範本搭配失敗', err);
-                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 失敗：' + (err.message || err); }
-                    btn.disabled = false;
-                }
-            });
-        });
-
+        wrap.innerHTML = renderClassReviewDeskHtml(combos);
         bindClassReviewDesk(wrap);
+    }
 
-        wrap.querySelectorAll('.cmc-assign-remove-btn').forEach(function (btn) {
-            btn.addEventListener('click', async function () {
-                const id = btn.getAttribute('data-id');
-                if (!window.confirm('確定要移除這個班級的教材組合指派嗎？（只移除這筆關聯，不會動到 Drive 上的檔案）')) return;
-                try {
-                    await removeAssignment(id);
-                    window.showFlash && window.showFlash('✅ 已移除指派', 'success');
-                    render();
-                } catch (err) {
-                    console.error('[FeatureClassMaterialCombinations] 移除指派失敗', err);
-                    window.showFlash && window.showFlash('❌ 移除失敗：' + (err.message || err), 'error');
+    function uniqueSortedNames(list) {
+        const out = [];
+        (list || []).forEach(function (n) {
+            const s = String(n || '').trim();
+            if (s && out.indexOf(s) === -1) out.push(s);
+        });
+        return out.sort(function (a, b) { return a.localeCompare(b, 'zh-Hant'); });
+    }
+
+    var MZ_NO_SOURCE_KEY = '（無來源檔）';
+
+    function normalizeSourceFileName(name) {
+        return String(name || '').trim();
+    }
+
+    function sourceFileKey(name) {
+        const s = normalizeSourceFileName(name);
+        return s ? s.toUpperCase() : MZ_NO_SOURCE_KEY;
+    }
+
+    function defaultMaterialZoneLabel(sourceFile, folderName, templateName) {
+        const src = normalizeSourceFileName(sourceFile).replace(/\.(xlsx|xls|csv)$/i, '');
+        if (src) return src;
+        return [String(folderName || '').trim(), String(templateName || '').trim()].filter(Boolean).join(' ')
+            || '未命名教材';
+    }
+
+    function parseSourceLabels(raw) {
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+        if (typeof raw === 'string' && raw.trim()) {
+            try {
+                const o = JSON.parse(raw);
+                if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+            } catch (_e) {}
+        }
+        return {};
+    }
+
+    function sourceLabelFromMap(map, sourceFile) {
+        const labels = parseSourceLabels(map);
+        const want = normalizeSourceFileName(sourceFile) || MZ_NO_SOURCE_KEY;
+        if (labels[want]) return String(labels[want]).trim();
+        const u = want.toUpperCase();
+        const keys = Object.keys(labels);
+        for (let i = 0; i < keys.length; i++) {
+            if (String(keys[i]).toUpperCase() === u) return String(labels[keys[i]] || '').trim();
+        }
+        return '';
+    }
+
+    function materialZoneRowKey(folderId, templateId, sourceFile) {
+        return [String(folderId || ''), String(templateId || ''), sourceFileKey(sourceFile)].join('|');
+    }
+
+    function sheetMatchKey(name) {
+        let s = String(name || '').trim().replace(/\.meta\.json$/i, '');
+        if (!s) return '';
+        const dot = s.indexOf('.');
+        if (dot > 0) s = s.slice(0, dot);
+        return s.toUpperCase();
+    }
+
+    /** 套餐已連上的活頁（含擷取範本欄位還沒對齊的那本，例如 GEPT-2 的 A）。 */
+    function comboLinkedSheetFiles(combo) {
+        const links = Array.isArray(combo && combo.material_combination_sheets) ? combo.material_combination_sheets : [];
+        const out = [];
+        const seen = {};
+        links.forEach(function (cs) {
+            const sh = cs.material_sheets || {};
+            const id = sh.id || cs.material_sheet_id;
+            const stem = String(sh.sheet_stem || '').trim();
+            if (!id || !stem || seen[String(id)]) return;
+            seen[String(id)] = true;
+            out.push({
+                id: id,
+                stem: stem,
+                meta: sh.meta_file_name || '',
+                script: sh.script_file_name || ''
+            });
+        });
+        return out;
+    }
+
+    let _catalogRowsCache = null;
+    let _usageSummaryCache = null;
+
+    async function loadCatalogRows(force) {
+        if (!force && _catalogRowsCache) return _catalogRowsCache;
+        const ids = allClasses().map(function (c) { return c && c.id; }).filter(Boolean);
+        if (!ids.length || !window.supabaseClient) {
+            _catalogRowsCache = [];
+            return _catalogRowsCache;
+        }
+        const { data, error } = await window.supabaseClient
+            .from('class_review_catalog')
+            .select('class_id, folder_name, sheet_stem, page_min, page_max, available_count')
+            .in('class_id', ids);
+        if (error) {
+            console.error('[FeatureClassMaterialCombinations] 讀統計表失敗', error);
+            _catalogRowsCache = [];
+            return _catalogRowsCache;
+        }
+        _catalogRowsCache = data || [];
+        return _catalogRowsCache;
+    }
+
+    function invalidateDisplayCaches() {
+        _usageSummaryCache = null;
+        _catalogRowsCache = null;
+        _materialZoneRowsCache = null;
+    }
+
+    /**
+     * 顯示用 meta：只取統計表 class_review_catalog 裡、且屬於這個套餐的活頁。
+     * 套餐有連但還沒進統計表的（例如 A）這裡不列，等更新目錄後才出現。
+     */
+    function statsMetaFilesForCombo(combo, catalogRows) {
+        const folderU = String((combo && combo.material_folders && combo.material_folders.folder_name) || '').trim().toUpperCase();
+        if (!folderU) return [];
+        const classIds = {};
+        (combo.class_material_combinations || []).forEach(function (a) {
+            if (a && a.class_id) classIds[String(a.class_id)] = true;
+        });
+        const comboByKey = {};
+        comboLinkedSheetFiles(combo).forEach(function (f) {
+            const k = sheetMatchKey(f.stem);
+            if (k) comboByKey[k] = f;
+        });
+        const seen = {};
+        const out = [];
+        (catalogRows || []).forEach(function (row) {
+            if (!classIds[String(row.class_id)]) return;
+            if (String(row.folder_name || '').trim().toUpperCase() !== folderU) return;
+            const stem = String(row.sheet_stem || '').trim();
+            const k = sheetMatchKey(stem);
+            if (!k || !comboByKey[k] || seen[k]) return;
+            seen[k] = true;
+            const file = comboByKey[k];
+            const meta = file.meta || (String(file.stem || stem).replace(/\.meta\.json$/i, '') + '.meta.json');
+            out.push({
+                stem: file.stem || stem,
+                meta: /\.meta\.json$/i.test(meta) ? meta : (meta + '.meta.json'),
+                script: file.script || ''
+            });
+        });
+        out.sort(function (a, b) {
+            return String(a.stem || '').localeCompare(String(b.stem || ''), 'zh-Hant');
+        });
+        return out;
+    }
+
+    async function listOverwriteTargets(folderName, templateId) {
+        const userId = await getCurrentUserId();
+        if (!userId || !folderName) return [];
+        const combos = await loadCombinations(userId);
+        const folderU = String(folderName || '').trim().toUpperCase();
+        const out = [];
+        const seen = {};
+        function addFrom(combo) {
+            comboLinkedSheetFiles(combo).forEach(function (f) {
+                const k = sheetMatchKey(f.stem) || String(f.id || '');
+                if (!k || seen[k]) return;
+                seen[k] = true;
+                const meta = f.meta || (String(f.stem || '').replace(/\.meta\.json$/i, '') + '.meta.json');
+                out.push({
+                    id: f.id,
+                    stem: f.stem,
+                    meta: /\.meta\.json$/i.test(meta) ? meta : (meta + '.meta.json'),
+                    script: f.script || String(f.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt'
+                });
+            });
+        }
+        (combos || []).forEach(function (c) {
+            const fn = (c.material_folders && c.material_folders.folder_name) || '';
+            if (String(fn).trim().toUpperCase() !== folderU) return;
+            if (templateId && String(c.extraction_template_id) !== String(templateId)) return;
+            addFrom(c);
+        });
+        (combos || []).forEach(function (c) {
+            const fn = (c.material_folders && c.material_folders.folder_name) || '';
+            if (String(fn).trim().toUpperCase() !== folderU) return;
+            addFrom(c);
+        });
+        return out;
+    }
+
+    /**
+     * 改活頁清單補上套餐已連、但擷取範本欄還沒對齊的活頁。
+     * 「幾個 meta」仍只看統計表，不拿這裡的數量去顯示。
+     */
+    function mergeLinkedComboSheetsIntoZoneRows(rows, comboByFolderTpl) {
+        const byCombo = {};
+        (rows || []).forEach(function (row) {
+            const ck = String(row.folderId || '') + '|' + String(row.templateId || '');
+            if (!byCombo[ck]) byCombo[ck] = [];
+            byCombo[ck].push(row);
+        });
+        Object.keys(byCombo).forEach(function (ck) {
+            const combo = comboByFolderTpl[ck];
+            if (!combo) return;
+            const group = byCombo[ck];
+            const seenIds = {};
+            group.forEach(function (row) {
+                (row.sheetDbIds || []).forEach(function (id) { seenIds[String(id)] = true; });
+            });
+            const missing = comboLinkedSheetFiles(combo).filter(function (f) {
+                return !seenIds[String(f.id)];
+            });
+            if (!missing.length) return;
+            const target = group.length === 1
+                ? group[0]
+                : (group.find(function (r) { return !r.sourceFile; }) || group[0]);
+            missing.forEach(function (f) {
+                target.sheetStems.push(f.stem);
+                if (target.sheetDbIds.indexOf(f.id) === -1) {
+                    target.sheetDbIds.push(f.id);
+                    target.sheetFiles.push(f);
                 }
             });
         });
     }
 
+    function buildMaterialZoneRows(_groups, combos, applyRows) {
+        const comboByFolderTpl = {};
+        (combos || []).forEach(function (c) {
+            comboByFolderTpl[String(c.material_folder_id) + '|' + String(c.extraction_template_id)] = c;
+        });
+        const byKey = {};
+        const order = [];
+        (applyRows || []).forEach(function (r) {
+            const folder = r.material_folders || {};
+            const folderId = folder.id || '';
+            const templateId = r.extraction_template_id || '';
+            const sourceFile = normalizeSourceFileName(r.source_file_name);
+            const key = materialZoneRowKey(folderId, templateId, sourceFile);
+            if (!byKey[key]) {
+                const combo = comboByFolderTpl[String(folderId) + '|' + String(templateId)] || null;
+                const assigns = combo ? (combo.class_material_combinations || []) : [];
+                const assignmentByClassId = {};
+                assigns.forEach(function (a) {
+                    if (a && a.class_id && a.id) assignmentByClassId[String(a.class_id)] = a.id;
+                });
+                byKey[key] = {
+                    key: key,
+                    comboId: combo ? combo.id : '',
+                    comboLabel: combo ? String(combo.label || '').trim() : '',
+                    folderId: folderId,
+                    templateId: templateId,
+                    folderName: folder.folder_name || '',
+                    rootKind: folder.root_kind === 'class' ? 'class' : 'teacher',
+                    classId: folder.class_id || '',
+                    templateName: (r.material_templates && r.material_templates.name) || templateNameById(templateId),
+                    sourceFile: sourceFile,
+                    sourceKey: sourceFile || MZ_NO_SOURCE_KEY,
+                    label: sourceLabelFromMap(combo && combo.source_labels, sourceFile),
+                    sheetStems: [],
+                    sheetDbIds: [],
+                    sheetFiles: [],
+                    examTemplateIds: combo
+                        ? (combo.material_combination_exam_templates || []).map(function (l) {
+                            return l && l.exam_template_id ? String(l.exam_template_id) : '';
+                        }).filter(Boolean)
+                        : [],
+                    classIds: assigns.map(function (a) { return a && a.class_id ? String(a.class_id) : ''; }).filter(Boolean),
+                    assignmentByClassId: assignmentByClassId,
+                    classNames: uniqueSortedNames(assigns.map(function (a) {
+                        return classNameById(a.class_id);
+                    }))
+                };
+                order.push(key);
+            }
+            const row = byKey[key];
+            if (sourceFile && !row.sourceFile) row.sourceFile = sourceFile;
+            if (r.sheet_stem) row.sheetStems.push(r.sheet_stem);
+            if (r.id && row.sheetDbIds.indexOf(r.id) === -1) {
+                row.sheetDbIds.push(r.id);
+                row.sheetFiles.push({
+                    id: r.id,
+                    stem: r.sheet_stem || '',
+                    meta: r.meta_file_name || '',
+                    script: r.script_file_name || ''
+                });
+            }
+        });
+        const rows = order.map(function (k) { return byKey[k]; });
+        mergeLinkedComboSheetsIntoZoneRows(rows, comboByFolderTpl);
+        return rows.map(function (row) {
+            row.sheetStems = collapseRelatedSheetStems(row.sheetStems);
+            row.sheetFiles.sort(function (a, b) {
+                return String(a.stem || '').localeCompare(String(b.stem || ''), 'zh-Hant');
+            });
+            const combo = comboByFolderTpl[String(row.folderId || '') + '|' + String(row.templateId || '')] || null;
+            const stats = combo ? statsMetaFilesForCombo(combo, _catalogRowsCache || []) : [];
+            row.statsMetaFiles = stats.map(function (f) { return f.meta; });
+            row.metaCount = stats.length;
+            row.defaultLabel = defaultMaterialZoneLabel(row.sourceFile, row.folderName, row.templateName);
+            return row;
+        }).sort(function (a, b) {
+            const fa = String(a.folderName || '').localeCompare(String(b.folderName || ''), 'zh-Hant');
+            if (fa) return fa;
+            const la = a.label || a.defaultLabel;
+            const lb = b.label || b.defaultLabel;
+            return String(la).localeCompare(String(lb), 'zh-Hant');
+        });
+    }
+
+    async function teacherDriveFolderNames() {
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
+            try { await window.FeatureTimeline.ensureMetaCatalog('', 'teacher', { force: false }); } catch (_e) {}
+        }
+        if (window.FeatureExamJob && typeof window.FeatureExamJob.getUniqueFolderNames === 'function') {
+            return window.FeatureExamJob.getUniqueFolderNames('', 'teacher') || [];
+        }
+        return [];
+    }
+
+    /** Drive 有、教材區還沒套用的資料夾仍要列出，不能因為沒套用就消失。 */
+    function appendUnusedDriveFolderRows(rows, driveFolders) {
+        const list = rows || [];
+        const have = {};
+        list.forEach(function (r) {
+            const u = String(r.folderName || '').trim().toUpperCase();
+            if (u) have[u] = true;
+        });
+        (driveFolders || []).forEach(function (name) {
+            const n = String(name || '').trim();
+            const u = n.toUpperCase();
+            if (!n || have[u]) return;
+            have[u] = true;
+            list.push({
+                key: 'unused|' + u,
+                unused: true,
+                comboId: '',
+                comboLabel: '',
+                folderId: '',
+                templateId: '',
+                folderName: n,
+                templateName: '',
+                sourceFile: '',
+                sourceKey: MZ_NO_SOURCE_KEY,
+                label: '',
+                sheetStems: [],
+                sheetDbIds: [],
+                sheetFiles: [],
+                examTemplateIds: [],
+                classIds: [],
+                assignmentByClassId: {},
+                classNames: [],
+                statsMetaFiles: [],
+                metaCount: 0,
+                defaultLabel: n
+            });
+        });
+        list.sort(function (a, b) {
+            const fa = String(a.folderName || '').localeCompare(String(b.folderName || ''), 'zh-Hant');
+            if (fa) return fa;
+            if (!!a.unused !== !!b.unused) return a.unused ? 1 : -1;
+            const la = a.label || a.defaultLabel;
+            const lb = b.label || b.defaultLabel;
+            return String(la).localeCompare(String(lb), 'zh-Hant');
+        });
+        return list;
+    }
+
+    async function listMaterialZoneRows() {
+        const userId = await getCurrentUserId();
+        if (!userId) return [];
+        if (_materialZoneRowsCache) return _materialZoneRowsCache;
+        const [groups, combos, applyRows, _catalog, driveFolders] = await Promise.all([
+            loadGroups(userId),
+            loadCombinations(userId),
+            loadExtractionApplyRecords(userId),
+            loadCatalogRows(false),
+            teacherDriveFolderNames()
+        ]);
+        _materialZoneRowsCache = appendUnusedDriveFolderRows(
+            buildMaterialZoneRows(groups, combos, applyRows),
+            driveFolders
+        );
+        return _materialZoneRowsCache;
+    }
+
+    async function updateMaterialZoneLabel(row, label) {
+        const userId = await getCurrentUserId();
+        if (!userId) throw new Error('尚未登入');
+        if (!row || !row.folderId || !row.templateId) throw new Error('找不到這本教材，無法改名');
+        const name = String(label || '').trim();
+        let comboId = row.comboId;
+        if (!comboId) {
+            comboId = await ensureCombination(userId, {
+                material_folder_id: row.folderId,
+                extraction_template_id: row.templateId,
+                sheet_db_ids: row.sheetDbIds || []
+            }, name || null);
+        }
+        const { error } = await window.supabaseClient
+            .from('material_combinations')
+            .update({
+                label: name || null,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', comboId);
+        if (error) throw error;
+        row.comboId = comboId;
+        row.comboLabel = name || '';
+        row.label = name || '';
+        invalidateDisplayCaches();
+        invalidateSuggestionCache();
+        return comboId;
+    }
+
+    async function updateMaterialZoneSourceFile(row, sourceFile) {
+        const next = normalizeSourceFileName(sourceFile);
+        const prev = normalizeSourceFileName(row && row.sourceFile);
+        const ids = (row && row.sheetDbIds) || [];
+        if (!ids.length) return;
+        const { error } = await window.supabaseClient
+            .from('material_sheets')
+            .update({
+                source_file_name: next || null,
+                updated_at: new Date().toISOString()
+            })
+            .in('id', ids);
+        if (error) throw error;
+        if (prev && next && prev !== next
+            && row.folderId
+            && window.MaterialNameMap && typeof window.MaterialNameMap.recordAlias === 'function') {
+            await window.MaterialNameMap.recordAlias({
+                kind: 'source_file',
+                alias: prev,
+                currentLabel: next,
+                materialFolderId: row.folderId
+            });
+        }
+        row.sourceFile = next;
+        row.sourceKey = next || MZ_NO_SOURCE_KEY;
+    }
+
+    async function syncMaterialZoneClassAssignments(comboId, row, wantedClassIds, userId) {
+        const wanted = {};
+        (wantedClassIds || []).forEach(function (id) {
+            const s = String(id || '').trim();
+            if (s) wanted[s] = true;
+        });
+        const current = row.assignmentByClassId || {};
+        const toRemove = Object.keys(current).filter(function (cid) { return !wanted[cid]; });
+        const toAdd = Object.keys(wanted).filter(function (cid) { return !current[cid]; });
+        for (let i = 0; i < toRemove.length; i++) {
+            await removeAssignment(current[toRemove[i]]);
+        }
+        if (toAdd.length) await assignToClasses(comboId, toAdd, userId);
+    }
+
+    async function saveMaterialZoneCard(row, cardEl) {
+        const userId = await getCurrentUserId();
+        if (!userId) throw new Error('尚未登入');
+        if (!row || !row.folderId || !row.templateId) throw new Error('找不到這本教材');
+        const nameEl = cardEl.querySelector('.mz-label');
+        const typed = String(nameEl && nameEl.value || '').trim();
+        const examIds = Array.prototype.map.call(cardEl.querySelectorAll('.mz-exam-tpl-cb:checked'), function (cb) {
+            return cb.value;
+        }).filter(Boolean);
+        const classIds = Array.prototype.map.call(cardEl.querySelectorAll('.mz-class-cb:checked'), function (cb) {
+            return cb.value;
+        }).filter(Boolean);
+        if (!examIds.length) {
+            throw new Error('請至少勾選一個試卷範本。沒有官方配對就不能出考卷。');
+        }
+        const comboId = await updateMaterialZoneLabel(row, typed);
+        const sourceEl = cardEl.querySelector('.mz-source-file');
+        await updateMaterialZoneSourceFile(row, sourceEl && sourceEl.value);
+        await setComboExamTemplates(comboId, examIds);
+        await syncMaterialZoneClassAssignments(comboId, row, classIds, userId);
+        invalidateSuggestionCache();
+    }
+
+    function renderMaterialZoneCardHtml(row) {
+        if (row && row.unused) {
+            return (
+                '<div class="mz-card mz-unused" data-key="' + esc(row.key) + '" style="border:1px dashed #CBD5E1; border-radius:10px; padding:14px; margin-bottom:10px; background:#F8FAFC;">'
+                + '<div style="font-size:1rem; font-weight:900; color:#64748B;">📁 ' + esc(row.folderName || '') + '</div>'
+                + '<div style="font-size:0.8rem; color:#64748B; font-weight:700; margin-top:6px; line-height:1.7;">'
+                + '<div>教材　資料夾　' + esc(row.folderName || '') + '（雲端有這個資料夾）</div>'
+                + '<div>教材　檔案　尚未套用擷取範本</div>'
+                + '</div>'
+                + '<div style="margin-top:8px; font-size:0.76rem; color:#94A3B8; font-weight:700;">還沒被套用，所以沒有套餐名稱／試卷配對／採用班級。要使用請到上面「套用目前的範本」選這個資料夾。</div>'
+                + '</div>'
+            );
+        }
+        const displayName = row.comboLabel || row.label || row.defaultLabel;
+        const metaText = !(row.classIds && row.classIds.length)
+            ? '統計表尚無（尚未指派班級）'
+            : (row.metaCount ? (row.metaCount + ' 個 meta') : '統計表尚無');
+        const folderLine = (row.folderName || '（未知名資料夾）')
+            + '（擷取範本 ' + (row.templateName || '尚未套用') + '）';
+        const examHtml = examTemplateCheckboxesHtml('mz', row.examTemplateIds || []);
+        const classHtml = classEditorCheckboxesHtml(row.classIds || []);
+        return (
+            '<div class="mz-card" data-key="' + esc(row.key) + '" style="border:1px solid #99F6E4; border-radius:10px; padding:14px; margin-bottom:10px; background:#F0FDFA;">'
+            + '<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">套餐名稱（出作業下拉會顯示這個）</label>'
+            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="套餐名稱" style="font-size:1rem; font-weight:900; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px;">'
+            + '<div style="font-size:0.8rem; color:#0F766E; font-weight:700; line-height:1.75; margin-top:8px;">'
+            + '<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">來源　檔案（Excel 檔名，可手填）</label>'
+            + '<input type="text" class="mz-source-file" value="' + esc(row.sourceFile || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名" style="font-size:0.82rem; font-weight:700; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px; margin-bottom:6px;">'
+            + '<div>教材　資料夾　' + esc(folderLine) + '</div>'
+            + '<div>教材　檔案　' + esc(metaText) + '</div>'
+            + '</div>'
+            + '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #99F6E4;">'
+            + '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">'
+            + '<div style="font-size:0.76rem; font-weight:800; color:#6D28D9;">試卷範本（至少勾一個，這是官方配對）</div>'
+            + '<button type="button" class="mz-new-exam-tpl btn" style="padding:2px 8px; font-size:0.72rem; background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px; cursor:pointer;">🧾 新增試卷範本</button>'
+            + '</div>'
+            + '<div class="mz-exam-box">' + examHtml + '</div>'
+            + '</div>'
+            + '<div style="margin-top:10px;">'
+            + '<div style="font-size:0.76rem; font-weight:800; color:#15803D; margin-bottom:4px;">採用班級</div>'
+            + '<div class="mz-class-box">' + classHtml + '</div>'
+            + '</div>'
+            + '<div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">'
+            + '<button type="button" class="mz-save btn btn-primary" data-key="' + esc(row.key) + '" style="padding:6px 14px; border-radius:6px; font-weight:800; font-size:0.82rem; cursor:pointer;">儲存設定</button>'
+            + '<button type="button" class="mz-rename-files btn" data-key="' + esc(row.key) + '" style="padding:6px 10px; border-radius:6px; border:1px solid #5EEAD4; background:#CCFBF1; color:#115E59; font-weight:800; font-size:0.78rem; cursor:pointer;">改活頁／檔名</button>'
+            + '<span class="mz-msg" style="font-size:0.76rem; font-weight:700;"></span>'
+            + '</div>'
+            + '</div>'
+        );
+    }
+
+    function bindMaterialZoneRename(wrap, rows) {
+        wrap.querySelectorAll('.mz-label').forEach(function (input) {
+            input.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    const card = input.closest('.mz-card');
+                    const saveBtn = card && card.querySelector('.mz-save');
+                    if (saveBtn) saveBtn.click();
+                }
+            });
+        });
+        wrap.querySelectorAll('.mz-save').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                const card = btn.closest('.mz-card');
+                const key = btn.getAttribute('data-key');
+                const row = (rows || []).find(function (r) { return r.key === key; });
+                const msgEl = card && card.querySelector('.mz-msg');
+                if (!row || !card) return;
+                btn.disabled = true;
+                if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 儲存中…'; }
+                try {
+                    await saveMaterialZoneCard(row, card);
+                    window.showFlash && window.showFlash('✅ 已儲存教材設定', 'success');
+                    render();
+                } catch (err) {
+                    console.error('[FeatureClassMaterialCombinations] 教材區儲存失敗', err);
+                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ ' + (err.message || err); }
+                    window.showFlash && window.showFlash('❌ 儲存失敗：' + (err.message || err), 'error');
+                    btn.disabled = false;
+                }
+            });
+        });
+        wrap.querySelectorAll('.mz-rename-files').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const key = btn.getAttribute('data-key');
+                const row = (rows || []).find(function (r) { return r.key === key; });
+                if (row) openMaterialZoneFileRename(row);
+            });
+        });
+        wrap.querySelectorAll('.mz-new-exam-tpl').forEach(function (btn) {
+            btn.addEventListener('click', openNewExamTemplateShortcut);
+        });
+    }
+
+    function sheetKeyFromStem(stem) {
+        const s = String(stem || '').trim();
+        if (!s) return '';
+        return s.split('.')[0] || s;
+    }
+
+    function inferSheetFormula(sample, sheetKey) {
+        const raw = String(sample || '').trim();
+        const lead = String(sheetKey || '').trim();
+        if (!raw) return '';
+        if (!lead) return raw;
+        if (raw.length >= lead.length && raw.slice(0, lead.length).toUpperCase() === lead.toUpperCase()) {
+            return '{活頁}' + raw.slice(lead.length);
+        }
+        return raw;
+    }
+
+    function applyFileNameFormula(pattern, sheetKey, stem) {
+        const key = sheetKey || '';
+        return String(pattern || '')
+            .replace(/\{活頁\}/g, key)
+            .replace(/\{sheet\}/gi, key)
+            .replace(/\{letter\}/gi, key)
+            .replace(/\{stem\}/gi, stem || '');
+    }
+
+    function openMaterialZoneFileRename(row) {
+        if (!window.ModalOverlay) {
+            window.showFlash && window.showFlash('❌ 無法開啟改名視窗', 'error');
+            return;
+        }
+        const files = (row.sheetFiles || []).slice();
+        if (!files.length) {
+            window.showFlash && window.showFlash('這本教材還沒有活頁紀錄，無法改檔名', 'error');
+            return;
+        }
+        const first = files[0] || {};
+        const key0 = sheetKeyFromStem(first.stem);
+        const stemFormula0 = '{活頁}';
+        const metaFormula0 = inferSheetFormula(first.meta, key0);
+        const scriptFormula0 = inferSheetFormula(first.script, key0);
+        const modalId = 'mz-rename-files-modal';
+        const rowsHtml = files.map(function (f, idx) {
+            const sheetKey = sheetKeyFromStem(f.stem);
+            return (
+                '<div data-sheet-id="' + esc(f.id) + '" data-sheet-key="' + esc(sheetKey) + '" style="display:grid; grid-template-columns:72px 1fr 1.4fr 1.4fr; gap:6px; align-items:center; margin-bottom:6px;">'
+                + '<div style="font-size:0.78rem; font-weight:800; color:#0F766E;">' + esc(sheetKey || String(idx + 1)) + '</div>'
+                + '<input class="mz-rf-stem" value="' + esc(f.stem) + '" title="活頁名" style="width:100%; padding:5px 6px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box; font-size:0.78rem;">'
+                + '<input class="mz-rf-meta" value="' + esc(f.meta) + '" title="meta 檔名" style="width:100%; padding:5px 6px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box; font-size:0.78rem;">'
+                + '<input class="mz-rf-script" value="' + esc(f.script) + '" title="文稿檔名" style="width:100%; padding:5px 6px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box; font-size:0.78rem;">'
+                + '</div>'
+            );
+        }).join('');
+        window.ModalOverlay.open({
+            id: modalId,
+            tier: 'B',
+            unsavedMessage: '活頁／檔名已改但尚未儲存，確定要關閉嗎？',
+            isDirty: function () {
+                const el = document.getElementById(modalId);
+                if (!el || el.getAttribute('data-mo-busy') === '1') return false;
+                const blocks = el.querySelectorAll('[data-sheet-id]');
+                for (let i = 0; i < blocks.length; i++) {
+                    const f = files[i];
+                    if (!f) continue;
+                    const stem = (blocks[i].querySelector('.mz-rf-stem') || {}).value || '';
+                    const meta = (blocks[i].querySelector('.mz-rf-meta') || {}).value || '';
+                    const script = (blocks[i].querySelector('.mz-rf-script') || {}).value || '';
+                    if (String(stem).trim() !== String(f.stem || '').trim()
+                        || String(meta).trim() !== String(f.meta || '').trim()
+                        || String(script).trim() !== String(f.script || '').trim()) return true;
+                }
+                return false;
+            },
+            contentHtml: (
+                '<div style="background:white; border-radius:14px; width:min(720px,96vw); max-height:90vh; overflow:auto; padding:20px; box-shadow:0 12px 40px rgba(15,23,42,0.18);">'
+                + '<h3 style="margin:0 0 6px 0; color:#0F766E;">改活頁／檔名</h3>'
+                + '<p style="margin:0 0 10px 0; color:#64748B; font-size:0.8rem; line-height:1.6;">只在這裡改一次。公式用 <code>{活頁}</code> 帶入這一本的活頁名（A、vBK-2 都可以），不必加範本後綴。儲存會同時改系統現用名與雲端檔名；舊名會記住。</p>'
+                + '<div style="background:#F0FDFA; border:1px dashed #99F6E4; border-radius:8px; padding:10px; margin-bottom:12px;">'
+                + '<div style="font-size:0.76rem; font-weight:800; color:#0F766E; margin-bottom:6px;">公式（改一處，套用到全部活頁）</div>'
+                + '<label style="display:block; font-size:0.74rem; color:#334155; font-weight:700; margin-bottom:4px;">活頁名'
+                + '<input class="mz-rf-formula-stem" value="' + esc(stemFormula0) + '" style="display:block; width:100%; margin-top:2px; padding:6px 8px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box;"></label>'
+                + '<label style="display:block; font-size:0.74rem; color:#334155; font-weight:700; margin-bottom:4px;">meta 檔名'
+                + '<input class="mz-rf-formula-meta" value="' + esc(metaFormula0) + '" style="display:block; width:100%; margin-top:2px; padding:6px 8px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box;"></label>'
+                + '<label style="display:block; font-size:0.74rem; color:#334155; font-weight:700; margin-bottom:6px;">文稿檔名'
+                + '<input class="mz-rf-formula-script" value="' + esc(scriptFormula0) + '" style="display:block; width:100%; margin-top:2px; padding:6px 8px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box;"></label>'
+                + '<button type="button" class="mz-rf-apply-formula btn" style="padding:5px 10px; border-radius:6px; border:1px solid #5EEAD4; background:#CCFBF1; color:#115E59; font-weight:800; font-size:0.78rem; cursor:pointer;">套用公式到全部</button>'
+                + '</div>'
+                + '<div style="display:grid; grid-template-columns:72px 1fr 1.4fr 1.4fr; gap:6px; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:4px;">'
+                + '<div>活頁</div><div>現用名</div><div>meta</div><div>文稿</div></div>'
+                + rowsHtml
+                + '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">'
+                + '<button type="button" class="mz-rf-cancel" style="padding:6px 12px; border-radius:8px; border:1px solid #CBD5E1; background:white; font-weight:800; cursor:pointer;">取消</button>'
+                + '<button type="button" class="mz-rf-save" style="padding:6px 12px; border-radius:8px; border:0; background:#0F766E; color:white; font-weight:800; cursor:pointer;">儲存（系統＋雲端）</button>'
+                + '</div>'
+                + '</div>'
+            ),
+            onMount: function (el) {
+                const cancelBtn = el.querySelector('.mz-rf-cancel');
+                const saveBtn = el.querySelector('.mz-rf-save');
+                const applyBtn = el.querySelector('.mz-rf-apply-formula');
+                function applyFormulaToRows() {
+                    const stemPat = String((el.querySelector('.mz-rf-formula-stem') || {}).value || '').trim();
+                    const metaPat = String((el.querySelector('.mz-rf-formula-meta') || {}).value || '').trim();
+                    const scriptPat = String((el.querySelector('.mz-rf-formula-script') || {}).value || '').trim();
+                    const blocks = el.querySelectorAll('[data-sheet-id]');
+                    blocks.forEach(function (block, i) {
+                        const f = files[i] || {};
+                        const sheetKey = block.getAttribute('data-sheet-key') || sheetKeyFromStem(f.stem);
+                        if (stemPat) block.querySelector('.mz-rf-stem').value = applyFileNameFormula(stemPat, sheetKey, f.stem);
+                        if (metaPat) block.querySelector('.mz-rf-meta').value = applyFileNameFormula(metaPat, sheetKey, f.stem);
+                        if (scriptPat) block.querySelector('.mz-rf-script').value = applyFileNameFormula(scriptPat, sheetKey, f.stem);
+                    });
+                }
+                if (applyBtn) applyBtn.addEventListener('click', applyFormulaToRows);
+                if (cancelBtn) {
+                    cancelBtn.addEventListener('click', function () {
+                        window.ModalOverlay.requestClose(modalId);
+                    });
+                }
+                if (saveBtn) {
+                    saveBtn.addEventListener('click', async function () {
+                        if (!window.MaterialNameMap || typeof window.MaterialNameMap.applySheetCurrentNames !== 'function') {
+                            window.showFlash && window.showFlash('❌ 對照中心尚未載入', 'error');
+                            return;
+                        }
+                        const blocks = el.querySelectorAll('[data-sheet-id]');
+                        saveBtn.disabled = true;
+                        if (window.ModalOverlay && typeof window.ModalOverlay.setBusy === 'function') {
+                            window.ModalOverlay.setBusy(modalId, true);
+                        }
+                        try {
+                            const driveItems = [];
+                            for (let i = 0; i < blocks.length; i++) {
+                                const f = files[i];
+                                if (!f) continue;
+                                const stem = String((blocks[i].querySelector('.mz-rf-stem') || {}).value || '').trim();
+                                const meta = String((blocks[i].querySelector('.mz-rf-meta') || {}).value || '').trim();
+                                const script = String((blocks[i].querySelector('.mz-rf-script') || {}).value || '').trim();
+                                if (stem === String(f.stem || '').trim()
+                                    && meta === String(f.meta || '').trim()
+                                    && script === String(f.script || '').trim()) continue;
+                                await window.MaterialNameMap.applySheetCurrentNames({
+                                    folderId: row.folderId,
+                                    sheetId: f.id,
+                                    sheetStem: stem,
+                                    metaFileName: meta,
+                                    scriptFileName: script
+                                });
+                                if (f.meta && meta && f.meta !== meta) driveItems.push({ oldName: f.meta, newName: meta });
+                                if (f.script && script && f.script !== script) driveItems.push({ oldName: f.script, newName: script });
+                                f.stem = stem;
+                                f.meta = meta;
+                                f.script = script;
+                            }
+                            let driveNote = '';
+                            if (driveItems.length
+                                && window.GasService && typeof window.GasService.renameMaterialFiles === 'function'
+                                && window.FeatureTimeline && typeof window.FeatureTimeline.resolveMaterialsRootFolderId === 'function') {
+                                try {
+                                    const rootId = await window.FeatureTimeline.resolveMaterialsRootFolderId(
+                                        row.classId || '',
+                                        row.rootKind || 'teacher'
+                                    );
+                                    const driveResult = await window.GasService.renameMaterialFiles(
+                                        rootId,
+                                        row.folderName,
+                                        driveItems,
+                                        row.rootKind || 'teacher'
+                                    );
+                                    const missing = (driveResult && driveResult.missing) || [];
+                                    const errs = (driveResult && driveResult.errors) || [];
+                                    if (missing.length || errs.length) {
+                                        driveNote = '雲端有 ' + (missing.length + errs.length) + ' 個檔沒改到（系統已記住新名，讀檔仍可靠舊名）。';
+                                    } else {
+                                        driveNote = '雲端檔名已一併改好。';
+                                    }
+                                    if (typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
+                                        await window.FeatureTimeline.ensureMetaCatalog(row.classId || '', row.rootKind || 'teacher', { force: true });
+                                    }
+                                } catch (driveErr) {
+                                    driveNote = '系統已改名；雲端改檔失敗（可能還沒重新部署 GAS）：' + ((driveErr && driveErr.message) || driveErr);
+                                }
+                            }
+                            _materialZoneRowsCache = null;
+                            window.showFlash && window.showFlash('✅ 已更新活頁／檔名。' + (driveNote ? ' ' + driveNote : ' 舊名仍對得上。'), 'success');
+                            window.ModalOverlay.close(modalId);
+                            render();
+                        } catch (err) {
+                            console.error('[FeatureClassMaterialCombinations] 活頁改名失敗', err);
+                            window.showFlash && window.showFlash('❌ 改名失敗：' + (err.message || err), 'error');
+                            if (window.ModalOverlay && typeof window.ModalOverlay.setBusy === 'function') {
+                                window.ModalOverlay.setBusy(modalId, false);
+                            }
+                        } finally {
+                            saveBtn.disabled = false;
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    function paintMaterialZone(wrap, rows) {
+        const list = rows && rows.length
+            ? rows.map(renderMaterialZoneCardHtml).join('')
+            : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有教材實例。請先到上面「套用／設計範本」把擷取範本套到教材資料夾。</div>';
+        wrap.innerHTML = (
+            '<div style="background:white; padding:20px; border-radius:12px; border:2px solid #99F6E4; margin-bottom:16px;">'
+            + '<h3 style="margin:0 0 4px 0; color:#0F766E;">📁 教材區</h3>'
+            + '<p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">套餐只在這裡編輯並存進資料庫：名稱、試卷範本、採用班級。來源檔與資料夾是套用紀錄，不能在這裡改。文稿以這裡為收集基準；班級是採用者，不是文稿主檔。</p>'
+            + list
+            + '</div>'
+        );
+        bindMaterialZoneRename(wrap, rows || []);
+    }
+
+    function renderMaterialZone() {
+        const wrap = document.getElementById('material-zone-container');
+        if (!wrap) return;
+        wrap.innerHTML = '<div style="padding:20px; text-align:center; color:#0F766E; font-weight:800;">⏳ 載入教材區…</div>';
+        listMaterialZoneRows().then(function (rows) {
+            paintMaterialZone(wrap, rows);
+        }).catch(function (err) {
+            console.error('[FeatureClassMaterialCombinations] 教材區載入失敗', err);
+            wrap.innerHTML = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 教材區載入失敗：' + esc(err.message || err) + '</div>';
+        });
+    }
+
     function render() {
         const wrap = document.getElementById('class-material-combinations-container');
-        if (!wrap) return;
-        wrap.innerHTML = '<div style="padding:20px; text-align:center; color:var(--primary); font-weight:800;">⏳ 載入班級教材組合…</div>';
+        const mzWrap = document.getElementById('material-zone-container');
+        if (!wrap && !mzWrap) return;
+        if (wrap) wrap.innerHTML = '<div style="padding:20px; text-align:center; color:var(--primary); font-weight:800;">⏳ 載入班級教材組合…</div>';
+        if (mzWrap) mzWrap.innerHTML = '<div style="padding:20px; text-align:center; color:#0F766E; font-weight:800;">⏳ 載入教材區…</div>';
         (async function () {
             const userId = await getCurrentUserId();
-            if (!userId) { wrap.innerHTML = ''; return; }
-            const examTemplatesPromise = (window.FeatureExamJob && typeof window.FeatureExamJob.fetchExamTemplates === 'function')
-                ? window.FeatureExamJob.fetchExamTemplates(false)
+            if (!userId) {
+                if (wrap) wrap.innerHTML = '';
+                if (mzWrap) mzWrap.innerHTML = '';
+                return;
+            }
+            const examTemplatesPromise = (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.fetchTemplates === 'function')
+                ? window.FeatureTemplateLibrary.fetchTemplates(false)
                 : Promise.resolve([]);
-            const [groups, combos] = await Promise.all([loadGroups(userId), loadCombinations(userId), examTemplatesPromise]);
-            paint(wrap, groups, combos);
+            const [groups, combos, applyRows, _examTpl, _catalog, driveFolders] = await Promise.all([
+                loadGroups(userId),
+                loadCombinations(userId),
+                loadExtractionApplyRecords(userId),
+                examTemplatesPromise,
+                loadCatalogRows(false),
+                teacherDriveFolderNames()
+            ]);
+            _materialZoneRowsCache = appendUnusedDriveFolderRows(
+                buildMaterialZoneRows(groups, combos, applyRows),
+                driveFolders
+            );
+            if (mzWrap) paintMaterialZone(mzWrap, _materialZoneRowsCache);
+            if (wrap) paint(wrap, groups, combos);
         })().catch(function (err) {
             console.error('[FeatureClassMaterialCombinations] 載入失敗', err);
-            wrap.innerHTML = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 載入失敗：' + esc(err.message || err) + '</div>';
+            const msg = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 載入失敗：' + esc(err.message || err) + '</div>';
+            if (wrap) wrap.innerHTML = msg;
+            if (mzWrap) mzWrap.innerHTML = msg;
         });
     }
 
@@ -1046,8 +1929,8 @@ window.FeatureClassMaterialCombinations = (function () {
 
     /**
      * 套用範本並產出 meta/script 後寫入組合＋（可選）考卷角色＋班級指派。
-     * 找不到對應 material_sheets 時仍會建立／更新 material_combinations（活頁連結可為空），
-     * 至少把「哪個原始檔／哪個擷取範本／有沒有當試卷範本／指派給哪些班」記下來。
+     * 套用 Excel／Drive 後只確保套餐列存在（活頁連結）。
+     * 套餐名稱、試卷範本、採用班級只在教材區編輯，這裡不准另寫一筆。
      */
     async function recordApplyFromExcel(opts) {
         const o = opts || {};
@@ -1078,31 +1961,24 @@ window.FeatureClassMaterialCombinations = (function () {
                 sheet_db_ids: []
             };
         }
-        const comboId = await ensureCombination(userId, group, null);
-        if (o.includeExam) {
-            await setComboExamTemplates(comboId, [templateId]);
-        }
-        const classIds = Array.isArray(o.classIds) ? o.classIds.filter(Boolean) : [];
-        if (classIds.length) await assignToClasses(comboId, classIds, userId);
-        _suggestionCache = null;
-        _usageSummaryCache = null;
+        await ensureCombination(userId, group, null);
+        invalidateSuggestionCache();
+        invalidateDisplayCaches();
     }
 
     /**
      * 每個範本目前真正套到哪些教材資料夾、指派給哪些班級、有沒有當試卷搭配。
-     * 給擷取／試卷清單與「套用目前的範本」下拉用，避免只看到名字、看不出實際使用狀況。
+     * 擷取側「幾個 meta」只讀統計表 class_review_catalog，不再數套用列或 Drive 清單。
      */
-    let _usageSummaryCache = null;
     async function summarizeUsageByTemplate() {
         const userId = await getCurrentUserId();
         if (!userId) {
             _usageSummaryCache = {};
             return _usageSummaryCache;
         }
-        const [groups, combos, applyRows] = await Promise.all([
-            loadGroups(userId),
+        const [combos, catalogRows] = await Promise.all([
             loadCombinations(userId),
-            loadExtractionApplyRecords(userId)
+            loadCatalogRows(false)
         ]);
         const out = {};
         function emptySide() { return { folders: [], byFolder: {}, records: [] }; }
@@ -1134,67 +2010,35 @@ window.FeatureClassMaterialCombinations = (function () {
             if (side.byFolder[fn].classNames.indexOf(n) === -1) side.byFolder[fn].classNames.push(n);
             if (rec.classNames.indexOf(n) === -1) rec.classNames.push(n);
         }
-        const groupByKey = {};
-        const sheetsByFolder = {};
-        (groups || []).forEach(function (g) {
-            groupByKey[g.material_folder_id + '|' + g.extraction_template_id] = g;
-            const fn = String(g.folder_name || '').trim();
-            if (!fn) return;
-            if (!sheetsByFolder[fn]) sheetsByFolder[fn] = [];
-            (g.sheet_ids || []).forEach(function (s) {
-                const stem = String(s || '').trim();
-                if (stem && sheetsByFolder[fn].indexOf(stem) === -1) sheetsByFolder[fn].push(stem);
-            });
-            sheetsByFolder[fn] = collapseRelatedSheetStems(sheetsByFolder[fn]);
-        });
-        function examSheetsForFolder(folderName, preferred) {
-            const picked = (preferred && preferred.length)
-                ? preferred
-                : ((sheetsByFolder[String(folderName || '').trim()] && sheetsByFolder[String(folderName || '').trim()].length)
-                    ? sheetsByFolder[String(folderName || '').trim()]
-                    : []);
-            return collapseRelatedSheetStems(picked);
-        }
-        (applyRows || []).forEach(function (row) {
-            const rec = ensure(row.extraction_template_id);
-            if (!rec) return;
-            const folderName = (row.material_folders && row.material_folders.folder_name) || '';
-            const sourceFile = String(row.source_file_name || '').trim();
-            const stem = String(row.sheet_stem || '').trim().replace(/\.meta\.json$/i, '');
-            const tplName = (row.material_templates && row.material_templates.name)
-                || templateNameById(row.extraction_template_id)
-                || '';
-            const metaName = toMetaFileName(stem, tplName);
-            if (folderName && rec.folders.indexOf(folderName) === -1) rec.folders.push(folderName);
-            if (!folderName && !sourceFile && !stem) return;
-            const key = (sourceFile || folderName || stem).toUpperCase() + '|' + String(folderName).trim().toUpperCase();
-            if (!rec.extraction.byKey) rec.extraction.byKey = {};
-            if (!rec.extraction.byKey[key]) {
-                const item = {
-                    sourceFile: sourceFile,
-                    sheets: [],
-                    metaFiles: [],
-                    targetFolder: folderName
-                };
-                rec.extraction.byKey[key] = item;
-                rec.extraction.records.push(item);
-            }
-            const item = rec.extraction.byKey[key];
-            const sheetLabel = sheetLabelFromStem(stem, tplName);
-            if (sheetLabel && item.sheets.indexOf(sheetLabel) === -1) item.sheets.push(sheetLabel);
-            if (metaName && item.metaFiles.indexOf(metaName) === -1) item.metaFiles.push(metaName);
-            item.metaFiles = collapseRelatedSheetStems(item.metaFiles).map(function (s) {
-                return /\.meta\.json$/i.test(s) ? s : (s + '.meta.json');
-            });
-            if (folderName && rec.extraction.folders.indexOf(folderName) === -1) rec.extraction.folders.push(folderName);
-        });
         (combos || []).forEach(function (c) {
             const rec = ensure(c.extraction_template_id);
             const folderName = c.material_folders && c.material_folders.folder_name;
             const assigns = c.class_material_combinations || [];
-            const g = groupByKey[c.material_folder_id + '|' + c.extraction_template_id];
-            const sheetIds = examSheetsForFolder(folderName, (g && g.sheet_ids) ? g.sheet_ids : []);
-            if (folderName && rec && rec.folders.indexOf(folderName) === -1) rec.folders.push(folderName);
+            const stats = statsMetaFilesForCombo(c, catalogRows);
+            const metaFiles = stats.map(function (f) { return f.meta; }).filter(Boolean);
+            if (folderName && rec) {
+                if (rec.folders.indexOf(folderName) === -1) rec.folders.push(folderName);
+                if (!rec.extraction.byKey) rec.extraction.byKey = {};
+                const key = String(folderName).trim().toUpperCase();
+                if (!rec.extraction.byKey[key]) {
+                    const item = {
+                        sourceFile: '',
+                        sheets: [],
+                        metaFiles: [],
+                        targetFolder: folderName
+                    };
+                    rec.extraction.byKey[key] = item;
+                    rec.extraction.records.push(item);
+                }
+                const item = rec.extraction.byKey[key];
+                metaFiles.forEach(function (m) {
+                    if (item.metaFiles.indexOf(m) === -1) item.metaFiles.push(m);
+                });
+                item.metaFiles = collapseRelatedSheetStems(item.metaFiles).map(function (s) {
+                    return /\.meta\.json$/i.test(s) ? s : (s + '.meta.json');
+                });
+                if (rec.extraction.folders.indexOf(folderName) === -1) rec.extraction.folders.push(folderName);
+            }
             assigns.forEach(function (a) {
                 if (!rec) return;
                 const n = classNameById(a.class_id);
@@ -1207,8 +2051,8 @@ window.FeatureClassMaterialCombinations = (function () {
                 if (!examRec) return;
                 examRec.hasExam = true;
                 const examTplName = templateNameById(l.exam_template_id);
-                if (!assigns.length) addToSide(examRec, examRec.exam, folderName, null, sheetIds, { templateName: examTplName });
-                assigns.forEach(function (a) { addToSide(examRec, examRec.exam, folderName, a.class_id, sheetIds, { templateName: examTplName }); });
+                if (!assigns.length) addToSide(examRec, examRec.exam, folderName, null, [], { templateName: examTplName });
+                assigns.forEach(function (a) { addToSide(examRec, examRec.exam, folderName, a.class_id, [], { templateName: examTplName }); });
             });
         });
         _usageSummaryCache = out;
@@ -1248,6 +2092,22 @@ window.FeatureClassMaterialCombinations = (function () {
             s = s.replace(re, '');
         }
         return s || String(sheetStem || '').trim().replace(/\.meta\.json$/i, '');
+    }
+
+    /**
+     * 官方配對／出題下拉用的「真的產出 meta 檔名」。
+     * 禁止把 Excel 活頁名（vBK-2）補成 vBK-2.meta.json。
+     */
+    function publishedMetaNameFromSheet(sheetStem, metaFileName, templateName) {
+        const fromDb = String(metaFileName || '').trim();
+        if (fromDb) return fromDb;
+        const stem = String(sheetStem || '').trim();
+        if (!stem) return '';
+        if (/\.meta\.json$/i.test(stem)) return stem;
+        if (/\.meta$/i.test(stem)) return stem.replace(/\.meta$/i, '.meta.json');
+        const tpl = String(templateName || '').trim();
+        if (!tpl) return '';
+        return toMetaFileName(stem, tpl);
     }
 
     function toMetaFileName(sheetStem, templateName) {
@@ -1318,6 +2178,120 @@ window.FeatureClassMaterialCombinations = (function () {
         return '<div style="font-size:0.76rem; color:#047857; font-weight:700; margin-top:4px;">實際使用：</div>' + body;
     }
 
+    let _comboStatsByClass = {};
+    const _comboStatsLoad = {};
+
+    function comboStatsKey(folderName, stem) {
+        return String(folderName || '').trim().toUpperCase() + '|' + String(stem || '').trim()
+            .replace(/\.meta\.json$/i, '').toUpperCase();
+    }
+
+    function indexComboStatsRows(rows) {
+        const map = {};
+        (rows || []).forEach(function (row) {
+            if (!row) return;
+            const folder = String(row.folder_name || '').trim();
+            const stem = String(row.sheet_stem || '').trim();
+            if (!folder || !stem) return;
+            const pageCounts = (row.page_counts && typeof row.page_counts === 'object') ? row.page_counts : {};
+            const rec = {
+                folderName: folder,
+                sheetStem: stem,
+                pageMin: row.page_min == null ? null : Number(row.page_min),
+                pageMax: row.page_max == null ? null : Number(row.page_max),
+                availableCount: row.available_count == null ? null : Number(row.available_count),
+                pageCounts: pageCounts
+            };
+            map[comboStatsKey(folder, stem)] = rec;
+        });
+        return map;
+    }
+
+    async function loadComboStatsForClass(classId, force) {
+        const cid = String(classId || '');
+        if (!cid) return {};
+        if (!force && _comboStatsByClass[cid]) return _comboStatsByClass[cid];
+        if (!force && _comboStatsLoad[cid]) return _comboStatsLoad[cid];
+        _comboStatsLoad[cid] = (async function () {
+            let rows = [];
+            if (window.supabaseClient) {
+                const { data, error } = await window.supabaseClient.rpc('fetch_class_combo_stats', {
+                    p_class_id: cid
+                });
+                if (!error) {
+                    if (Array.isArray(data)) rows = data;
+                    else if (data && Array.isArray(data.sheets)) rows = data.sheets;
+                }
+            }
+            const prev = _comboStatsByClass[cid] || {};
+            const next = indexComboStatsRows(rows);
+            Object.keys(prev).forEach(function (k) {
+                if (next[k] && prev[k] && prev[k].pageCounts && Object.keys(prev[k].pageCounts).length
+                    && (!next[k].pageCounts || !Object.keys(next[k].pageCounts).length)) {
+                    next[k].pageCounts = prev[k].pageCounts;
+                }
+            });
+            _comboStatsByClass[cid] = next;
+            return next;
+        })().finally(function () { delete _comboStatsLoad[cid]; });
+        return _comboStatsLoad[cid];
+    }
+
+    async function prefetchForClass(classId) {
+        await Promise.all([
+            fetchSuggestionMap(false).catch(function () { return null; }),
+            loadComboStatsForClass(classId, false).catch(function () { return {}; })
+        ]);
+    }
+
+    function lookupSheetStats(classId, folderName, sheetHint) {
+        const cid = String(classId || '');
+        const map = _comboStatsByClass[cid];
+        if (!map || !folderName || !sheetHint) return null;
+        const folder = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+            ? window.MaterialNameMap.resolveFolderName(folderName) : String(folderName || '').trim();
+        const raw = String(sheetHint || '').trim().replace(/\.meta\.json$/i, '');
+        if (!raw) return null;
+        const exact = map[comboStatsKey(folder, raw)] || map[comboStatsKey(String(folderName || '').trim(), raw)];
+        if (exact) return exact;
+        const want = raw.toUpperCase();
+        const keys = Object.keys(map);
+        for (let i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf(folder.toUpperCase() + '|') !== 0) continue;
+            const rec = map[keys[i]];
+            const stem = String(rec.sheetStem || '').toUpperCase();
+            if (stem === want || stem.indexOf(want + '.') === 0 || want.indexOf(stem + '.') === 0) return rec;
+        }
+        return null;
+    }
+
+    function rememberSheetPageCounts(classId, folderName, sheetHint, pageCounts) {
+        const cid = String(classId || '');
+        const folder = String(folderName || '').trim();
+        const stem = String(sheetHint || '').trim().replace(/\.meta\.json$/i, '');
+        if (!cid || !folder || !stem || !pageCounts) return;
+        if (!_comboStatsByClass[cid]) _comboStatsByClass[cid] = {};
+        const key = comboStatsKey(folder, stem);
+        const prev = _comboStatsByClass[cid][key] || {
+            folderName: folder,
+            sheetStem: stem,
+            pageMin: null,
+            pageMax: null,
+            availableCount: null,
+            pageCounts: {}
+        };
+        prev.pageCounts = pageCounts;
+        const pages = Object.keys(pageCounts).map(Number).filter(function (n) { return !isNaN(n); });
+        if (pages.length) {
+            prev.pageMin = Math.min.apply(null, pages);
+            prev.pageMax = Math.max.apply(null, pages);
+            prev.availableCount = pages.reduce(function (sum, p) {
+                return sum + (Number(pageCounts[p] != null ? pageCounts[p] : pageCounts[String(p)]) || 0);
+            }, 0);
+        }
+        _comboStatsByClass[cid][key] = prev;
+    }
+
     function bindUsageSheetToggles(root) {
         if (!root) return;
         root.querySelectorAll('.mlp-usage-sheets-toggle').forEach(function (btn) {
@@ -1342,17 +2316,29 @@ window.FeatureClassMaterialCombinations = (function () {
         render: render,
         getSuggestedExamTemplateId: getSuggestedExamTemplateId,
         listOfficialExamTemplateIds: listOfficialExamTemplateIds,
+        listOfficialMetaStemsForFolder: listOfficialMetaStemsForFolder,
         getOfficialExamTemplateDefaultId: getOfficialExamTemplateDefaultId,
         isOfficialPairingCacheReady: isOfficialPairingCacheReady,
         fetchOfficialPairings: fetchOfficialPairings,
         folderHasOfficialExamPairing: folderHasOfficialExamPairing,
         listAssignedFoldersForClass: listAssignedFoldersForClass,
+        listAssignedCombosForClass: listAssignedCombosForClass,
+        getAssignedComboById: getAssignedComboById,
+        findAssignedComboForSection: findAssignedComboForSection,
         isFolderAssignedToClass: isFolderAssignedToClass,
         lookupUsage: lookupUsage,
         recordApplyFromExcel: recordApplyFromExcel,
         summarizeUsageByTemplate: summarizeUsageByTemplate,
         getUsageSummaryCachedSync: getUsageSummaryCachedSync,
+        listOverwriteTargets: listOverwriteTargets,
+        invalidateDisplayCaches: invalidateDisplayCaches,
         renderTemplateUsageHtml: renderTemplateUsageHtml,
-        bindUsageSheetToggles: bindUsageSheetToggles
+        bindUsageSheetToggles: bindUsageSheetToggles,
+        listMaterialZoneRows: listMaterialZoneRows,
+        updateMaterialZoneLabel: updateMaterialZoneLabel,
+        renderMaterialZone: renderMaterialZone,
+        prefetchForClass: prefetchForClass,
+        lookupSheetStats: lookupSheetStats,
+        rememberSheetPageCounts: rememberSheetPageCounts
     };
 })();

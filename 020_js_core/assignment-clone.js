@@ -20,6 +20,12 @@ window.AssignmentClone = (function () {
         delete copy.submission_id;
         delete copy.drive_file_id;
         delete copy.student_upload_id;
+        // 套用歷史作業＝新作業。範圍／exam_job 設定可沿用，但線上卷必須重新抽題，
+        // 不能把舊作業的 quiz_paper 一起帶過來（否則「產生試卷」會誤以為這份已有卷、
+        // 跳出「覆蓋現有卷」——那份現有卷其實是複製來的，不是這份新作業自己的）。
+        delete copy.quiz_paper;
+        delete copy.quiz_paper_no;
+        delete copy.quiz_paper_signature;
         return copy;
     }
 

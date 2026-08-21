@@ -18,9 +18,28 @@ window.BuilderStore = (() => {
             .trim();
     }
 
-    /** 從範圍層底下錄音任務的 material_range／meta 列組出範圍標題 */
+    /**
+     * 範圍層組標題：
+     * - 已選套餐 → 套餐名稱（pack_combo_label）
+     * - 舊作業沒有 pack_combo_id → 才退回錄音 material_range（相容舊資料）
+     * 沒選套餐、或本班尚未指派套餐 → 空白，不拿別班／別套餐補。
+     */
     function deriveRangeTitleFromGroup(groupNode) {
-        if (!groupNode || !Array.isArray(groupNode.subTasks)) return '';
+        if (!groupNode) return '';
+        const gRaw = groupNode.raw_data || {};
+        const packId = String(gRaw.pack_combo_id || '').trim();
+        const packLabel = String(gRaw.pack_combo_label || '').trim();
+        if (packId) {
+            if (packLabel) return packLabel;
+            const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+            const classId = (bState && bState.classId) || '';
+            const fcmc = window.FeatureClassMaterialCombinations;
+            const combo = (fcmc && typeof fcmc.getAssignedComboById === 'function')
+                ? fcmc.getAssignedComboById(classId, packId)
+                : null;
+            return (combo && combo.label) ? String(combo.label).trim() : '';
+        }
+        if (!Array.isArray(groupNode.subTasks)) return '';
         const audio = groupNode.subTasks.find(function (t) { return t && t.type === 'audio_record'; });
         if (!audio) return '';
         const raw = audio.raw_data || {};
@@ -40,8 +59,28 @@ window.BuilderStore = (() => {
         return label;
     }
 
+    function syncRangePackFieldsFromDom(t, pathStr) {
+        if (!t || !t.raw_data || t.raw_data.group_role !== 'range') return;
+        const comboEl = document.getElementById('range-pack-combo-' + pathStr);
+        const sheetEl = document.getElementById('range-pack-sheet-' + pathStr);
+        const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr);
+        const startEl = document.getElementById('range-pack-start-' + pathStr);
+        const endEl = document.getElementById('range-pack-end-' + pathStr);
+        if (comboEl) {
+            t.raw_data.pack_combo_id = String(comboEl.value || '').trim();
+            const opt = comboEl.options[comboEl.selectedIndex];
+            t.raw_data.pack_combo_label = (t.raw_data.pack_combo_id && opt)
+                ? String(opt.text || '').trim()
+                : '';
+        }
+        if (sheetEl) t.raw_data.pack_meta_file = String(sheetEl.value || '').trim();
+        if (rtypeEl) t.raw_data.pack_range_type = rtypeEl.value === 'qnum' ? 'qnum' : 'page';
+        if (startEl) t.raw_data.pack_start = String(startEl.value || '').trim();
+        if (endEl) t.raw_data.pack_end = String(endEl.value || '').trim();
+    }
+
     /**
-     * 範圍層標題空白、或仍標記為「自動繼承中」時，用 base 範圍（錄音 meta）自動產生；
+     * 範圍層標題空白、或仍標記為「自動繼承中」時，用套餐名（或舊作業的錄音範圍）自動產生；
      * 不覆寫老師已真正手動填過的標題（title_auto_from_range === false 才算手動）。
      */
     function fillBlankRangeGroupTitles(tasks) {
@@ -94,9 +133,10 @@ window.BuilderStore = (() => {
             if (t.late_mode === 'infinite') { t.grace_period_hours = 0; }
             
             if (t.type === 'group') {
+                syncRangePackFieldsFromDom(t, pathStr);
                 if (t.subTasks) syncTasksState(t.subTasks, pathArray);
-                // 範圍層標題：空白，或仍標記為「自動繼承中」→ 用底下錄音 base 範圍重新算一次
-                // （不能只看「標題是否為空」，否則存過一次非空標題後就再也追不到新的 base 範圍）
+                // 範圍層標題：空白，或仍標記為「自動繼承中」→ 用套餐名（舊作業則用錄音範圍）重算
+                // （不能只看「標題是否為空」，否則存過一次非空標題後就再也追不到新來源）
                 if (t.raw_data && t.raw_data.group_role === 'range') {
                     const plain = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                     const wasAuto = !!(t.raw_data && t.raw_data.title_auto_from_range);
@@ -625,10 +665,14 @@ window.BuilderStore = (() => {
             else if (type === 'pdf_exam') raw = window.BuilderStore._defaultPdfExamRaw();
             else if (type === 'group') raw = {};
 
-            // 掛在範圍層下的錄音：若尚未填 material_range，帶入父層標題當提示（舊作業無 group_role 不受影響）
+            // 舊範圍層（沒選套餐）底下加錄音：若尚未填 material_range，帶入父層標題當提示。
+            // 已開包選套餐的範圍層：組標題是套餐名，不可寫進錄音範圍。
             if (type === 'audio_record' && window.BuilderStore._isRangeGroupNode(parentNode)) {
-                const rangeHint = (parentNode.title || '').replace(/<[^>]*>?/gm, '').trim();
-                if (rangeHint && !raw.material_range) raw.material_range = rangeHint;
+                const parentRaw = parentNode.raw_data || {};
+                if (!parentRaw.pack_combo_id) {
+                    const rangeHint = (parentNode.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    if (rangeHint && !raw.material_range) raw.material_range = rangeHint;
+                }
             }
 
             const node = window.BuilderStore._makeLeafNode(type, defaultTitle, raw);
@@ -638,7 +682,7 @@ window.BuilderStore = (() => {
 
         /**
          * 一鍵建立「範圍群組 → 錄音＋考試」（僅影響新建節點，不改舊作業）
-         * 標題留給老師填範圍，例如：A pp. 1~2, B pp. 1~2, C #16~35
+         * 開包後先選本班已指派套餐；組標題＝套餐名，錄音／考試小標題＝活頁＋起迄。
          */
         addRangeBundle: (pathStr) => {
             syncState();
@@ -664,7 +708,16 @@ window.BuilderStore = (() => {
                 late_mode: 'infinite',
                 grace_period_hours: 0,
                 penalty_percentage: 0,
-                raw_data: { group_role: 'range' },
+                raw_data: {
+                    group_role: 'range',
+                    title_auto_from_range: true,
+                    pack_combo_id: '',
+                    pack_combo_label: '',
+                    pack_meta_file: '',
+                    pack_range_type: 'page',
+                    pack_start: '',
+                    pack_end: ''
+                },
                 subTasks: [
                     window.BuilderStore._makeLeafNode('audio_record', '', window.BuilderStore._defaultAudioRaw()),
                     window.BuilderStore._makeLeafNode('exam', '', window.BuilderStore._defaultExamRaw())

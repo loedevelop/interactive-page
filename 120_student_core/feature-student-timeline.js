@@ -202,9 +202,13 @@ window.FeatureStudentTimeline = (() => {
         return false;
     }
 
-    function applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl, extraRaw) {
+    function applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, fileId, audioUrl, extraRaw, markComplete) {
         const compositeKey = `${assignmentId}_${taskId}`;
-        if (!completedTasks.includes(compositeKey)) completedTasks.push(compositeKey);
+        if (markComplete !== false) {
+            if (!completedTasks.includes(compositeKey)) completedTasks.push(compositeKey);
+        } else {
+            completedTasks = completedTasks.filter(function (id) { return id !== compositeKey; });
+        }
         if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
         const audioUrlStr = audioUrl ? String(audioUrl) : '';
         const rawPatch = Object.assign({
@@ -256,10 +260,52 @@ window.FeatureStudentTimeline = (() => {
 
     function getTaskGradingUnits(taskConfig) {
         const raw = (taskConfig && taskConfig.raw_data) ? taskConfig.raw_data : {};
-        if (Array.isArray(raw.grading_units) && raw.grading_units.length) {
-            return raw.grading_units.slice();
+        const units = (Array.isArray(raw.grading_units) && raw.grading_units.length)
+            ? raw.grading_units.slice()
+            : [];
+        const rangeText = (window.UIStudentTimelineTemplates
+            && typeof window.UIStudentTimelineTemplates.visibleRecordingRange === 'function')
+            ? window.UIStudentTimelineTemplates.visibleRecordingRange(taskConfig)
+            : (raw.material_range ? String(raw.material_range).trim() : String((taskConfig && taskConfig.title) || '').replace(/<[^>]*>/g, '').trim());
+        if (window.UIStudentTimelineTemplates && typeof window.UIStudentTimelineTemplates.alignUnitsToVisibleRange === 'function') {
+            return window.UIStudentTimelineTemplates.alignUnitsToVisibleRange(units, rangeText);
         }
-        return [];
+        return units;
+    }
+
+    function parsePageFromFileName(name) {
+        if (window.UIStudentTimelineTemplates && typeof window.UIStudentTimelineTemplates.parseRecordingPageFromName === 'function') {
+            return window.UIStudentTimelineTemplates.parseRecordingPageFromName(name);
+        }
+        const base = String(name || '').replace(/\.[^.]+$/, '').replace(/pp?\.?\s*\d+\s*[~～〜－—–-]\s*\d+/gi, ' ');
+        let m = base.match(/第\s*(\d+)\s*頁/);
+        if (m) return parseInt(m[1], 10);
+        m = base.match(/(?:^|[^0-9a-z])(?:p|page)\s*\.?\s*(\d+)(?:[^0-9]|$)/i);
+        if (m) return parseInt(m[1], 10);
+        return null;
+    }
+
+    function pairItemsToUnits(items, units) {
+        const remaining = (units || []).slice();
+        const pairs = [];
+        const leftover = [];
+        (items || []).forEach(function (item) {
+            const page = parsePageFromFileName(item && item.name);
+            let idx = -1;
+            if (page != null) {
+                idx = remaining.findIndex(function (u) { return u && Number(u.page) === page; });
+            }
+            if (idx >= 0) {
+                pairs.push({ item: item, unit: remaining[idx] });
+                remaining.splice(idx, 1);
+            } else {
+                leftover.push(item);
+            }
+        });
+        leftover.forEach(function (item) {
+            pairs.push({ item: item, unit: remaining.shift() || {} });
+        });
+        return pairs;
     }
 
     function getExistingAudioSegments(assignmentId, taskId) {
@@ -271,63 +317,61 @@ window.FeatureStudentTimeline = (() => {
             : [];
     }
 
-    function submittedUnitKeyMap(assignmentId, taskId) {
-        const map = {};
-        getExistingAudioSegments(assignmentId, taskId).forEach(function (s) {
-            const key = String((s && s.unit_key) || '').trim();
-            if (key) map[key] = true;
-        });
-        return map;
+    function markSubmittedKey(map, item) {
+        if (!item || !map) return;
+        const key = String((item.unit_key) || '').trim();
+        if (key) map[key] = true;
+        if (item.page != null && item.page !== '') map['range:' + Number(item.page)] = true;
+        const label = String(item.label || item.name || '');
+        const m = label.match(/(?:p\.?\s*|第\s*)(\d+)/i);
+        if (m) map['range:' + parseInt(m[1], 10)] = true;
     }
 
-    /**
-     * 錄音艙用的頁清單：優先 Snapshot／骨架的 grading_units；
-     * 沒有結構化單位、但 base 範圍展開超過 1 頁時，用頁碼當穩定 unit_key。
-     * 單頁／無範圍＝空陣列，艙內維持舊的單檔流程。
-     */
-    function getStudioRecordingPages(taskConfig) {
-        const units = getTaskGradingUnits(taskConfig);
-        if (units.length > 1) {
-            return units.map(function (u, i) {
-                return {
-                    unit_key: String((u && u.unit_key) || '').trim() || ('unit:' + i),
-                    stem: (u && u.stem) || '',
-                    page: (u && u.page != null) ? u.page : null,
-                    label: (u && u.label) || ('第' + (i + 1) + '頁'),
-                    original_script: String((u && u.original_script) || '').trim()
-                };
-            });
-        }
-        if (units.length === 1) return [];
-        const rangeText = (taskConfig && taskConfig.raw_data && taskConfig.raw_data.material_range)
-            ? String(taskConfig.raw_data.material_range).trim()
-            : '';
-        const pages = (rangeText && window.UIStudentTimelineTemplates
-            && typeof window.UIStudentTimelineTemplates.pagesFromRangeText === 'function')
-            ? window.UIStudentTimelineTemplates.pagesFromRangeText(rangeText)
-            : [];
-        if (pages.length <= 1) return [];
-        return pages.map(function (p) {
-            return {
-                unit_key: 'range:' + p,
-                stem: '',
-                page: p,
-                label: 'p. ' + p,
-                original_script: ''
-            };
+    function submittedUnitKeyMap(assignmentId, taskId) {
+        const taskConfig = findTaskConfig(assignmentId, taskId);
+        return Object.assign({}, loadRecordingBoard(assignmentId, taskId, taskConfig).submittedKeys);
+    }
+
+    function loadRecordingBoard(assignmentId, taskId, taskConfig) {
+        const rec = (window._studentTaskCompletions || []).find(function (c) {
+            return String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId);
         });
+        if (window.UIStudentTimelineTemplates && typeof window.UIStudentTimelineTemplates.getRecordingBoard === 'function') {
+            return window.UIStudentTimelineTemplates.getRecordingBoard(taskConfig, rec && rec.raw_data);
+        }
+        return { pages: [], expectedCount: 0, submittedCount: 0, submittedKeys: {}, players: [] };
+    }
+
+    function getStudioRecordingPages(taskConfig, assignmentId, taskId) {
+        const board = loadRecordingBoard(assignmentId, taskId, taskConfig);
+        return board.pages || [];
+    }
+
+    function isStudioPageSubmitted(page, keys) {
+        const map = keys || {};
+        const k = String((page && page.unit_key) || '').trim();
+        if (k && map[k]) return true;
+        if (page && page.page != null && page.page !== '' && map['range:' + Number(page.page)]) return true;
+        return false;
+    }
+
+    function recordingPagesRemaining(taskConfig, assignmentId, taskId, extraKeys) {
+        const pages = getStudioRecordingPages(taskConfig, assignmentId, taskId);
+        if (pages.length <= 1) return 0;
+        const keys = Object.assign({}, submittedUnitKeyMap(assignmentId, taskId), extraKeys || {});
+        return pages.filter(function (p) {
+            return !isStudioPageSubmitted(p, keys);
+        }).length;
     }
 
     function firstUnsubmittedStudioIndex(pages, submittedKeys, afterIndex) {
         const keys = submittedKeys || {};
         const start = (afterIndex == null ? -1 : afterIndex) + 1;
         for (let i = start; i < pages.length; i++) {
-            const key = String((pages[i] && pages[i].unit_key) || '').trim();
-            if (!key || !keys[key]) return i;
+            if (!isStudioPageSubmitted(pages[i], keys)) return i;
         }
         for (let j = 0; j < start && j < pages.length; j++) {
-            const key = String((pages[j] && pages[j].unit_key) || '').trim();
-            if (!key || !keys[key]) return j;
+            if (!isStudioPageSubmitted(pages[j], keys)) return j;
         }
         return -1;
     }
@@ -405,6 +449,9 @@ window.FeatureStudentTimeline = (() => {
         const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
         const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}${uploadExt}`;
         const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId, oldFileId || null);
+        if (!result || !result.fileId) {
+            throw new Error('上傳成功但沒有檔案 ID，無法播放。請再試一次或改用「上傳音檔」。');
+        }
         return {
             fileId: result.fileId,
             audioUrl: `https://drive.google.com/file/d/${result.fileId}/view`,
@@ -495,15 +542,19 @@ window.FeatureStudentTimeline = (() => {
                 : (remainingUnits.length ? remainingUnits : gradingUnits);
             const alreadyDoneCount = targetUnit ? 0 : (gradingUnits.length - effectiveUnits.length);
 
-            // 選取順序對應「尚未提交」的 grading_units（一頁一檔）
+            const pairs = pairItemsToUnits(items, effectiveUnits.length ? effectiveUnits : []);
+            const mappedByName = pairs.filter(function (p) {
+                return p.unit && p.unit.page != null && parsePageFromFileName(p.item && p.item.name) === Number(p.unit.page);
+            }).length;
             const pairCount = effectiveUnits.length
-                ? Math.min(items.length, effectiveUnits.length)
-                : items.length;
+                ? Math.min(pairs.length, effectiveUnits.length)
+                : pairs.length;
             if (!targetUnit && effectiveUnits.length && items.length !== effectiveUnits.length) {
                 window.showFlash(
                     `已選 ${items.length} 檔；此作業共 ${gradingUnits.length} 個錄音頁單位`
                     + (alreadyDoneCount > 0 ? `（其中 ${alreadyDoneCount} 頁先前已提交，將接續補上剩下的頁）` : '')
-                    + `，將依選取順序對應前 ${pairCount} 個尚未提交的頁。`,
+                    + (mappedByName ? `，其中 ${mappedByName} 檔已依檔名對到頁碼` : '')
+                    + `，其餘依選取順序對尚未提交的頁。`,
                     'warning'
                 );
             }
@@ -539,7 +590,8 @@ window.FeatureStudentTimeline = (() => {
 
             const uploaded = [];
             for (let i = 0; i < pairCount; i++) {
-                const item = items[i];
+                const pair = pairs[i] || {};
+                const item = pair.item || items[i];
                 if (statusEl) {
                     statusEl.textContent = canSendAI
                         ? `⚙️ 轉碼／上傳 ${i + 1}/${pairCount}...`
@@ -556,7 +608,7 @@ window.FeatureStudentTimeline = (() => {
                 const up = await uploadOneAudioBlobWithRetry(
                     assignmentId, taskId, safeTitleForJS, blob, item.name || `part_${i + 1}.wav`, canSendAI
                 );
-                const unit = effectiveUnits[i] || {};
+                const unit = pair.unit || effectiveUnits[i] || {};
                 uploaded.push({
                     file_id: up.fileId,
                     audio_url: up.audioUrl,
@@ -572,6 +624,11 @@ window.FeatureStudentTimeline = (() => {
                 if (i < pairCount - 1) await delay(350);
             }
 
+            const extraKeys = {};
+            uploaded.forEach(function (u) { markSubmittedKey(extraKeys, u); });
+            const remainingBeforeSave = recordingPagesRemaining(taskConfig, assignmentId, taskId, extraKeys);
+            const allPagesDone = remainingBeforeSave === 0;
+
             if (canSendAI) {
                 if (statusEl) {
                     statusEl.textContent = `🧠 喚醒 AI（${uploaded.length} 段）...`;
@@ -579,7 +636,9 @@ window.FeatureStudentTimeline = (() => {
                 }
                 await submitAudioSegmentsToAIGrading(assignmentId, taskId, uploaded);
                 if (statusEl) {
-                    statusEl.textContent = `✅ 已繳交 ${uploaded.length} 檔，AI 依頁批改中`;
+                    statusEl.textContent = allPagesDone
+                        ? `✅ 已繳交 ${uploaded.length} 檔，AI 依頁批改中`
+                        : `✅ 已繳交 ${uploaded.length} 檔，還有 ${remainingBeforeSave} 頁未錄`;
                     statusEl.style.color = '#10B981';
                 }
                 applyLocalCompletionAfterAudioSubmit(
@@ -597,26 +656,37 @@ window.FeatureStudentTimeline = (() => {
                             unit_key: u.unit_key,
                             label: u.label
                         }))
-                    }
+                    },
+                    allPagesDone
                 );
                 const mapHint = uploaded.map((u, i) => `${i + 1}→${u.label || u.unit_key || '段'}`).join('，');
-                window.showFlash(`已上傳 ${uploaded.length} 音檔（${mapHint}），AI 將逐頁批改。`);
+                window.showFlash(allPagesDone
+                    ? `已上傳 ${uploaded.length} 音檔（${mapHint}），AI 將逐頁批改。`
+                    : `已上傳 ${uploaded.length} 音檔（${mapHint}）。還有 ${remainingBeforeSave} 頁，請繼續錄。`);
             } else {
-                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, true, uploaded.map(u => ({
+                await window.FeatureStudentTimeline.updateProgress(assignmentId, taskId, allPagesDone, uploaded.map(u => ({
                     id: u.file_id,
                     mime: u.uploadMime || 'audio/wav',
-                    name: u.name
+                    name: u.name,
+                    unit_key: u.unit_key,
+                    label: u.label,
+                    stem: u.stem,
+                    page: u.page
                 })));
                 const skipReason = !hasScript ? '無文稿' : '未勾選 AI 批改';
                 if (statusEl) {
-                    statusEl.textContent = `✅ 已上傳 ${uploaded.length} 檔（${skipReason}，略過 AI）`;
+                    statusEl.textContent = allPagesDone
+                        ? `✅ 已上傳 ${uploaded.length} 檔（${skipReason}，略過 AI）`
+                        : `✅ 已上傳 ${uploaded.length} 檔，還有 ${remainingBeforeSave} 頁未錄`;
                     statusEl.style.color = '#10B981';
                 }
-                window.showFlash('音檔已上傳到資料夾。此任務' + (!hasScript ? '尚未設定批改文稿' : '未開啟 AI 批改') + '，故未送 AI。');
+                window.showFlash(allPagesDone
+                    ? ('音檔已上傳到資料夾。此任務' + (!hasScript ? '尚未設定批改文稿' : '未開啟 AI 批改') + '，故未送 AI。')
+                    : ('這一頁已上傳。還有 ' + remainingBeforeSave + ' 頁，請繼續錄（不會標成已完成）。'));
             }
             renderCourses();
             const afterKeys = submittedUnitKeyMap(assignmentId, taskId);
-            const studioPages = getStudioRecordingPages(taskConfig);
+            const studioPages = getStudioRecordingPages(taskConfig, assignmentId, taskId);
             const remainingCount = studioPages.length
                 ? studioPages.filter(function (p) {
                     const k = String((p && p.unit_key) || '').trim();
@@ -748,7 +818,10 @@ window.FeatureStudentTimeline = (() => {
             currentClassConfig = classData ? classData : {};
             assignments = assignRes.data ? assignRes.data : [];
             window._studentTaskCompletions = compRes.data ? compRes.data : [];
-            completedTasks = (compRes.data ? compRes.data : []).map(function (row) {
+            completedTasks = (compRes.data ? compRes.data : []).filter(function (row) {
+                const s = String((row && row.status) || '');
+                return s && s !== 'incomplete' && s !== 'pending';
+            }).map(function (row) {
                 return String(row.assignment_id) + '_' + String(row.task_id);
             });
 
@@ -1076,14 +1149,9 @@ window.FeatureStudentTimeline = (() => {
                             raw_data: {}
                         });
                     }
-                }
-                else if (!isChecked) {
+                } else if (!isChecked) {
                     completedTasks = completedTasks.filter(id => id !== compositeKey);
-                    if (window._studentTaskCompletions) {
-                        window._studentTaskCompletions = window._studentTaskCompletions.filter(c =>
-                            !(String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId))
-                        );
-                    }
+                    // 有檔案的「未交齊」不要清掉本地 raw_data，否則播放器／已交頁會消失
                 }
                 renderCourses();
 
@@ -1094,11 +1162,16 @@ window.FeatureStudentTimeline = (() => {
                         if (typeof f === 'string') {
                             normalizedFiles.push({ id: String(f) });
                         } else if (f.id) {
-                            normalizedFiles.push({
+                            const row = {
                                 id: String(f.id),
                                 mime: f.mime ? String(f.mime) : '',
                                 name: f.name ? String(f.name) : ''
-                            });
+                            };
+                            if (f.unit_key) row.unit_key = String(f.unit_key);
+                            if (f.label) row.label = String(f.label);
+                            if (f.stem) row.stem = String(f.stem);
+                            if (f.page != null && f.page !== '') row.page = f.page;
+                            normalizedFiles.push(row);
                         }
                     });
                 }
@@ -1128,6 +1201,29 @@ window.FeatureStudentTimeline = (() => {
                     if (mime.indexOf('audio/') === 0 || /\.(wav|mp3|m4a|ogg|aac|webm|flac)$/.test(name)) {
                         rawData.student_audio_url = 'https://drive.google.com/file/d/' + first.id + '/view';
                         rawData.audio_url = rawData.student_audio_url;
+                    }
+                    const newSegs = mergedFiles.filter(function (f) { return f && f.unit_key; }).map(function (f) {
+                        return {
+                            file_id: f.id,
+                            name: f.name || '',
+                            uploadMime: f.mime || '',
+                            unit_key: f.unit_key,
+                            label: f.label || '',
+                            stem: f.stem || '',
+                            page: (f.page != null && f.page !== '') ? f.page : null,
+                            status: 'submitted'
+                        };
+                    });
+                    if (newSegs.length) {
+                        const prevSegs = (prevCompletion && prevCompletion.raw_data && Array.isArray(prevCompletion.raw_data.audio_segments))
+                            ? prevCompletion.raw_data.audio_segments
+                            : [];
+                        const newKeys = new Set(newSegs.map(function (s) { return String(s.unit_key || '').trim(); }).filter(Boolean));
+                        const kept = prevSegs.filter(function (s) {
+                            const key = String((s && s.unit_key) || '').trim();
+                            return key && !newKeys.has(key);
+                        });
+                        rawData.audio_segments = kept.concat(newSegs);
                     }
                 }
 
@@ -1171,13 +1267,28 @@ window.FeatureStudentTimeline = (() => {
                             if (insertErr) throw insertErr;
                         }
                     } else {
-                        // 取消勾選＝未完成（保留列，不刪除）
-                        const { error } = await window.supabaseClient.from('task_completions')
-                            .update({ status: 'incomplete', deleted_at: null })
+                        // 取消勾選／未交齊＝未完成（保留列；有檔就要把 raw_data 一併寫入）
+                        const payload = {
+                            assignment_id: assignmentId,
+                            task_id: taskId,
+                            student_id: userId,
+                            class_id: classId,
+                            status: 'incomplete',
+                            deleted_at: null
+                        };
+                        if (rawData) payload.raw_data = rawData;
+                        const { data: updatedIncomplete, error: incompleteErr } = await window.supabaseClient.from('task_completions')
+                            .update(payload)
                             .eq('task_id', taskId)
                             .eq('student_id', userId)
-                            .eq('class_id', classId);
-                        if (error) throw error;
+                            .eq('class_id', classId)
+                            .select();
+                        if (incompleteErr) throw incompleteErr;
+                        if ((!updatedIncomplete || updatedIncomplete.length === 0) && rawData) {
+                            const { error: insertIncompleteErr } = await window.supabaseClient.from('task_completions')
+                                .insert([payload]);
+                            if (insertIncompleteErr) throw insertIncompleteErr;
+                        }
                     }
                 }
 
@@ -1186,17 +1297,22 @@ window.FeatureStudentTimeline = (() => {
                 // 舊快取——音檔播放器／縮圖要等下次整頁重新整理（fetchData）才會出現新檔案。
                 // 依 server 端 student_set_task_completion 的 shallow 合併語意在本地做同樣的事，
                 // 讓「上傳成功」與「畫面看到新檔案」是同一次操作，不用重整頁面。
-                if (isChecked) {
+                if (rawData || isChecked) {
                     if (!window._studentTaskCompletions) window._studentTaskCompletions = [];
                     let rec = window._studentTaskCompletions.find(c =>
                         String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId)
                     );
                     if (!rec) {
-                        rec = { assignment_id: assignmentId, task_id: taskId, status: 'completed', raw_data: {} };
+                        rec = { assignment_id: assignmentId, task_id: taskId, status: isChecked ? 'completed' : 'incomplete', raw_data: {} };
                         window._studentTaskCompletions.push(rec);
                     }
-                    rec.status = 'completed';
+                    rec.status = isChecked ? 'completed' : 'incomplete';
                     if (rawData) rec.raw_data = Object.assign({}, rec.raw_data, rawData);
+                    renderCourses();
+                } else if (!isChecked && window._studentTaskCompletions) {
+                    window._studentTaskCompletions = window._studentTaskCompletions.filter(c =>
+                        !(String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId))
+                    );
                     renderCourses();
                 }
             } catch (err) {
@@ -1481,10 +1597,12 @@ window.FeatureStudentTimeline = (() => {
 
                     updateStatus('🧠 喚醒 AI 重新批改...', '#8B5CF6');
                     await submitAudioSegmentsToAIGrading(assignmentId, taskId, [segment]);
+                    const replaceKeys = {};
+                    if (unitKey) replaceKeys[unitKey] = true;
                     applyLocalCompletionAfterAudioSubmit(assignmentId, taskId, segment.file_id, segment.audio_url, {
                         drive_file_ids: [segment.file_id],
                         audio_segments: [Object.assign({}, segment, { status: 'pending' })]
-                    });
+                    }, recordingPagesRemaining(taskConfig, assignmentId, taskId, replaceKeys) === 0);
 
                     updateStatus(`✅ 已取代${segment.label ? '（' + segment.label + '）' : ''}，AI 重新批改中`, '#10B981');
                     window.showFlash('已取代該檔案，AI 將重新批改這一段。');
@@ -1515,9 +1633,12 @@ window.FeatureStudentTimeline = (() => {
                     const base64Data = (await readFileAsDataURL(file)).split(',')[1];
                     const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, mime, targetFolderId, assignmentId, taskId, oldFileId);
 
+                    const replaceKeys = {};
+                    if (unitKey) replaceKeys[unitKey] = true;
                     await window.FeatureStudentTimeline.updateProgress(
-                        assignmentId, taskId, true,
-                        [{ id: result.fileId, mime, name: finalFileName }],
+                        assignmentId, taskId,
+                        recordingPagesRemaining(taskConfig, assignmentId, taskId, replaceKeys) === 0,
+                        [{ id: result.fileId, mime, name: finalFileName, unit_key: unitKey, label: ds.label ? String(ds.label) : '', page: (ds.page !== undefined && ds.page !== '') ? ds.page : null }],
                         oldFileId
                     );
 
@@ -1589,8 +1710,9 @@ window.FeatureStudentTimeline = (() => {
                     }
                 }
 
-                const studioPages = getStudioRecordingPages(foundTask);
-                const submittedKeys = submittedUnitKeyMap(assignmentId, taskId);
+                const board = loadRecordingBoard(assignmentId, taskId, foundTask);
+                const studioPages = board.pages;
+                const submittedKeys = board.submittedKeys;
                 const initialIndex = firstUnsubmittedStudioIndex(studioPages, submittedKeys, -1);
 
                 window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, finalMaterialUrl, finalMaterialRange, async (audioData) => {

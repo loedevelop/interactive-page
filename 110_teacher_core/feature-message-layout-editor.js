@@ -301,8 +301,8 @@ window.FeatureMessageLayoutEditor = (function () {
 
         var resetBtn = document.getElementById('ml-reset-btn');
         if (resetBtn) {
-            resetBtn.addEventListener('click', function () {
-                if (!confirm('回復系統預設欄位與排列？')) return;
+            resetBtn.addEventListener('click', async function () {
+                if (!(await window.ModalOverlay.confirm('回復系統預設欄位與排列？'))) return;
                 working = T().defaultLayout();
                 refresh();
             });

@@ -33,6 +33,19 @@ window.FeatureStudentReview = (function () {
             .replace(/"/g, '&quot;');
     }
 
+    function formatDurationMs(ms) {
+        const n = Math.max(0, Math.floor(Number(ms) || 0));
+        if (!n) return '';
+        if (n < 1000) return '不到 1 秒';
+        const totalSec = Math.round(n / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return h + ' 小時 ' + m + ' 分';
+        if (m > 0) return m + ' 分 ' + s + ' 秒';
+        return s + ' 秒';
+    }
+
     function getClassId() {
         const cfg = window.FeatureStudentTimeline && typeof window.FeatureStudentTimeline.getCurrentClassConfig === 'function'
             ? window.FeatureStudentTimeline.getCurrentClassConfig()
@@ -55,7 +68,14 @@ window.FeatureStudentReview = (function () {
 
     function selectedFolder() {
         const folders = (lastCatalog && lastCatalog.folders) || [];
-        return folders.find(function (f) { return String(f.folder_name) === wizard.folder; }) || null;
+        const want = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+            ? window.MaterialNameMap.resolveFolderName(wizard.folder) : wizard.folder;
+        return folders.find(function (f) {
+            const name = String(f.folder_name || '');
+            const resolved = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+                ? window.MaterialNameMap.resolveFolderName(name) : name;
+            return name === wizard.folder || resolved === want;
+        }) || null;
     }
 
     function selectedSheets() {
@@ -83,7 +103,8 @@ window.FeatureStudentReview = (function () {
 
     async function refreshAvailable() {
         const classId = getClassId();
-        const folder = wizard.folder;
+        const folder = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+            ? window.MaterialNameMap.resolveFolderName(wizard.folder) : wizard.folder;
         const stems = wizard.sheets.slice();
         const start = parseInt(wizard.pageStart, 10);
         const end = parseInt(wizard.pageEnd, 10);
@@ -273,9 +294,11 @@ window.FeatureStudentReview = (function () {
                 const score = (s.result && s.result.score != null) ? (s.result.score + '%') : (s.status === 'submitted' ? '完成' : '進行中');
                 const when = String(s.submitted_at || s.created_at || '').replace('T', ' ').slice(0, 16);
                 const folder = (s.config && s.config.folder_name) || '';
+                const durMs = Number(s.result && (s.result.total_time_ms || s.result.duration_ms)) || 0;
+                const dur = durMs > 0 ? (' · 用時 ' + formatDurationMs(durMs)) : '';
                 return '<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #F1F5F9; font-size:0.85rem; font-weight:700; color:#334155;">'
                     + '<span>' + esc(mode) + ' · ' + esc(folder) + '</span>'
-                    + '<span>' + esc(score) + ' · ' + esc(when) + '</span></div>';
+                    + '<span>' + esc(score) + dur + ' · ' + esc(when) + '</span></div>';
             }).join('');
         } catch (_e) {
             box.innerHTML = '<span style="color:#94A3B8; font-weight:700;">紀錄暫時無法載入。</span>';
@@ -355,7 +378,8 @@ window.FeatureStudentReview = (function () {
         const payload = {
             p_class_id: classId,
             p_mode: mode,
-            p_folder_name: wizard.folder,
+            p_folder_name: (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+                ? window.MaterialNameMap.resolveFolderName(wizard.folder) : wizard.folder,
             p_sheet_stems: wizard.sheets.slice(),
             p_page_start: parseInt(wizard.pageStart, 10),
             p_page_end: parseInt(wizard.pageEnd, 10),
@@ -415,7 +439,14 @@ window.FeatureStudentReview = (function () {
                 paper: pack.quiz_paper,
                 requiredCount: Math.max(1, Number(pack.practice_required_count) || wizard.practiceCount || 1),
                 onPersist: function (progressMap, allDone) {
-                    return persistSession(pack.session_id, { practice_progress: progressMap }, allDone);
+                    const meta = progressMap && progressMap.__meta;
+                    return persistSession(pack.session_id, {
+                        practice_progress: progressMap,
+                        result: {
+                            duration_ms: meta && meta.duration_ms ? meta.duration_ms : 0,
+                            total_time_ms: meta && meta.total_time_ms ? meta.total_time_ms : 0
+                        }
+                    }, allDone);
                 }
             });
             return;
@@ -442,6 +473,9 @@ window.FeatureStudentReview = (function () {
         if (!el) return;
         el.innerHTML = '<div class="card" style="padding:28px; color:#94A3B8; font-weight:800; text-align:center;">⏳ 載入練習教材…</div>';
         try {
+            if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+                await window.MaterialNameMap.ensureLoaded(false);
+            }
             const catalog = await fetchCatalog();
             if (!catalog || !catalog.enabled) {
                 renderDisabled();

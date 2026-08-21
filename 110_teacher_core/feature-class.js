@@ -211,15 +211,23 @@ window.FeatureClass = (() => {
 
     function closeClassSettings(force) {
         const overlayId = 'class-settings-modal';
-        if (!force && window._classSettingsDirty) {
-            if (!confirm('有未儲存的變更，確定要關閉嗎？')) return;
+        if (force) {
+            window._classSettingsDirty = false;
+            if (window.ModalOverlay) window.ModalOverlay.close(overlayId);
+            else {
+                const el = document.getElementById(overlayId);
+                if (el) el.remove();
+            }
+            return;
         }
+        if (window.ModalOverlay && typeof window.ModalOverlay.requestClose === 'function') {
+            window.ModalOverlay.requestClose(overlayId);
+            return;
+        }
+        if (window._classSettingsDirty) return;
         window._classSettingsDirty = false;
-        if (window.ModalOverlay) window.ModalOverlay.close(overlayId);
-        else {
-            const el = document.getElementById(overlayId);
-            if (el) el.remove();
-        }
+        const el = document.getElementById(overlayId);
+        if (el) el.remove();
     }
 
     async function openClassSettings(classId) {
@@ -242,7 +250,9 @@ window.FeatureClass = (() => {
             id: overlayId,
             tier: 'B',
             contentHtml: '<div style="background:white; padding:20px; border-radius:8px; font-weight:bold;">⏳ 讀取班級資料中...</div>',
-            isDirty: function () { return !!window._classSettingsDirty; }
+            unsavedMessage: '有未儲存的變更，確定要關閉嗎？',
+            isDirty: function () { return !!window._classSettingsDirty; },
+            onClose: function () { window._classSettingsDirty = false; }
         });
 
         try {

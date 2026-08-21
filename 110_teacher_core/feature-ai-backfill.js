@@ -719,7 +719,7 @@ window.FeatureAIBackfill = (function () {
         const processingCount = job.eligible.filter(function (e) {
             return studentIds.indexOf(String(e.student.id)) > -1 && isAiProcessingOpen(e.completion);
         }).length;
-        const ok = confirm(
+        const ok = await window.ModalOverlay.confirm(
             '確定要為「' + job.taskTitle + '」的以下 ' + studentIds.length + ' 位學生補啟／續跑 AI 批改嗎？\n\n'
             + selected.join('、') + '\n\n'
             + (processingCount > 0
@@ -752,7 +752,7 @@ window.FeatureAIBackfill = (function () {
         }
 
         const selected = studentNamesForIds(job.withRecord, studentIds);
-        const ok = confirm(
+        const ok = await window.ModalOverlay.confirm(
             '確定要清除「' + job.taskTitle + '」以下 ' + studentIds.length + ' 位學生的 AI 批改紀錄嗎？\n\n'
             + selected.join('、') + '\n\n'
             + '此動作無法復原（AI 評分、錯字診斷、批改歷史都會被移除，狀態退回「已繳交」）。'

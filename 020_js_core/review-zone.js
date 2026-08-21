@@ -14,7 +14,10 @@ window.ReviewZone = (function () {
     }
 
     function folderKey(folderName) {
-        return String(folderName || '').trim().toUpperCase();
+        const raw = String(folderName || '').trim();
+        const resolved = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
+            ? window.MaterialNameMap.resolveFolderName(raw) : raw;
+        return String(resolved || raw).toUpperCase();
     }
 
     function sheetKey(folderName, sheetStem) {

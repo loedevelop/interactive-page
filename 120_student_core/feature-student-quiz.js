@@ -38,6 +38,7 @@ window.FeatureStudentQuiz = (function () {
     let allowFsExit = false;
     let leftWhileHidden = false;
     let leaveCount = 0;
+    let leaveConfirmBusy = false;
     let leaveLog = [];
     let lastLeaveAt = 0;
     let visibilityHandler = null;
@@ -50,6 +51,10 @@ window.FeatureStudentQuiz = (function () {
     let sessionSubmitted = false;
     let sessionQuitSaved = false;
     let sessionBaseRaw = {};
+    /** 本次開啟考卷／練習的起始時間（毫秒）；繳交或退出時用來算 duration_ms */
+    let sessionStartedAtMs = 0;
+    let standaloneQuizStartedAtMs = 0;
+    let standalonePracticeStartedAtMs = 0;
     /**
      * 💣 雷區（2026-08-12 老師回報「解答根本對不起來」）：openQuiz／openRetakeQuiz 顯示的
      * 題目順序是「這次打開才洗牌」的結果（見 displayOrderItems），只存在畫面／這次
@@ -183,10 +188,65 @@ window.FeatureStudentQuiz = (function () {
             complete_count: 0,
             last_leave_count: 0,
             last_leave_log: [],
+            total_time_ms: 0,
+            last_duration_ms: 0,
             wrong_items: [],
             spelling_history: [],
             spelling_ledger: {},
             history: []
+        };
+    }
+
+    function formatDurationMs(ms) {
+        const n = Math.max(0, Math.floor(Number(ms) || 0));
+        if (n < 1000) return '不到 1 秒';
+        const totalSec = Math.round(n / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return h + ' 小時 ' + m + ' 分';
+        if (m > 0) return m + ' 分 ' + s + ' 秒';
+        return s + ' 秒';
+    }
+
+    function markSessionStart() {
+        sessionStartedAtMs = Date.now();
+    }
+
+    function takeSessionDurationMs() {
+        if (!sessionStartedAtMs) return 0;
+        const ms = Math.max(0, Date.now() - sessionStartedAtMs);
+        sessionStartedAtMs = 0;
+        return ms;
+    }
+
+    function applyDurationToStats(stats, durationMs) {
+        const ms = Math.max(0, Math.floor(Number(durationMs) || 0));
+        if (!ms) return 0;
+        stats.last_duration_ms = ms;
+        stats.total_time_ms = (Number(stats.total_time_ms) || 0) + ms;
+        return ms;
+    }
+
+    function readPracticeTimeStats(src) {
+        const s = src && typeof src === 'object' ? src : {};
+        return {
+            last_duration_ms: Number(s.last_duration_ms) || 0,
+            total_time_ms: Number(s.total_time_ms) || 0
+        };
+    }
+
+    function makePracticeSessionTimer(baselineTotalMs) {
+        const startedAtMs = Date.now();
+        const baseline = Math.max(0, Math.floor(Number(baselineTotalMs) || 0));
+        return function takePracticeTimeStats() {
+            const last = Math.max(0, Date.now() - startedAtMs);
+            return {
+                last_duration_ms: last,
+                total_time_ms: baseline + last,
+                started_at: new Date(startedAtMs).toISOString(),
+                updated_at: new Date().toISOString()
+            };
         };
     }
 
@@ -199,6 +259,8 @@ window.FeatureStudentQuiz = (function () {
         base.complete_count = Number(src.complete_count) || 0;
         base.last_leave_count = Number(src.last_leave_count) || 0;
         base.last_leave_log = Array.isArray(src.last_leave_log) ? src.last_leave_log.slice() : [];
+        base.total_time_ms = Number(src.total_time_ms) || 0;
+        base.last_duration_ms = Number(src.last_duration_ms) || 0;
         base.wrong_items = Array.isArray(src.wrong_items) ? src.wrong_items.slice() : [];
         base.spelling_history = Array.isArray(src.spelling_history) ? src.spelling_history.slice() : [];
         base.spelling_ledger = (src.spelling_ledger && typeof src.spelling_ledger === 'object')
@@ -355,7 +417,10 @@ window.FeatureStudentQuiz = (function () {
     }
 
     function renderAppealAreaHtml(item, opts) {
-        if (!opts || !opts.allowAppeal) return '';
+        const allowed = (item && item.allow_answer_appeal != null)
+            ? !!item.allow_answer_appeal
+            : !!(opts && opts.allowAppeal);
+        if (!allowed) return '';
         const appeal = (opts.appealsByItemId || {})[String(item.item_id)];
         if (!appeal) {
             return '<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:0.78rem; font-weight:700; color:#7C3AED; cursor:pointer;">'
@@ -433,6 +498,8 @@ window.FeatureStudentQuiz = (function () {
         else if (st.attempt_count > 0) parts.push('已開啟 ' + st.attempt_count + ' 次');
         if (st.quit_count > 0) parts.push('中途退出 ' + st.quit_count + ' 次');
         if (st.leave_count_total > 0) parts.push('嘗試離開 ' + st.leave_count_total + ' 次');
+        if (st.last_duration_ms > 0) parts.push('最近作答 ' + formatDurationMs(st.last_duration_ms));
+        if (st.total_time_ms > 0) parts.push('累計 ' + formatDurationMs(st.total_time_ms));
         const qr = (raw && raw.quiz_result) ? raw.quiz_result : null;
         if (qr && qr.total != null) {
             parts.push('最近 ' + qr.correct + '/' + qr.total + '（' + qr.score + '%）');
@@ -462,7 +529,12 @@ window.FeatureStudentQuiz = (function () {
         // 這裡是塞進 onclick="...('safeAssign','safeTask')" 的 JS 字串常值，要跳單引號，不是 HTML escape（esc 只處理 &<>"）
         const safeAssign = String(opts.assignmentId == null ? '' : opts.assignmentId).replace(/'/g, "\\'");
         const safeTask = String(opts.taskId == null ? '' : opts.taskId).replace(/'/g, "\\'");
-        const hasAppealable = opts.allowAppeal && wrongItems.some(function (item) { return !appealsByItemId[String(item.item_id)]; });
+        const hasAppealable = wrongItems.some(function (item) {
+            const allowed = (item && item.allow_answer_appeal != null)
+                ? !!item.allow_answer_appeal
+                : !!opts.allowAppeal;
+            return allowed && !appealsByItemId[String(item.item_id)];
+        });
         const appealSubmitHtml = hasAppealable
             ? ('<div style="display:flex; justify-content:flex-end; margin:6px 0 12px;">'
                 + '<button type="button" class="btn btn-action" style="background:#7C3AED; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.submitAppeals(\'' + safeAssign + '\',\'' + safeTask + '\',\'' + wrongCardsBodyId + '\',\'review\')">📮 送出申訴</button>'
@@ -497,6 +569,8 @@ window.FeatureStudentQuiz = (function () {
                     + ' · 已作答過 ' + esc(stats.complete_count) + ' 次'
                     + ' · 中途退出 ' + esc(stats.quit_count) + ' 次'
                     + ' · 嘗試離開累計 ' + esc(stats.leave_count_total) + ' 次'
+                    + (stats.last_duration_ms > 0 ? (' · 本次 ' + esc(formatDurationMs(stats.last_duration_ms))) : '')
+                    + (stats.total_time_ms > 0 ? (' · 累計 ' + esc(formatDurationMs(stats.total_time_ms))) : '')
                 + '</div>' +
                 retakeBannerHtml +
                 inputCorrectionBannerHtml +
@@ -770,12 +844,43 @@ window.FeatureStudentQuiz = (function () {
      */
     function displayOrderItems(paper, task) {
         const items = (paper && paper.items) || [];
-        const opts = task && task.raw_data && task.raw_data.exam_job && task.raw_data.exam_job.options;
-        const shuffleOn = !(opts && opts.shuffle === false);
-        if (!shuffleOn || !window.QuizPaperBuilder || typeof window.QuizPaperBuilder.shuffleInPlace !== 'function') {
-            return items;
+        const job = task && task.raw_data && task.raw_data.exam_job;
+        const opts = job && job.options;
+        const hasSection = items.some(function (it) { return it && it.section_id; });
+        const canShuffle = window.QuizPaperBuilder && typeof window.QuizPaperBuilder.shuffleInPlace === 'function';
+        if (!hasSection) {
+            const shuffleOn = !(opts && opts.shuffle === false);
+            if (!shuffleOn || !canShuffle) return items;
+            return window.QuizPaperBuilder.shuffleInPlace(items.slice());
         }
-        return window.QuizPaperBuilder.shuffleInPlace(items.slice());
+        const groups = [];
+        const byId = {};
+        items.forEach(function (it) {
+            const sid = String(it.section_id || '');
+            if (!byId[sid]) {
+                byId[sid] = { section_id: sid, shuffle: it.section_shuffle !== false, items: [] };
+                groups.push(byId[sid]);
+            }
+            byId[sid].items.push(it);
+        });
+        if (canShuffle) {
+            groups.forEach(function (g) {
+                if (g.shuffle) g.items = window.QuizPaperBuilder.shuffleInPlace(g.items.slice());
+            });
+        }
+        const orderedGroups = (opts && opts.shuffle_sections && canShuffle)
+            ? window.QuizPaperBuilder.shuffleInPlace(groups.slice())
+            : groups;
+        const out = [];
+        orderedGroups.forEach(function (g) {
+            g.items.forEach(function (it) { out.push(it); });
+        });
+        return out;
+    }
+
+    function itemAllowsAppeal(item, task) {
+        if (item && item.allow_answer_appeal != null) return !!item.allow_answer_appeal;
+        return !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
     }
 
     function replaceLocalCompletion(assignmentId, taskId, row) {
@@ -889,10 +994,12 @@ window.FeatureStudentQuiz = (function () {
         stats.leave_count_total += leaveCount;
         stats.last_leave_count = leaveCount;
         stats.last_leave_log = leaveLog.slice();
+        const durationMs = applyDurationToStats(stats, takeSessionDurationMs());
         pushHistory(stats, {
             at: new Date().toISOString(),
             type: 'quit',
-            leave_count: leaveCount
+            leave_count: leaveCount,
+            duration_ms: durationMs
         });
         const keepCompleted = stats.complete_count > 0;
         // 注意：Postgres jsonb || 若帶 null 會蓋掉舊值；quit 時只更新 quiz_stats
@@ -958,7 +1065,7 @@ window.FeatureStudentQuiz = (function () {
         };
         window.addEventListener('beforeunload', beforeUnloadHandler);
 
-        visibilityHandler = function () {
+        visibilityHandler = async function () {
             if (!examGuardOn) return;
             if (document.visibilityState === 'hidden') {
                 leftWhileHidden = true;
@@ -967,43 +1074,55 @@ window.FeatureStudentQuiz = (function () {
             }
             if (leftWhileHidden && document.visibilityState === 'visible') {
                 leftWhileHidden = false;
-                const keepGoing = window.confirm(TAB_RETURN_MSG + '\n目前離開次數：' + leaveCount);
-                if (!keepGoing) {
-                    closeQuizNow();
-                    return;
-                }
-                if (!isFullscreen()) {
-                    requestExamFullscreen(overlayEl || document.documentElement);
+                if (leaveConfirmBusy) return;
+                leaveConfirmBusy = true;
+                try {
+                    const keepGoing = await window.ModalOverlay.confirm(TAB_RETURN_MSG + '\n目前離開次數：' + leaveCount);
+                    if (!keepGoing) {
+                        closeQuizNow();
+                        return;
+                    }
+                    if (!isFullscreen()) {
+                        requestExamFullscreen(overlayEl || document.documentElement);
+                    }
+                } finally {
+                    leaveConfirmBusy = false;
                 }
             }
         };
         document.addEventListener('visibilitychange', visibilityHandler);
 
-        fullscreenHandler = function () {
+        fullscreenHandler = async function () {
             if (!examGuardOn || allowFsExit) return;
             if (isFullscreen()) return;
             recordLeave('fullscreen_exit');
-            const keepGoing = window.confirm(FS_EXIT_MSG + '\n目前離開次數：' + leaveCount);
-            if (!keepGoing) {
-                closeQuizNow();
-                return;
-            }
-            requestExamFullscreen(overlayEl || document.documentElement).then(function (ok) {
-                if (!ok) {
-                    window.showFlash('無法恢復全螢幕，請手動按 F11 或允許全螢幕後繼續', 'warning');
+            if (leaveConfirmBusy) return;
+            leaveConfirmBusy = true;
+            try {
+                const keepGoing = await window.ModalOverlay.confirm(FS_EXIT_MSG + '\n目前離開次數：' + leaveCount);
+                if (!keepGoing) {
+                    closeQuizNow();
+                    return;
                 }
-            });
+                requestExamFullscreen(overlayEl || document.documentElement).then(function (ok) {
+                    if (!ok) {
+                        window.showFlash('無法恢復全螢幕，請手動按 F11 或允許全螢幕後繼續', 'warning');
+                    }
+                });
+            } finally {
+                leaveConfirmBusy = false;
+            }
         };
         document.addEventListener('fullscreenchange', fullscreenHandler);
         document.addEventListener('webkitfullscreenchange', fullscreenHandler);
     }
 
-    function requestCloseQuiz() {
+    async function requestCloseQuiz() {
         if (!examGuardOn) {
             closeQuizNow();
             return;
         }
-        if (!window.confirm('作答尚未繳交，確定要中斷考試並關閉？\n目前離開次數：' + leaveCount)) return;
+        if (!(await window.ModalOverlay.confirm('作答尚未繳交，確定要中斷考試並關閉？\n目前離開次數：' + leaveCount))) return;
         closeQuizNow();
     }
 
@@ -1027,6 +1146,7 @@ window.FeatureStudentQuiz = (function () {
         stats.attempt_count += 1;
         pushHistory(stats, { at: new Date().toISOString(), type: 'open' });
         sessionBaseRaw.quiz_stats = stats;
+        markSessionStart();
         // 開啟即寫入 attempt（失敗不擋作答）
         persistResult(assignmentId, taskId, { quiz_stats: stats }, stats.complete_count > 0).catch(function (err) {
             console.warn('[FeatureStudentQuiz] persist open', err);
@@ -1048,8 +1168,17 @@ window.FeatureStudentQuiz = (function () {
         // （sessionDisplayOrder），submit() 交卷時要用同一份順序算編號，不能再重新洗牌一次。
         const displayItems = displayOrderItems(paper, task);
         sessionDisplayOrder = displayItems.map(function (it) { return it.item_id; });
+        let lastSectionId = null;
+        let sectionNo = 0;
         const itemsHtml = displayItems.map(function (it, idx) {
-            return renderItemRow(it, undefined, idx + 1);
+            let head = '';
+            const sid = String(it.section_id || '');
+            if (sid && sid !== lastSectionId) {
+                lastSectionId = sid;
+                sectionNo += 1;
+                head = '<div style="margin:16px 0 8px; padding:6px 10px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px; font-weight:800; color:#065F46;">段落 ' + sectionNo + '</div>';
+            }
+            return head + renderItemRow(it, undefined, idx + 1);
         }).join('');
 
         const title = String(task.title || (task.raw_data && task.raw_data.exam_title) || '線上考試')
@@ -1138,6 +1267,7 @@ window.FeatureStudentQuiz = (function () {
         stats.leave_count_total += leaveCount;
         stats.last_leave_count = leaveCount;
         stats.last_leave_log = leaveLog.slice();
+        const durationMs = applyDurationToStats(stats, takeSessionDurationMs());
         // 錯題本編號＝這題在「這次作答畫面上」排第幾題（sessionDisplayOrder），不是錯題清單裡
         // 排第幾個、也不是出卷時的固定 seq——用畫面順序才能讓學生對得起來「剛剛看到的第幾題」。
         // 💣 雷區（2026-08-13 老師回報「編號還是 7,1,6,4 這樣亂跳」）：上面這段只修到「每一張
@@ -1174,7 +1304,8 @@ window.FeatureStudentQuiz = (function () {
             score: result.score,
             correct: result.correct,
             total: result.total,
-            wrong_count: stats.wrong_items.length
+            wrong_count: stats.wrong_items.length,
+            duration_ms: durationMs
         });
 
         // 不把全卷 details 塞進 DB（避免 task_completions 過肥）
@@ -1191,7 +1322,9 @@ window.FeatureStudentQuiz = (function () {
                 leave_log: leaveLog.slice(),
                 complete_count: stats.complete_count,
                 quit_count: stats.quit_count,
-                leave_count_total: stats.leave_count_total
+                leave_count_total: stats.leave_count_total,
+                duration_ms: durationMs,
+                total_time_ms: stats.total_time_ms
             }
         };
 
@@ -1275,6 +1408,7 @@ window.FeatureStudentQuiz = (function () {
         }
         // 同 openQuiz：記下這次重考實際顯示的順序，submitRetake 交卷時要用同一份順序算編號。
         sessionRetakeDisplayOrder = retakeItems.map(function (it) { return it.item_id; });
+        markSessionStart();
         const title = String(task.title || (task.raw_data && task.raw_data.exam_title) || '線上考試')
             .replace(/<[^>]*>?/gm, '');
 
@@ -1366,17 +1500,29 @@ window.FeatureStudentQuiz = (function () {
         // 合併正確率＝（原始答對＋錯題重考答對）/ 原始總題數（分母不變，重考題只是原始錯題的子集訂正）
         const combinedCorrect = originalCorrect + result.correct;
         const combinedRate = originalTotal > 0 ? Math.round((combinedCorrect / originalTotal) * 1000) / 10 : null;
+        const stats = readStats(raw);
+        const durationMs = applyDurationToStats(stats, takeSessionDurationMs());
+        pushHistory(stats, {
+            at: gradedAt,
+            type: 'retake_complete',
+            score: result.score,
+            correct: result.correct,
+            total: result.total,
+            duration_ms: durationMs
+        });
 
         const updatedRetake = {
             item_ids: retake.item_ids.slice(),
             done: true,
             answers: answers,
             graded_at: gradedAt,
+            duration_ms: durationMs,
             result: {
                 score: result.score,
                 correct: result.correct,
                 total: result.total,
-                wrong_items: retakeWrongItems
+                wrong_items: retakeWrongItems,
+                duration_ms: durationMs
             },
             combined: {
                 correct: combinedCorrect,
@@ -1386,7 +1532,7 @@ window.FeatureStudentQuiz = (function () {
         };
 
         try {
-            await persistResult(assignmentId, taskId, { quiz_retake: updatedRetake }, true);
+            await persistResult(assignmentId, taskId, { quiz_retake: updatedRetake, quiz_stats: stats }, true);
             if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_MODAL_ID);
             openRetakeReportModal(assignmentId, taskId, originalResult, updatedRetake, appealsByItemIdFromRaw(raw));
         } catch (err) {
@@ -1411,7 +1557,12 @@ window.FeatureStudentQuiz = (function () {
         // 這裡是塞進 onclick="...('safeAssign','safeTask')" 的 JS 字串常值，要跳單引號，不是 HTML escape
         const safeAssign = String(opts.assignmentId == null ? '' : opts.assignmentId).replace(/'/g, "\\'");
         const safeTask = String(opts.taskId == null ? '' : opts.taskId).replace(/'/g, "\\'");
-        const hasAppealable = opts.allowAppeal && wrongItems.some(function (item) { return !appealsByItemId[String(item.item_id)]; });
+        const hasAppealable = wrongItems.some(function (item) {
+            const allowed = (item && item.allow_answer_appeal != null)
+                ? !!item.allow_answer_appeal
+                : !!opts.allowAppeal;
+            return allowed && !appealsByItemId[String(item.item_id)];
+        });
         const appealSubmitHtml = hasAppealable
             ? ('<div style="display:flex; justify-content:flex-end; margin:6px 0 8px;">'
                 + '<button type="button" class="btn btn-action" style="background:#7C3AED; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.submitAppeals(\'' + safeAssign + '\',\'' + safeTask + '\',\'' + wrongCardsBodyId + '\',\'retake\')">📮 送出申訴</button>'
@@ -1773,11 +1924,12 @@ window.FeatureStudentQuiz = (function () {
         const progressMap = opts.progressMap;
         const difficultyMap = opts.difficultyMap || {};
         const levelCounts = opts.levelCounts || defaultPracticeLevelCounts(requiredCount);
+        const takePracticeTimeStats = makePracticeSessionTimer(opts.baselineTotalMs);
         let detachAll = null;
 
         function persistMeta(done) {
             if (typeof opts.persist !== 'function') return Promise.resolve();
-            return opts.persist(done ? { input_practice_done: true } : {}, !!done);
+            return opts.persist(done ? { input_practice_done: true } : {}, !!done, takePracticeTimeStats());
         }
 
         function remountBody() {
@@ -1826,7 +1978,12 @@ window.FeatureStudentQuiz = (function () {
             id: modalId,
             tier: 'B',
             isDirty: function () { return false; },
-            onClose: function () { if (detachAll) { detachAll(); detachAll = null; } },
+            onClose: function () {
+                persistMeta(false).catch(function (err) {
+                    console.warn('[FeatureStudentQuiz] practice close persist', err);
+                });
+                if (detachAll) { detachAll(); detachAll = null; }
+            },
             onMount: function () {
                 remountBody();
                 bindCountInputs();
@@ -1864,6 +2021,7 @@ window.FeatureStudentQuiz = (function () {
         const normItems = buildPracticeNormItems('practice', paper.items);
         const title = String(task.title || task.raw_data.exam_title || '線上考試').replace(/<[^>]*>?/gm, '');
 
+        const prevTime = readPracticeTimeStats(raw.input_practice_stats);
         mountPracticeModal({
             modalId: INPUT_PRACTICE_MODAL_ID,
             title: title,
@@ -1873,11 +2031,13 @@ window.FeatureStudentQuiz = (function () {
             progressMap: progressMap,
             difficultyMap: difficultyMap,
             levelCounts: levelCounts,
-            persist: function (extra, done) {
+            baselineTotalMs: prevTime.total_time_ms,
+            persist: function (extra, done, timeStats) {
                 return persistResult(assignmentId, taskId, Object.assign({
                     input_practice_progress: progressMap,
                     input_practice_difficulty: difficultyMap,
-                    input_practice_level_counts: levelCounts
+                    input_practice_level_counts: levelCounts,
+                    input_practice_stats: timeStats || prevTime
                 }, extra || {}), !!done);
             }
         });
@@ -1899,20 +2059,37 @@ window.FeatureStudentQuiz = (function () {
         const progressMap = JSON.parse(JSON.stringify(raw.input_correction_progress || {}));
         const normItems = buildPracticeNormItems('correction', wrongItems);
         const title = String(task.title || task.raw_data.exam_title || '線上考試').replace(/<[^>]*>?/gm, '');
+        const prevTime = readPracticeTimeStats(raw.input_correction_stats);
+        const takeCorrectionTimeStats = makePracticeSessionTimer(prevTime.total_time_ms);
+
+        function persistCorrection(extra) {
+            return persistResult(assignmentId, taskId, Object.assign({
+                input_correction_progress: progressMap,
+                input_correction_stats: takeCorrectionTimeStats()
+            }, extra || {}), true);
+        }
 
         let detachAll = null;
         window.ModalOverlay.open({
             id: INPUT_CORRECTION_MODAL_ID,
             tier: 'B',
             isDirty: function () { return false; },
-            onClose: function () { if (detachAll) { detachAll(); detachAll = null; } },
+            onClose: function () {
+                persistCorrection({}).catch(function (err) {
+                    console.warn('[FeatureStudentQuiz] correction close persist', err);
+                });
+                if (detachAll) { detachAll(); detachAll = null; }
+            },
             onMount: function () {
                 detachAll = wirePracticeSession('correction', normItems, requiredCount, progressMap, function (pm) {
-                    persistResult(assignmentId, taskId, { input_correction_progress: pm }, true).catch(function (err) {
+                    persistResult(assignmentId, taskId, {
+                        input_correction_progress: pm,
+                        input_correction_stats: takeCorrectionTimeStats()
+                    }, true).catch(function (err) {
                         console.warn('[FeatureStudentQuiz] persist input_correction_progress', err);
                     });
                 }, function () {
-                    persistResult(assignmentId, taskId, { input_correction_progress: progressMap, input_correction_done: true }, true).then(function () {
+                    persistCorrection({ input_correction_done: true }).then(function () {
                         window.showFlash('🎉 錯題改正練習全部完成！', 'success');
                     }).catch(function (err) {
                         console.warn('[FeatureStudentQuiz] persist input_correction_done', err);
@@ -1950,6 +2127,10 @@ window.FeatureStudentQuiz = (function () {
             Object.assign(defaultPracticeLevelCounts(requiredCount), raw.input_practice_level_counts || {})
         );
         summary.requiredCount = requiredCount;
+        const pTime = readPracticeTimeStats(raw.input_practice_stats);
+        summary.last_duration_ms = pTime.last_duration_ms;
+        summary.total_time_ms = pTime.total_time_ms;
+        summary.duration_label = pTime.total_time_ms ? formatDurationMs(pTime.total_time_ms) : '';
         return summary;
     }
 
@@ -1965,6 +2146,10 @@ window.FeatureStudentQuiz = (function () {
         const normItems = buildPracticeNormItems('correction', wrongItems);
         const summary = summarizePracticeProgress(normItems, requiredCount, raw.input_correction_progress || {});
         summary.requiredCount = requiredCount;
+        const cTime = readPracticeTimeStats(raw.input_correction_stats);
+        summary.last_duration_ms = cTime.last_duration_ms;
+        summary.total_time_ms = cTime.total_time_ms;
+        summary.duration_label = cTime.total_time_ms ? formatDurationMs(cTime.total_time_ms) : '';
         return summary;
     }
 
@@ -1988,6 +2173,7 @@ window.FeatureStudentQuiz = (function () {
         const difficultyMap = JSON.parse(JSON.stringify(opts.difficultyMap || savedMeta.difficulty || {}));
         const levelCounts = Object.assign(defaultPracticeLevelCounts(requiredCount), opts.levelCounts || savedMeta.level_counts || {});
         const normItems = buildPracticeNormItems('practice', paper.items);
+        const baselineTotalMs = Number(savedMeta.total_time_ms) || 0;
         mountPracticeModal({
             modalId: INPUT_PRACTICE_MODAL_ID,
             title: String((opts && opts.title) || '複習練習').replace(/<[^>]*>?/gm, ''),
@@ -1997,10 +2183,18 @@ window.FeatureStudentQuiz = (function () {
             progressMap: progressMap,
             difficultyMap: difficultyMap,
             levelCounts: levelCounts,
-            persist: function (_extra, done) {
+            baselineTotalMs: baselineTotalMs,
+            persist: function (_extra, done, timeStats) {
                 if (typeof opts.onPersist !== 'function') return Promise.resolve();
                 const packed = Object.assign({}, progressMap, {
-                    __meta: { difficulty: difficultyMap, level_counts: levelCounts }
+                    __meta: {
+                        difficulty: difficultyMap,
+                        level_counts: levelCounts,
+                        duration_ms: timeStats ? timeStats.last_duration_ms : 0,
+                        total_time_ms: timeStats ? timeStats.total_time_ms : baselineTotalMs,
+                        started_at: timeStats && timeStats.started_at ? timeStats.started_at : null,
+                        updated_at: timeStats && timeStats.updated_at ? timeStats.updated_at : new Date().toISOString()
+                    }
                 });
                 return opts.onPersist(packed, !!done);
             }
@@ -2021,6 +2215,7 @@ window.FeatureStudentQuiz = (function () {
         }
         const title = String((opts && opts.title) || '複習測試').replace(/<[^>]*>?/gm, '');
         const bodyId = 'student-review-test-body';
+        standaloneQuizStartedAtMs = Date.now();
         const itemsHtml = paper.items.map(function (it, idx) {
             return renderItemRow(it, undefined, idx + 1);
         }).join('');
@@ -2048,11 +2243,17 @@ window.FeatureStudentQuiz = (function () {
             btn.addEventListener('click', function () {
                 const answers = collectAnswers(bodyId);
                 const graded = window.QuizPaperBuilder.gradeAnswers(paper, answers);
+                const startedAtMs = standaloneQuizStartedAtMs;
+                const durationMs = startedAtMs ? Math.max(0, Date.now() - startedAtMs) : 0;
+                standaloneQuizStartedAtMs = 0;
                 const result = {
                     score: graded && graded.score != null ? graded.score : 0,
                     correct: graded && graded.correct != null ? graded.correct : 0,
                     total: graded && graded.total != null ? graded.total : paper.items.length,
-                    details: graded && graded.details ? graded.details : []
+                    details: graded && graded.details ? graded.details : [],
+                    duration_ms: durationMs,
+                    started_at: startedAtMs ? new Date(startedAtMs).toISOString() : null,
+                    submitted_at: new Date().toISOString()
                 };
                 const done = (typeof opts.onSubmit === 'function')
                     ? opts.onSubmit(answers, result)
@@ -2067,7 +2268,9 @@ window.FeatureStudentQuiz = (function () {
                             '<div style="background:white; padding:24px; border-radius:14px; max-width:420px; width:90vw; text-align:center;">'
                             + '<h3 style="margin:0 0 8px; color:#9A3412;">測試結果</h3>'
                             + '<div style="font-size:2rem; font-weight:900; color:' + color + ';">' + esc(String(result.score)) + '%</div>'
-                            + '<div style="color:#64748B; font-weight:700; margin:8px 0 16px;">' + result.correct + ' / ' + result.total + ' 題正確</div>'
+                            + '<div style="color:#64748B; font-weight:700; margin:8px 0 16px;">' + result.correct + ' / ' + result.total + ' 題正確'
+                            + (durationMs ? (' · 用時 ' + esc(formatDurationMs(durationMs))) : '')
+                            + '</div>'
                             + '<button type="button" class="btn" style="background:#EA580C; color:white; border:none; padding:8px 16px; font-weight:800;" onclick="window.ModalOverlay.close(\'student-review-test-result\')">關閉</button>'
                             + '</div>'
                     });

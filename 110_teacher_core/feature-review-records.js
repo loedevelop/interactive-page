@@ -31,6 +31,24 @@ window.FeatureReviewRecords = (function () {
         return data || { visible: false, sessions: [] };
     }
 
+    function formatDurationMs(ms) {
+        const n = Math.max(0, Math.floor(Number(ms) || 0));
+        if (!n) return '';
+        if (n < 1000) return '不到 1 秒';
+        const totalSec = Math.round(n / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return h + ' 小時 ' + m + ' 分';
+        if (m > 0) return m + ' 分 ' + s + ' 秒';
+        return s + ' 秒';
+    }
+
+    function sessionDurationMs(s) {
+        const result = s && s.result;
+        return Number(result && (result.total_time_ms || result.duration_ms)) || 0;
+    }
+
     function formatWhen(iso) {
         if (!iso) return '—';
         return String(iso).replace('T', ' ').slice(0, 16);
@@ -60,11 +78,13 @@ window.FeatureReviewRecords = (function () {
             const range = (cfg.page_start != null && cfg.page_end != null)
                 ? ('pp. ' + cfg.page_start + '～' + cfg.page_end)
                 : '';
+            const durLabel = formatDurationMs(sessionDurationMs(s));
             return '<tr>'
                 + '<td style="padding:8px; border:1px solid #E2E8F0; font-weight:800;">' + esc(s.student_name || '') + '</td>'
                 + '<td style="padding:8px; border:1px solid #E2E8F0; text-align:center;">' + mode + '</td>'
                 + '<td style="padding:8px; border:1px solid #E2E8F0;">' + esc(cfg.folder_name || '') + ' ' + esc(range) + '</td>'
                 + '<td style="padding:8px; border:1px solid #E2E8F0; text-align:center; font-weight:900; color:' + scoreColor(s.result) + ';">' + esc(scoreText(s.result)) + '</td>'
+                + '<td style="padding:8px; border:1px solid #E2E8F0; text-align:center; font-weight:700; color:#475569;">' + esc(durLabel || '—') + '</td>'
                 + '<td style="padding:8px; border:1px solid #E2E8F0; text-align:center;">' + esc(status) + (s.counts_as_score ? ' · 計分' : '') + '</td>'
                 + '<td style="padding:8px; border:1px solid #E2E8F0; font-size:0.8rem; color:#64748B;">' + esc(formatWhen(s.submitted_at || s.created_at)) + '</td>'
                 + '</tr>';
@@ -75,6 +95,7 @@ window.FeatureReviewRecords = (function () {
             + '<th style="padding:8px; border:1px solid #E2E8F0;">模式</th>'
             + '<th style="padding:8px; border:1px solid #E2E8F0; text-align:left;">教材／範圍</th>'
             + '<th style="padding:8px; border:1px solid #E2E8F0;">成績</th>'
+            + '<th style="padding:8px; border:1px solid #E2E8F0;">用時</th>'
             + '<th style="padding:8px; border:1px solid #E2E8F0;">狀態</th>'
             + '<th style="padding:8px; border:1px solid #E2E8F0;">時間</th>'
             + '</tr></thead><tbody>' + rows + '</tbody></table></div>';

@@ -61,25 +61,24 @@ window.FeatureProfile = (() => {
 
     // 🚪 獨立出的安全登出邏輯，供全域與動態按鈕共用
     async function logout() {
-        if (confirm('⚠️ 確定要安全登出系統，並註銷當前裝置的雲端授權嗎？')) {
-            if (window.logoutToLogin) {
-                await window.logoutToLogin(true);
-                return;
-            }
-            try {
-                if (typeof window.supabaseClient !== 'undefined') {
-                    await window.supabaseClient.auth.signOut();
-                }
-            } catch (e) {
-                console.warn("雲端登出失敗，執行強制本地清除");
-            }
-            localStorage.clear();
-            sessionStorage.clear();
-            const loginUrl = window.buildLoginUrl
-                ? window.buildLoginUrl(true)
-                : '../index.html?clear=true&_=' + Date.now();
-            window.location.replace(loginUrl);
+        if (!(await window.ModalOverlay.confirm('⚠️ 確定要安全登出系統，並註銷當前裝置的雲端授權嗎？'))) return;
+        if (window.logoutToLogin) {
+            await window.logoutToLogin(true);
+            return;
         }
+        try {
+            if (typeof window.supabaseClient !== 'undefined') {
+                await window.supabaseClient.auth.signOut();
+            }
+        } catch (e) {
+            console.warn("雲端登出失敗，執行強制本地清除");
+        }
+        localStorage.clear();
+        sessionStorage.clear();
+        const loginUrl = window.buildLoginUrl
+            ? window.buildLoginUrl(true)
+            : '../index.html?clear=true&_=' + Date.now();
+        window.location.replace(loginUrl);
     }
 
     // 載入與渲染雲端教師個人設定介面

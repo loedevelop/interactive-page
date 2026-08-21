@@ -1,0 +1,51 @@
+# 教材／範本對照中心鐵律（雷區）
+
+> 改名之後，關係不能消失。身分是 UUID，名稱只是現用標籤。
+> 動範本庫改名、教材區活頁／檔名、套用紀錄、Snapshot／考試讀 meta 時必讀。
+
+## 不變量
+
+```
+material_folders.id / material_sheets.id / material_templates.id = 身分
+名稱（folder_name／sheet_stem／meta_file_name／script_file_name／templates.name）= 現用標籤
+舊名 → material_name_maps → 同一 UUID
+讀取：現用名對不到時，先 MaterialNameMap.resolve／lookupKeys，禁止只做字串相等
+```
+
+## 禁止
+
+```javascript
+// ❌ 改名＝刪掉舊列再 insert（新 UUID，FK／組合／作業全斷）
+await supabase.from('material_sheets').delete().eq('id', oldId);
+await supabase.from('material_sheets').insert({ sheet_stem: newName });
+
+// ❌ 考試／套用只比對現用檔名
+if (section.meta_file_name === file.fileName) ...
+
+// ❌ 把教材區顯示暱稱（source_labels）當成 Drive／活頁真名
+```
+
+## 正確
+
+```javascript
+// ✅ 同一 id UPDATE 現用欄，再 recordAlias／recordTemplateRename
+await supabase.from('material_templates').update({ name }).eq('id', id);
+await MaterialNameMap.recordTemplateRename(id, oldName, name);
+
+// ✅ 讀取
+const keys = MaterialNameMap.lookupKeys('sheet_stem', storedStem);
+const tplId = MaterialNameMap.resolveTemplateId(oldTemplateName);
+const folder = MaterialNameMap.resolveFolderName(storedFolder); // GEPT-2_sentence → GEPT-2
+```
+
+- meta 與文稿是一塊：改現用名時兩個舊名都要記
+- 組合已用 `extraction_template_id`，範本改名不該變空卡
+- 只有舊 `template_name` 的套用紀錄必須 resolve
+- `meta_rows_by_stem` 禁止用舊+新 key 複製整份列（會膨脹）；讀取 resolve、寫回只留現用 key
+- 教材區卡片上的顯示名稱仍是 `source_labels`，不是對照中心
+
+## 檔案
+
+- `020_js_core/material-name-map.js`
+- `supabase/migrations/20260818140000_material_name_maps.sql`
+- `supabase/migrations/20260819160000_material_name_maps_template.sql`

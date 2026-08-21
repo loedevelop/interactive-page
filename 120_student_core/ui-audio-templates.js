@@ -139,7 +139,7 @@ window.UIAudioTemplates = {
 
         let bodyHtml = '';
         if (showText) {
-            bodyHtml += `<div style="color: #334155; line-height: 1.6; overflow-y: auto; background: #ffffff; flex: 1; max-height: none; height: 100%; padding: 24px 32px; font-size: 1.15rem;">${safeText}</div>`;
+            bodyHtml += `<div id="audio-studio-transcript" style="color: #334155; line-height: 1.6; overflow-y: auto; background: #ffffff; flex: 1; max-height: none; height: 100%; padding: 24px 32px; font-size: 1.15rem;">${safeText}</div>`;
         }
         
         if (embedUrl) {

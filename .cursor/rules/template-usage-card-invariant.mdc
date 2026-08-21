@@ -28,7 +28,7 @@ alwaysApply: false
 
 ```
 擷取「檔案 xxx.xlsx」＝ Excel 來源，展開／計數單位是活頁（不是 meta）
-擷取「教材 資料夾」＝ 產出，展開 items ＝ meta 檔名（必須以 .meta.json 結尾）
+擷取「教材 資料夾」＝ 產出，展開 items ＝ **統計表 `class_review_catalog` 的 meta 檔名**（必須以 .meta.json 結尾）。禁止再數套用列、Drive 清單、或套餐連結當顯示數量。
 試卷展開 items ＝ material_templates.name（範本名字，不是活頁、不是檔名）
 徽章／按鈕／出題表頭：「考卷範本」禁止出現，一律「試卷範本」
 ```

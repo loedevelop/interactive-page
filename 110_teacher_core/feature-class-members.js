@@ -524,7 +524,7 @@ window.FeatureClassMembers = (() => {
                 return;
             }
 
-            if (!confirm(`將為 ${withDrive.length} 位學生重新設定 Drive 資料夾權限（知道連結可編輯 + 加入學生信箱）。\n\n請確認 GAS 已重新部署後再執行。繼續？`)) {
+            if (!(await window.ModalOverlay.confirm(`將為 ${withDrive.length} 位學生重新設定 Drive 資料夾權限（知道連結可編輯 + 加入學生信箱）。\n\n請確認 GAS 已重新部署後再執行。繼續？`))) {
                 return;
             }
 
@@ -561,7 +561,7 @@ window.FeatureClassMembers = (() => {
         },
         
         deleteStudent: async (id, classId) => {
-            if (!confirm('⚠️ 確定要把該名學生從本班級移除嗎？\n\n(注意：這只是將學生退出本班，系統主檔仍會保留。如果該學生有綁定家長，家長將自動無法觀測本班進度)')) return;
+            if (!(await window.ModalOverlay.confirm('⚠️ 確定要把該名學生從本班級移除嗎？\n\n(注意：這只是將學生退出本班，系統主檔仍會保留。如果該學生有綁定家長，家長將自動無法觀測本班進度)'))) return;
             
             const { error } = await window.supabaseClient
                 .from('student_enrollments')
@@ -574,7 +574,7 @@ window.FeatureClassMembers = (() => {
         },
 
         removeStaff: async (userId, classId) => {
-            if (!confirm('⚠️ 確定要把該名教職員從本班級團隊移除嗎？\n(注意：對方的帳號仍會保留在系統中)')) return;
+            if (!(await window.ModalOverlay.confirm('⚠️ 確定要把該名教職員從本班級團隊移除嗎？\n(注意：對方的帳號仍會保留在系統中)'))) return;
             
             const { error } = await window.supabaseClient
                 .from('class_staff')
@@ -587,7 +587,7 @@ window.FeatureClassMembers = (() => {
         },
 
         removeParentMapping: async (parentId, childId, classId) => {
-            if (!confirm('⚠️ 確定要解除該名家長對此學生的觀測權限嗎？\n(家長端將立即失去觀測此學生的資格)')) return;
+            if (!(await window.ModalOverlay.confirm('⚠️ 確定要解除該名家長對此學生的觀測權限嗎？\n(家長端將立即失去觀測此學生的資格)'))) return;
             
             const { error } = await window.supabaseClient
                 .from('parent_child_mappings')

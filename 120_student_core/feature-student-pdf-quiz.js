@@ -528,13 +528,13 @@ window.FeatureStudentPdfQuiz = (function () {
         if (el) el.innerHTML = _renderSectionTabsHtml();
     }
 
-    function requestClose() {
+    async function requestClose() {
         var st = _quizState;
         var hasUnsavedWork = st && st.sections.some(function (sec, idx) {
             return !_isSectionSubmitted(idx) && (st.boxesBySection[idx] || []).length > 0;
         });
         if (hasUnsavedWork) {
-            if (!window.confirm('目前這大題還沒提交批改，這部分作答不會被存檔，確定要關閉？')) return;
+            if (!(await window.ModalOverlay.confirm('目前這大題還沒提交批改，這部分作答不會被存檔，確定要關閉？'))) return;
         }
         if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
     }
@@ -928,7 +928,7 @@ window.FeatureStudentPdfQuiz = (function () {
         // 💣 不強制作答框數量一定要等於程式判斷的格數（程式判斷可能算錯）——數量不符也能直接送出，
         // 送出後就依學生當時實際點的作答框批改；不會作答的題也不會擋在這裡，是學生自己的選擇。
         var sec = st.sections[idx];
-        if (!window.confirm('確定要提交「' + sec.section + '」嗎？提交後會立刻批改，這一大題就不能再修改了。')) return;
+        if (!(await window.ModalOverlay.confirm('確定要提交「' + sec.section + '」嗎？提交後會立刻批改，這一大題就不能再修改了。'))) return;
 
         var sectionAnswers = _buildSectionAnswers(idx);
         var fullPaper = window.PdfExamPaper.buildGradingPaper(st.job);

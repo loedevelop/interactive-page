@@ -577,6 +577,85 @@ function deleteMaterialStemFiles(rootFolderId, materialFolderName, stem, rootKin
   return { deleted: deleted, folderName: targetSub.getName(), stem: cleanStem };
 }
 
+function sanitizeDriveFileName(name) {
+  var clean = String(name || '').replace(/<[^>]*>?/gm, '').replace(/[\\/:*?"<>|]/g, '_').trim();
+  return clean;
+}
+
+/**
+ * 教材子資料夾內批次改檔名（meta／文稿）。兩段改名避免 A→B、B→A 互撞。
+ * 找不到的檔記 missing，不整批失敗。
+ */
+function renameMaterialFiles(rootFolderId, materialFolderName, items, rootKind) {
+  var rootFolder = DriveApp.getFolderById(rootFolderId);
+  var kind = normalizeMaterialsRootKind(rootKind);
+  var mastersRoot = resolveMaterialsRoot(rootFolder, kind, false);
+  if (!mastersRoot) {
+    throw new Error(kind === 'teacher'
+      ? '找不到 01_My_Materials，請先確認老師個人資料夾已綁定。'
+      : '找不到 00_Class_Materials，請先確認班級資料夾已設定。');
+  }
+  var cleanFolderName = String(materialFolderName || '').trim();
+  if (!cleanFolderName) throw new Error('缺少教材資料夾名稱');
+  var targetSub = findSubFolderInsensitive(mastersRoot, cleanFolderName);
+  if (!targetSub) throw new Error('找不到教材資料夾：' + cleanFolderName);
+
+  var list = items || [];
+  var pairs = [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var it = list[i] || {};
+    var oldName = String(it.oldName || '').trim();
+    var newName = sanitizeDriveFileName(it.newName);
+    if (!oldName || !newName || oldName === newName) continue;
+    pairs.push({ oldName: oldName, newName: newName, file: null });
+  }
+
+  var TMP = '__mzren__';
+  var renamed = [];
+  var missing = [];
+  var errors = [];
+
+  function findOne(name) {
+    var files = targetSub.getFilesByName(name);
+    if (!files.hasNext()) return null;
+    return files.next();
+  }
+
+  for (i = 0; i < pairs.length; i++) {
+    var found = findOne(pairs[i].oldName);
+    if (!found) {
+      missing.push(pairs[i].oldName);
+      continue;
+    }
+    try {
+      found.setName(TMP + pairs[i].newName);
+      pairs[i].file = found;
+    } catch (e1) {
+      errors.push(pairs[i].oldName + '：' + String(e1 && e1.message ? e1.message : e1));
+    }
+  }
+  for (i = 0; i < pairs.length; i++) {
+    if (!pairs[i].file) continue;
+    try {
+      pairs[i].file.setName(pairs[i].newName);
+      renamed.push({
+        oldName: pairs[i].oldName,
+        newName: pairs[i].newName,
+        fileId: pairs[i].file.getId()
+      });
+    } catch (e2) {
+      errors.push(pairs[i].oldName + ' → ' + pairs[i].newName + '：' + String(e2 && e2.message ? e2.message : e2));
+    }
+  }
+  return {
+    renamed: renamed,
+    missing: missing,
+    errors: errors,
+    folderName: targetSub.getName()
+  };
+}
+
 /** 老師工作區根目錄：統一 _Teachers（若有舊名 Teachers 則改名對齊） */
 function resolveTeachersRootFolder() {
   var root = resolveDriveRootFolder();
@@ -970,6 +1049,23 @@ function doPost(e) {
         deleted: delResult.deleted,
         folderName: delResult.folderName,
         stem: delResult.stem
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'rename_material_files') {
+      var rnFolderId = data.targetFolderId ? String(data.targetFolderId).trim() : '';
+      var rnMaterialFolder = data.materialFolder ? String(data.materialFolder).trim() : '';
+      var rnRootKind = data.rootKind || data.materialsRootKind || 'teacher';
+      var rnItems = data.items || data.files || [];
+      if (!rnFolderId) throw new Error('缺少 targetFolderId');
+      if (!rnMaterialFolder) throw new Error('缺少 materialFolder');
+      var rnResult = renameMaterialFiles(rnFolderId, rnMaterialFolder, rnItems, rnRootKind);
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        renamed: rnResult.renamed,
+        missing: rnResult.missing,
+        errors: rnResult.errors,
+        folderName: rnResult.folderName
       })).setMimeType(ContentService.MimeType.JSON);
     }
 

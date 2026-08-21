@@ -1,17 +1,29 @@
 /**
  * 📂 020_js_core/modal-overlay.js
  * 全站 popup 唯一入口。關閉行為由 tier 中央控管，禁止各功能自建 overlay。
+ * 版面走 010_css/style.css（.modal-overlay / .modal-overlay--prompt）。
  *
- * A：點視窗外 = 取消 = 關閉
- * B：點視窗外 → 若 isDirty() 先 confirm，再關閉
+ * A：點視窗外 = 離開
+ * B：點視窗外 → 沒改過就離開；有 unsaved 才先問
  * C：禁止 backdrop 關閉（僅按鈕／程式 close）
+ *
+ * 禁止 window.confirm。
  */
 window.ModalOverlay = (function () {
     'use strict';
 
     var activeId = null;
+    var stack = [];
     /** @type {Record<string, { onClose?: Function, onCancel?: Function, tier: string, isDirty?: Function, unsavedMessage?: string }>} */
     var registry = {};
+
+    function escapeHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
 
     function cleanupRegistry(id) {
         var meta = registry[id];
@@ -19,16 +31,64 @@ window.ModalOverlay = (function () {
         return meta || null;
     }
 
+    /**
+     * 直接關閉，不再問。儲存成功後請走這條。
+     * @param {string} [id]
+     */
     function close(id) {
         var targetId = id || activeId;
         if (!targetId) return;
         var el = document.getElementById(targetId);
         var meta = cleanupRegistry(targetId);
         if (el) el.remove();
-        if (activeId === targetId) activeId = null;
+        stack = stack.filter(function (x) { return x !== targetId; });
+        if (activeId === targetId) activeId = stack.length ? stack[stack.length - 1] : null;
         if (meta && typeof meta.onClose === 'function') {
             try { meta.onClose(); } catch (_e) { /* ignore */ }
         }
+    }
+
+    function shouldConfirmClose(id) {
+        var meta = registry[id];
+        var el = document.getElementById(id);
+        if (!meta) return false;
+        if (el && el.getAttribute('data-mo-busy') === '1') return false;
+        return typeof meta.isDirty === 'function' && !!meta.isDirty();
+    }
+
+    function clickedOutsidePanel(overlay, target) {
+        if (!overlay || !target) return false;
+        if (target === overlay) return true;
+        var panel = overlay.querySelector('[data-mo-panel]') || overlay.firstElementChild;
+        if (!panel) return true;
+        return !panel.contains(target);
+    }
+
+    /**
+     * 使用者要離開：沒改過／只是提示 → 直接關；有未存變更才問一次。
+     */
+    function requestClose(id) {
+        var targetId = id || activeId;
+        if (!targetId) return Promise.resolve(false);
+        var meta = registry[targetId];
+        var el = document.getElementById(targetId);
+        if (el && el.getAttribute('data-mo-busy') === '1') return Promise.resolve(false);
+        if (!shouldConfirmClose(targetId)) {
+            if (meta && typeof meta.onCancel === 'function') {
+                try { meta.onCancel(); } catch (_e) { /* ignore */ }
+            }
+            close(targetId);
+            return Promise.resolve(true);
+        }
+        var msg = (meta && meta.unsavedMessage) || '有未儲存的變更，確定要關閉嗎？';
+        return confirmDialog(msg).then(function (ok) {
+            if (!ok) return false;
+            if (meta && typeof meta.onCancel === 'function') {
+                try { meta.onCancel(); } catch (_e) { /* ignore */ }
+            }
+            close(targetId);
+            return true;
+        });
     }
 
     /**
@@ -37,10 +97,12 @@ window.ModalOverlay = (function () {
      * @param {'A'|'B'|'C'} options.tier  必填；省略時視為 A 並 console.warn
      * @param {string} [options.contentHtml]
      * @param {boolean} [options.replace=true]
-     * @param {() => boolean} [options.isDirty]  B 級用
+     * @param {boolean} [options.prompt]  提示／確認：距頂 1/3（CSS .modal-overlay--prompt）
+     * @param {number} [options.zIndex]
+     * @param {() => boolean} [options.isDirty]  有未存變更才擋離開
      * @param {string} [options.unsavedMessage]
-     * @param {() => void} [options.onCancel]  使用者取消（backdrop）時，close 前呼叫
-     * @param {() => void} [options.onClose]   任何方式關閉後呼叫（含按鈕 close）
+     * @param {() => void} [options.onCancel]
+     * @param {() => void} [options.onClose]
      * @param {(el: HTMLElement) => void} [options.onMount]
      */
     function open(options) {
@@ -61,8 +123,9 @@ window.ModalOverlay = (function () {
 
         var overlay = document.createElement('div');
         overlay.id = id;
+        overlay.className = 'modal-overlay' + (options.prompt ? ' modal-overlay--prompt' : '');
         overlay.setAttribute('data-modal-tier', tier);
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;z-index:9999;backdrop-filter:blur(2px);overflow-y:auto;padding:20px;box-sizing:border-box;';
+        if (options.zIndex) overlay.style.zIndex = String(options.zIndex);
         overlay.innerHTML = options.contentHtml || '';
 
         registry[id] = {
@@ -75,29 +138,77 @@ window.ModalOverlay = (function () {
 
         if (tier !== 'C') {
             overlay.addEventListener('click', function (e) {
-                if (e.target !== overlay) return;
-                var meta = registry[id];
-                if (!meta) return;
-                if (meta.tier === 'B' && typeof meta.isDirty === 'function' && meta.isDirty()) {
-                    var msg = meta.unsavedMessage || '有未儲存的變更，確定要關閉嗎？';
-                    if (!confirm(msg)) return;
-                }
-                if (typeof meta.onCancel === 'function') {
-                    try { meta.onCancel(); } catch (_e) { /* ignore */ }
-                }
-                close(id);
+                if (!clickedOutsidePanel(overlay, e.target)) return;
+                requestClose(id);
             });
         }
 
         document.body.appendChild(overlay);
+        if (stack.indexOf(id) === -1) stack.push(id);
         activeId = id;
         if (typeof options.onMount === 'function') options.onMount(overlay);
         return id;
     }
 
+    function setBusy(id, busy) {
+        var el = document.getElementById(id || activeId);
+        if (!el) return;
+        if (busy) el.setAttribute('data-mo-busy', '1');
+        else el.removeAttribute('data-mo-busy');
+    }
+
+    /**
+     * 提示／確認框。點外面＝離開（取消）。回傳 Promise<boolean>。
+     */
+    function confirmDialog(message, options) {
+        options = options || {};
+        var text = String(message == null ? '' : message);
+        return new Promise(function (resolve) {
+            var id = 'modal-overlay-confirm-' + Date.now();
+            var settled = false;
+            function finish(ok) {
+                if (settled) return;
+                settled = true;
+                resolve(!!ok);
+                close(id);
+            }
+            open({
+                id: id,
+                tier: 'A',
+                prompt: true,
+                replace: false,
+                zIndex: 10050,
+                contentHtml: (
+                    '<div data-mo-panel role="dialog" aria-modal="true" class="modal-overlay-card">'
+                    + '<div class="modal-overlay-card__msg">' + escapeHtml(text) + '</div>'
+                    + '<div class="modal-overlay-card__actions">'
+                    + '<button type="button" data-mo-confirm-cancel class="modal-overlay-card__cancel">' + escapeHtml(options.cancelText || '取消') + '</button>'
+                    + '<button type="button" data-mo-confirm-ok class="modal-overlay-card__ok">' + escapeHtml(options.okText || '確定') + '</button>'
+                    + '</div></div>'
+                ),
+                onClose: function () {
+                    if (!settled) {
+                        settled = true;
+                        resolve(false);
+                    }
+                },
+                onMount: function (el) {
+                    var okBtn = el.querySelector('[data-mo-confirm-ok]');
+                    var cancelBtn = el.querySelector('[data-mo-confirm-cancel]');
+                    if (okBtn) okBtn.addEventListener('click', function () { finish(true); });
+                    if (cancelBtn) cancelBtn.addEventListener('click', function () { finish(false); });
+                    if (okBtn) okBtn.focus();
+                }
+            });
+        });
+    }
+
     return {
         open: open,
         close: close,
+        requestClose: requestClose,
+        confirm: confirmDialog,
+        setBusy: setBusy,
         getActiveId: function () { return activeId; },
         getTier: function (id) {
             var meta = registry[id || activeId];

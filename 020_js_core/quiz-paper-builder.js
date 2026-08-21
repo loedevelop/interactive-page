@@ -442,8 +442,20 @@ window.QuizPaperBuilder = (function () {
         return Object.assign({}, (profile && profile.col_map) || {});
     }
 
+    function flattenJobPickRows(examJob) {
+        const raw = (examJob && Array.isArray(examJob.sections)) ? examJob.sections : [];
+        if (raw.some(function (s) { return s && Array.isArray(s.segments); })) {
+            const out = [];
+            raw.forEach(function (sec) {
+                (sec.segments || []).forEach(function (seg) { out.push(seg); });
+            });
+            return out;
+        }
+        return raw;
+    }
+
     function findSectionForItem(examJob, item) {
-        const sections = (examJob && Array.isArray(examJob.sections)) ? examJob.sections : [];
+        const sections = flattenJobPickRows(examJob);
         const src = (item && item.source) || {};
         const sheetId = String(src.sheet_id || '').trim().toUpperCase();
         const itemPid = String(src.layout_profile_id || '').trim();
@@ -753,10 +765,32 @@ window.QuizPaperBuilder = (function () {
         const loadSheetMeta = args.loadSheetMeta;
         if (typeof loadSheetMeta !== 'function') throw new Error('缺少 loadSheetMeta');
 
-        const shuffle = !(examJob.options && examJob.options.shuffle === false);
+        function normalizeJobSections(job) {
+            const raw = Array.isArray(job.sections) ? job.sections : [];
+            if (raw.some(function (s) { return s && Array.isArray(s.segments); })) return raw;
+            return [{
+                id: 'sec-legacy',
+                shuffle: !(job.options && job.options.shuffle === false),
+                allow_answer_appeal: true,
+                segments: raw
+            }];
+        }
 
-        const sections = Array.isArray(examJob.sections) ? examJob.sections : [];
-        if (!sections.length) throw new Error('exam_job 沒有區段');
+        const jobSections = normalizeJobSections(examJob);
+        if (!jobSections.length) throw new Error('exam_job 沒有段落');
+        const shuffleSections = !!(examJob.options && examJob.options.shuffle_sections);
+        const orderedSections = shuffleSections ? shuffleInPlace(jobSections.slice()) : jobSections.slice();
+        const sections = [];
+        orderedSections.forEach(function (sec) {
+            (sec && sec.segments ? sec.segments : []).forEach(function (seg) {
+                sections.push(Object.assign({}, seg, {
+                    _section_id: sec.id || '',
+                    _section_shuffle: sec.shuffle !== false,
+                    _section_appeal: sec.allow_answer_appeal !== false
+                }));
+            });
+        });
+        if (!sections.length) throw new Error('exam_job 沒有片段');
 
         const picked = [];
         const metaCache = {};
@@ -833,7 +867,7 @@ window.QuizPaperBuilder = (function () {
                 }
             }
 
-            if (shuffle) restPool = shuffleInPlace(restPool.slice());
+            restPool = shuffleInPlace(restPool.slice());
             // 💣 雷區（2026-08-17）：題數填 0 以前被當成「沒填＝抽範圍內全部」，
             // 三列各 20 可用、其中兩列題數 0，會產出 60 題。明確的 0＝不出這列；
             // 只有空白／未填才沿用「抽全部」舊語意。
@@ -853,9 +887,8 @@ window.QuizPaperBuilder = (function () {
             }
 
             take.forEach(function (row) {
-                // 確保 sheet_id 在列上（若 Excel 有 D 欄會已有；否則補上）
                 const row2 = rowWithPairedWord(Object.assign({}, row, row.sheet_id ? {} : { sheet_id: sheetId }), findPairedMetaRow(metaCache, sheetId, row));
-                picked.push(buildItemFromRow(row2, {
+                const item = buildItemFromRow(row2, {
                     sheetId: sheetId,
                     materialFolder: materialFolder,
                     schemaId: schemaId,
@@ -866,12 +899,31 @@ window.QuizPaperBuilder = (function () {
                     colMap: colMap,
                     quizMode: quizMode,
                     layoutProfileId: (profile && profile.profile_id) || pid
-                }));
+                });
+                item.section_id = sec._section_id || ('sec-' + sIdx);
+                item.section_shuffle = sec._section_shuffle !== false;
+                item.allow_answer_appeal = sec._section_appeal !== false;
+                item.segment_id = String(sec.sheet_id || '') + ':' + String(sec.start || '') + '-' + String(sec.end || '');
+                picked.push(item);
             });
         }
 
-        if (shuffle) shuffleInPlace(picked);
-        picked.forEach(function (it, idx) {
+        const grouped = [];
+        const groupBy = {};
+        picked.forEach(function (it) {
+            const sid = String(it.section_id || '');
+            if (!groupBy[sid]) {
+                groupBy[sid] = { shuffle: it.section_shuffle !== false, items: [] };
+                grouped.push(groupBy[sid]);
+            }
+            groupBy[sid].items.push(it);
+        });
+        const orderedItems = [];
+        grouped.forEach(function (g) {
+            const part = g.shuffle ? shuffleInPlace(g.items.slice()) : g.items;
+            part.forEach(function (it) { orderedItems.push(it); });
+        });
+        orderedItems.forEach(function (it, idx) {
             it.seq = idx + 1;
         });
 
@@ -890,7 +942,7 @@ window.QuizPaperBuilder = (function () {
                     };
                 }).filter(function (s) { return s.layout_profile_id; })
             },
-            items: picked,
+            items: orderedItems,
             notices: notices
         };
     }
@@ -961,7 +1013,9 @@ window.QuizPaperBuilder = (function () {
                 answer: answer,
                 expected: expected,
                 prompt_zh: it.prompt_zh || '',
-                source: it.source || null
+                source: it.source || null,
+                allow_answer_appeal: it.allow_answer_appeal,
+                section_id: it.section_id || ''
             };
             if (isSubAnswer) row.sub_results = subGrade.sub_results;
             if (!ok) {

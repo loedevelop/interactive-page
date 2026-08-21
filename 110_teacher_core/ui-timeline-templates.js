@@ -7,6 +7,125 @@
 
 window.TimelineTemplates = (() => {
 
+    function escapeHtml(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function displayStemFromMetaFile(fileName) {
+        const stem = String(fileName || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+        const m = stem.match(/^(.+)\.([A-Za-z][A-Za-z0-9_-]*)$/);
+        return m ? m[1] : stem;
+    }
+
+    /** 範圍層開包：套餐＋（多活頁才出現的）活頁＋ page/# 起迄 */
+    function renderRangePackHtml(pathStr, groupNode) {
+        const raw = (groupNode && groupNode.raw_data) || {};
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const fcmc = window.FeatureClassMaterialCombinations;
+        const cacheReady = !!(fcmc && typeof fcmc.isOfficialPairingCacheReady === 'function' && fcmc.isOfficialPairingCacheReady());
+        const combos = (cacheReady && fcmc && typeof fcmc.listAssignedCombosForClass === 'function')
+            ? fcmc.listAssignedCombosForClass(classId)
+            : [];
+        const currentId = String(raw.pack_combo_id || '').trim();
+        const currentMeta = String(raw.pack_meta_file || '').trim();
+        const rangeType = raw.pack_range_type === 'qnum' ? 'qnum' : 'page';
+        const start = raw.pack_start != null ? String(raw.pack_start) : '';
+        const end = raw.pack_end != null ? String(raw.pack_end) : '';
+
+        let combo = null;
+        if (currentId && fcmc && typeof fcmc.getAssignedComboById === 'function') {
+            combo = fcmc.getAssignedComboById(classId, currentId);
+        }
+        const metas = (combo && Array.isArray(combo.metaFiles)) ? combo.metaFiles : [];
+        const needSheet = metas.length > 1;
+
+        let comboOpts = '<option value="">— 請選擇這個班已指派的套餐 —</option>';
+        if (!cacheReady) {
+            if (currentId) {
+                comboOpts += '<option value="' + escapeHtml(currentId) + '" selected>'
+                    + escapeHtml(raw.pack_combo_label || '目前套餐') + '</option>';
+            }
+            comboOpts += '<option value="" disabled>⏳ 載入套餐…</option>';
+        } else {
+            let matched = !currentId;
+            combos.forEach(function (c) {
+                if (!c || !c.id) return;
+                const selected = String(c.id) === currentId;
+                if (selected) matched = true;
+                comboOpts += '<option value="' + escapeHtml(c.id) + '"' + (selected ? ' selected' : '') + '>'
+                    + escapeHtml(c.label) + '</option>';
+            });
+            if (!matched && currentId) {
+                comboOpts += '<option value="' + escapeHtml(currentId) + '" selected>'
+                    + escapeHtml(raw.pack_combo_label || currentId) + '</option>';
+            }
+            if (!combos.length) {
+                comboOpts += '<option value="" disabled>（這個班還沒有已指派且搭配試卷範本的套餐）</option>';
+            }
+        }
+
+        let sheetOpts = '<option value="">— 請選活頁 —</option>';
+        metas.forEach(function (name) {
+            const file = String(name || '').trim();
+            if (!file) return;
+            const curKey = currentMeta.replace(/\.meta\.json$/i, '').toUpperCase();
+            const fileKey = file.replace(/\.meta\.json$/i, '').toUpperCase();
+            const selected = !!(currentMeta && fileKey === curKey);
+            sheetOpts += '<option value="' + escapeHtml(file) + '"' + (selected ? ' selected' : '') + '>'
+                + escapeHtml(displayStemFromMetaFile(file)) + '</option>';
+        });
+
+        const lockedNote = (combo && !needSheet && metas[0])
+            ? '<span style="font-size:0.78rem; color:#1D4ED8; font-weight:700;">活頁已在套餐綁定</span>'
+            : '';
+
+        return `
+            <div class="range-pack-panel" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
+                <div style="font-size:0.82rem; font-weight:900; color:#1E3A8A; margin-bottom:8px;">這一包的範圍（錄音與考試預設共用）</div>
+                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                    <div style="flex:1 1 220px; min-width:200px;">
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐</label>
+                        <select id="range-pack-combo-${pathStr}" class="form-control range-pack-combo" style="width:100%; padding:6px;"
+                            onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: true })">
+                            ${comboOpts}
+                        </select>
+                    </div>
+                    <div id="range-pack-sheet-wrap-${pathStr}" style="display:${needSheet ? 'flex' : 'none'}; flex:1 1 160px; min-width:140px; flex-direction:column;">
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">活頁</label>
+                        <select id="range-pack-sheet-${pathStr}" class="form-control" style="width:100%; padding:6px;"
+                            onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: true })">
+                            ${sheetOpts}
+                        </select>
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">基準</label>
+                        <select id="range-pack-rtype-${pathStr}" class="form-control" style="padding:6px; min-width:80px;"
+                            onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: true })">
+                            <option value="page"${rangeType === 'page' ? ' selected' : ''}>頁碼</option>
+                            <option value="qnum"${rangeType === 'qnum' ? ' selected' : ''}>題號</option>
+                        </select>
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">起</label>
+                        <input id="range-pack-start-${pathStr}" type="number" class="form-control" value="${escapeHtml(start)}" style="width:72px; padding:6px;"
+                            oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: false })">
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">迄</label>
+                        <input id="range-pack-end-${pathStr}" type="number" class="form-control" value="${escapeHtml(end)}" style="width:72px; padding:6px;"
+                            oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: false })">
+                    </div>
+                    ${lockedNote}
+                </div>
+            </div>
+        `;
+    }
+
     function getTimelineStyleBlock() {
         return `
             <style>
@@ -380,7 +499,7 @@ window.TimelineTemplates = (() => {
                 const groupBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
                 const groupIcon = isRangeGroup ? '📐' : '🗂️';
                 const titlePlaceholder = isRangeGroup
-                    ? '✏️ 範圍，例：A pp. 1~2, B pp. 1~2, C #16~35'
+                    ? '✏️ 套餐名稱（選套餐後自動帶入）'
                     : '✏️ 群組作業標題';
                 const titleColor = isRangeGroup ? '#1E3A8A' : '#581C87';
                 const titleBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
@@ -388,8 +507,9 @@ window.TimelineTemplates = (() => {
                     ? '<span style="font-size:0.75rem; background:#DBEAFE; color:#1D4ED8; padding:3px 8px; border-radius:999px; font-weight:800; white-space:nowrap;">範圍層</span>'
                     : '';
                 const rangeHint = isRangeGroup
-                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">標題空白時會從底下錄音的 base 範圍自動帶入；子任務用「錄音」「考試」。</div>'
+                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">組標題空白時帶入套餐名稱；錄音／考試小標題用活頁＋頁碼起迄。沒選套餐或本班尚未指派套餐時，組標題維持空白。</div>'
                     : '';
+                const rangePackHtml = isRangeGroup ? renderRangePackHtml(pathStr, t) : '';
 
                 return `
                     <div id="group-block-${pathStr}"
@@ -409,6 +529,7 @@ window.TimelineTemplates = (() => {
                             </div>
                         </div>
                         ${rangeHint}
+                        ${rangePackHtml}
 
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
                             <div style="display:flex; align-items:center; gap:8px;">
@@ -818,9 +939,22 @@ window.TimelineTemplates = (() => {
 
                 let examInputHtml = '';
                 if (t.type === 'exam') {
-                    examInputHtml = (window.FeatureExamJob && typeof window.FeatureExamJob.renderInlineEditorHtml === 'function')
-                        ? window.FeatureExamJob.renderInlineEditorHtml(pathStr, t)
-                        : '<div style="margin-top:8px; color:#B91C1C;">FeatureExamJob 未載入</div>';
+                    try {
+                        if (window.FeatureExamJob && typeof window.FeatureExamJob.renderInlineEditorHtml === 'function') {
+                            examInputHtml = window.FeatureExamJob.renderInlineEditorHtml(pathStr, t);
+                        } else {
+                            const loadErr = window.FeatureExamJob && window.FeatureExamJob._loadError
+                                ? String(window.FeatureExamJob._loadError)
+                                : '';
+                            examInputHtml = '<div style="margin-top:8px; color:#B91C1C; font-weight:800;">出題模組沒載入。請硬重新整理（Cmd+Shift+R）。'
+                                + (loadErr ? ('<div style="margin-top:4px; font-size:0.78rem;">原因：' + String(loadErr).replace(/</g, '&lt;') + '</div>') : '')
+                                + '</div>';
+                        }
+                    } catch (examErr) {
+                        examInputHtml = '<div style="margin-top:8px; color:#B91C1C; font-weight:800;">出題畫面錯誤：'
+                            + String((examErr && examErr.message) || examErr).replace(/</g, '&lt;')
+                            + '</div>';
+                    }
                 }
 
                 // 🆕 PDF 考卷：全新、獨立分支，跟上面的 exam（meta 出題）互不干涉

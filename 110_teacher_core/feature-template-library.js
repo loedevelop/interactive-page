@@ -86,6 +86,9 @@ window.FeatureTemplateLibrary = (function () {
                 return _cache;
             }
             _cache = (data || []).map(mapRow);
+            if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+                window.MaterialNameMap.ensureLoaded(false).catch(function () {});
+            }
             return _cache;
         })().finally(function () { _loadPromise = null; });
         return _loadPromise;
@@ -144,8 +147,21 @@ window.FeatureTemplateLibrary = (function () {
     /** 局部更新——只寫呼叫端明確給的欄位，不會不小心洗掉另一個角色的資料（雙用範本安全關鍵） */
     async function updateTemplate(id, fields) {
         const payload = Object.assign(sanitizePayload(fields), { updated_at: new Date().toISOString() });
+        let oldName = '';
+        if (payload.name) {
+            const prev = getTemplatesCachedSync().find(function (t) { return String(t.id) === String(id); });
+            oldName = prev && prev.name ? String(prev.name).trim() : '';
+        }
         const { error } = await window.supabaseClient.from('material_templates').update(payload).eq('id', id);
         if (error) throw error;
+        if (payload.name && oldName && oldName !== payload.name
+            && window.MaterialNameMap && typeof window.MaterialNameMap.recordTemplateRename === 'function') {
+            try {
+                await window.MaterialNameMap.recordTemplateRename(id, oldName, payload.name);
+            } catch (aliasErr) {
+                console.warn('[FeatureTemplateLibrary] 範本已改名，寫對照失敗', aliasErr);
+            }
+        }
         await fetchTemplates(true);
     }
 
@@ -191,12 +207,6 @@ window.FeatureTemplateLibrary = (function () {
         const payload = { updated_at: new Date().toISOString() };
         if (role === 'exam') {
             payload.is_exam_role = true;
-            if (!String(t.fields || '').trim()) {
-                payload.fields = 'vBK_name&" - "&page&" - "&item_no';
-            }
-            if (!String(t.quiz_prompt || '').trim()) {
-                payload.quiz_prompt = 'display_zh';
-            }
         } else {
             payload.is_extraction_role = true;
         }
@@ -315,10 +325,14 @@ window.FeatureTemplateLibrary = (function () {
         if (!id) return null;
         const list = getTemplatesCachedSync();
         const wantName = normTemplateName(id);
+        const mappedId = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveTemplateId === 'function')
+            ? window.MaterialNameMap.resolveTemplateId(id)
+            : '';
         return list.find(function (x) { return String(x.id) === id; })
             || list.find(function (x) { return x.legacy_id && String(x.legacy_id) === id; })
             || list.find(function (x) { return x.legacy_profile_id && String(x.legacy_profile_id) === id; })
             || list.find(function (x) { return normTemplateName(x.name) === wantName; })
+            || (mappedId ? list.find(function (x) { return String(x.id) === String(mappedId); }) : null)
             || null;
     }
 

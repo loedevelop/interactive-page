@@ -15,6 +15,19 @@ window.FeatureProgress = (() => {
     /** 避免快速重抓／切班時，舊的 Phase2 覆寫新畫面 */
     let progressFetchSeq = 0;
 
+    function formatDurationMs(ms) {
+        const n = Number(ms);
+        if (!n || n <= 0) return '';
+        const totalSec = Math.round(n / 1000);
+        if (totalSec < 60) return totalSec + ' 秒';
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        if (m < 60) return s ? (m + ' 分 ' + s + ' 秒') : (m + ' 分');
+        const h = Math.floor(m / 60);
+        const rm = m % 60;
+        return rm ? (h + ' 小時 ' + rm + ' 分') : (h + ' 小時');
+    }
+
     function initDB() {
         return new Promise((resolve, reject) => {
             // v2：鍵改為 [assignment_id, task_id, student_id]，與 student_task_progress 的
@@ -180,9 +193,14 @@ window.FeatureProgress = (() => {
             const key = String(c.assignment_id) + '\t' + String(c.student_id) + '\t' + String(c.task_id);
             doneKeys.add(key);
             const raw = c.raw_data;
-            if (raw && raw.quiz_result && raw.quiz_result.total != null) {
-                examResultByKey.set(key, raw.quiz_result);
-            }
+            if (!raw) return;
+            examResultByKey.set(key, {
+                result: raw.quiz_result || null,
+                stats: raw.quiz_stats || null,
+                practiceStats: raw.input_practice_stats || null,
+                correctionStats: raw.input_correction_stats || null,
+                pdfResult: raw.pdf_quiz_result || null
+            });
         });
         // 無提交機制的小項：老師手動打勾持久化在 student_task_progress，與真實提交是 OR 關係
         (manualProgress || []).forEach(function (m) {
@@ -256,18 +274,47 @@ window.FeatureProgress = (() => {
                     if (t.type === 'exam') {
                         // 考試：格子不是手動打勾，是「查看／批改考卷」入口（見 feature-exam-review.js）
                         const openCall = `window.FeatureExamReview && window.FeatureExamReview.openReview('${classId}', '${safeAssignId}', '${t.id}', '${safeStudentId}')`;
-                        const qr = examResultByKey.get(key);
+                        const packed = examResultByKey.get(key);
+                        const qr = packed && packed.result;
+                        const stats = packed && packed.stats;
+                        const isPractice = !!(t.raw_data && t.raw_data.input_practice_enabled);
+                        const practiceStats = packed && packed.practiceStats;
                         let cellContent = isDone ? '✅' : '—';
                         let scoreStyle = 'color:#CBD5E1; font-size:0.8rem;';
-                        if (qr) {
+                        let timeTitle = isPractice ? '點擊查看輸入練習' : '點擊查看／批改考卷';
+                        if (isPractice) {
+                            const lastMs = Number(practiceStats && practiceStats.last_duration_ms) || 0;
+                            const totalMs = Number(practiceStats && practiceStats.total_time_ms) || 0;
+                            const lastLabel = formatDurationMs(lastMs);
+                            const totalLabel = formatDurationMs(totalMs);
+                            if (lastLabel || totalLabel) {
+                                cellContent = (isDone ? '✅' : '✍️') + '<br><span style="font-size:0.68rem; font-weight:700; color:#64748B;">'
+                                    + (totalLabel || lastLabel) + '</span>';
+                                scoreStyle = isDone
+                                    ? 'color:#047857; font-size:1rem; font-weight:900;'
+                                    : 'color:#0F766E; font-size:0.95rem; font-weight:800;';
+                            } else if (isDone) {
+                                scoreStyle = 'font-size:1.2rem;';
+                            }
+                            if (lastLabel) timeTitle += ' · 本次 ' + lastLabel;
+                            if (totalLabel && totalMs !== lastMs) timeTitle += ' · 累計 ' + totalLabel;
+                        } else if (qr) {
                             const score = qr.score;
                             const color = score >= 80 ? '#10B981' : (score >= 50 ? '#F59E0B' : '#EF4444');
-                            cellContent = score + '%';
+                            const lastMs = Number(qr.duration_ms) || Number(stats && stats.last_duration_ms) || 0;
+                            const totalMs = Number(stats && stats.total_time_ms) || 0;
+                            const lastLabel = formatDurationMs(lastMs);
+                            const totalLabel = formatDurationMs(totalMs);
+                            cellContent = lastLabel
+                                ? (score + '%<br><span style="font-size:0.68rem; font-weight:700; color:#64748B;">' + lastLabel + '</span>')
+                                : (score + '%');
                             scoreStyle = `color:${color}; font-size:1rem; font-weight:900;`;
+                            if (lastLabel) timeTitle += ' · 本次 ' + lastLabel;
+                            if (totalLabel && totalMs !== lastMs) timeTitle += ' · 累計 ' + totalLabel;
                         } else if (isDone) {
                             scoreStyle = 'font-size:1.2rem;';
                         }
-                        rowHtml += `<td id="${cellId}" onclick="${openCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; background:${isDone ? '#ECFDF5' : '#FFF'}; user-select:none; transition:0.2s; ${scoreStyle}" title="點擊查看／批改考卷">${cellContent}</td>`;
+                        rowHtml += `<td id="${cellId}" onclick="${openCall}" style="cursor:pointer; border:1px solid #CBD5E1; text-align:center; background:${isDone ? '#ECFDF5' : '#FFF'}; user-select:none; transition:0.2s; ${scoreStyle}" title="${timeTitle}">${cellContent}</td>`;
                         return;
                     }
 

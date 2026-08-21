@@ -371,6 +371,22 @@ window.GasService = (function() {
       });
     },
 
+    /** 教材子資料夾內批次改檔名（meta／文稿）。找不到的檔會回 missing，不整批失敗。 */
+    async renameMaterialFiles(targetFolderId, materialFolder, items, rootKind = 'teacher') {
+      return postGasJson({
+        action: 'rename_material_files',
+        targetFolderId: targetFolderId,
+        materialFolder: materialFolder || '',
+        rootKind: rootKind === 'class' ? 'class' : 'teacher',
+        items: (items || []).map(function (it) {
+          return {
+            oldName: (it && it.oldName) || '',
+            newName: (it && it.newName) || ''
+          };
+        })
+      });
+    },
+
     /** 一批讀多個 meta／layout（一次 GAS 往返） */
     async readMaterialFiles(targetFolderId, items, rootKind = 'class') {
       const result = await postGasJson({

@@ -646,19 +646,98 @@ window.PdfExamPaper = (function () {
     var AB_LINE_RE = /^([A-Za-z]):\s*(.*)$/;
     var OR_LEAD_RE = /^OR\b[\s:]*\s*(.*)$/i;
     var TRAILING_OR_RE = /\bOR\s*$/i;
+    // 💣 A/B 有兩層，不能一律當大題：
+    // ① 練習分組（大題裡先 A 再 1~，後 B 再 1~）：「A.」「B. Directions」「A. 1. xxx」
+    // ② 同一題底下的小題／對白（1 下面的 A/B）：「1. A: …」「B: …」或「A. 答案文字」
+    var SUBSECTION_DOTTED_RE = /^([A-Z])\.\s*(.*)$/;
+    var SUBSECTION_BARE_RE = /^([A-Z])$/;
+    var SUBSECTION_SKIP_REST_RE = /^(directions|example|examples|exercise)\b/i;
+
+    function _peelAbPart(text) {
+        var raw = String(text || '').trim();
+        var colon = raw.match(AB_LINE_RE);
+        if (colon) return { part: colon[1].toUpperCase(), text: colon[2] };
+        var dotted = raw.match(/^([A-Za-z])\.\s+(.*)$/);
+        if (dotted && !SUBSECTION_SKIP_REST_RE.test(dotted[2]) && !/^\d+\.\s*/.test(dotted[2])) {
+            return { part: dotted[1].toUpperCase(), text: dotted[2] };
+        }
+        return { part: null, text: raw };
+    }
+
+    /** 回傳 { kind:'group'|'part', letter, rest|text } 或 null */
+    function _classifyAbLine(line, hasLastItem) {
+        var s = String(line || '').trim();
+        var colon = s.match(AB_LINE_RE);
+        if (colon) {
+            return hasLastItem
+                ? { kind: 'part', letter: colon[1].toUpperCase(), text: colon[2] }
+                : null;
+        }
+        var dotted = s.match(SUBSECTION_DOTTED_RE);
+        if (dotted) {
+            var letter = dotted[1].toUpperCase();
+            var rest = String(dotted[2] || '').trim();
+            if (!rest || SUBSECTION_SKIP_REST_RE.test(rest)) {
+                return { kind: 'group', letter: letter, rest: '' };
+            }
+            if (/^\d+\.\s*/.test(rest)) {
+                return { kind: 'group', letter: letter, rest: rest };
+            }
+            if (hasLastItem) return { kind: 'part', letter: letter, text: rest };
+            return { kind: 'group', letter: letter, rest: '' };
+        }
+        var bare = s.match(SUBSECTION_BARE_RE);
+        if (bare) return { kind: 'group', letter: bare[1].toUpperCase(), rest: '' };
+        return null;
+    }
 
     function stripTrailingOr(text) {
         var endsWithOr = TRAILING_OR_RE.test(text);
         return { text: endsWithOr ? text.replace(TRAILING_OR_RE, '').trim() : text, endsWithOr: endsWithOr };
     }
 
+    function _nextPartLetter(part) {
+        var ch = String(part || 'A').toUpperCase().charCodeAt(0);
+        if (ch >= 65 && ch < 90) return String.fromCharCode(ch + 1);
+        return 'B';
+    }
+
     /**
-     * 💣 這裡的「question-swap」是解析器唯一的特殊判斷：像 Quiz 3 那種「問句換行接答句」的格式，
-     * 第一個抓到的片段常常其實是題目（以「?」結尾），緊接著才是真正的答案。若目前所有已收集的
-     * 片段都像問句、而新片段不是問句，就把新片段挪到最前面當「主答案」（answer_text），問句本身
-     * 留在 accepted_answers 當無害的殘留（老師確認清單時可以刪掉）。上一行若以 OR 結尾，代表下一行
-     * 是「同一個答案的另一種說法」，直接併入，不要再套用這個問句判斷。
+     * 💣 Quiz 3：「2. Has Miriam … yet?」換行接「No, she hasn't …」＝同一題號底下的兩小題
+     * （2-A 問句、2-B 答句），不是「一個答案 + 問句當其他可接受答案」。
+     * 禁止再把問句 unshift／塞進 accepted_answers。
      */
+    function _splitQuestionThenAnswer(text) {
+        var raw = String(text || '').trim();
+        var m = raw.match(/^(.*?[?？])\s+(.+)$/);
+        if (!m) return null;
+        var q = m[1].trim();
+        var a = m[2].trim();
+        if (!q || !a) return null;
+        if (!isQuestionLike(q) || isQuestionLike(a)) return null;
+        if (/^OR\b/i.test(a)) return null;
+        return { question: q, answer: a };
+    }
+
+    /**
+     * 💣 可行答案（accepted_answers）只認解答裡的 OR。沒有 OR＝不是替代寫法。
+     * 禁止把換行、問句、小題當成其他可接受答案。
+     */
+    function _splitOrAlternatives(text) {
+        var raw = String(text || '').trim();
+        if (!raw) return { primary: '', accepted: [] };
+        var parts = raw.split(/\s*\bOR\b\s*/i).map(function (s) { return s.trim(); }).filter(Boolean);
+        if (parts.length <= 1) return { primary: raw, accepted: [] };
+        return { primary: parts[0], accepted: parts.slice(1) };
+    }
+
+    function _shouldBeNewPart(item, newText) {
+        if (!item || item._pendingOr) return false;
+        var existing = (item.fragments || []).filter(Boolean);
+        if (!existing.length) return false;
+        return existing.every(isQuestionLike) && !isQuestionLike(newText);
+    }
+
     /**
      * 💣 逗號拆格：純文字分不出「依序多格」跟「答案本身含逗號」（例如 "No, she hasn’t…"）。
      * 自動決策只靠句首語氣詞／代詞這種高把握規則；空格線數量只拿來交叉檢查、紅字提醒老師，
@@ -683,38 +762,50 @@ window.PdfExamPaper = (function () {
 
     /**
      * 依「拆格判斷」結果，把一段（題號行或 A:/B: 行）的文字轉成 1 個或多個 item 物件。
-     * `sequential` 模式會把逗號分段各自變成一個新 item（帶 blankIndex 1..N，各自成一格）；
-     * 其他模式維持原本「單一 item、fragments 陣列」的行為（fragments[0]＝答案，其餘＝其他可接受答案）。
+     * `sequential` 模式會把逗號分段各自變成一個新 item（帶 blankIndex 1..N，各自成一格）。
+     * 可行答案只從 OR 拆出，寫進 item.accepted；fragments 只留主答案。
      */
-    function _buildFragmentItems(section, itemNo, part, strippedFirst) {
+    function _makeAnswerItem(section, itemNo, part, group, blankIndex, text, endsWithOr) {
+        var or = _splitOrAlternatives(text);
+        return {
+            section: section, itemNo: itemNo, part: part, group: group || null,
+            blankIndex: blankIndex || null,
+            fragments: [or.primary],
+            accepted: or.accepted.slice(),
+            _pendingOr: !!endsWithOr
+        };
+    }
+
+    function _buildFragmentItems(section, itemNo, part, strippedFirst, group) {
+        var qa = !part ? _splitQuestionThenAnswer(strippedFirst.text) : null;
+        if (qa) {
+            return _buildFragmentItems(section, itemNo, 'A', { text: qa.question, endsWithOr: false }, group)
+                .concat(_buildFragmentItems(section, itemNo, 'B', { text: qa.answer, endsWithOr: strippedFirst.endsWithOr }, group));
+        }
         var split = _splitFragmentIntoBlanks(strippedFirst.text);
         if (split.mode === 'sequential' && split.pieces.length > 1) {
             return split.pieces.map(function (piece, i) {
                 var isLast = i === split.pieces.length - 1;
-                return {
-                    section: section, itemNo: itemNo, part: part, blankIndex: i + 1,
-                    fragments: [piece], _pendingOr: isLast ? strippedFirst.endsWithOr : false
-                };
+                return _makeAnswerItem(section, itemNo, part, group, i + 1, piece, isLast ? strippedFirst.endsWithOr : false);
             });
         }
-        var fragments = split.pieces.filter(Boolean);
-        if (!fragments.length && strippedFirst.text) fragments = [strippedFirst.text];
-        return [{
-            section: section, itemNo: itemNo, part: part,
-            fragments: fragments, _pendingOr: strippedFirst.endsWithOr
-        }];
+        var text = (split.pieces.filter(Boolean)[0]) || strippedFirst.text || '';
+        return [_makeAnswerItem(section, itemNo, part, group, null, text, strippedFirst.endsWithOr)];
     }
 
     function addContinuationFragment(item, rawText) {
         var stripped = stripTrailingOr(String(rawText || '').trim());
         var text = stripped.text;
-        if (!text) { item._pendingOr = stripped.endsWithOr; return; }
+        if (!item.accepted) item.accepted = [];
+        if (!text) { item._pendingOr = item._pendingOr || stripped.endsWithOr; return; }
+        var or = _splitOrAlternatives(text);
         if (item._pendingOr) {
-            item.fragments.push(text);
+            if (or.primary) item.accepted.push(or.primary);
+            item.accepted = item.accepted.concat(or.accepted);
         } else {
-            var allQuestion = item.fragments.length > 0 && item.fragments.every(isQuestionLike);
-            if (allQuestion && !isQuestionLike(text)) item.fragments.unshift(text);
-            else item.fragments.push(text);
+            var cur = String(item.fragments[0] || '').trim();
+            item.fragments[0] = cur ? (cur + ' ' + or.primary) : or.primary;
+            item.accepted = item.accepted.concat(or.accepted);
         }
         item._pendingOr = stripped.endsWithOr;
     }
@@ -726,9 +817,13 @@ window.PdfExamPaper = (function () {
 
     /**
      * 寬鬆解析老師貼的解答原始文字，回傳扁平陣列：
-     * [{ key, section, item_no, part, blank_index, answer_text, accepted_answers[] }]
-     * key = "section::item_no::part::blankIndex"（part、blankIndex 可為 null），用來跟畫框時選的題目一一對應。
-     * 逗號分隔的答案一律拆成依序多格（見 _splitFragmentIntoBlanks 說明，不再靠 PDF 空格數偵測降級）。
+     * [{ key, section, item_no, part, group, blank_index, answer_text, accepted_answers[] }]
+     * key = "section::group::item_no::part::blankIndex"（group／part／blankIndex 可省略）
+     *
+     * 💣 同一大題裡常有 A 練習 1~n、接著 B 練習又從 1 開始（Azar：A. Directions… 然後 B. Directions…）。
+     * 若只依題號數字排序，A 的 1 會跟 B 的 1 排在一起，答案順序就錯了。必須先依練習分組（A／B），
+     * 組內再依題號排。group（練習分組 A／B）跟同一題底下的 A:／B:（part）不是同一層：
+     * 有「Directions／後面接著 1.」才當練習分組；已經在某一題底下、後面是答案文字，就當該題小題。
      *
      * 回傳的陣列另外附掛一個 sectionPageHints 屬性（{ section -> 課本印刷頁碼 }），從「Quiz N, p. NN」
      * 這種標頭旁的頁碼擷取而來；呼叫端要自己在存檔時把它複製到 job.section_page_hints（陣列的額外
@@ -739,20 +834,60 @@ window.PdfExamPaper = (function () {
         var items = [];
         var currentSection = '(未分類)';
         var testCtx = null; // 目前在哪個 Test 底下（見 _composeSectionLabel），非 Test/Part 大題時清空
+        var currentGroup = null; // 大題內 A／B 練習分組
         var last = null;
         var sectionPageHints = {};
 
+        function nextGroupLetter(letter) {
+            var ch = String(letter || 'A').toUpperCase().charCodeAt(0);
+            if (ch >= 65 && ch < 90) return String.fromCharCode(ch + 1);
+            return 'B';
+        }
+
+        function advanceGroupOnNumberRestart(itemNo) {
+            var n = parseInt(itemNo, 10);
+            if (n !== 1) return;
+            var prevN = -1;
+            for (var i = items.length - 1; i >= 0; i--) {
+                if (items[i].section !== currentSection) continue;
+                if ((items[i].group || '') !== (currentGroup || '')) continue;
+                prevN = parseInt(items[i].itemNo, 10);
+                break;
+            }
+            if (isNaN(prevN) || prevN <= 1) return;
+            if (!currentGroup) {
+                items.forEach(function (it) {
+                    if (it.section === currentSection && !it.group) it.group = 'A';
+                });
+                currentGroup = 'B';
+            } else {
+                currentGroup = nextGroupLetter(currentGroup);
+            }
+        }
+
         lines.forEach(function (rawLine) {
             var line = rawLine.trim();
-            if (!line) return; // 空行不中斷 continuation（同大題內常見排版空行）
+            if (!line) return;
 
             var secMatch = line.match(SECTION_HEADER_RE);
             if (secMatch && !/^\d+\./.test(line)) {
                 var composed = _composeSectionLabel(testCtx, secMatch[1]);
                 testCtx = composed.testCtx;
                 last = null;
-                if (composed.isTestHeader) return; // Test 標頭本身沒有題目，只更新上下文，不當大題
+                var fam = sectionFamily(secMatch[1]);
+                if (fam === 'quiz' || fam === 'chapter' || fam === 'unit' || fam === 'lesson') {
+                    currentGroup = null;
+                }
+                if (fam === 'part') {
+                    var partToken = String(secMatch[1] || '').match(/part\s+([A-Za-z0-9]+)/i);
+                    if (partToken && /^quiz\s*\d+/i.test(currentSection)) {
+                        currentGroup = String(partToken[1]).toUpperCase();
+                        return;
+                    }
+                }
+                if (composed.isTestHeader) return;
                 currentSection = composed.label;
+                currentGroup = null;
                 if (sectionPageHints[currentSection] == null) {
                     var pageHintMatch = line.slice(secMatch[0].length).match(SECTION_PAGE_HINT_RE);
                     if (pageHintMatch) {
@@ -763,6 +898,23 @@ window.PdfExamPaper = (function () {
                 return;
             }
 
+            var abClass = _classifyAbLine(line, !!last);
+            if (abClass && !/^\d+\./.test(line)) {
+                if (abClass.kind === 'group') {
+                    currentGroup = abClass.letter;
+                    last = null;
+                    if (!abClass.rest) return;
+                    line = abClass.rest;
+                } else if (abClass.kind === 'part' && last) {
+                    var strippedAb = stripTrailingOr(String(abClass.text || '').trim());
+                    var newItems2 = _buildFragmentItems(last.section, last.itemNo, abClass.letter, strippedAb, last.group || currentGroup);
+                    newItems2.forEach(function (it) { items.push(it); last = it; });
+                    return;
+                }
+            }
+
+            if (/^(directions|example|examples)\s*:/i.test(line)) return;
+
             ITEM_MARKER_RE.lastIndex = 0;
             var matches = [];
             var m;
@@ -771,67 +923,84 @@ window.PdfExamPaper = (function () {
             }
 
             if (matches.length) {
+                advanceGroupOnNumberRestart(matches[0].no);
                 for (var i = 0; i < matches.length; i++) {
                     var seg = matches[i];
                     var endIdx = (i + 1 < matches.length) ? matches[i + 1].start : line.length;
                     var text = line.slice(seg.textStart, endIdx).trim();
-                    var part = null;
-                    var abMatch = text.match(AB_LINE_RE);
-                    if (abMatch) { part = abMatch[1].toUpperCase(); text = abMatch[2]; }
+                    var peeled = _peelAbPart(text);
+                    var part = peeled.part;
+                    text = peeled.text;
                     var strippedFirst = stripTrailingOr(text);
-                    var newItems = _buildFragmentItems(currentSection, seg.no, part, strippedFirst);
+                    var newItems = _buildFragmentItems(currentSection, seg.no, part, strippedFirst, currentGroup);
                     newItems.forEach(function (it) { items.push(it); last = it; });
                 }
                 return;
             }
 
-            var abOnly = line.match(AB_LINE_RE);
-            if (abOnly && last) {
-                var strippedAb = stripTrailingOr(abOnly[2].trim());
-                var newItems2 = _buildFragmentItems(last.section, last.itemNo, abOnly[1].toUpperCase(), strippedAb);
-                newItems2.forEach(function (it) { items.push(it); last = it; });
-                return;
-            }
-
             var orOnly = line.match(OR_LEAD_RE);
             if (orOnly && last) {
-                last.fragments.push(orOnly[1].trim());
-                last._pendingOr = false;
+                var orRest = stripTrailingOr(orOnly[1].trim());
+                var orAlt = _splitOrAlternatives(orRest.text);
+                if (!last.accepted) last.accepted = [];
+                if (orAlt.primary) last.accepted.push(orAlt.primary);
+                last.accepted = last.accepted.concat(orAlt.accepted);
+                last._pendingOr = orRest.endsWithOr;
                 return;
             }
 
-            if (last) addContinuationFragment(last, line);
+            if (last) {
+                var cont = stripTrailingOr(line);
+                if (_shouldBeNewPart(last, cont.text)) {
+                    if (!last.part) last.part = 'A';
+                    var nextPart = _nextPartLetter(last.part);
+                    var partItems = _buildFragmentItems(last.section, last.itemNo, nextPart, cont, last.group || currentGroup);
+                    partItems.forEach(function (it) { items.push(it); last = it; });
+                    return;
+                }
+                addContinuationFragment(last, line);
+            }
         });
 
         var flat = items.map(function (it) {
-            var fragments = it.fragments.length ? it.fragments : [''];
+            var primary = (it.fragments && it.fragments[0]) || '';
+            var accepted = (it.accepted || []).filter(function (f) { return f && f !== primary; });
             return {
-                key: makeKey(it.section, it.itemNo, it.part, it.blankIndex),
+                key: makeKey(it.section, it.itemNo, it.part, it.blankIndex, it.group),
                 section: it.section,
                 item_no: it.itemNo,
                 part: it.part,
+                group: it.group || null,
                 blank_index: it.blankIndex || null,
-                answer_text: fragments[0],
-                accepted_answers: fragments.slice(1).filter(function (f) { return f && f !== fragments[0]; })
+                answer_text: primary,
+                accepted_answers: accepted
             };
         });
 
         // 💣 老師/OCR 常把答案「一行擠兩題」抄寫（例如 "2. been 10. stopped"），純粹是為了省紙／
         // 省空間，不代表考卷本身的版面順序——考卷通常還是單欄由上到下 1,2,3...N。若照文字出現
         // 順序直接拿去跟考卷上偵測到的空格做「位置保險配對」，會整批對錯（空格#2 對到「第10題」的
-        // 答案）。這裡依「大題第一次出現的順序」為主排序、大題內再依題號數字＋子項字母排序，
-        // 讓 bank 的順序回到考卷最常見的「由上到下、由小到大」排列，位置配對才準。
+        // 答案）。排序必須是：大題 → 練習分組 A/B（不是只看數字）→ 組內題號 → 對白 A:/B: → 拆格。
         var sectionOrder = [];
-        flat.forEach(function (it) { if (sectionOrder.indexOf(it.section) === -1) sectionOrder.push(it.section); });
+        var groupOrderBySection = {};
+        flat.forEach(function (it) {
+            if (sectionOrder.indexOf(it.section) === -1) sectionOrder.push(it.section);
+            if (!groupOrderBySection[it.section]) groupOrderBySection[it.section] = [];
+            var g = it.group || '';
+            if (groupOrderBySection[it.section].indexOf(g) === -1) groupOrderBySection[it.section].push(g);
+        });
         flat.sort(function (a, b) {
             var sa = sectionOrder.indexOf(a.section), sb = sectionOrder.indexOf(b.section);
             if (sa !== sb) return sa - sb;
+            var ga = groupOrderBySection[a.section].indexOf(a.group || '');
+            var gb = groupOrderBySection[b.section].indexOf(b.group || '');
+            if (ga !== gb) return ga - gb;
             var na = parseInt(a.item_no, 10), nb = parseInt(b.item_no, 10);
             if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
             if (a.item_no !== b.item_no) return String(a.item_no).localeCompare(String(b.item_no));
             var pa = String(a.part || ''), pb = String(b.part || '');
             if (pa !== pb) return pa.localeCompare(pb);
-            return (a.blank_index || 0) - (b.blank_index || 0); // 同題號同子項被拆成多格時，依拆出順序排列
+            return (a.blank_index || 0) - (b.blank_index || 0);
         });
         flat.sectionPageHints = sectionPageHints;
         return flat;
@@ -857,7 +1026,8 @@ window.PdfExamPaper = (function () {
             var p = prevByKey[b.key];
             if (p && p._manuallyEdited) {
                 return {
-                    key: b.key, section: b.section, item_no: b.item_no, part: b.part, blank_index: b.blank_index,
+                    key: b.key, section: b.section, item_no: b.item_no, part: b.part, group: b.group,
+                    blank_index: b.blank_index,
                     answer_text: p.answer_text, accepted_answers: p.accepted_answers, _manuallyEdited: true
                 };
             }
@@ -882,12 +1052,15 @@ window.PdfExamPaper = (function () {
         return true;
     }
 
-    function makeKey(section, itemNo, part, blankIndex) {
-        return String(section || '') + '::' + String(itemNo || '') + (part ? ('::' + part) : '') + (blankIndex ? ('::' + blankIndex) : '');
+    function makeKey(section, itemNo, part, blankIndex, group) {
+        var g = group ? (String(group).toUpperCase() + '::') : '';
+        return String(section || '') + '::' + g + String(itemNo || '') + (part ? ('::' + part) : '') + (blankIndex ? ('::' + blankIndex) : '');
     }
 
     function itemLabel(it) {
-        return String((it && it.section) || '') + ' 第' + String((it && it.item_no) || '') + '題' + ((it && it.part) ? ('-' + it.part) : '')
+        return String((it && it.section) || '')
+            + (it && it.group ? (' ' + String(it.group)) : '')
+            + ' 第' + String((it && it.item_no) || '') + '題' + ((it && it.part) ? ('-' + it.part) : '')
             + ((it && it.blank_index) ? ('（第' + it.blank_index + '格）') : '');
     }
 
@@ -899,7 +1072,7 @@ window.PdfExamPaper = (function () {
         return {
             items: list.map(function (it, idx) {
                 return {
-                    item_id: it.key || makeKey(it.section, it.item_no, it.part),
+                    item_id: it.key || makeKey(it.section, it.item_no, it.part, it.blank_index, it.group),
                     seq: idx,
                     answer_en: it.answer_text || '',
                     accepted_answers: Array.isArray(it.accepted_answers) ? it.accepted_answers : [],

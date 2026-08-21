@@ -12,8 +12,8 @@
  * 公式語言沿用既有 020_js_core/layout-fields-eval.js（STACK／FONTSIZE／TEXTJOIN／&／
  * 直接寫 semantic_key），不是新引擎，只是把公式存的位置從程式碼常數變成這張表。
  *
- * CRUD 委派給 feature-exam-job.js（fetchExamTemplates／createExamTemplate／
- * updateExamTemplate／deleteExamTemplate，內部再委派給 FeatureTemplateLibrary），這裡只負責畫面。
+ * 清單只讀 FeatureTemplateLibrary（教材範本管理同一份 material_templates）。
+ * 新增／改／刪仍走 feature-exam-job.js 包裝，內部一樣進範本庫。
  */
 window.FeatureExamTemplateEditor = (function () {
     'use strict';
@@ -30,6 +30,10 @@ window.FeatureExamTemplateEditor = (function () {
     let _draft = null;
 
     function fej() { return window.FeatureExamJob; }
+    function lib() { return window.FeatureTemplateLibrary; }
+    function examTemplatesFromLibrary() {
+        return (lib() && typeof lib().getExamTemplates === 'function') ? lib().getExamTemplates() : [];
+    }
 
     function templateUsageHtml(t) {
         if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.renderTemplateUsageHtml === 'function') {
@@ -117,7 +121,7 @@ window.FeatureExamTemplateEditor = (function () {
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                     <div class="form-group">
-                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">排版訊息（訊息列公式）</label>
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">訊息排版（訊息列公式）</label>
                         <textarea id="exam-tpl-fields" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no'>${esc(_draft.fields)}</textarea>
                     </div>
                     <div class="form-group">
@@ -125,7 +129,7 @@ window.FeatureExamTemplateEditor = (function () {
                         <textarea id="exam-tpl-fields-answer" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="TEXTJOIN(&quot; / &quot;, answer_zh)">${esc(_draft.fields_answer)}</textarea>
                     </div>
                     <div class="form-group">
-                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">排版題目（題目公式，例如 display_zh 或 pos&amp;" "&amp;display_zh）</label>
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">題目排版（題目公式，例如 display_zh 或 pos&amp;" "&amp;display_zh）</label>
                         <textarea id="exam-tpl-quiz-prompt" class="form-control" rows="2" style="padding:6px; font-family:monospace; font-size:0.8rem;">${esc(_draft.quiz_prompt)}</textarea>
                     </div>
                     <div class="form-group">
@@ -200,7 +204,7 @@ window.FeatureExamTemplateEditor = (function () {
 
         wrap.querySelectorAll('.exam-tpl-edit-btn').forEach(function (btn) {
             btn.addEventListener('click', function () {
-                const list = (fej() && typeof fej().getExamTemplatesCachedSync === 'function') ? fej().getExamTemplatesCachedSync() : [];
+                const list = examTemplatesFromLibrary();
                 const t = list.find(function (x) { return x.id === btn.getAttribute('data-id'); });
                 if (t) openEditForm(t);
             });
@@ -209,7 +213,7 @@ window.FeatureExamTemplateEditor = (function () {
         wrap.querySelectorAll('.exam-tpl-delete-btn').forEach(function (btn) {
             btn.addEventListener('click', async function () {
                 const id = btn.getAttribute('data-id');
-                if (!window.confirm('確定要取消這筆的「試卷範本」角色嗎？\n\n已經用過這個範本出過的考卷不會受影響（仍能重新產生），但之後出題下拉不會再看到它。若這筆同時也是擷取範本（雙用），只會關掉試卷角色，擷取範本那一側資料不受影響。')) return;
+                if (!(await window.ModalOverlay.confirm('確定要取消這筆的「試卷範本」角色嗎？\n\n已經用過這個範本出過的考卷不會受影響（仍能重新產生），但之後出題下拉不會再看到它。若這筆同時也是擷取範本（雙用），只會關掉試卷角色，擷取範本那一側資料不受影響。'))) return;
                 try {
                     await fej().deleteExamTemplate(id);
                     window.showFlash && window.showFlash('✅ 已刪除試卷範本', 'success');
@@ -295,12 +299,12 @@ window.FeatureExamTemplateEditor = (function () {
     function render() {
         const wrap = document.getElementById('exam-template-editor-container');
         if (!wrap) return;
-        if (!fej() || typeof fej().fetchExamTemplates !== 'function') {
+        if (!lib() || typeof lib().fetchTemplates !== 'function') {
             wrap.innerHTML = '';
             return;
         }
-        fej().fetchExamTemplates(false).then(function (templates) {
-            paint(wrap, templates || []);
+        lib().fetchTemplates(false).then(function () {
+            paint(wrap, examTemplatesFromLibrary());
         }).catch(function (err) {
             console.error('[FeatureExamTemplateEditor] 載入失敗', err);
             wrap.innerHTML = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 載入試卷範本失敗：' + esc(err.message || err) + '</div>';

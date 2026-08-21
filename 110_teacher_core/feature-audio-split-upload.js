@@ -633,7 +633,7 @@ window.FeatureAudioSplitUpload = (function () {
         const student = getSelectedStudent();
         if (!task || !student) return;
 
-        const ok = confirm(
+        const ok = await window.ModalOverlay.confirm(
             '確定要把「' + student.name + '」的音檔切成 ' + task.gradingUnits.length + ' 段並上傳嗎？\n\n'
             + '原始檔案不會被刪除或搬動，只會在同一個資料夾新增切好的檔案；\n'
             + '資料庫紀錄會更新為這 ' + task.gradingUnits.length + ' 段，並自動觸發逐頁 AI 批改。'

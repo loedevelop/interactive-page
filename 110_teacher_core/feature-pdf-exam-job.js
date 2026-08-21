@@ -214,8 +214,14 @@ window.FeaturePdfExamJob = (function () {
             warnedSections[String(w.section || '')] = true;
         });
         var groups = window.PdfExamPaper.groupItemsBySection(bank);
+        var btnBase = 'padding:2px 6px; border-radius:4px; font-size:0.72rem; font-weight:800; cursor:pointer; line-height:1.2;';
+        var btnOn = btnBase + ' border:1px solid #7DD3FC; background:#E0F2FE; color:#0369A1;';
+        var btnOff = btnBase + ' border:1px solid #E2E8F0; background:#F1F5F9; color:#94A3B8; cursor:not-allowed;';
+        var btnAdd = btnBase + ' border:1px solid #99F6E4; background:#CCFBF1; color:#0F766E;';
+        var btnDel = btnBase + ' border:1px solid #FECACA; background:#FEF2F2; color:#B91C1C;';
         return groups.map(function (g) {
             var secWarn = !!warnedSections[g.section];
+            var lastShownGroup = null;
             var rowsHtml = g.items.map(function (bk) {
                 var idx = bank.indexOf(bk);
                 var flagReason = flagged[bk.key] || '';
@@ -224,15 +230,30 @@ window.FeaturePdfExamJob = (function () {
                 var labelColor = isFlag ? '#B91C1C' : '#0369A1';
                 var inputBorder = isFlag ? '#F87171' : '#CBD5E1';
                 var inputColor = isFlag ? '#B91C1C' : '#0F172A';
-                return (
+                var sameGroup = g.items.filter(function (x) { return (x.group || '') === (bk.group || ''); });
+                var posInGroup = sameGroup.indexOf(bk);
+                var canUp = posInGroup > 0;
+                var canDown = posInGroup < sameGroup.length - 1;
+                var groupHead = '';
+                if (bk.group && bk.group !== lastShownGroup) {
+                    groupHead = '<div style="font-size:0.75rem; font-weight:800; color:#0F766E; margin:8px 0 2px;">' + esc(bk.group) + '</div>';
+                }
+                lastShownGroup = bk.group || lastShownGroup;
+                return groupHead + (
                     '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid ' + (isFlag ? '#FECACA' : '#E0F2FE') + '; background:' + rowBg + ';"'
                         + (flagReason ? ' title="' + esc(flagReason) + '"' : '') + '>' +
-                        '<span style="width:56px; font-size:0.78rem; color:' + labelColor + '; font-weight:800;" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + (bk.blank_index ? ('-' + esc(bk.blank_index)) : '') + '</span>' +
+                        '<span style="width:72px; flex-shrink:0; font-size:0.78rem; color:' + labelColor + '; font-weight:800;" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + (bk.group ? esc(bk.group) + '-' : '') + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + (bk.blank_index ? ('-' + esc(bk.blank_index)) : '') + '</span>' +
                         '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + '; font-weight:' + (isFlag ? '800' : '400') + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'answer_text\', this.value)">' +
-                        '<input type="text" value="' + esc((bk.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案（逗號分隔）" style="flex:1; min-width:130px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + ';" ' +
+                        '<input type="text" value="' + esc((bk.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案（逗號分隔）" style="flex:1; min-width:110px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'accepted_answers\', this.value)">' +
-                        '<button type="button" class="btn-icon" style="font-size:0.8rem; padding:2px 6px;" onclick="window.FeaturePdfExamJob.removeBankRow(\'' + pathStr + '\', ' + idx + ')">🗑️</button>' +
+                        '<span style="display:flex; gap:3px; flex-shrink:0; white-space:nowrap;">' +
+                            '<button type="button" title="上移" style="' + (canUp ? btnOn : btnOff) + '" ' + (canUp ? 'onclick="window.FeaturePdfExamJob.moveBankRow(\'' + pathStr + '\', ' + idx + ', -1)"' : 'disabled') + '>↑</button>' +
+                            '<button type="button" title="下移" style="' + (canDown ? btnOn : btnOff) + '" ' + (canDown ? 'onclick="window.FeaturePdfExamJob.moveBankRow(\'' + pathStr + '\', ' + idx + ', 1)"' : 'disabled') + '>↓</button>' +
+                            '<button type="button" title="在上方加一筆" style="' + btnAdd + '" onclick="window.FeaturePdfExamJob.insertBankRow(\'' + pathStr + '\', ' + idx + ', 0)">＋上</button>' +
+                            '<button type="button" title="在下方加一筆" style="' + btnAdd + '" onclick="window.FeaturePdfExamJob.insertBankRow(\'' + pathStr + '\', ' + idx + ', 1)">＋下</button>' +
+                            '<button type="button" title="刪除" style="' + btnDel + '" onclick="window.FeaturePdfExamJob.removeBankRow(\'' + pathStr + '\', ' + idx + ')">🗑</button>' +
+                        '</span>' +
                     '</div>'
                 );
             }).join('');
@@ -304,7 +325,7 @@ window.FeaturePdfExamJob = (function () {
         var merged = parsed.map(function (b) {
             var prev = prevByKey[b.key];
             if (prev && prev._manuallyEdited) {
-                return { key: b.key, section: b.section, item_no: b.item_no, part: b.part, blank_index: b.blank_index, answer_text: prev.answer_text, accepted_answers: prev.accepted_answers, _manuallyEdited: true };
+                return { key: b.key, section: b.section, item_no: b.item_no, part: b.part, group: b.group, blank_index: b.blank_index, answer_text: prev.answer_text, accepted_answers: prev.accepted_answers, _manuallyEdited: true };
             }
             return b;
         });
@@ -338,11 +359,82 @@ window.FeaturePdfExamJob = (function () {
         markNeedsRegrade(pathStr, job);
     }
 
-    function removeBankRow(pathStr, idx) {
+    function siblingIndexInSection(bank, idx, dir) {
+        var cur = bank[idx];
+        if (!cur) return -1;
+        var sec = cur.section || '(未分類)';
+        var grp = cur.group || '';
+        if (dir < 0) {
+            for (var i = idx - 1; i >= 0; i--) {
+                if ((bank[i].section || '(未分類)') === sec && (bank[i].group || '') === grp) return i;
+            }
+        } else {
+            for (var j = idx + 1; j < bank.length; j++) {
+                if ((bank[j].section || '(未分類)') === sec && (bank[j].group || '') === grp) return j;
+            }
+        }
+        return -1;
+    }
+
+    function makeInsertedBankRow(job, template) {
+        var section = template.section || '(未分類)';
+        var itemNo = String(template.item_no || '').trim() || '?';
+        var part = template.part || null;
+        var group = template.group || null;
+        var blank = Number(template.blank_index) || 1;
+        var key = window.PdfExamPaper.makeKey(section, itemNo, part, blank, group);
+        var used = {};
+        (job.parsed_bank || []).forEach(function (b) { if (b && b.key) used[b.key] = true; });
+        while (used[key] && blank < 99) {
+            blank += 1;
+            key = window.PdfExamPaper.makeKey(section, itemNo, part, blank, group);
+        }
+        return {
+            key: key,
+            section: section,
+            item_no: itemNo,
+            part: part,
+            group: group,
+            blank_index: blank,
+            answer_text: '',
+            accepted_answers: [],
+            _manual: true
+        };
+    }
+
+    function moveBankRow(pathStr, idx, dir) {
         var task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         var job = ensureJob(task);
-        if (!window.confirm('刪除這一題答案？若已經在 PDF 上畫框對應這一題，那個框不會自動刪除，會變成「未指定題目」。')) return;
+        var bank = job.parsed_bank || [];
+        var otherIdx = siblingIndexInSection(bank, idx, dir);
+        if (otherIdx < 0) return;
+        var tmp = bank[idx];
+        bank[idx] = bank[otherIdx];
+        bank[otherIdx] = tmp;
+        markNeedsRegrade(pathStr, job);
+        refreshBankTable(pathStr, job);
+    }
+
+    function insertBankRow(pathStr, idx, after) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        var bank = job.parsed_bank || [];
+        var template = bank[idx];
+        if (!template) return;
+        var row = makeInsertedBankRow(job, template);
+        var insertAt = Number(idx) + (after ? 1 : 0);
+        bank.splice(insertAt, 0, row);
+        markNeedsRegrade(pathStr, job);
+        refreshBankTable(pathStr, job);
+    }
+
+    async function removeBankRow(pathStr, idx) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        if (!(await window.ModalOverlay.confirm('刪除這一題答案？若已經在 PDF 上畫框對應這一題，那個框不會自動刪除，會變成「未指定題目」。'))) return;
         job.parsed_bank.splice(idx, 1);
         markNeedsRegrade(pathStr, job);
         refreshBankTable(pathStr, job);
@@ -733,7 +825,7 @@ window.FeaturePdfExamJob = (function () {
         var bankEditHtml = (st.job.parsed_bank || []).map(function (it, idx) {
             return (
                 '<div style="display:flex; gap:6px; align-items:center; padding:3px 0;">' +
-                    '<span style="width:70px; font-size:0.78rem; color:#0369A1; font-weight:800;">' + esc(it.item_no || '?') + (it.part ? ('-' + esc(it.part)) : '') + '</span>' +
+                    '<span style="width:78px; font-size:0.78rem; color:#0369A1; font-weight:800;">' + (it.group ? esc(it.group) + '-' : '') + esc(it.item_no || '?') + (it.part ? ('-' + esc(it.part)) : '') + '</span>' +
                     '<input type="text" value="' + esc(it.answer_text || '') + '" style="flex:1; padding:3px 6px; font-size:0.8rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
                         'onchange="window.FeaturePdfExamJob._updateReviewAnswer(' + idx + ', \'answer_text\', this.value)">' +
                     '<input type="text" value="' + esc((it.accepted_answers || []).join(', ')) + '" placeholder="其他可接受答案" style="flex:1; padding:3px 6px; font-size:0.8rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
@@ -907,6 +999,8 @@ window.FeaturePdfExamJob = (function () {
         updateBankField: updateBankField,
         removeBankRow: removeBankRow,
         addBankRow: addBankRow,
+        moveBankRow: moveBankRow,
+        insertBankRow: insertBankRow,
         openReview: openReview,
         _updateReviewAnswer: _updateReviewAnswer,
         _viewStudentDetail: _viewStudentDetail,

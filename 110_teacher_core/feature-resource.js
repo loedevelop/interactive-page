@@ -924,7 +924,7 @@ window.FeatureResource = (() => {
             const ownerId = await getCurrentUserId();
             const { data: existing } = await window.supabaseClient.from('resources').select('id').eq('url', url).is('deleted_at', null);
             if (existing && existing.length > 0) {
-                if (!confirm('⚠️ 此網址已存在資源庫中。點擊「確定」將會更新為本班資源。')) {
+                if (!(await window.ModalOverlay.confirm('⚠️ 此網址已存在資源庫中。點擊「確定」將會更新為本班資源。'))) {
                     btn.innerHTML = '💾 儲存並加入';
                     btn.disabled = false;
                     return;
@@ -997,7 +997,7 @@ window.FeatureResource = (() => {
                 const ownerId = await getCurrentUserId();
                 const { data: existing } = await window.supabaseClient.from('resources').select('id').eq('url', url).is('deleted_at', null);
                 if (existing && existing.length > 0) {
-                    if (!confirm('⚠️ 此網址已存在於資源庫中。\n點擊「確定」將會更新其名稱與派發設定。')) {
+                    if (!(await window.ModalOverlay.confirm('⚠️ 此網址已存在於資源庫中。\n點擊「確定」將會更新其名稱與派發設定。'))) {
                         btn.innerHTML = originalText;
                         btn.disabled = false;
                         return;
@@ -1044,7 +1044,7 @@ window.FeatureResource = (() => {
         ensureAndBindTeacherPersonalDrive: ensureAndBindTeacherPersonalDrive,
         persistTeacherDriveRoot: persistTeacherDriveRoot,
         deleteResourceGroup: async function (resUrl) {
-            if (!confirm('⚠️ 確定要刪除此資源嗎？\n(這將會把該資源從所有相關範圍移除)')) return;
+            if (!(await window.ModalOverlay.confirm('⚠️ 確定要刪除此資源嗎？\n(這將會把該資源從所有相關範圍移除)'))) return;
             try {
                 const nowTs = window.UtilsDate.getTaiwanIsoTimestamp();
                 const { error } = await window.supabaseClient.from('resources').update({ deleted_at: nowTs }).eq('url', resUrl).is('deleted_at', null);
