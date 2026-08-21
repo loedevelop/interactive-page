@@ -470,8 +470,9 @@ window.FeatureExamJob = (function () {
     }
 
     /**
-     * 範圍層開包：把套餐／活頁／起迄寫進考試第一段第一個片段。
+     * 範圍層開包：把套餐／各行活頁＋起迄寫進考試第一段。
      * 不改其他段落、不發明試卷範本（只吃套餐已認證的 examTemplateId）。
+     * 沒選活頁的行不寫入，不准改套別的活頁。
      */
     function applyRangePackToExam(examTask, pack) {
         pack = pack || {};
@@ -491,29 +492,33 @@ window.FeatureExamJob = (function () {
             sec.combination_id = '';
             sec.material_folder = '';
         }
-        if (!Array.isArray(sec.segments) || !sec.segments.length) {
-            sec.segments = [emptySegment()];
-        }
-        const seg = sec.segments[0] || emptySegment();
-        const metaFile = String(pack.metaFile || '').trim();
-        if (metaFile) {
+        const packRows = Array.isArray(pack.rows) && pack.rows.length
+            ? pack.rows
+            : [{ metaFile: pack.metaFile, rangeType: pack.rangeType, start: pack.start, end: pack.end }];
+        const segs = [];
+        packRows.forEach(function (row) {
+            const metaFile = String((row && row.metaFile) || '').trim();
+            if (!metaFile) return;
+            const seg = emptySegment();
             seg.meta_file_name = metaFile;
             seg.sheet_id = displayStemFromMetaFile(metaFile);
             delete seg.available_count;
             delete seg.meta_missing_page;
-        }
-        if (pack.rangeType === 'qnum' || pack.rangeType === 'page') {
-            seg.range_type = pack.rangeType;
-        }
-        if (pack.start !== '' && pack.start != null && !isNaN(Number(pack.start))) {
-            seg.start = Number(pack.start);
-        }
-        if (pack.end !== '' && pack.end != null && !isNaN(Number(pack.end))) {
-            seg.end = Number(pack.end);
-        } else if (pack.start !== '' && pack.start != null && !isNaN(Number(pack.start))) {
-            seg.end = Number(pack.start);
-        }
-        sec.segments[0] = seg;
+            if (row.rangeType === 'qnum' || row.rangeType === 'page') {
+                seg.range_type = row.rangeType;
+            }
+            if (row.start !== '' && row.start != null && !isNaN(Number(row.start))) {
+                seg.start = Number(row.start);
+            }
+            if (row.end !== '' && row.end != null && !isNaN(Number(row.end))) {
+                seg.end = Number(row.end);
+            } else if (row.start !== '' && row.start != null && !isNaN(Number(row.start))) {
+                seg.end = Number(row.start);
+            }
+            segs.push(seg);
+        });
+        if (segs.length) sec.segments = segs;
+        else if (!Array.isArray(sec.segments) || !sec.segments.length) sec.segments = [emptySegment()];
         sections[0] = sec;
         job.sections = sections;
         examTask.raw_data.exam_job = job;

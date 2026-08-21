@@ -71,7 +71,16 @@ if (candidatePage >= prevPage && candidatePage <= nextPage) foundPage[sec] = can
 這一層放在 loose/bare 候選補位**之前**執行，但只補「還沒找到」的大題，不會覆蓋已經靠標題
 文字精確比對成功的大題。
 
-## 改動前自問
+## 第四層（2026-08-21）：同一頁上下兩大題只記頁碼、不記標題 y
+
+症狀：Quiz 10／Quiz 11 都在 p.8。點 Quiz 11 仍停在頁頂的 Quiz 10；學生在 Quiz 10 的空格作答，
+框卻記到選中的 Quiz 11，提交後全錯。TEST 1 Part A～F 同頁也會這樣。
+
+`detectSectionPageRanges` 以前只回 `startPage`。捲動錨點＝該頁頂端＝上面那一大題。
+
+修法：精確／寬鬆比對標題時一併記下該列 `yPct`（`startYPct`）。學生端 `_jumpToSection`
+捲到「該頁＋標題列高度」，不是只捲到頁頂。沒掃到標題列就不填 y、不准猜中間。
+
 
 1. 是不是又用了「單一 regex 一次到位」的想法？大題標題偵測**一定**要有「找不到就退化成更寬鬆
    的候選＋靠順序補位」這層防呆，不能假設 OCR／文字圖層永遠讀得對。

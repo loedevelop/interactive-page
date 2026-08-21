@@ -658,6 +658,12 @@ window.FeatureStudentPdfQuiz = (function () {
             var img = block.querySelector('img');
             var sync = function () {
                 try { _syncDrawCanvas(block); } catch (_syncErr) { console.warn('[FeatureStudentPdfQuiz] sync draw', _syncErr); }
+                var cur = _quizState;
+                if (!cur) return;
+                var range = cur.pageRanges[cur.currentIdx] || {};
+                if (Number(range.startPage) === Number(pageNum)) {
+                    _scrollPageIntoQuizBody(block, range.startYPct);
+                }
             };
             if (img) {
                 img.addEventListener('load', sync);
@@ -765,20 +771,26 @@ window.FeatureStudentPdfQuiz = (function () {
         if (nextBtn) nextBtn.style.visibility = st.currentIdx === st.sections.length - 1 ? 'hidden' : 'visible';
     }
 
-    function _scrollPageIntoQuizBody(block) {
+    function _scrollPageIntoQuizBody(block, yPct) {
         var body = document.getElementById(MODAL_ID + '-body');
         var overlay = document.getElementById(MODAL_ID);
         if (overlay) overlay.scrollTop = 0;
         if (!body || !block) return;
         var bodyRect = body.getBoundingClientRect();
         var blockRect = block.getBoundingClientRect();
-        body.scrollTop = body.scrollTop + (blockRect.top - bodyRect.top);
+        var y = Number(yPct);
+        if (!isFinite(y) || y < 0) y = 0;
+        if (y > 100) y = 100;
+        var offsetInPage = blockRect.height * (y / 100);
+        body.scrollTop = body.scrollTop + (blockRect.top - bodyRect.top) + offsetInPage;
         if (overlay) overlay.scrollTop = 0;
     }
 
     /**
      * 設定「目前選中的大題」＋把它的錨點頁碼捲到考卷區最上方。
-     * 不能用 scrollIntoView：灰色 overlay 自己也 overflow 可捲，會把整張考卷視窗捲出畫面（點後面的大題例如 Quiz 8 就像跳開）。
+     * 不能用 scrollIntoView：灰色 overlay 自己也 overflow 可捲，會把整張考卷視窗捲出畫面。
+     * 同一頁上下兩大題：必須再加上 startYPct，捲到該大題標題列，不能只停在該頁頂端
+     * （否則點 Quiz 11 仍看到頁頂的 Quiz 10，作答會記到選中的大題、批改全錯）。
      */
     function _jumpToSection(idx, skipAnim) {
         var st = _quizState;
@@ -788,9 +800,10 @@ window.FeatureStudentPdfQuiz = (function () {
         _renderActiveBanner();
         _renderSectionCounter();
         _updateNavButtons();
-        var anchorPage = (st.pageRanges[idx] || {}).startPage || 1;
+        var range = st.pageRanges[idx] || {};
+        var anchorPage = range.startPage || 1;
         var block = document.querySelector('.pdf-quiz-page-block[data-page="' + anchorPage + '"]');
-        _scrollPageIntoQuizBody(block);
+        _scrollPageIntoQuizBody(block, range.startYPct);
         _paintSectionTabs();
     }
 
@@ -1075,9 +1088,11 @@ window.FeatureStudentPdfQuiz = (function () {
         var rangeBySection = {};
         (pageRanges || []).forEach(function (r) { rangeBySection[r.section] = r; });
         st.pageRanges = st.sections.map(function (s) {
-            return rangeBySection[s.section] || { startPage: 1, endPage: st.pdfDoc.numPages };
+            var r = rangeBySection[s.section];
+            return r || { startPage: 1, endPage: st.pdfDoc.numPages, startYPct: 0 };
         });
         _renderSectionTabs();
+        _jumpToSection(st.currentIdx, true);
     }
 
     async function _loadQuizDocument() {
@@ -1202,8 +1217,9 @@ window.FeatureStudentPdfQuiz = (function () {
             onMount: function (overlay) {
                 overlay.style.overflow = 'hidden';
                 overlay.style.overscrollBehavior = 'none';
-                overlay.style.alignItems = 'flex-start';
-                overlay.style.paddingTop = '2vh';
+                overlay.style.alignItems = 'stretch';
+                overlay.style.justifyContent = 'stretch';
+                overlay.style.padding = '0';
                 _bindSectionTabs(overlay);
                 overlay.addEventListener('input', _onBodyInput);
                 overlay.addEventListener('click', _onBodyClick);
@@ -1231,7 +1247,7 @@ window.FeatureStudentPdfQuiz = (function () {
                 }
             },
             contentHtml:
-                '<div data-mo-panel style="max-width:900px; width:95vw; height:92vh; max-height:92vh; overflow:hidden; background:white; border-radius:14px; padding:16px; box-shadow:0 20px 50px rgba(15,23,42,0.2); display:flex; flex-direction:column; box-sizing:border-box;">' +
+                '<div data-mo-panel style="width:100%; height:100%; max-width:none; max-height:none; overflow:hidden; background:white; border-radius:0; padding:12px 16px; display:flex; flex-direction:column; box-sizing:border-box;">' +
                     '<div style="flex-shrink:0;">' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">' +
                         '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">📄 ' + esc(title) + '</h3>' +

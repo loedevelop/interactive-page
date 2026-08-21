@@ -21,7 +21,40 @@ window.TimelineTemplates = (() => {
         return m ? m[1] : stem;
     }
 
-    /** 範圍層開包：套餐＋（多活頁才出現的）活頁＋ page/# 起迄 */
+    /** 範圍層開包：套餐＋每一行必選活頁＋ page/# 起迄（資料夾有數個活頁，不准省略） */
+    function normalizePackRowsForRender(raw) {
+        if (raw && Array.isArray(raw.pack_rows) && raw.pack_rows.length) {
+            return raw.pack_rows.map(function (r) {
+                return {
+                    meta_file: String((r && r.meta_file) || '').trim(),
+                    range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
+                    start: r && r.start != null ? String(r.start) : '',
+                    end: r && r.end != null ? String(r.end) : ''
+                };
+            });
+        }
+        return [{
+            meta_file: String((raw && raw.pack_meta_file) || '').trim(),
+            range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
+            start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
+            end: raw && raw.pack_end != null ? String(raw.pack_end) : ''
+        }];
+    }
+
+    function renderPackSheetOptions(metas, currentMeta) {
+        let html = '<option value="">— 請選活頁 —</option>';
+        const curKey = String(currentMeta || '').replace(/\.meta\.json$/i, '').toUpperCase();
+        (metas || []).forEach(function (name) {
+            const file = String(name || '').trim();
+            if (!file) return;
+            const fileKey = file.replace(/\.meta\.json$/i, '').toUpperCase();
+            const selected = !!(curKey && fileKey === curKey);
+            html += '<option value="' + escapeHtml(file) + '"' + (selected ? ' selected' : '') + '>'
+                + escapeHtml(displayStemFromMetaFile(file)) + '</option>';
+        });
+        return html;
+    }
+
     function renderRangePackHtml(pathStr, groupNode) {
         const raw = (groupNode && groupNode.raw_data) || {};
         const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
@@ -32,17 +65,15 @@ window.TimelineTemplates = (() => {
             ? fcmc.listAssignedCombosForClass(classId)
             : [];
         const currentId = String(raw.pack_combo_id || '').trim();
-        const currentMeta = String(raw.pack_meta_file || '').trim();
-        const rangeType = raw.pack_range_type === 'qnum' ? 'qnum' : 'page';
-        const start = raw.pack_start != null ? String(raw.pack_start) : '';
-        const end = raw.pack_end != null ? String(raw.pack_end) : '';
+        const rows = normalizePackRowsForRender(raw);
 
         let combo = null;
         if (currentId && fcmc && typeof fcmc.getAssignedComboById === 'function') {
             combo = fcmc.getAssignedComboById(classId, currentId);
         }
-        const metas = (combo && Array.isArray(combo.metaFiles)) ? combo.metaFiles : [];
-        const needSheet = metas.length > 1;
+        const metas = (window.FeatureTimeline && typeof window.FeatureTimeline.listPackMetaFiles === 'function')
+            ? window.FeatureTimeline.listPackMetaFiles(classId, combo)
+            : ((combo && Array.isArray(combo.metaFiles)) ? combo.metaFiles.slice() : []);
 
         let comboOpts = '<option value="">— 請選擇這個班已指派的套餐 —</option>';
         if (!cacheReady) {
@@ -69,20 +100,40 @@ window.TimelineTemplates = (() => {
             }
         }
 
-        let sheetOpts = '<option value="">— 請選活頁 —</option>';
-        metas.forEach(function (name) {
-            const file = String(name || '').trim();
-            if (!file) return;
-            const curKey = currentMeta.replace(/\.meta\.json$/i, '').toUpperCase();
-            const fileKey = file.replace(/\.meta\.json$/i, '').toUpperCase();
-            const selected = !!(currentMeta && fileKey === curKey);
-            sheetOpts += '<option value="' + escapeHtml(file) + '"' + (selected ? ' selected' : '') + '>'
-                + escapeHtml(displayStemFromMetaFile(file)) + '</option>';
-        });
-
-        const lockedNote = (combo && !needSheet && metas[0])
-            ? '<span style="font-size:0.78rem; color:#1D4ED8; font-weight:700;">活頁已在套餐綁定</span>'
-            : '';
+        const rowHtml = rows.map(function (row, idx) {
+            const sheetOpts = combo
+                ? renderPackSheetOptions(metas, row.meta_file)
+                : '<option value="">— 請先選套餐 —</option>';
+            const delBtn = rows.length > 1
+                ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="刪這一行"'
+                    + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>')
+                : '';
+            return '<div class="range-pack-row" data-row-idx="' + idx + '" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-top:8px;">'
+                + '<div style="flex:1 1 160px; min-width:140px;">'
+                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">活頁</label>'
+                + '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet" style="width:100%; padding:6px;"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
+                + sheetOpts + '</select></div>'
+                + '<div style="display:flex; flex-direction:column;">'
+                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">基準</label>'
+                + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control" style="padding:6px; min-width:80px;"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
+                + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
+                + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
+                + '</select></div>'
+                + '<div style="display:flex; flex-direction:column;">'
+                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">起</label>'
+                + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.start) + '" style="width:72px; padding:6px;"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + '</div>'
+                + '<div style="display:flex; flex-direction:column;">'
+                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">迄</label>'
+                + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.end) + '" style="width:72px; padding:6px;"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + '</div>'
+                + delBtn
+                + '</div>';
+        }).join('');
 
         return `
             <div class="range-pack-panel" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
@@ -95,32 +146,12 @@ window.TimelineTemplates = (() => {
                             ${comboOpts}
                         </select>
                     </div>
-                    <div id="range-pack-sheet-wrap-${pathStr}" style="display:${needSheet ? 'flex' : 'none'}; flex:1 1 160px; min-width:140px; flex-direction:column;">
-                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">活頁</label>
-                        <select id="range-pack-sheet-${pathStr}" class="form-control" style="width:100%; padding:6px;"
-                            onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: true })">
-                            ${sheetOpts}
-                        </select>
-                    </div>
-                    <div style="display:flex; flex-direction:column;">
-                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">基準</label>
-                        <select id="range-pack-rtype-${pathStr}" class="form-control" style="padding:6px; min-width:80px;"
-                            onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: true })">
-                            <option value="page"${rangeType === 'page' ? ' selected' : ''}>頁碼</option>
-                            <option value="qnum"${rangeType === 'qnum' ? ' selected' : ''}>題號</option>
-                        </select>
-                    </div>
-                    <div style="display:flex; flex-direction:column;">
-                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">起</label>
-                        <input id="range-pack-start-${pathStr}" type="number" class="form-control" value="${escapeHtml(start)}" style="width:72px; padding:6px;"
-                            oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: false })">
-                    </div>
-                    <div style="display:flex; flex-direction:column;">
-                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">迄</label>
-                        <input id="range-pack-end-${pathStr}" type="number" class="form-control" value="${escapeHtml(end)}" style="width:72px; padding:6px;"
-                            oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: false })">
-                    </div>
-                    ${lockedNote}
+                </div>
+                ${rowHtml}
+                <div style="margin-top:10px;">
+                    <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
+                        onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackRow && window.FeatureTimeline.addRangePackRow('${pathStr}')">＋ 增加行</button>
+                    <span style="margin-left:8px; font-size:0.75rem; color:#64748B; font-weight:700;">這個資料夾有數個活頁，每一行都要選活頁。</span>
                 </div>
             </div>
         `;

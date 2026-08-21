@@ -1034,21 +1034,99 @@ window.FeatureTimeline = (() => {
         return lo === hi ? ('p. ' + lo) : ('pp. ' + lo + '~' + hi);
     }
 
+    function listPackMetaFiles(classId, combo) {
+        const names = [];
+        const seen = {};
+        function push(name) {
+            const file = asMetaFileName(name);
+            if (!file) return;
+            const key = file.replace(/\.meta\.json$/i, '').toUpperCase();
+            if (seen[key]) return;
+            seen[key] = true;
+            names.push(file);
+        }
+        if (combo && Array.isArray(combo.metaFiles)) combo.metaFiles.forEach(push);
+        const folder = combo && String(combo.folderName || '').trim();
+        if (folder) {
+            const folderU = folder.toUpperCase();
+            ['teacher', 'class'].forEach(function (kind) {
+                const entry = getMetaCatalogEntry(classId, kind);
+                ((entry && entry.options) || []).forEach(function (o) {
+                    if (String((o && o.folderName) || '').trim().toUpperCase() !== folderU) return;
+                    push(o && o.fileName);
+                });
+            });
+        }
+        return names;
+    }
+
+    function normalizePackRows(raw) {
+        if (raw && Array.isArray(raw.pack_rows) && raw.pack_rows.length) {
+            return raw.pack_rows.map(function (r) {
+                return {
+                    meta_file: String((r && r.meta_file) || '').trim(),
+                    range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
+                    start: r && r.start != null ? String(r.start) : '',
+                    end: r && r.end != null ? String(r.end) : ''
+                };
+            });
+        }
+        return [{
+            meta_file: String((raw && raw.pack_meta_file) || '').trim(),
+            range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
+            start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
+            end: raw && raw.pack_end != null ? String(raw.pack_end) : ''
+        }];
+    }
+
+    function writePackRowsToGroup(group, rows) {
+        if (!group.raw_data) group.raw_data = {};
+        const list = (rows && rows.length) ? rows : [{ meta_file: '', range_type: 'page', start: '', end: '' }];
+        group.raw_data.pack_rows = list;
+        group.raw_data.pack_meta_file = list[0].meta_file;
+        group.raw_data.pack_range_type = list[0].range_type;
+        group.raw_data.pack_start = list[0].start;
+        group.raw_data.pack_end = list[0].end;
+    }
+
     function readRangePackFromDom(pathStr) {
         const comboEl = document.getElementById('range-pack-combo-' + pathStr);
-        const sheetEl = document.getElementById('range-pack-sheet-' + pathStr);
-        const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr);
-        const startEl = document.getElementById('range-pack-start-' + pathStr);
-        const endEl = document.getElementById('range-pack-end-' + pathStr);
         const comboId = comboEl ? String(comboEl.value || '').trim() : '';
         const opt = comboEl && comboEl.options[comboEl.selectedIndex];
+        const rows = [];
+        const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
+        const rowEls = panel ? panel.querySelectorAll('.range-pack-row') : [];
+        if (rowEls.length) {
+            Array.prototype.forEach.call(rowEls, function (rowEl, idx) {
+                const sheetEl = document.getElementById('range-pack-sheet-' + pathStr + '-' + idx)
+                    || (rowEl && rowEl.querySelector('.range-pack-sheet'));
+                const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr + '-' + idx);
+                const startEl = document.getElementById('range-pack-start-' + pathStr + '-' + idx);
+                const endEl = document.getElementById('range-pack-end-' + pathStr + '-' + idx);
+                rows.push({
+                    metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
+                    rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
+                    start: startEl ? String(startEl.value || '').trim() : '',
+                    end: endEl ? String(endEl.value || '').trim() : ''
+                });
+            });
+        }
+        if (!rows.length) {
+            const sheetEl = document.getElementById('range-pack-sheet-' + pathStr);
+            const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr);
+            const startEl = document.getElementById('range-pack-start-' + pathStr);
+            const endEl = document.getElementById('range-pack-end-' + pathStr);
+            rows.push({
+                metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
+                rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
+                start: startEl ? String(startEl.value || '').trim() : '',
+                end: endEl ? String(endEl.value || '').trim() : ''
+            });
+        }
         return {
             comboId: comboId,
             comboLabel: (comboId && opt) ? String(opt.text || '').trim() : '',
-            metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
-            rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
-            start: startEl ? String(startEl.value || '').trim() : '',
-            end: endEl ? String(endEl.value || '').trim() : ''
+            rows: rows
         };
     }
 
@@ -1058,16 +1136,10 @@ window.FeatureTimeline = (() => {
         return fcmc.getAssignedComboById(classId, comboId) || null;
     }
 
-    function resolvePackMetaFile(combo, pickedMeta) {
-        const metas = (combo && Array.isArray(combo.metaFiles)) ? combo.metaFiles : [];
-        if (metas.length === 1) return asMetaFileName(metas[0]);
+    function resolvePackMetaFile(combo, pickedMeta, classId) {
         const want = String(pickedMeta || '').trim();
-        if (!want || !metas.length) return '';
-        const hit = metas.find(function (m) {
-            return String(m).toUpperCase() === want.toUpperCase()
-                || String(m).replace(/\.meta\.json$/i, '').toUpperCase() === want.replace(/\.meta\.json$/i, '').toUpperCase();
-        });
-        return hit ? asMetaFileName(hit) : '';
+        if (!want) return '';
+        return asMetaFileName(want);
     }
 
     function applyRangePackToAudio(audioTask, pack) {
@@ -1076,36 +1148,35 @@ window.FeatureTimeline = (() => {
         const raw = audioTask.raw_data;
         raw.script_source = raw.script_source || 'meta';
         const combo = pack.combo;
-        const metaFile = String(pack.metaFile || '').trim();
-        const rangeSpec = pack.rangeSpec || '';
-        if (!combo || !metaFile) return String(raw.material_range || '').trim();
-        const stem = displayStemFromMetaFileLocal(metaFile);
-        const ref = {
-            materials_root_kind: combo.rootKind === 'class' ? 'class' : 'teacher',
-            material_folder: combo.folderName || '',
-            published_file: metaFile,
-            metaFile: metaFile,
-            label: stem,
-            range_spec: rangeSpec,
-            select_mode: 'range_spec'
-        };
-        const prev = Array.isArray(raw.material_refs) ? raw.material_refs.slice() : [];
-        if (prev.length > 1) {
-            prev[0] = ref;
-            raw.material_refs = prev;
-        } else {
-            raw.material_refs = [ref];
-        }
-        raw.material_ref = ref;
-        let coverage = stem;
+        const packRows = Array.isArray(pack.rows) && pack.rows.length
+            ? pack.rows
+            : [{ metaFile: pack.metaFile, rangeType: pack.rangeType, start: pack.start, end: pack.end, rangeSpec: pack.rangeSpec }];
+        if (!combo) return String(raw.material_range || '').trim();
+        const refs = [];
+        const labels = [];
         const MS = window.MaterialSnapshot;
-        if (rangeSpec && MS && typeof MS.formatRangeLabel === 'function') {
-            coverage = MS.formatRangeLabel(stem, rangeSpec);
-        } else if (rangeSpec) {
-            coverage = stem + ' ' + rangeSpec;
-        }
-        raw.material_range = coverage;
-        return coverage;
+        packRows.forEach(function (row) {
+            const metaFile = String((row && row.metaFile) || '').trim();
+            const rangeSpec = (row && row.rangeSpec) || buildPackRangeSpec(row && row.rangeType, row && row.start, row && row.end);
+            if (!metaFile || !rangeSpec) return;
+            const stem = displayStemFromMetaFileLocal(metaFile);
+            refs.push({
+                materials_root_kind: combo.rootKind === 'class' ? 'class' : 'teacher',
+                material_folder: combo.folderName || '',
+                published_file: metaFile,
+                metaFile: metaFile,
+                label: stem,
+                range_spec: rangeSpec,
+                select_mode: 'range_spec'
+            });
+            if (MS && typeof MS.formatRangeLabel === 'function') labels.push(MS.formatRangeLabel(stem, rangeSpec));
+            else labels.push(stem + ' ' + rangeSpec);
+        });
+        if (!refs.length) return String(raw.material_range || '').trim();
+        raw.material_refs = refs;
+        raw.material_ref = refs[0];
+        raw.material_range = labels.join('；');
+        return raw.material_range;
     }
 
     function syncRangePackChildDom(groupPathStr, pack, coverage) {
@@ -1118,14 +1189,19 @@ window.FeatureTimeline = (() => {
             const rangeEl = document.getElementById('node-material-range-' + audioPath);
             if (rangeEl && coverage) rangeEl.value = coverage;
             const rowsEl = document.getElementById('node-material-rows-' + audioPath);
-            const firstRow = rowsEl && rowsEl.querySelector('.material-meta-row');
-            if (firstRow && pack.combo && pack.metaFile) {
-                const fileEl = firstRow.querySelector('.material-meta-file');
-                const specEl = firstRow.querySelector('.material-meta-range');
-                const value = (pack.combo.folderName || '') + '::' + pack.metaFile;
+            const packRows = Array.isArray(pack.rows) && pack.rows.length
+                ? pack.rows
+                : [{ metaFile: pack.metaFile, rangeSpec: pack.rangeSpec }];
+            const metaRows = rowsEl ? rowsEl.querySelectorAll('.material-meta-row') : [];
+            packRows.forEach(function (row, i) {
+                const rowEl = metaRows[i];
+                if (!rowEl || !pack.combo || !row.metaFile) return;
+                const fileEl = rowEl.querySelector('.material-meta-file');
+                const specEl = rowEl.querySelector('.material-meta-range');
+                const value = (pack.combo.folderName || '') + '::' + row.metaFile;
                 if (fileEl) fileEl.value = value;
-                if (specEl && pack.rangeSpec) specEl.value = pack.rangeSpec;
-            }
+                if (specEl && row.rangeSpec) specEl.value = row.rangeSpec;
+            });
             const audioTitleEl = document.getElementById('node-title-' + audioPath);
             if (audioTitleEl && coverage && audioTitleEl.getAttribute('data-title-auto') !== '0') {
                 audioTitleEl.textContent = coverage;
@@ -1138,12 +1214,17 @@ window.FeatureTimeline = (() => {
             const comboEl = document.getElementById('exam-inline-materialfolder-' + examPath + '-0')
                 || document.getElementById('exam-inline-materialfolder-' + examPath);
             if (comboEl && pack.combo) comboEl.value = pack.combo.id;
-            const rtypeEl = document.getElementById('exam-inline-rtype-' + examPath + '-0-0');
-            const startEl = document.getElementById('exam-inline-start-' + examPath + '-0-0');
-            const endEl = document.getElementById('exam-inline-end-' + examPath + '-0-0');
-            if (rtypeEl && pack.rangeType) rtypeEl.value = pack.rangeType;
-            if (startEl && pack.start !== '') startEl.value = pack.start;
-            if (endEl && (pack.end !== '' || pack.start !== '')) endEl.value = pack.end || pack.start;
+            const packRows = Array.isArray(pack.rows) && pack.rows.length
+                ? pack.rows
+                : [{ rangeType: pack.rangeType, start: pack.start, end: pack.end }];
+            packRows.forEach(function (row, i) {
+                const rtypeEl = document.getElementById('exam-inline-rtype-' + examPath + '-0-' + i);
+                const startEl = document.getElementById('exam-inline-start-' + examPath + '-0-' + i);
+                const endEl = document.getElementById('exam-inline-end-' + examPath + '-0-' + i);
+                if (rtypeEl && row.rangeType) rtypeEl.value = row.rangeType;
+                if (startEl && row.start !== '') startEl.value = row.start;
+                if (endEl && (row.end !== '' || row.start !== '')) endEl.value = row.end || row.start;
+            });
             const examTitleEl = document.getElementById('node-title-' + examPath);
             if (examTitleEl && coverage && !String(examTitleEl.textContent || '').trim()) {
                 examTitleEl.textContent = coverage;
@@ -1172,15 +1253,19 @@ window.FeatureTimeline = (() => {
         const classId = (bState && bState.classId) || '';
         const fromDom = readRangePackFromDom(pathStr);
         const combo = resolvePackCombo(classId, fromDom.comboId);
-        const metaFile = resolvePackMetaFile(combo, fromDom.metaFile);
-        const rangeSpec = buildPackRangeSpec(fromDom.rangeType, fromDom.start, fromDom.end);
+        const rows = (fromDom.rows || []).map(function (r) {
+            return {
+                meta_file: resolvePackMetaFile(combo, r.metaFile, classId),
+                range_type: r.rangeType === 'qnum' ? 'qnum' : 'page',
+                start: String(r.start || '').trim(),
+                end: String(r.end || '').trim()
+            };
+        });
+        if (!rows.length) rows.push({ meta_file: '', range_type: 'page', start: '', end: '' });
 
         group.raw_data.pack_combo_id = combo ? combo.id : '';
         group.raw_data.pack_combo_label = combo ? String(combo.label || fromDom.comboLabel || '').trim() : '';
-        group.raw_data.pack_meta_file = metaFile;
-        group.raw_data.pack_range_type = fromDom.rangeType;
-        group.raw_data.pack_start = fromDom.start;
-        group.raw_data.pack_end = fromDom.end;
+        writePackRowsToGroup(group, rows);
 
         const titleEl = document.getElementById('node-title-' + pathStr);
         const groupAuto = !titleEl || titleEl.getAttribute('data-title-auto') !== '0';
@@ -1200,34 +1285,82 @@ window.FeatureTimeline = (() => {
 
         const audio = (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
         const exam = (group.subTasks || []).find(function (t) { return t && t.type === 'exam'; });
+        const packRows = rows.map(function (r) {
+            return {
+                metaFile: r.meta_file,
+                rangeType: r.range_type,
+                start: r.start,
+                end: r.end,
+                rangeSpec: buildPackRangeSpec(r.range_type, r.start, r.end)
+            };
+        });
         const pack = {
             combo: combo,
-            metaFile: metaFile,
-            rangeType: fromDom.rangeType,
-            start: fromDom.start,
-            end: fromDom.end,
-            rangeSpec: rangeSpec
+            rows: packRows,
+            metaFile: packRows[0].metaFile,
+            rangeType: packRows[0].rangeType,
+            start: packRows[0].start,
+            end: packRows[0].end,
+            rangeSpec: packRows[0].rangeSpec
         };
         const coverage = applyRangePackToAudio(audio, pack);
         if (exam && window.FeatureExamJob && typeof window.FeatureExamJob.applyRangePackToExam === 'function') {
             window.FeatureExamJob.applyRangePackToExam(exam, pack);
         }
+        const hasCompleteRow = packRows.some(function (r) { return !!(combo && r.metaFile && r.rangeSpec); });
 
         if (rerender) {
             if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
                 window.FeatureTimeline.refreshBuilder({ skipSync: true });
             }
             const audioIdx = (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
-            if (audioIdx >= 0 && combo && metaFile && rangeSpec) {
+            if (audioIdx >= 0 && hasCompleteRow) {
                 scheduleAutoSnapshot(pathStr + '-' + audioIdx);
             }
             return;
         }
         syncRangePackChildDom(pathStr, pack, coverage);
         const audioIdx = (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
-        if (audioIdx >= 0 && combo && metaFile && rangeSpec) {
+        if (audioIdx >= 0 && hasCompleteRow) {
             scheduleAutoSnapshot(pathStr + '-' + audioIdx);
         }
+    }
+
+    function addRangePackRow(pathStr) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!group || group.type !== 'group') return;
+        if (!group.raw_data) group.raw_data = {};
+        const rows = normalizePackRows(group.raw_data);
+        rows.push({
+            meta_file: '',
+            range_type: rows[0] ? rows[0].range_type : 'page',
+            start: '',
+            end: ''
+        });
+        writePackRowsToGroup(group, rows);
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+    }
+
+    function removeRangePackRow(pathStr, idx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!group || group.type !== 'group') return;
+        if (!group.raw_data) group.raw_data = {};
+        const rows = normalizePackRows(group.raw_data);
+        if (rows.length <= 1) return;
+        rows.splice(Number(idx), 1);
+        writePackRowsToGroup(group, rows);
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+        onRangePackChange(pathStr, { rerender: false });
     }
 
     let _rangePackComboRefreshBusy = false;
@@ -2865,6 +2998,9 @@ window.FeatureTimeline = (() => {
         onNodeTitleInput: onNodeTitleInput,
         onGroupTitleInput: onGroupTitleInput,
         onRangePackChange: onRangePackChange,
+        listPackMetaFiles: listPackMetaFiles,
+        addRangePackRow: addRangePackRow,
+        removeRangePackRow: removeRangePackRow,
 
         onScriptSourceChange: function (pathStr) {
             const sourceEl = document.getElementById('node-script-source-' + pathStr);

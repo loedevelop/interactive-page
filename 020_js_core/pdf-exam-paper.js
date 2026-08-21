@@ -1189,8 +1189,10 @@ window.PdfExamPaper = (function () {
         var fuzzyTargets = sectionOrder.map(normFuzzy);
 
         var foundPage = {}; // section -> 第一次出現的頁碼
-        var looseCandidates = []; // { family, pageNum } - 關鍵字配到但數字被 OCR 壞掉的候選行
-        var bareCandidates = []; // { family, pageNum } - 只比對到行首關鍵字，連數字都配不到（更弱，最後才用）
+        var foundYPct = {}; // section -> 該頁標題列的 yPct（頂端=0）；同一頁上下兩大題必須靠這個捲到下面那題
+        var allHeaders = []; // { label, pageNum, yPct } 精確比對到的標題，給只有頁碼沒有 y 的補位用
+        var looseCandidates = []; // { family, pageNum, yPct } - 關鍵字配到但數字被 OCR 壞掉的候選行
+        var bareCandidates = []; // { family, pageNum, yPct } - 只比對到行首關鍵字，連數字都配不到（更弱，最後才用）
         var footerOffsetVotes = {}; // offset(印刷頁碼-PDF頁碼) -> 出現次數，用來推算全篇一致的落差
         var pdfTestCtx = null; // 掃 PDF 時目前在哪個 Test 底下（跟 parseAnswerText 的 testCtx 同一套邏輯，見 _composeSectionLabel）
         return pageNums.reduce(function (chain, pageNum) {
@@ -1228,10 +1230,12 @@ window.PdfExamPaper = (function () {
                             // 否則「Q U I Z 1 6」這種標題永遠配不到 Quiz\s*\d+。
                             var secMatch = collapsed.match(SECTION_HEADER_ANYWHERE_RE);
                             var candidate = secMatch ? normalizeSectionLabel(secMatch[1]) : null;
+                            if (candidate) allHeaders.push({ label: candidate, pageNum: pageNum, yPct: line.yPct });
                             sectionOrder.forEach(function (sec, idx) {
                                 if (foundPage[sec] != null) return; // 只記第一次出現
                                 if (candidate && normFuzzy(candidate) === fuzzyTargets[idx]) {
                                     foundPage[sec] = pageNum;
+                                    foundYPct[sec] = line.yPct;
                                 }
                             });
                             // 數字被 OCR 壞掉（例如「QUIZ 7」變成「QUIZ?」）時上面精確比對永遠配不到，
@@ -1246,12 +1250,12 @@ window.PdfExamPaper = (function () {
                                 var garbledMatch = collapsed.match(SECTION_HEADER_GARBLED_RE);
                                 if (garbledMatch) {
                                     var famMatch = garbledMatch[1].match(SECTION_KEYWORD_FAMILY_RE);
-                                    if (famMatch) looseCandidates.push({ family: famMatch[1].toLowerCase(), pageNum: pageNum });
+                                    if (famMatch) looseCandidates.push({ family: famMatch[1].toLowerCase(), pageNum: pageNum, yPct: line.yPct });
                                 } else {
                                     // 連「關鍵字＋壞掉的短符號」都配不到，才退而比對「行首只有關鍵字」——
                                     // 標題數字可能被分到別的視覺行去了，這一行只剩關鍵字本身。
                                     var bareMatch = collapsed.match(SECTION_HEADER_BARE_KEYWORD_RE);
-                                    if (bareMatch) bareCandidates.push({ family: bareMatch[1].toLowerCase(), pageNum: pageNum });
+                                    if (bareMatch) bareCandidates.push({ family: bareMatch[1].toLowerCase(), pageNum: pageNum, yPct: line.yPct });
                                 }
                             }
                         });
@@ -1310,6 +1314,7 @@ window.PdfExamPaper = (function () {
                     var cand = looseCandidates[c];
                     if (cand.family === family && cand.pageNum >= prevPage && cand.pageNum <= nextPage) {
                         foundPage[sec] = cand.pageNum;
+                        if (cand.yPct != null) foundYPct[sec] = cand.yPct;
                         usedCandidateIdx[c] = true;
                         break;
                     }
@@ -1322,6 +1327,7 @@ window.PdfExamPaper = (function () {
                     var bc = bareCandidates[d];
                     if (bc.family === family && bc.pageNum >= prevPage && bc.pageNum <= nextPage) {
                         foundPage[sec] = bc.pageNum;
+                        if (bc.yPct != null) foundYPct[sec] = bc.yPct;
                         usedBareIdx[d] = true;
                         break;
                     }
@@ -1329,6 +1335,16 @@ window.PdfExamPaper = (function () {
             });
             // 找不到的大題：沿用前一個已定位大題的頁碼（至少能看到差不多的頁面，不會整片空白）；
             // 第一個大題還是找不到就預設第 1 頁。
+            // 只有頁碼、沒有 y（例如只靠解答 p.NN 換算）時，用同一頁上精確掃到的同名標題列補 y。
+            // 找不到就不填，不准猜中間高度——同一頁下面那題沒有 y 就仍會停在頁頂。
+            sectionOrder.forEach(function (sec, idx) {
+                if (foundYPct[sec] != null || foundPage[sec] == null) return;
+                var page = foundPage[sec];
+                var hit = allHeaders.find(function (h) {
+                    return h.pageNum === page && normFuzzy(h.label) === fuzzyTargets[idx];
+                });
+                if (hit && hit.yPct != null) foundYPct[sec] = hit.yPct;
+            });
             var lastKnown = 1;
             var starts = sectionOrder.map(function (sec) {
                 if (foundPage[sec] != null) { lastKnown = foundPage[sec]; return foundPage[sec]; }
@@ -1338,7 +1354,13 @@ window.PdfExamPaper = (function () {
                 var start = starts[idx];
                 var nextStart = (idx + 1 < starts.length) ? starts[idx + 1] : (numPages + 1);
                 var end = Math.max(start, nextStart - 1);
-                return { section: sec, startPage: start, endPage: Math.min(end, numPages) };
+                var yPct = foundYPct[sec];
+                return {
+                    section: sec,
+                    startPage: start,
+                    endPage: Math.min(end, numPages),
+                    startYPct: (yPct != null && isFinite(yPct)) ? yPct : 0
+                };
             });
         });
     }

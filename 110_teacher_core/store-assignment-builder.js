@@ -62,10 +62,6 @@ window.BuilderStore = (() => {
     function syncRangePackFieldsFromDom(t, pathStr) {
         if (!t || !t.raw_data || t.raw_data.group_role !== 'range') return;
         const comboEl = document.getElementById('range-pack-combo-' + pathStr);
-        const sheetEl = document.getElementById('range-pack-sheet-' + pathStr);
-        const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr);
-        const startEl = document.getElementById('range-pack-start-' + pathStr);
-        const endEl = document.getElementById('range-pack-end-' + pathStr);
         if (comboEl) {
             t.raw_data.pack_combo_id = String(comboEl.value || '').trim();
             const opt = comboEl.options[comboEl.selectedIndex];
@@ -73,6 +69,34 @@ window.BuilderStore = (() => {
                 ? String(opt.text || '').trim()
                 : '';
         }
+        const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
+        const rowEls = panel ? panel.querySelectorAll('.range-pack-row') : [];
+        if (rowEls.length) {
+            const rows = [];
+            Array.prototype.forEach.call(rowEls, function (rowEl, idx) {
+                const sheetEl = document.getElementById('range-pack-sheet-' + pathStr + '-' + idx)
+                    || (rowEl && rowEl.querySelector('.range-pack-sheet'));
+                const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr + '-' + idx);
+                const startEl = document.getElementById('range-pack-start-' + pathStr + '-' + idx);
+                const endEl = document.getElementById('range-pack-end-' + pathStr + '-' + idx);
+                rows.push({
+                    meta_file: sheetEl ? String(sheetEl.value || '').trim() : '',
+                    range_type: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
+                    start: startEl ? String(startEl.value || '').trim() : '',
+                    end: endEl ? String(endEl.value || '').trim()
+                });
+            });
+            t.raw_data.pack_rows = rows;
+            t.raw_data.pack_meta_file = rows[0].meta_file;
+            t.raw_data.pack_range_type = rows[0].range_type;
+            t.raw_data.pack_start = rows[0].start;
+            t.raw_data.pack_end = rows[0].end;
+            return;
+        }
+        const sheetEl = document.getElementById('range-pack-sheet-' + pathStr);
+        const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr);
+        const startEl = document.getElementById('range-pack-start-' + pathStr);
+        const endEl = document.getElementById('range-pack-end-' + pathStr);
         if (sheetEl) t.raw_data.pack_meta_file = String(sheetEl.value || '').trim();
         if (rtypeEl) t.raw_data.pack_range_type = rtypeEl.value === 'qnum' ? 'qnum' : 'page';
         if (startEl) t.raw_data.pack_start = String(startEl.value || '').trim();
@@ -716,7 +740,8 @@ window.BuilderStore = (() => {
                     pack_meta_file: '',
                     pack_range_type: 'page',
                     pack_start: '',
-                    pack_end: ''
+                    pack_end: '',
+                    pack_rows: [{ meta_file: '', range_type: 'page', start: '', end: '' }]
                 },
                 subTasks: [
                     window.BuilderStore._makeLeafNode('audio_record', '', window.BuilderStore._defaultAudioRaw()),
