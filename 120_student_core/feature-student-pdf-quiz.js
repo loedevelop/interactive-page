@@ -765,27 +765,33 @@ window.FeatureStudentPdfQuiz = (function () {
         if (nextBtn) nextBtn.style.visibility = st.currentIdx === st.sections.length - 1 ? 'hidden' : 'visible';
     }
 
+    function _scrollPageIntoQuizBody(block) {
+        var body = document.getElementById(MODAL_ID + '-body');
+        var overlay = document.getElementById(MODAL_ID);
+        if (overlay) overlay.scrollTop = 0;
+        if (!body || !block) return;
+        var bodyRect = body.getBoundingClientRect();
+        var blockRect = block.getBoundingClientRect();
+        body.scrollTop = body.scrollTop + (blockRect.top - bodyRect.top);
+        if (overlay) overlay.scrollTop = 0;
+    }
+
     /**
-     * 設定「目前選中的大題」＋把它的錨點頁碼精準捲到畫面最上方（scrollIntoView block:'start'）。
-     * 不用「一大題一畫面」了——各大題的作答框各自存在 boxesBySection[idx]，跟目前選中哪個大題
-     * 無關，所以自由切換不會遺失任何已填的內容；已批改的大題選中後看到的框就是鎖定唯讀樣式。
-     * 頁碼範圍（pageRanges）現在只是「捲動錨點」，就算偵測有些微誤差，最差情況只是捲過去
-     * 差一兩頁，不會像舊版一樣造成內容顯示錯誤或重複。
+     * 設定「目前選中的大題」＋把它的錨點頁碼捲到考卷區最上方。
+     * 不能用 scrollIntoView：灰色 overlay 自己也 overflow 可捲，會把整張考卷視窗捲出畫面（點後面的大題例如 Quiz 8 就像跳開）。
      */
     function _jumpToSection(idx, skipAnim) {
         var st = _quizState;
         if (!st) return;
         if (idx < 0 || idx >= st.sections.length) return;
         st.currentIdx = idx;
-        _renderSectionTabs();
         _renderActiveBanner();
         _renderSectionCounter();
         _updateNavButtons();
         var anchorPage = (st.pageRanges[idx] || {}).startPage || 1;
         var block = document.querySelector('.pdf-quiz-page-block[data-page="' + anchorPage + '"]');
-        if (block && typeof block.scrollIntoView === 'function') {
-            block.scrollIntoView(skipAnim ? { block: 'start' } : { behavior: 'smooth', block: 'start' });
-        }
+        _scrollPageIntoQuizBody(block);
+        _paintSectionTabs();
     }
 
     function _goToSection(delta) {
@@ -794,34 +800,83 @@ window.FeatureStudentPdfQuiz = (function () {
         _jumpToSection(st.currentIdx + delta);
     }
 
-    // 💣 按鈕上方是大題名稱、下方是頁碼（例如「QUIZ 11」／「p.57~58」），兩行都直接寫在按鈕上，
-    // 不是只顯示序號要靠 title 提示——老師/學生一眼就看到有哪些大題、各自從第幾頁開始。
-    function _renderSectionTabsHtml() {
+    function _sectionTabLook(idx) {
         var st = _quizState;
-        if (!st) return '';
-        return st.sections.map(function (sec, idx) {
-            var submitted = _isSectionSubmitted(idx);
-            var isCurrent = idx === st.currentIdx;
-            var bg = submitted ? '#ECFDF5' : (isCurrent ? '#E0F2FE' : '#F8FAFC');
-            var border = submitted ? '#6EE7B7' : (isCurrent ? '#7DD3FC' : '#E2E8F0');
-            var color = submitted ? '#047857' : (isCurrent ? '#0369A1' : '#64748B');
-            var range = st.pageRanges[idx] || {};
-            var pageLabel = range.startPage
-                ? ('p.' + range.startPage + (range.endPage && range.endPage !== range.startPage ? ('~' + range.endPage) : ''))
-                : '';
-            return '<button type="button" class="pdf-quiz-section-tab" data-idx="' + idx + '" ' +
-                'style="border:2px solid ' + border + '; background:' + bg + '; color:' + color + '; font-weight:800; padding:4px 10px; border-radius:10px; cursor:pointer; flex-shrink:0; display:flex; flex-direction:column; align-items:center; line-height:1.3; gap:1px;' +
-                (isCurrent ? ' box-shadow:0 0 0 2px rgba(3,105,161,0.25);' : '') + '" ' +
-                'onclick="window.FeatureStudentPdfQuiz._jumpToSection(' + idx + ')">' +
-                '<span style="font-size:0.78rem;">' + esc(sec.section) + (submitted ? ' ✓' : '') + '</span>' +
-                (pageLabel ? ('<span style="font-size:0.66rem; font-weight:700; opacity:0.8;">' + esc(pageLabel) + '</span>') : '') +
-            '</button>';
-        }).join('');
+        var submitted = _isSectionSubmitted(idx);
+        var isCurrent = !!(st && idx === st.currentIdx);
+        var range = (st && st.pageRanges[idx]) || {};
+        var pageLabel = range.startPage
+            ? ('p.' + range.startPage + (range.endPage && range.endPage !== range.startPage ? ('~' + range.endPage) : ''))
+            : '';
+        return {
+            submitted: submitted,
+            isCurrent: isCurrent,
+            pageLabel: pageLabel,
+            bg: submitted ? '#ECFDF5' : (isCurrent ? '#E0F2FE' : '#F8FAFC'),
+            border: submitted ? '#6EE7B7' : (isCurrent ? '#7DD3FC' : '#E2E8F0'),
+            color: submitted ? '#047857' : (isCurrent ? '#0369A1' : '#64748B')
+        };
     }
 
+    function _applySectionTabLook(btn, idx) {
+        var look = _sectionTabLook(idx);
+        btn.style.cssText = 'border:2px solid ' + look.border + '; background:' + look.bg + '; color:' + look.color + '; font-weight:800; padding:4px 10px; border-radius:10px; cursor:pointer; flex-shrink:0; display:flex; flex-direction:column; align-items:center; line-height:1.3; gap:1px;' +
+            (look.isCurrent ? ' box-shadow:0 0 0 2px rgba(3,105,161,0.25);' : '');
+        var nameEl = btn.querySelector('[data-tab-name]');
+        var pageEl = btn.querySelector('[data-tab-page]');
+        var st = _quizState;
+        var sec = st && st.sections[idx];
+        if (nameEl && sec) nameEl.textContent = sec.section + (look.submitted ? ' ✓' : '');
+        if (pageEl) {
+            pageEl.textContent = look.pageLabel;
+            pageEl.style.display = look.pageLabel ? '' : 'none';
+        }
+    }
+
+    // 💣 上方是大題名稱、下方是頁碼。籤必須跟「上一大題」一樣是固定按鈕，
+    // 點了只改顏色，不准 innerHTML 整排拆掉——拆掉會讓這次 click 落到灰色層而跳出。
     function _renderSectionTabs() {
         var el = document.getElementById('pdf-quiz-section-tabs');
-        if (el) el.innerHTML = _renderSectionTabsHtml();
+        var st = _quizState;
+        if (!el || !st) return;
+        var existing = el.querySelectorAll('.pdf-quiz-section-tab');
+        if (existing.length !== st.sections.length) {
+            el.innerHTML = st.sections.map(function (sec, idx) {
+                return '<button type="button" class="pdf-quiz-section-tab" data-idx="' + idx + '">' +
+                    '<span data-tab-name style="font-size:0.78rem;"></span>' +
+                    '<span data-tab-page style="font-size:0.66rem; font-weight:700; opacity:0.8;"></span>' +
+                '</button>';
+            }).join('');
+            existing = el.querySelectorAll('.pdf-quiz-section-tab');
+        }
+        Array.prototype.forEach.call(existing, function (btn) {
+            _applySectionTabLook(btn, Number(btn.getAttribute('data-idx')));
+        });
+    }
+
+    function _paintSectionTabs() {
+        var el = document.getElementById('pdf-quiz-section-tabs');
+        if (!el) return;
+        Array.prototype.forEach.call(el.querySelectorAll('.pdf-quiz-section-tab'), function (btn) {
+            _applySectionTabLook(btn, Number(btn.getAttribute('data-idx')));
+        });
+    }
+
+    function _onSectionTabsEvent(e) {
+        e.stopPropagation();
+        if (e.type !== 'click') return;
+        var btn = e.target.closest ? e.target.closest('.pdf-quiz-section-tab') : null;
+        if (!btn) return;
+        _jumpToSection(Number(btn.getAttribute('data-idx')));
+    }
+
+    function _bindSectionTabs(overlay) {
+        var el = overlay.querySelector('#pdf-quiz-section-tabs');
+        if (!el || el.getAttribute('data-tabs-bound') === '1') return;
+        el.setAttribute('data-tabs-bound', '1');
+        ['pointerdown', 'mousedown', 'click'].forEach(function (type) {
+            el.addEventListener(type, _onSectionTabsEvent);
+        });
     }
 
     async function requestClose() {
@@ -1145,6 +1200,11 @@ window.FeatureStudentPdfQuiz = (function () {
             },
             unsavedMessage: '要暫存目前作答與筆記後離開嗎？',
             onMount: function (overlay) {
+                overlay.style.overflow = 'hidden';
+                overlay.style.overscrollBehavior = 'none';
+                overlay.style.alignItems = 'flex-start';
+                overlay.style.paddingTop = '2vh';
+                _bindSectionTabs(overlay);
                 overlay.addEventListener('input', _onBodyInput);
                 overlay.addEventListener('click', _onBodyClick);
                 overlay.addEventListener('mousedown', _onBodyMouseDown);
@@ -1191,7 +1251,7 @@ window.FeatureStudentPdfQuiz = (function () {
                     '<div id="pdf-quiz-active-banner" style="margin-bottom:6px;"></div>' +
                     '<div id="pdf-quiz-counter" style="font-size:0.8rem; margin-bottom:6px;"></div>' +
                     '</div>' +
-                    '<div id="' + MODAL_ID + '-body" style="flex:1; min-height:0; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; padding:10px;">' + _loadingHtml('正在下載考卷…') + '</div>' +
+                    '<div id="' + MODAL_ID + '-body" style="flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; padding:10px;">' + _loadingHtml('正在下載考卷…') + '</div>' +
                     '<div style="flex-shrink:0; display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">' +
                         '<button type="button" class="btn" id="pdf-quiz-prev-btn" onclick="window.FeatureStudentPdfQuiz._goToSection(-1)">◀ 上一大題</button>' +
                         '<button type="button" class="btn btn-action" id="pdf-quiz-main-action-btn" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;">提交這一大題並批改</button>' +

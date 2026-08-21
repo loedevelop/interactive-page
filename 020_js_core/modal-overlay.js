@@ -56,12 +56,11 @@ window.ModalOverlay = (function () {
         return typeof meta.isDirty === 'function' && !!meta.isDirty();
     }
 
+    // 只有「按下＋放開都在灰色 overlay 本身」才算出面。
+    // 不准用座標範圍、也不准用 !panel.contains(target)：點籤時若節點被重繪拿掉，
+    // contains 會變 false，中間偏上的大題籤就會被當成點外面而跳出。
     function clickedOutsidePanel(overlay, target) {
-        if (!overlay || !target) return false;
-        if (target === overlay) return true;
-        var panel = overlay.querySelector('[data-mo-panel]') || overlay.firstElementChild;
-        if (!panel) return true;
-        return !panel.contains(target);
+        return !!(overlay && target === overlay);
     }
 
     /**
@@ -138,7 +137,13 @@ window.ModalOverlay = (function () {
         };
 
         if (tier !== 'C') {
+            overlay.addEventListener('pointerdown', function (e) {
+                overlay.setAttribute('data-mo-backdrop-down', clickedOutsidePanel(overlay, e.target) ? '1' : '0');
+            });
             overlay.addEventListener('click', function (e) {
+                var startedOnBackdrop = overlay.getAttribute('data-mo-backdrop-down') === '1';
+                overlay.removeAttribute('data-mo-backdrop-down');
+                if (!startedOnBackdrop) return;
                 if (!clickedOutsidePanel(overlay, e.target)) return;
                 requestClose(id);
             });
