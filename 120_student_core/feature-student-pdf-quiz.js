@@ -30,11 +30,11 @@
  * 按「提交這一大題並批改」就立刻批改、鎖定這一大題（不能再改），並馬上顯示這一大題的對錯格數／
  * 百分比（不顯示正確答案）。要換下一大題前必須先提交目前這大題。最後一大題提交完，才彈出整份
  * 考卷的總結。
- * - 每提交一大題都會即時存檔（含 pdf_quiz_boxes_by_section／pdf_quiz_section_results），老師端
- *   可以看到部分完成度，不用等整份交完才有資料。
- * - 中途關閉視窗、之後重新打開：若上次「還在作答中」（沒交完），會自動接續已批改的大題，從第一個
- *   還沒批改的大題繼續；若上次已經整份交完，重新打開＝重新開始全新一份作答（不影響已存檔的舊成績，
- *   最後交卷時才會整份覆蓋）。
+ * - 每提交一大題都會即時存檔（含 pdf_quiz_boxes_by_section／pdf_quiz_section_results／畫筆筆記），
+ *   老師端可以看到部分完成度，不用等整份交完才有資料。
+ * - 「暫存並離開」／點外面關閉：把目前作答框＋畫筆筆記一併寫進 task_completions（status 仍是未完成）。
+ *   下次打開若上次還沒整份交完，會接續已批改的大題、未提交的作答框、以及各頁筆記。
+ * - 若上次已經整份交完，重新打開＝重新開始全新一份作答（不覆蓋舊成績，直到這次有大題真正提交）。
  */
 window.FeatureStudentPdfQuiz = (function () {
     'use strict';
@@ -51,8 +51,13 @@ window.FeatureStudentPdfQuiz = (function () {
     var _quizState = null;
     var _drag = null; // 拖曳中的作答框狀態：{ boxId, sectionIdx, pageBlockEl, boxEl }
     var _pageObserver = null; // IntersectionObserver：捲到視窗附近才渲染該頁 PDF 圖片（lazy render）
+    var _ink = null; // 正在畫的一筆：{ pageNum, canvas, points }
     var _measureCanvas = document.createElement('canvas');
     var _measureCtx = _measureCanvas.getContext('2d');
+    var PEN_COLORS = ['#0F172A', '#DC2626', '#2563EB', '#16A34A'];
+    var TOOL_PEN_WIDTH = 2.4;
+    var TOOL_HIGHLIGHT_WIDTH = 14;
+    var TOOL_ERASER_WIDTH = 18;
 
     function _fontFamilyForMeasure() {
         return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -181,6 +186,41 @@ window.FeatureStudentPdfQuiz = (function () {
             }
         }
         patchLocalCompletion(assignmentId, taskId, rawPayload, completed);
+    }
+
+    function _hasAnyDrawings(map) {
+        if (!map || typeof map !== 'object') return false;
+        return Object.keys(map).some(function (k) {
+            return Array.isArray(map[k]) && map[k].length > 0;
+        });
+    }
+
+    function _canPersistDraft() {
+        var st = _quizState;
+        if (!st) return false;
+        if (st.loading) return false;
+        if (st.allowDraftPersist) return true;
+        return (st.sectionResults || []).some(function (r) { return !!r; });
+    }
+
+    function _buildRawPayload() {
+        var st = _quizState;
+        var aggregate = _aggregateResults();
+        return {
+            pdf_quiz_answers: _buildAnswersFromBoxes(),
+            pdf_quiz_boxes_by_section: st.boxesBySection,
+            pdf_quiz_section_results: st.sectionResults,
+            pdf_quiz_result: aggregate,
+            pdf_quiz_drawings_by_page: st.drawingsByPage || {}
+        };
+    }
+
+    async function saveDraft() {
+        var st = _quizState;
+        if (!st) return false;
+        if (!_canPersistDraft()) return false;
+        await persistResult(st.assignmentId, st.taskId, _buildRawPayload(), false);
+        return true;
     }
 
     // ------------------------------------------------------------------
@@ -335,6 +375,238 @@ window.FeatureStudentPdfQuiz = (function () {
         '</div>';
     }
 
+    function _toolStrokeStyle(tool, color) {
+        if (tool === 'highlighter') return { color: color || '#EAB308', width: TOOL_HIGHLIGHT_WIDTH, alpha: 0.38, eraser: false };
+        if (tool === 'eraser') return { color: 'rgba(0,0,0,1)', width: TOOL_ERASER_WIDTH, alpha: 1, eraser: true };
+        return { color: color || '#0F172A', width: TOOL_PEN_WIDTH, alpha: 1, eraser: false };
+    }
+
+    function _pageStrokes(pageNum) {
+        var st = _quizState;
+        if (!st) return [];
+        if (!st.drawingsByPage) st.drawingsByPage = {};
+        var key = String(pageNum);
+        if (!Array.isArray(st.drawingsByPage[key])) st.drawingsByPage[key] = [];
+        return st.drawingsByPage[key];
+    }
+
+    function _syncDrawCanvas(block) {
+        if (!block) return;
+        var img = block.querySelector('img');
+        var canvas = block.querySelector('canvas.pdf-quiz-draw-layer');
+        if (!img || !canvas) return;
+        var cssW = img.clientWidth || img.naturalWidth || 0;
+        var cssH = img.clientHeight || img.naturalHeight || 0;
+        if (cssW < 8 || cssH < 8) return;
+        var dpr = window.devicePixelRatio || 1;
+        var pxW = Math.max(1, Math.round(cssW * dpr));
+        var pxH = Math.max(1, Math.round(cssH * dpr));
+        if (canvas.width !== pxW || canvas.height !== pxH) {
+            canvas.width = pxW;
+            canvas.height = pxH;
+        }
+        _redrawPageDrawings(Number(block.getAttribute('data-page')));
+    }
+
+    function _redrawPageDrawings(pageNum) {
+        var block = document.querySelector('.pdf-quiz-page-block[data-page="' + pageNum + '"]');
+        if (!block) return;
+        var canvas = block.querySelector('canvas.pdf-quiz-draw-layer');
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var cssW = canvas.clientWidth || 1;
+        var cssH = canvas.clientHeight || 1;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        (_pageStrokes(pageNum) || []).forEach(function (stroke) {
+            if (!stroke || !stroke.points || stroke.points.length < 1) return;
+            var style = _toolStrokeStyle(stroke.tool, stroke.color);
+            ctx.save();
+            ctx.globalCompositeOperation = style.eraser ? 'destination-out' : 'source-over';
+            ctx.globalAlpha = style.alpha;
+            ctx.strokeStyle = style.color;
+            ctx.lineWidth = style.width;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            stroke.points.forEach(function (pt, i) {
+                var x = pt.x * cssW;
+                var y = pt.y * cssH;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            if (stroke.points.length === 1) {
+                ctx.lineTo(stroke.points[0].x * cssW + 0.01, stroke.points[0].y * cssH);
+            }
+            ctx.stroke();
+            ctx.restore();
+        });
+    }
+
+    function _applyToolCursor() {
+        var st = _quizState;
+        var drawing = !!(st && st.tool && st.tool !== 'select');
+        Array.prototype.slice.call(document.querySelectorAll('.pdf-quiz-page-block')).forEach(function (el) {
+            if (drawing) {
+                el.classList.add('is-drawing');
+                el.setAttribute('data-tool', st.tool);
+            } else {
+                el.classList.remove('is-drawing');
+                el.removeAttribute('data-tool');
+            }
+        });
+        Array.prototype.slice.call(document.querySelectorAll('.pdf-quiz-box')).forEach(function (boxEl) {
+            boxEl.style.pointerEvents = drawing ? 'none' : '';
+        });
+        _refreshToolButtons();
+    }
+
+    function _refreshToolButtons() {
+        var st = _quizState;
+        if (!st) return;
+        Array.prototype.slice.call(document.querySelectorAll('.pdf-quiz-tool-btn')).forEach(function (btn) {
+            var on = btn.getAttribute('data-tool') === st.tool;
+            if (on) btn.classList.add('is-active');
+            else btn.classList.remove('is-active');
+        });
+        Array.prototype.slice.call(document.querySelectorAll('.pdf-quiz-color-dot')).forEach(function (btn) {
+            var on = String(btn.getAttribute('data-color')).toLowerCase() === String(st.penColor || '').toLowerCase();
+            if (on) btn.classList.add('is-active');
+            else btn.classList.remove('is-active');
+        });
+    }
+
+    function setTool(tool) {
+        var st = _quizState;
+        if (!st) return;
+        st.tool = (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') ? tool : 'select';
+        _applyToolCursor();
+        if (st.tool === 'select') {
+            var banner = document.getElementById('pdf-quiz-active-banner');
+            if (banner) _renderActiveBanner();
+        } else {
+            _renderActiveBanner();
+        }
+    }
+
+    function setPenColor(color) {
+        var st = _quizState;
+        if (!st) return;
+        st.penColor = color || PEN_COLORS[0];
+        if (st.tool === 'select' || st.tool === 'eraser') st.tool = 'pen';
+        _applyToolCursor();
+    }
+
+    function _normPointFromEvent(e, canvas) {
+        var rect = canvas.getBoundingClientRect();
+        var pos = _clientXY(e);
+        return {
+            x: Math.min(1, Math.max(0, (pos.x - rect.left) / (rect.width || 1))),
+            y: Math.min(1, Math.max(0, (pos.y - rect.top) / (rect.height || 1)))
+        };
+    }
+
+    function _onDrawPointerDown(e) {
+        var canvas = e.target && e.target.closest ? e.target.closest('canvas.pdf-quiz-draw-layer') : null;
+        if (!canvas) return;
+        var st = _quizState;
+        if (!st || st.tool === 'select') return;
+        e.preventDefault();
+        e.stopPropagation();
+        var pageNum = Number(canvas.getAttribute('data-page'));
+        var pt = _normPointFromEvent(e, canvas);
+        var stroke = { tool: st.tool, color: st.penColor, points: [pt] };
+        _pageStrokes(pageNum).push(stroke);
+        _ink = { pageNum: pageNum, canvas: canvas, last: pt };
+        _redrawPageDrawings(pageNum);
+        document.addEventListener('pointermove', _onDrawPointerMove);
+        document.addEventListener('pointerup', _onDrawPointerUp);
+        document.addEventListener('pointercancel', _onDrawPointerUp);
+    }
+
+    function _onDrawPointerMove(e) {
+        if (!_ink || !_quizState) return;
+        e.preventDefault();
+        var pt = _normPointFromEvent(e, _ink.canvas);
+        var last = _ink.last;
+        var dx = (pt.x - last.x) * _ink.canvas.clientWidth;
+        var dy = (pt.y - last.y) * _ink.canvas.clientHeight;
+        if ((dx * dx + dy * dy) < 4) return;
+        var strokes = _pageStrokes(_ink.pageNum);
+        var stroke = strokes[strokes.length - 1];
+        if (!stroke) return;
+        stroke.points.push(pt);
+        _ink.last = pt;
+        _redrawPageDrawings(_ink.pageNum);
+    }
+
+    function _onDrawPointerUp() {
+        _ink = null;
+        document.removeEventListener('pointermove', _onDrawPointerMove);
+        document.removeEventListener('pointerup', _onDrawPointerUp);
+        document.removeEventListener('pointercancel', _onDrawPointerUp);
+    }
+
+    function _onDrawResize() {
+        Array.prototype.slice.call(document.querySelectorAll('.pdf-quiz-page-block[data-rendered="1"]')).forEach(_syncDrawCanvas);
+    }
+
+    function _visiblePageNum() {
+        var body = document.getElementById(MODAL_ID + '-body');
+        if (!body) return 1;
+        var mid = body.getBoundingClientRect();
+        var centerY = (mid.top + mid.bottom) / 2;
+        var best = 1;
+        var bestDist = Infinity;
+        Array.prototype.slice.call(body.querySelectorAll('.pdf-quiz-page-block[data-rendered="1"]')).forEach(function (el) {
+            var r = el.getBoundingClientRect();
+            var d = Math.abs(((r.top + r.bottom) / 2) - centerY);
+            if (d < bestDist) {
+                bestDist = d;
+                best = Number(el.getAttribute('data-page')) || 1;
+            }
+        });
+        return best;
+    }
+
+    async function clearPageDrawings() {
+        var st = _quizState;
+        if (!st) return;
+        var pageNum = _visiblePageNum();
+        if (!(await window.ModalOverlay.confirm('確定清除第 ' + pageNum + ' 頁的畫筆筆記？作答框不會被刪。'))) return;
+        st.drawingsByPage[String(pageNum)] = [];
+        _redrawPageDrawings(pageNum);
+    }
+
+    function _drawToolsHtml() {
+        var st = _quizState;
+        var color = (st && st.penColor) || PEN_COLORS[0];
+        var tool = (st && st.tool) || 'select';
+        var colors = PEN_COLORS.map(function (c) {
+            return '<button type="button" class="pdf-quiz-color-dot' + (c.toLowerCase() === color.toLowerCase() ? ' is-active' : '') + '" data-color="' + c + '" title="筆色" style="background:' + c + ';" onclick="window.FeatureStudentPdfQuiz.setPenColor(\'' + c + '\')"></button>';
+        }).join('');
+        function toolBtn(id, label) {
+            return '<button type="button" class="btn pdf-quiz-tool-btn' + (tool === id ? ' is-active' : '') + '" data-tool="' + id + '" onclick="window.FeatureStudentPdfQuiz.setTool(\'' + id + '\')">' + label + '</button>';
+        }
+        return '<div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap; background:#F1F5F9; border-radius:8px; padding:3px 6px;">' +
+            toolBtn('select', '作答') +
+            toolBtn('pen', '畫筆') +
+            toolBtn('highlighter', '螢光') +
+            toolBtn('eraser', '擦掉') +
+            '<span style="display:inline-flex; align-items:center; gap:4px; margin-left:4px;">' + colors + '</span>' +
+            '<button type="button" class="btn pdf-quiz-tool-btn" style="margin-left:4px;" onclick="window.FeatureStudentPdfQuiz.clearPageDrawings()">清除本頁筆記</button>' +
+        '</div>';
+    }
+
+    function _teardownQuiz() {
+        if (_pageObserver) { _pageObserver.disconnect(); _pageObserver = null; }
+        _onDrawPointerUp();
+        window.removeEventListener('resize', _onDrawResize);
+        _quizState = null;
+    }
+
     /**
      * 這一頁疊上「所有大題」中屬於這一頁的作答框（不只是目前選中的大題）——因為同一頁常常
      * 同時看得到好幾個大題的內容（見檔案頂端說明）。每個框的鎖定／標紅狀態依它自己所屬大題
@@ -381,7 +653,20 @@ window.FeatureStudentPdfQuiz = (function () {
                 st.pageImageCache[pageNum] = dataUrl;
             }
             block.style.cssText = 'position:relative; display:inline-block; margin:0 auto 14px; max-width:100%; cursor:crosshair;';
-            block.innerHTML = '<img src="' + dataUrl + '" style="display:block; max-width:100%; height:auto; user-select:none;" draggable="false">';
+            block.innerHTML = '<img src="' + dataUrl + '" alt="第 ' + pageNum + ' 頁" style="display:block; max-width:100%; height:auto; user-select:none; position:relative; z-index:0;" draggable="false">' +
+                '<canvas class="pdf-quiz-draw-layer" data-page="' + pageNum + '"></canvas>';
+            var img = block.querySelector('img');
+            var sync = function () {
+                try { _syncDrawCanvas(block); } catch (_syncErr) { console.warn('[FeatureStudentPdfQuiz] sync draw', _syncErr); }
+            };
+            if (img) {
+                img.addEventListener('load', sync);
+                if (img.complete) requestAnimationFrame(sync);
+            }
+            if (st.tool && st.tool !== 'select') {
+                block.classList.add('is-drawing');
+                block.setAttribute('data-tool', st.tool);
+            }
             _renderBoxOverlayForPage(pageNum);
         } catch (err) {
             console.error('[FeatureStudentPdfQuiz] _ensurePageRendered', pageNum, err);
@@ -416,7 +701,7 @@ window.FeatureStudentPdfQuiz = (function () {
      * 頁碼範圍」的 _renderSection，那樣共用頁會在兩個大題的畫面裡各出現一次）。 */
     function _renderAllPages() {
         var st = _quizState;
-        if (!st) return;
+        if (!st || !st.pdfDoc) return;
         var body = document.getElementById(MODAL_ID + '-body');
         if (!body) return;
         var htmlParts = [];
@@ -425,6 +710,10 @@ window.FeatureStudentPdfQuiz = (function () {
         _setupLazyPageObserver();
         _renderSectionTabs();
         _jumpToSection(st.currentIdx, true);
+        var anchorPage = (st.pageRanges[st.currentIdx] || {}).startPage || 1;
+        _ensurePageRendered(anchorPage);
+        if (anchorPage > 1) _ensurePageRendered(anchorPage - 1);
+        _ensurePageRendered(anchorPage + 1);
     }
 
     /** 大題狀態有變動（提交批改）後，只重繪它自己作答框所在的那幾頁 overlay＋籤／提示條，
@@ -451,6 +740,13 @@ window.FeatureStudentPdfQuiz = (function () {
         var idx = st.currentIdx;
         var sec = st.sections[idx];
         var locked = _isSectionSubmitted(idx);
+        if (st.tool && st.tool !== 'select') {
+            var toolLabel = st.tool === 'highlighter' ? '螢光筆' : (st.tool === 'eraser' ? '橡皮擦' : '畫筆');
+            el.innerHTML = '<div style="padding:8px 10px; background:#FEF3C7; border:1px solid #FCD34D; border-radius:8px; font-size:0.82rem; color:#92400E; font-weight:700;">'
+                + '✏️ 筆記模式（' + toolLabel + '）：可在考卷上畫重點。筆記不算分數。要點作答框請先按「作答」。'
+                + '</div>';
+            return;
+        }
         el.innerHTML = locked
             ? ('<div style="padding:8px 10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#134E4A; font-weight:700;">'
                 + '✅ 目前選中「' + esc(sec.section) + '」，已批改：' + st.sectionResults[idx].correct + ' / ' + st.sectionResults[idx].total + '（' + st.sectionResults[idx].score + '%），不能再修改（只鎖這一大題，其他大題不受影響）。'
@@ -530,13 +826,22 @@ window.FeatureStudentPdfQuiz = (function () {
 
     async function requestClose() {
         var st = _quizState;
-        var hasUnsavedWork = st && st.sections.some(function (sec, idx) {
-            return !_isSectionSubmitted(idx) && (st.boxesBySection[idx] || []).length > 0;
-        });
-        if (hasUnsavedWork) {
-            if (!(await window.ModalOverlay.confirm('目前這大題還沒提交批改，這部分作答不會被存檔，確定要關閉？'))) return;
+        if (!st) {
+            if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
+            return;
         }
-        if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
+        if (window.ModalOverlay) window.ModalOverlay.setBusy(MODAL_ID, true);
+        try {
+            var saved = await saveDraft();
+            st._draftSaved = true;
+            if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
+            if (saved) window.showFlash('已暫存作答與筆記，下次可接續', 'success');
+        } catch (err) {
+            console.error('[FeatureStudentPdfQuiz] requestClose', err);
+            window.showFlash('暫存失敗：' + (err.message || err), 'error');
+        } finally {
+            if (window.ModalOverlay) window.ModalOverlay.setBusy(MODAL_ID, false);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -547,8 +852,10 @@ window.FeatureStudentPdfQuiz = (function () {
         var block = e.target.closest ? e.target.closest('.pdf-quiz-page-block') : null;
         if (!block) return;
         if (e.target.closest('.pdf-quiz-box')) return; // 點到既有的框/輸入框/刪除鈕，不要在這裡新增
+        if (e.target.closest && e.target.closest('canvas.pdf-quiz-draw-layer')) return;
         var st = _quizState;
         if (!st) return;
+        if (st.tool && st.tool !== 'select') return;
         if (_isSectionSubmitted(st.currentIdx)) return; // 這一大題已批改鎖定，不能再新增作答框
         var rect = block.getBoundingClientRect();
         var xPct = ((e.clientX - rect.left) / rect.width) * 100;
@@ -700,6 +1007,59 @@ window.FeatureStudentPdfQuiz = (function () {
         _applyFontSizeToVisibleInputs();
     }
 
+    function _loadingHtml(msg) {
+        return '<div style="min-height:240px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; padding:24px; text-align:center;">'
+            + '<div style="font-size:1.05rem; font-weight:900; color:#0F766E;">⏳ ' + esc(msg) + '</div>'
+            + '<div style="font-size:0.8rem; color:#64748B; font-weight:700;">大檔案可能需要十幾秒，請不要關閉視窗</div>'
+            + '</div>';
+    }
+
+    function _applyDetectedRanges(pageRanges) {
+        var st = _quizState;
+        if (!st || !st.pdfDoc) return;
+        var rangeBySection = {};
+        (pageRanges || []).forEach(function (r) { rangeBySection[r.section] = r; });
+        st.pageRanges = st.sections.map(function (s) {
+            return rangeBySection[s.section] || { startPage: 1, endPage: st.pdfDoc.numPages };
+        });
+        _renderSectionTabs();
+    }
+
+    async function _loadQuizDocument() {
+        var st = _quizState;
+        if (!st) return;
+        var body = document.getElementById(MODAL_ID + '-body');
+        var job = st.job;
+        try {
+            if (body) body.innerHTML = _loadingHtml('正在下載考卷…');
+            var pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(job.pdf_file_id);
+            if (_quizState !== st) return;
+            st.pdfDoc = pdfDoc;
+            st.pageRanges = st.sections.map(function () {
+                return { startPage: 1, endPage: pdfDoc.numPages };
+            });
+            st.loading = false;
+            _renderAllPages();
+            window.PdfExamPaper.detectSectionPageRanges(pdfDoc, st.bank, job.section_page_hints).then(function (pageRanges) {
+                if (_quizState !== st) return;
+                _applyDetectedRanges(pageRanges);
+            }).catch(function (err) {
+                console.warn('[FeatureStudentPdfQuiz] detectSectionPageRanges', err);
+            });
+        } catch (err) {
+            console.error('[FeatureStudentPdfQuiz] loadPdfDocumentFromDrive', err);
+            if (_quizState !== st) return;
+            st.loading = false;
+            if (body) {
+                body.innerHTML = '<div style="padding:24px; text-align:center;">'
+                    + '<div style="font-weight:900; color:#B91C1C; margin-bottom:8px;">考卷讀取失敗</div>'
+                    + '<div style="font-size:0.85rem; color:#334155; font-weight:700; white-space:pre-wrap;">' + esc(err.message || err) + '</div>'
+                    + '</div>';
+            }
+            window.showFlash('考卷讀取失敗：' + (err.message || err), 'error');
+        }
+    }
+
     // ------------------------------------------------------------------
     // 開啟考卷
     // ------------------------------------------------------------------
@@ -714,49 +1074,25 @@ window.FeatureStudentPdfQuiz = (function () {
         if (!window.PdfExamPaper) return window.showFlash('PdfExamPaper 模組未載入', 'error');
         if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return window.showFlash('ModalOverlay 未載入', 'error');
 
-        window.showFlash('⏳ 讀取考卷…', 'info');
-        var pdfDoc;
-        try {
-            pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(job.pdf_file_id);
-        } catch (err) {
-            console.error('[FeatureStudentPdfQuiz] loadPdfDocumentFromDrive', err);
-            return window.showFlash('考卷讀取失敗：' + (err.message || err), 'error');
-        }
-
         var sections = window.PdfExamPaper.groupItemsBySection(bank);
-        var pageRanges;
-        try {
-            pageRanges = await window.PdfExamPaper.detectSectionPageRanges(pdfDoc, bank, job.section_page_hints);
-        } catch (err) {
-            console.error('[FeatureStudentPdfQuiz] detectSectionPageRanges', err);
-            pageRanges = sections.map(function () { return { startPage: 1, endPage: pdfDoc.numPages }; });
-        }
-        // detectSectionPageRanges 回傳的順序跟 sections 一樣（都來自同一份 bank 的大題出現順序），
-        // 保險起見用 section 名稱對應一次，避免任何排序差異害頁碼配錯大題。
-        var rangeBySection = {};
-        (pageRanges || []).forEach(function (r) { rangeBySection[r.section] = r; });
-        var orderedRanges = sections.map(function (s) {
-            return rangeBySection[s.section] || { startPage: 1, endPage: pdfDoc.numPages };
-        });
-
         var prev = findCompletion(assignmentId, taskId);
         var prevRaw = (prev && prev.raw_data) || {};
         var prevResult = prevRaw.pdf_quiz_result;
-
-        // 💣 只有「上次還在作答中（沒交完）」才續寫；上次已經整份交完的話，「再作一次」＝重新開始一份
-        // 全新的作答（不去動舊資料，重批就整份重來），避免把已批改鎖定的大題硬凹成可以續寫。
         var prevBoxesRaw = prevRaw.pdf_quiz_boxes_by_section;
         var prevSectionResultsRaw = prevRaw.pdf_quiz_section_results;
         var canResume = !!(prevResult && prevResult.all_submitted === false
             && Array.isArray(prevBoxesRaw) && prevBoxesRaw.length === sections.length
             && Array.isArray(prevSectionResultsRaw) && prevSectionResultsRaw.length === sections.length);
-
         var boxesBySection = canResume
             ? sections.map(function (s, idx) { return Array.isArray(prevBoxesRaw[idx]) ? prevBoxesRaw[idx] : []; })
             : sections.map(function () { return []; });
         var sectionResults = canResume
             ? sections.map(function (s, idx) { return prevSectionResultsRaw[idx] || null; })
             : sections.map(function () { return null; });
+        var drawingsByPage = {};
+        if (canResume && prevRaw.pdf_quiz_drawings_by_page && typeof prevRaw.pdf_quiz_drawings_by_page === 'object') {
+            drawingsByPage = prevRaw.pdf_quiz_drawings_by_page;
+        }
         var startIdx = 0;
         if (canResume) {
             var firstUnsubmittedIdx = sectionResults.findIndex(function (r) { return !r; });
@@ -768,14 +1104,20 @@ window.FeatureStudentPdfQuiz = (function () {
             taskId: taskId,
             task: task,
             job: job,
-            pdfDoc: pdfDoc,
+            bank: bank,
+            pdfDoc: null,
             sections: sections,
-            pageRanges: orderedRanges,
+            pageRanges: sections.map(function () { return { startPage: 1, endPage: 1 }; }),
             boxesBySection: boxesBySection,
             sectionResults: sectionResults,
+            drawingsByPage: drawingsByPage,
+            tool: 'select',
+            penColor: PEN_COLORS[0],
+            allowDraftPersist: canResume || !prevResult,
+            loading: true,
             currentIdx: startIdx,
             fontSizePx: DEFAULT_FONT_PX,
-            pageImageCache: {} // pageNum -> dataURL，每頁只用 pdf.js 渲染一次（見 _ensurePageRendered）
+            pageImageCache: {}
         };
 
         var title = String(task.title || 'PDF 考卷').replace(/<[^>]*>?/gm, '');
@@ -795,38 +1137,62 @@ window.FeatureStudentPdfQuiz = (function () {
             tier: 'B',
             isDirty: function () {
                 var s = _quizState;
-                return !!(s && s.sections.some(function (sec, idx) {
+                if (!s || s.loading) return false;
+                var hasBoxes = s.sections.some(function (sec, idx) {
                     return !_isSectionSubmitted(idx) && (s.boxesBySection[idx] || []).length > 0;
-                }));
+                });
+                return hasBoxes || _hasAnyDrawings(s.drawingsByPage);
             },
-            unsavedMessage: '目前這大題還沒提交批改，這部分作答不會被存檔，確定要關閉？',
+            unsavedMessage: '要暫存目前作答與筆記後離開嗎？',
             onMount: function (overlay) {
                 overlay.addEventListener('input', _onBodyInput);
                 overlay.addEventListener('click', _onBodyClick);
                 overlay.addEventListener('mousedown', _onBodyMouseDown);
                 overlay.addEventListener('touchstart', _onBodyMouseDown, { passive: false });
-                _renderAllPages();
+                overlay.addEventListener('pointerdown', _onDrawPointerDown);
+                window.addEventListener('resize', _onDrawResize);
+                _loadQuizDocument();
+            },
+            onClose: function () {
+                var st = _quizState;
+                var pending = null;
+                if (st && !st._draftSaved && _canPersistDraft()) {
+                    pending = {
+                        assignmentId: st.assignmentId,
+                        taskId: st.taskId,
+                        payload: _buildRawPayload()
+                    };
+                }
+                _teardownQuiz();
+                if (pending) {
+                    persistResult(pending.assignmentId, pending.taskId, pending.payload, false).catch(function (err) {
+                        console.error('[FeatureStudentPdfQuiz] onClose persist', err);
+                    });
+                }
             },
             contentHtml:
-                '<div style="max-width:900px; width:95vw; height:92vh; background:white; border-radius:14px; padding:16px; box-shadow:0 20px 50px rgba(15,23,42,0.2); display:flex; flex-direction:column; box-sizing:border-box;">' +
-                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">' +
+                '<div data-mo-panel style="max-width:900px; width:95vw; height:92vh; max-height:92vh; overflow:hidden; background:white; border-radius:14px; padding:16px; box-shadow:0 20px 50px rgba(15,23,42,0.2); display:flex; flex-direction:column; box-sizing:border-box;">' +
+                    '<div style="flex-shrink:0;">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">' +
                         '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">📄 ' + esc(title) + '</h3>' +
-                        '<div style="display:flex; align-items:center; gap:10px;">' +
+                        '<div style="display:flex; align-items:center; gap:8px;">' +
                             '<div style="display:flex; align-items:center; gap:4px; background:#F1F5F9; border-radius:8px; padding:3px 6px;">' +
                                 '<span style="font-size:0.75rem; color:#64748B;">文字大小</span>' +
                                 '<button type="button" class="btn" style="padding:2px 8px; font-size:0.8rem;" onclick="window.FeatureStudentPdfQuiz.changeFontSize(-2)">－</button>' +
                                 '<span id="pdf-quiz-fontsize-display" style="font-size:0.78rem; font-weight:700; color:#334155; min-width:34px; text-align:center;">' + DEFAULT_FONT_PX + 'px</span>' +
                                 '<button type="button" class="btn" style="padding:2px 8px; font-size:0.8rem;" onclick="window.FeatureStudentPdfQuiz.changeFontSize(2)">＋</button>' +
                             '</div>' +
-                            '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeatureStudentPdfQuiz.requestClose()">關閉</button>' +
+                            '<button type="button" class="btn" style="padding:4px 10px;" onclick="window.FeatureStudentPdfQuiz.requestClose()">暫存並離開</button>' +
                         '</div>' +
                     '</div>' +
+                    '<div style="margin-bottom:6px;">' + _drawToolsHtml() + '</div>' +
                     prevScoreHtml +
                     '<div id="pdf-quiz-section-tabs" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;"></div>' +
                     '<div id="pdf-quiz-active-banner" style="margin-bottom:6px;"></div>' +
                     '<div id="pdf-quiz-counter" style="font-size:0.8rem; margin-bottom:6px;"></div>' +
-                    '<div id="' + MODAL_ID + '-body" style="flex:1; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; padding:10px;"></div>' +
-                    '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">' +
+                    '</div>' +
+                    '<div id="' + MODAL_ID + '-body" style="flex:1; min-height:0; overflow:auto; border:1px solid #E2E8F0; border-radius:8px; background:#F8FAFC; padding:10px;">' + _loadingHtml('正在下載考卷…') + '</div>' +
+                    '<div style="flex-shrink:0; display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">' +
                         '<button type="button" class="btn" id="pdf-quiz-prev-btn" onclick="window.FeatureStudentPdfQuiz._goToSection(-1)">◀ 上一大題</button>' +
                         '<button type="button" class="btn btn-action" id="pdf-quiz-main-action-btn" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;">提交這一大題並批改</button>' +
                         '<button type="button" class="btn" id="pdf-quiz-next-btn" onclick="window.FeatureStudentPdfQuiz._goToSection(1)">下一大題 ▶</button>' +
@@ -947,21 +1313,13 @@ window.FeatureStudentPdfQuiz = (function () {
         };
 
         var aggregate = _aggregateResults();
-        var rawPayload = {
-            pdf_quiz_answers: _buildAnswersFromBoxes(),
-            // 💣 現階段完整保留學生整份卷子（每個作答框的頁碼／位置／文字），不只存扁平化的答案，
-            // 之後若要重現「學生當時到底怎麼點、怎麼寫」都還原得出來，不會因為只存 key→text 而失真。
-            pdf_quiz_boxes_by_section: st.boxesBySection,
-            // 每一大題各自的批改結果（含 wrong_items），中途關閉重開時要靠這個復原已批改的大題，
-            // 不然只用扁平化的 pdf_quiz_result 兜不出「哪些大題已批改、內容是什麼」。
-            pdf_quiz_section_results: st.sectionResults,
-            pdf_quiz_result: aggregate
-        };
+        var rawPayload = _buildRawPayload();
         try {
             await persistResult(st.assignmentId, st.taskId, rawPayload, aggregate.all_submitted);
             var r = st.sectionResults[idx];
             window.showFlash('✅「' + sec.section + '」已批改：' + r.correct + ' / ' + r.total + '（' + r.score + '%）', 'success');
             if (aggregate.all_submitted) {
+                st._draftSaved = true;
                 if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
                 _showResultModal(aggregate);
             } else {
@@ -978,6 +1336,9 @@ window.FeatureStudentPdfQuiz = (function () {
         openQuiz: openQuiz,
         requestClose: requestClose,
         submitSection: submitSection,
+        setTool: setTool,
+        setPenColor: setPenColor,
+        clearPageDrawings: clearPageDrawings,
         _goToSection: _goToSection,
         _jumpToSection: _jumpToSection,
         closeResult: closeResult,

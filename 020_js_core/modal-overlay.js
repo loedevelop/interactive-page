@@ -124,6 +124,7 @@ window.ModalOverlay = (function () {
         var overlay = document.createElement('div');
         overlay.id = id;
         overlay.className = 'modal-overlay' + (options.prompt ? ' modal-overlay--prompt' : '');
+        overlay.style.display = 'flex';
         overlay.setAttribute('data-modal-tier', tier);
         if (options.zIndex) overlay.style.zIndex = String(options.zIndex);
         overlay.innerHTML = options.contentHtml || '';

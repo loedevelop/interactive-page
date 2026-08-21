@@ -395,3 +395,46 @@ button:disabled,
     font-weight: 800;
     cursor: pointer;
 }
+
+/* PDF 考卷學生畫筆（視覺筆記）：疊在頁面圖上、作答框之下 */
+.pdf-quiz-box { z-index: 2; position: absolute; }
+.pdf-quiz-draw-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    pointer-events: none;
+    touch-action: none;
+    z-index: 1;
+}
+.pdf-quiz-page-block.is-drawing .pdf-quiz-draw-layer {
+    pointer-events: auto;
+    cursor: crosshair;
+}
+.pdf-quiz-page-block.is-drawing[data-tool="eraser"] .pdf-quiz-draw-layer { cursor: cell; }
+.pdf-quiz-tool-btn {
+    padding: 3px 8px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    border-radius: 6px;
+    background: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E1;
+}
+.pdf-quiz-tool-btn.is-active {
+    background: #0F766E;
+    color: #FFFFFF;
+    border-color: #0F766E;
+}
+.pdf-quiz-color-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid #E2E8F0;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.pdf-quiz-color-dot.is-active { border-color: #0F172A; }
