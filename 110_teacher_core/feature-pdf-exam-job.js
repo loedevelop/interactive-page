@@ -901,7 +901,11 @@ window.FeaturePdfExamJob = (function () {
         var stu = st.students.find(function (x) { return String(x.id) === String(studentId); });
         if (!c) return;
         var raw = c.raw_data || {};
-        var answers = raw.pdf_quiz_answers || {};
+        // 💣 跟重新批改同一條：學生答案看原始作答框即時配對，不准吃繳交當時的 pdf_quiz_answers。
+        // 答案清單 key 一改，舊表會整批變成「(未填)」，老師會以為學生沒寫。
+        var answers = (raw.pdf_quiz_boxes_by_section && window.PdfExamPaper && typeof window.PdfExamPaper.buildAnswersFromBoxesBySection === 'function')
+            ? window.PdfExamPaper.buildAnswersFromBoxesBySection(st.job.parsed_bank, raw.pdf_quiz_boxes_by_section)
+            : (raw.pdf_quiz_answers || {});
         var rowsHtml = (st.job.parsed_bank || []).map(function (it) {
             var got = answers[it.key] || '';
             var okList = [it.answer_text].concat(it.accepted_answers || []).map(function (a) { return window.QuizPaperBuilder.normalizeAnswer(a); }).filter(Boolean);
@@ -917,6 +921,7 @@ window.FeaturePdfExamJob = (function () {
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID + '-detail',
             tier: 'A',
+            replace: false,
             contentHtml:
                 '<div style="max-width:640px; width:92vw; max-height:86vh; overflow:auto; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">' +

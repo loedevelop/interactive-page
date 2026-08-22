@@ -397,6 +397,7 @@ window.FeatureClassMaterialCombinations = (function () {
                 meta_file_name,
                 script_file_name,
                 extraction_template_id,
+                is_group,
                 source_kind,
                 source_file_name,
                 material_folders!inner ( id, folder_name, teacher_id ),
@@ -409,51 +410,186 @@ window.FeatureClassMaterialCombinations = (function () {
         return data || [];
     }
 
-    /** 同一活頁會被記成 Excel 名（AvaLiu-vBK-2）又記成產出 stem（AvaLiu-vBK-2.vocab-word）。顯示／計數只留較完整的那一個。 */
+    function sheetStemBody(s) {
+        return String(s || '').trim().replace(/\.meta\.json$/i, '');
+    }
+
+    function sheetStemHead(s) {
+        const body = sheetStemBody(s);
+        if (!body) return '';
+        const dot = body.indexOf('.');
+        return dot > 0 ? body.slice(0, dot) : body;
+    }
+
+    /**
+     * 同一本活頁，全站同一把尺（只在同一張卡／同一資料夾內比）：
+     * 1) 較短名 +「.」是較長名的前綴（AvaLiu-vBK-2 ⊂ AvaLiu-vBK-2.vocab-word）
+     * 2) 第一段較短名是較長名的班級後綴（vBK-2 ⊂ AvaLiu-vBK-2）
+     *    後綴只在「整個清單裡剛好對到一本」時才併，對到兩本就不猜。
+     */
+    function sheetStemsRelated(a, b) {
+        const au = sheetStemBody(a).toUpperCase();
+        const bu = sheetStemBody(b).toUpperCase();
+        if (!au || !bu) return false;
+        if (au === bu) return true;
+        return au.indexOf(bu + '.') === 0 || bu.indexOf(au + '.') === 0;
+    }
+
+    function sheetHeadIsClassSuffix(longHead, shortHead) {
+        const L = String(longHead || '').toUpperCase();
+        const S = String(shortHead || '').toUpperCase();
+        if (!L || !S || L === S || L.length <= S.length) return false;
+        const tail = L.slice(L.length - S.length - 1);
+        return tail === '-' + S || tail === '_' + S;
+    }
+
+    function preferredSheetHead(names) {
+        let best = '';
+        (names || []).forEach(function (n) {
+            const h = sheetStemHead(n);
+            if (!h) return;
+            if (!best) {
+                best = h;
+                return;
+            }
+            if (h.toUpperCase() === best.toUpperCase()) return;
+            if (sheetHeadIsClassSuffix(h, best)) best = h;
+        });
+        return best;
+    }
+
+    /** 活頁名用帶班級的那一段；短名 vBK-2 只是影子。 */
+    function promoteFileSheetIdentity(f, extraNames) {
+        if (!f) return;
+        const head = preferredSheetHead([
+            f.stem, f.meta, f.script, f.dbStem, f.dbMeta, f.dbScript
+        ].concat(extraNames || []));
+        if (head) f.stem = head;
+    }
+
+    function uniqueClassSuffixKeep(list, incoming) {
+        const inHead = sheetStemHead(incoming.stem);
+        if (!inHead) return null;
+        const longerHits = [];
+        const shorterHits = [];
+        (list || []).forEach(function (x) {
+            const h = sheetStemHead(x.stem);
+            if (sheetHeadIsClassSuffix(h, inHead)) longerHits.push(x);
+            if (sheetHeadIsClassSuffix(inHead, h)) shorterHits.push(x);
+        });
+        if (longerHits.length === 1 && shorterHits.length === 0) return longerHits[0];
+        if (shorterHits.length === 1 && longerHits.length === 0) return shorterHits[0];
+        return null;
+    }
+
+    function mergeRelatedSheetFile(keep, incoming) {
+        if (!keep.relatedIds) keep.relatedIds = [];
+        const keepBody = sheetStemBody(keep.stem);
+        const newBody = sheetStemBody(incoming.stem);
+        if (newBody.length > keepBody.length) {
+            if (keep.id && String(keep.id) !== String(incoming.id)) keep.relatedIds.push(keep.id);
+            keep.id = incoming.id;
+            keep.stem = incoming.stem || newBody;
+        } else if (incoming.id && String(incoming.id) !== String(keep.id)) {
+            keep.relatedIds.push(incoming.id);
+        }
+        if (incoming.meta && (!keep.meta || sheetStemBody(incoming.meta).length > sheetStemBody(keep.meta).length)) {
+            keep.meta = incoming.meta;
+        }
+        if (incoming.script && (!keep.script || sheetStemBody(incoming.script).length > sheetStemBody(keep.script).length)) {
+            keep.script = incoming.script;
+        }
+        (incoming.relatedIds || []).forEach(function (id) {
+            if (id && String(id) !== String(keep.id) && keep.relatedIds.indexOf(id) === -1) keep.relatedIds.push(id);
+        });
+        if (incoming.is_group === true) keep.is_group = true;
+        return keep;
+    }
+
+    /** 同一活頁會被記成 Excel 名又記成產出 stem。顯示／計數／改名列都只留較完整的那一個。 */
     function collapseRelatedSheetStems(stems) {
         const raw = [];
         (stems || []).forEach(function (s) {
-            const t = String(s || '').trim().replace(/\.meta\.json$/i, '');
+            const t = sheetStemBody(s);
             if (t && !raw.some(function (x) { return x.toUpperCase() === t.toUpperCase(); })) raw.push(t);
         });
         return raw.filter(function (s, i) {
-            const su = s.toUpperCase();
             return !raw.some(function (other, j) {
                 if (i === j) return false;
-                const ou = other.toUpperCase();
-                return ou !== su && ou.indexOf(su + '.') === 0;
+                if (sheetStemsRelated(s, other) && sheetStemBody(other).length > sheetStemBody(s).length) return true;
+                const wrappers = raw
+                    .map(function (x, idx) { return { stem: x, idx: idx }; })
+                    .filter(function (x) { return x.idx !== i && sheetHeadIsClassSuffix(sheetStemHead(x.stem), sheetStemHead(s)); });
+                return wrappers.length === 1 && wrappers[0].idx === j;
             });
         });
     }
 
+    function collapseRelatedSheetFiles(files) {
+        const list = [];
+        (files || []).forEach(function (f) {
+            if (!f || !f.id) return;
+            if (!f.relatedIds) f.relatedIds = [];
+            const hit = list.find(function (x) { return sheetStemsRelated(x.stem, f.stem); })
+                || uniqueClassSuffixKeep(list, f);
+            if (!hit) {
+                list.push(f);
+                return;
+            }
+            mergeRelatedSheetFile(hit, f);
+            if (f.dbMeta && !hit.dbMeta) hit.dbMeta = f.dbMeta;
+            if (f.dbScript && !hit.dbScript) hit.dbScript = f.dbScript;
+            if (f.dbStem && sheetStemBody(f.dbStem).length > sheetStemBody(hit.dbStem || '').length) {
+                hit.dbStem = f.dbStem;
+            }
+        });
+        return list;
+    }
+
     /** 已經建立好的組合＋目前搭配的考卷範本＋目前指派到哪些班級 */
     async function loadCombinations(userId) {
-        const selectBody = function (withSourceLabels) {
+        const selectBody = function (opts) {
+            opts = opts || {};
             return `
                 id,
                 label,
-                ${withSourceLabels ? 'source_labels,' : ''}
+                ${opts.sourceLabels ? 'source_labels,' : ''}
+                ${opts.pdf ? 'student_pdf_file_id, student_pdf_file_name, student_pdf_page_map,' : ''}
                 material_folder_id,
                 extraction_template_id,
                 created_at,
                 material_folders!inner ( id, root_kind, class_id, folder_name, teacher_id ),
                 material_templates ( id, name ),
-                material_combination_sheets ( material_sheet_id, material_sheets ( id, sheet_stem, meta_file_name, script_file_name ) ),
+                material_combination_sheets ( material_sheet_id, material_sheets ( id, sheet_stem, meta_file_name, script_file_name, extraction_template_id, is_group ) ),
                 material_combination_exam_templates ( id, exam_template_id, is_default ),
                 class_material_combinations ( id, class_id, assigned_at )
             `;
         };
         let result = await window.supabaseClient
             .from('material_combinations')
-            .select(selectBody(true))
+            .select(selectBody({ sourceLabels: true, pdf: true }))
             .eq('material_folders.teacher_id', userId)
             .order('created_at', { ascending: false });
+        if (result.error && /student_pdf/i.test(result.error.message || '')) {
+            result = await window.supabaseClient
+                .from('material_combinations')
+                .select(selectBody({ sourceLabels: true, pdf: false }))
+                .eq('material_folders.teacher_id', userId)
+                .order('created_at', { ascending: false });
+        }
         if (result.error && /source_labels/i.test(result.error.message || '')) {
             result = await window.supabaseClient
                 .from('material_combinations')
-                .select(selectBody(false))
+                .select(selectBody({ sourceLabels: false, pdf: true }))
                 .eq('material_folders.teacher_id', userId)
                 .order('created_at', { ascending: false });
+            if (result.error && /student_pdf/i.test(result.error.message || '')) {
+                result = await window.supabaseClient
+                    .from('material_combinations')
+                    .select(selectBody({ sourceLabels: false, pdf: false }))
+                    .eq('material_folders.teacher_id', userId)
+                    .order('created_at', { ascending: false });
+            }
         }
         if (result.error) throw result.error;
         return result.data || [];
@@ -511,7 +647,8 @@ window.FeatureClassMaterialCombinations = (function () {
 
     /**
      * Step 2：把老師勾選的考卷範本寫入 material_combination_exam_templates（差異比對，不整批
-     * 覆寫）——這是老師「明確」決定的搭配，不是系統自動把擷取範本當考卷範本。examTemplateIds
+     * 覆寫）。老師選「擷取範本與試卷範本」時，同一份範本要寫進官方配對；不准默默改套別份。
+     * examTemplateIds
      * 至少要有一個（UI 層已擋，這裡再擋一次避免繞過 UI 直接呼叫）。第一個勾選的當 is_default。
      */
     async function setComboExamTemplates(comboId, examTemplateIds) {
@@ -621,20 +758,30 @@ window.FeatureClassMaterialCombinations = (function () {
         _suggestionLoadPromise = (async function () {
             const userId = await getCurrentUserId();
             if (!userId) { _suggestionCache = {}; return _suggestionCache; }
-            const comboRes = await window.supabaseClient
-                .from('material_combinations')
-                .select(`
+            const comboSelect = function (withPdf) {
+                return `
                     id,
                     label,
                     extraction_template_id,
                     material_folder_id,
+                    ${withPdf ? 'student_pdf_file_id, student_pdf_file_name, student_pdf_page_map,' : ''}
                     material_folders!inner ( root_kind, class_id, folder_name, teacher_id ),
                     material_templates ( name ),
                     material_combination_sheets ( material_sheets ( sheet_stem, meta_file_name ) ),
                     material_combination_exam_templates ( exam_template_id, is_default ),
                     class_material_combinations ( class_id )
-                `)
+                `;
+            };
+            let comboRes = await window.supabaseClient
+                .from('material_combinations')
+                .select(comboSelect(true))
                 .eq('material_folders.teacher_id', userId);
+            if (comboRes.error && /student_pdf/i.test(comboRes.error.message || '')) {
+                comboRes = await window.supabaseClient
+                    .from('material_combinations')
+                    .select(comboSelect(false))
+                    .eq('material_folders.teacher_id', userId);
+            }
             if (comboRes.error) {
                 console.warn('[FeatureClassMaterialCombinations] 讀取官方試卷配對失敗', comboRes.error);
                 _suggestionCache = _suggestionCache || {};
@@ -740,7 +887,10 @@ window.FeatureClassMaterialCombinations = (function () {
                         return String(n || '').replace(/\.meta\.json$/i, '');
                     }),
                     metaFiles: publishedNames.slice(),
-                    examTemplateId: String(chosen.exam_template_id)
+                    examTemplateId: String(chosen.exam_template_id),
+                    studentPdfFileId: String(combo.student_pdf_file_id || ''),
+                    studentPdfFileName: String(combo.student_pdf_file_name || ''),
+                    studentPdfPageMap: Array.isArray(combo.student_pdf_page_map) ? combo.student_pdf_page_map : []
                 };
                 (combo.class_material_combinations || []).forEach(function (a) {
                     if (!a.class_id || !comboRec.id) return;
@@ -1147,7 +1297,9 @@ window.FeatureClassMaterialCombinations = (function () {
                 id: id,
                 stem: stem,
                 meta: sh.meta_file_name || '',
-                script: sh.script_file_name || ''
+                script: sh.script_file_name || '',
+                extraction_template_id: sh.extraction_template_id || '',
+                is_group: sh.is_group === true
             });
         });
         return out;
@@ -1165,7 +1317,7 @@ window.FeatureClassMaterialCombinations = (function () {
         }
         const { data, error } = await window.supabaseClient
             .from('class_review_catalog')
-            .select('class_id, folder_name, sheet_stem, page_min, page_max, available_count')
+            .select('class_id, folder_name, sheet_stem, page_min, page_max, available_count, has_template, has_extraction_template, extraction_template_id, exam_template_id')
             .in('class_id', ids);
         if (error) {
             console.error('[FeatureClassMaterialCombinations] 讀統計表失敗', error);
@@ -1276,18 +1428,40 @@ window.FeatureClassMaterialCombinations = (function () {
                 (row.sheetDbIds || []).forEach(function (id) { seenIds[String(id)] = true; });
             });
             const missing = comboLinkedSheetFiles(combo).filter(function (f) {
-                return !seenIds[String(f.id)];
+                if (seenIds[String(f.id)]) return false;
+                if (f.extraction_template_id && String(f.extraction_template_id) !== String(combo.extraction_template_id || '')) {
+                    return false;
+                }
+                return true;
             });
             if (!missing.length) return;
             const target = group.length === 1
                 ? group[0]
                 : (group.find(function (r) { return !r.sourceFile; }) || group[0]);
             missing.forEach(function (f) {
-                target.sheetStems.push(f.stem);
-                if (target.sheetDbIds.indexOf(f.id) === -1) {
-                    target.sheetDbIds.push(f.id);
-                    target.sheetFiles.push(f);
+                if (target.sheetDbIds.indexOf(f.id) === -1) target.sheetDbIds.push(f.id);
+                const related = target.sheetFiles.find(function (x) {
+                    return sheetStemsRelated(x.stem, f.stem);
+                }) || uniqueClassSuffixKeep(target.sheetFiles, f);
+                if (related) {
+                    mergeRelatedSheetFile(related, {
+                        id: f.id,
+                        stem: f.stem || '',
+                        meta: f.meta || '',
+                        script: f.script || '',
+                        relatedIds: []
+                    });
+                    return;
                 }
+                target.sheetStems.push(f.stem);
+                target.sheetFiles.push({
+                    id: f.id,
+                    stem: f.stem || '',
+                    meta: f.meta || '',
+                    script: f.script || '',
+                    is_group: f.is_group === true,
+                    relatedIds: []
+                });
             });
         });
     }
@@ -1324,6 +1498,7 @@ window.FeatureClassMaterialCombinations = (function () {
                     templateName: (r.material_templates && r.material_templates.name) || templateNameById(templateId),
                     sourceFile: sourceFile,
                     sourceKey: sourceFile || MZ_NO_SOURCE_KEY,
+                    sourceLabels: combo ? combo.source_labels : {},
                     label: sourceLabelFromMap(combo && combo.source_labels, sourceFile),
                     sheetStems: [],
                     sheetDbIds: [],
@@ -1337,7 +1512,10 @@ window.FeatureClassMaterialCombinations = (function () {
                     assignmentByClassId: assignmentByClassId,
                     classNames: uniqueSortedNames(assigns.map(function (a) {
                         return classNameById(a.class_id);
-                    }))
+                    })),
+                    studentPdfFileId: combo ? String(combo.student_pdf_file_id || '') : '',
+                    studentPdfFileName: combo ? String(combo.student_pdf_file_name || '') : '',
+                    studentPdfPageMap: combo && Array.isArray(combo.student_pdf_page_map) ? combo.student_pdf_page_map : []
                 };
                 order.push(key);
             }
@@ -1350,14 +1528,17 @@ window.FeatureClassMaterialCombinations = (function () {
                     id: r.id,
                     stem: r.sheet_stem || '',
                     meta: r.meta_file_name || '',
-                    script: r.script_file_name || ''
+                    script: r.script_file_name || '',
+                    is_group: r.is_group === true,
+                    relatedIds: []
                 });
             }
         });
         const rows = order.map(function (k) { return byKey[k]; });
         mergeLinkedComboSheetsIntoZoneRows(rows, comboByFolderTpl);
-        return rows.map(function (row) {
+        const sorted = rows.map(function (row) {
             row.sheetStems = collapseRelatedSheetStems(row.sheetStems);
+            row.sheetFiles = collapseRelatedSheetFiles(row.sheetFiles);
             row.sheetFiles.sort(function (a, b) {
                 return String(a.stem || '').localeCompare(String(b.stem || ''), 'zh-Hant');
             });
@@ -1374,6 +1555,7 @@ window.FeatureClassMaterialCombinations = (function () {
             const lb = b.label || b.defaultLabel;
             return String(la).localeCompare(String(lb), 'zh-Hant');
         });
+        return sorted;
     }
 
     async function teacherDriveFolderNames() {
@@ -1420,7 +1602,10 @@ window.FeatureClassMaterialCombinations = (function () {
                 classNames: [],
                 statsMetaFiles: [],
                 metaCount: 0,
-                defaultLabel: n
+                defaultLabel: n,
+                studentPdfFileId: '',
+                studentPdfFileName: '',
+                studentPdfPageMap: []
             });
         });
         list.sort(function (a, b) {
@@ -1465,17 +1650,32 @@ window.FeatureClassMaterialCombinations = (function () {
                 sheet_db_ids: row.sheetDbIds || []
             }, name || null);
         }
+        const map = parseSourceLabels(row.sourceLabels);
+        const mapKey = normalizeSourceFileName(row.sourceFile) || MZ_NO_SOURCE_KEY;
+        map[mapKey] = name;
+        const patch = {
+            label: name || null,
+            source_labels: map,
+            updated_at: new Date().toISOString()
+        };
         const { error } = await window.supabaseClient
             .from('material_combinations')
-            .update({
-                label: name || null,
-                updated_at: new Date().toISOString()
-            })
+            .update(patch)
             .eq('id', comboId);
-        if (error) throw error;
+        if (error && /source_labels/i.test(error.message || '')) {
+            const { error: fallbackErr } = await window.supabaseClient
+                .from('material_combinations')
+                .update({
+                    label: name || null,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', comboId);
+            if (fallbackErr) throw fallbackErr;
+        } else if (error) throw error;
         row.comboId = comboId;
-        row.comboLabel = name || '';
+        row.sourceLabels = map;
         row.label = name || '';
+        row.comboLabel = name || '';
         invalidateDisplayCaches();
         invalidateSuggestionCache();
         return comboId;
@@ -1523,11 +1723,13 @@ window.FeatureClassMaterialCombinations = (function () {
         if (toAdd.length) await assignToClasses(comboId, toAdd, userId);
     }
 
-    async function saveMaterialZoneCard(row, cardEl) {
+    async function saveMaterialZoneCard(row, cardEl, groupRows) {
         const userId = await getCurrentUserId();
         if (!userId) throw new Error('尚未登入');
         if (!row || !row.folderId || !row.templateId) throw new Error('找不到這本教材');
-        const nameEl = cardEl.querySelector('.mz-label');
+        const groupEl = (cardEl && cardEl.closest && cardEl.closest('.mz-group')) || cardEl;
+        const nameEl = (cardEl && cardEl.querySelector && cardEl.querySelector('.mz-label'))
+            || (groupEl && groupEl.querySelector && groupEl.querySelector('.mz-label'));
         const typed = String(nameEl && nameEl.value || '').trim();
         const examIds = Array.prototype.map.call(cardEl.querySelectorAll('.mz-exam-tpl-cb:checked'), function (cb) {
             return cb.value;
@@ -1539,44 +1741,362 @@ window.FeatureClassMaterialCombinations = (function () {
             throw new Error('請至少勾選一個試卷範本。沒有官方配對就不能出考卷。');
         }
         const comboId = await updateMaterialZoneLabel(row, typed);
-        const sourceEl = cardEl.querySelector('.mz-source-file');
+        const sourceOnCard = !!(cardEl && cardEl.querySelector && cardEl.querySelector('.mz-source-file'));
+        const sourceEl = (sourceOnCard && cardEl.querySelector('.mz-source-file'))
+            || (groupEl && groupEl.querySelector && groupEl.querySelector('.mz-source-file'));
         await updateMaterialZoneSourceFile(row, sourceEl && sourceEl.value);
         await setComboExamTemplates(comboId, examIds);
         await syncMaterialZoneClassAssignments(comboId, row, classIds, userId);
+        const pdfHost = (cardEl && cardEl.closest && cardEl.closest('.mz-group')) || cardEl;
+        const sameGroup = (groupRows || []).filter(function (r) {
+            return r && !r.unused && materialZoneGroupKey(r) === materialZoneGroupKey(row);
+        });
+        const pdfComboIds = [comboId].concat(sameGroup.map(function (r) { return r.comboId; }).filter(function (id) {
+            return id && id !== comboId;
+        }));
+        await saveMaterialZoneStudentPdfToCombos(pdfComboIds, pdfHost);
+        if (!sourceOnCard) {
+            const siblings = sameGroup.filter(function (r) { return r.key !== row.key; });
+            for (let i = 0; i < siblings.length; i++) {
+                await updateMaterialZoneSourceFile(siblings[i], sourceEl && sourceEl.value);
+            }
+        }
         invalidateSuggestionCache();
     }
 
-    function renderMaterialZoneCardHtml(row) {
-        if (row && row.unused) {
-            return (
-                '<div class="mz-card mz-unused" data-key="' + esc(row.key) + '" style="border:1px dashed #CBD5E1; border-radius:10px; padding:14px; margin-bottom:10px; background:#F8FAFC;">'
-                + '<div style="font-size:1rem; font-weight:900; color:#64748B;">📁 ' + esc(row.folderName || '') + '</div>'
-                + '<div style="font-size:0.8rem; color:#64748B; font-weight:700; margin-top:6px; line-height:1.7;">'
-                + '<div>教材　資料夾　' + esc(row.folderName || '') + '（雲端有這個資料夾）</div>'
-                + '<div>教材　檔案　尚未套用擷取範本</div>'
-                + '</div>'
-                + '<div style="margin-top:8px; font-size:0.76rem; color:#94A3B8; font-weight:700;">還沒被套用，所以沒有套餐名稱／試卷配對／採用班級。要使用請到上面「套用目前的範本」選這個資料夾。</div>'
-                + '</div>'
-            );
-        }
-        const displayName = row.comboLabel || row.label || row.defaultLabel;
-        const metaText = !(row.classIds && row.classIds.length)
-            ? '統計表尚無（尚未指派班級）'
-            : (row.metaCount ? (row.metaCount + ' 個 meta') : '統計表尚無');
-        const folderLine = (row.folderName || '（未知名資料夾）')
-            + '（擷取範本 ' + (row.templateName || '尚未套用') + '）';
-        const examHtml = examTemplateCheckboxesHtml('mz', row.examTemplateIds || []);
-        const classHtml = classEditorCheckboxesHtml(row.classIds || []);
+    function materialZoneGroupKey(row) {
+        if (!row) return '';
+        if (row.unused) return 'unused|' + String(row.folderName || '').trim().toUpperCase();
+        return String(row.folderId || '') || ('folder|' + String(row.folderName || '').trim().toUpperCase());
+    }
+
+    function groupMaterialZoneRows(rows) {
+        const by = {};
+        const order = [];
+        (rows || []).forEach(function (row) {
+            const gk = materialZoneGroupKey(row);
+            if (!gk) return;
+            if (!by[gk]) {
+                by[gk] = { key: gk, unused: !!row.unused, rows: [] };
+                order.push(gk);
+            }
+            by[gk].rows.push(row);
+        });
+        return order.map(function (k) {
+            const g = by[k];
+            g.rows.sort(function (a, b) {
+                const ta = String(a.templateName || '').localeCompare(String(b.templateName || ''), 'zh-Hant');
+                if (ta) return ta;
+                return String(a.sheetKey || a.sourceFile || '').localeCompare(String(b.sheetKey || b.sourceFile || ''), 'en', { numeric: true, sensitivity: 'base' });
+            });
+            const first = g.rows[0] || {};
+            g.folderName = first.folderName || '';
+            const sources = {};
+            g.rows.forEach(function (r) {
+                sources[sourceFileKey(r.sourceFile)] = String(r.sourceFile || '');
+            });
+            const sourceKeys = Object.keys(sources);
+            g.sharedSource = sourceKeys.length <= 1;
+            g.sourceFile = g.sharedSource ? (sources[sourceKeys[0]] || '') : '';
+            g.showSourceOnParent = g.sharedSource && (!!g.sourceFile || g.rows.length === 1);
+            g.rows.forEach(function (r) { r.showSourceOnCard = !g.showSourceOnParent; });
+            return g;
+        });
+    }
+
+    function renderMaterialZoneUnusedHtml(row) {
         return (
-            '<div class="mz-card" data-key="' + esc(row.key) + '" style="border:1px solid #99F6E4; border-radius:10px; padding:14px; margin-bottom:10px; background:#F0FDFA;">'
-            + '<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">套餐名稱（出作業下拉會顯示這個）</label>'
-            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="套餐名稱" style="font-size:1rem; font-weight:900; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px;">'
-            + '<div style="font-size:0.8rem; color:#0F766E; font-weight:700; line-height:1.75; margin-top:8px;">'
-            + '<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">來源　檔案（Excel 檔名，可手填）</label>'
-            + '<input type="text" class="mz-source-file" value="' + esc(row.sourceFile || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名" style="font-size:0.82rem; font-weight:700; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px; margin-bottom:6px;">'
-            + '<div>教材　資料夾　' + esc(folderLine) + '</div>'
-            + '<div>教材　檔案　' + esc(metaText) + '</div>'
+            '<div class="mz-card mz-unused" data-key="' + esc(row.key) + '" style="border:1px dashed #CBD5E1; border-radius:10px; padding:14px; margin-bottom:10px; background:#F8FAFC;">'
+            + '<div style="font-size:1rem; font-weight:900; color:#64748B;">📁 ' + esc(row.folderName || '') + '</div>'
+            + '<div style="font-size:0.8rem; color:#64748B; font-weight:700; margin-top:6px; line-height:1.7;">'
+            + '<div>教材　資料夾　' + esc(row.folderName || '') + '（雲端有這個資料夾）</div>'
+            + '<div>教材　檔案　尚未套用擷取範本</div>'
             + '</div>'
+            + '<div style="margin-top:8px; font-size:0.76rem; color:#94A3B8; font-weight:700;">還沒被套用，所以沒有套餐名稱／試卷配對／採用班級。要使用請到上面「套用目前的範本」選這個資料夾。</div>'
+            + '</div>'
+        );
+    }
+
+    function sheetKeysForRow(row) {
+        const keys = [];
+        const seen = {};
+        function add(raw) {
+            const k = sheetKeyFromStem(String(raw || '').replace(/\.meta\.json$/i, ''));
+            const u = k.toUpperCase();
+            if (!k || seen[u]) return;
+            seen[u] = true;
+            keys.push(k);
+        }
+        (row && row.sheetStems || []).forEach(add);
+        (row && row.sheetFiles || []).forEach(function (f) { add(f && f.stem); });
+        keys.sort(function (a, b) {
+            return a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' });
+        });
+        return keys;
+    }
+
+    function comboLabelLooksMashed(named, keys) {
+        const label = String(named || '');
+        if (!label || !keys || keys.length < 2) return false;
+        let hits = 0;
+        keys.forEach(function (k) {
+            if (k && label.toUpperCase().indexOf(String(k).toUpperCase()) !== -1) hits++;
+        });
+        return hits >= 2;
+    }
+
+    function comboNameForRow(row) {
+        const fromMap = String((row && row.label) || '').trim();
+        if (fromMap) return fromMap;
+        const named = String((row && row.comboLabel) || '').trim();
+        const keys = sheetKeysForRow(row);
+        if (named && !comboLabelLooksMashed(named, keys)) return named;
+        return defaultMaterialZoneLabel((row && row.sourceFile) || '', (row && row.folderName) || '', '');
+    }
+
+    function officialExamNames(row) {
+        const examNames = [];
+        const seen = {};
+        ((row && row.examTemplateIds) || []).forEach(function (id) {
+            const n = String(examTemplateNameById(id) || '').trim();
+            const u = n.toUpperCase();
+            if (!n || seen[u]) return;
+            seen[u] = true;
+            examNames.push(n);
+        });
+        return examNames;
+    }
+
+    function renameTabRoleLines(row) {
+        return {
+            extract: String((row && row.templateName) || '').trim(),
+            exam: officialExamNames(row).join('、')
+        };
+    }
+
+    function sheetDisplayName(file) {
+        return String((file && (file.lockedName || file.stem)) || '').trim();
+    }
+
+    function roleTagItemsForFiles(row, files) {
+        const lines = renameTabRoleLines(row);
+        return (files || []).map(function (f) {
+            return {
+                name: sheetDisplayName(f),
+                extract: lines.extract,
+                exam: lines.exam,
+                isGroup: f && f.is_group === true
+            };
+        });
+    }
+
+    function renameRoleTagInnerHtml(row, sheetName, files) {
+        const FN = mf();
+        const lines = renameTabRoleLines(row);
+        if (files && files.length && FN && typeof FN.groupRoleTagItems === 'function') {
+            const groups = FN.groupRoleTagItems(roleTagItemsForFiles(row, files));
+            if (groups.length === 1 && typeof FN.roleTagHtml === 'function') {
+                const label = String(sheetName || '').trim()
+                    || (typeof FN.formatSheetNames === 'function' ? FN.formatSheetNames(groups[0].names) : '');
+                return FN.roleTagHtml(label, groups[0].extract, groups[0].exam);
+            }
+            if (groups.length > 1 && typeof FN.roleTagHtmlFromGroup === 'function') {
+                return groups.map(function (g) { return FN.roleTagHtmlFromGroup(g); }).join('');
+            }
+        }
+        const sheet = String(sheetName || '').trim();
+        if (FN && typeof FN.roleTagHtml === 'function') {
+            return FN.roleTagHtml(sheet, lines.extract, lines.exam);
+        }
+        return '<span style="display:block;">' + esc(sheet) + '</span>'
+            + '<span style="display:block;">擷取範本' + (lines.extract ? ' ' + esc(lines.extract) : '') + '</span>'
+            + '<span style="display:block;">試卷範本' + (lines.exam ? ' ' + esc(lines.exam) : '') + '</span>';
+    }
+
+    function renameTabButtonHtml(row, sheetName, i, on, files) {
+        return (
+            '<button type="button" class="mz-rf-tab" data-pane="' + i + '" style="padding:6px 12px; border-radius:8px; font-weight:800; font-size:0.74rem; line-height:1.4; text-align:left; cursor:pointer; border:1px solid '
+            + (on ? '#0F766E' : '#99F6E4') + '; background:' + (on ? '#0F766E' : '#F0FDFA') + '; color:' + (on ? 'white' : '#115E59') + ';">'
+            + renameRoleTagInnerHtml(row, sheetName, files)
+            + '</button>'
+        );
+    }
+
+    function splitRenamePanesByGroup(cardPanes) {
+        const out = [];
+        (cardPanes || []).forEach(function (card) {
+            const grouped = [];
+            const singles = [];
+            (card.files || []).forEach(function (f) {
+                if (f && f.is_group === true) grouped.push(f);
+                else singles.push(f);
+            });
+            if (grouped.length) out.push({ row: card.row, files: grouped });
+            singles.forEach(function (f) {
+                out.push({ row: card.row, files: [f] });
+            });
+        });
+        return out;
+    }
+
+    function examIdsForChildRender(row) {
+        return ((row && row.examTemplateIds) || []).slice();
+    }
+
+    function pdfMapRowHtml(m, canDelete) {
+        const row = (window.MaterialPdfPageMap && typeof window.MaterialPdfPageMap.normalize === 'function')
+            ? window.MaterialPdfPageMap.normalize([m])[0]
+            : (m || { range_type: 'page', book_start: '', book_end: '', pdf_start: '', pdf_end: '' });
+        return (
+            '<div class="mz-pdf-map-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; margin-top:6px;">'
+            + '<div><label style="display:block; font-size:0.7rem; font-weight:800; color:#9A3412;">基準</label>'
+            + '<select class="mz-pdf-rtype form-control" style="padding:4px; min-width:72px;">'
+            + '<option value="page"' + (row.range_type === 'qnum' ? '' : ' selected') + '>頁碼</option>'
+            + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
+            + '</select></div>'
+            + '<div><label style="display:block; font-size:0.7rem; font-weight:800; color:#9A3412;">課本起</label>'
+            + '<input type="number" class="mz-pdf-book-start form-control" value="' + esc(row.book_start) + '" style="width:64px; padding:4px;"></div>'
+            + '<div><label style="display:block; font-size:0.7rem; font-weight:800; color:#9A3412;">課本迄</label>'
+            + '<input type="number" class="mz-pdf-book-end form-control" value="' + esc(row.book_end) + '" style="width:64px; padding:4px;"></div>'
+            + '<div><label style="display:block; font-size:0.7rem; font-weight:800; color:#9A3412;">PDF 起</label>'
+            + '<input type="number" class="mz-pdf-pdf-start form-control" value="' + esc(row.pdf_start) + '" style="width:64px; padding:4px;"></div>'
+            + '<div><label style="display:block; font-size:0.7rem; font-weight:800; color:#9A3412;">PDF 迄</label>'
+            + '<input type="number" class="mz-pdf-pdf-end form-control" value="' + esc(row.pdf_end) + '" style="width:64px; padding:4px;"></div>'
+            + (canDelete
+                ? '<button type="button" class="mz-pdf-del-map btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;">刪</button>'
+                : '')
+            + '</div>'
+        );
+    }
+
+    function studentPdfBlockHtml(row) {
+        const fileName = String((row && row.studentPdfFileName) || '').trim();
+        const fileId = String((row && row.studentPdfFileId) || '').trim();
+        const maps = (window.MaterialPdfPageMap && typeof window.MaterialPdfPageMap.normalize === 'function')
+            ? window.MaterialPdfPageMap.normalize(row && row.studentPdfPageMap)
+            : [{ range_type: 'page', book_start: '', book_end: '', pdf_start: '', pdf_end: '' }];
+        const mapHtml = maps.map(function (m) {
+            return pdfMapRowHtml(m, maps.length > 1);
+        }).join('');
+        return (
+            '<div class="mz-pdf-block" style="margin-top:12px; padding-top:10px; border-top:1px dashed #FDBA74;">'
+            + '<div style="font-size:0.76rem; font-weight:800; color:#C2410C; margin-bottom:4px;">學生文稿 PDF（這本教材共用一份；檔案頁 ≠ 課本頁）</div>'
+            + '<div style="font-size:0.72rem; color:#9A3412; font-weight:700; line-height:1.45; margin-bottom:8px;">錄音指定的是課本頁／題號。這裡上傳 PDF，並寫「課本這段對檔案哪幾頁」。沒對到就不顯示，不准猜。儲存後寫進下面每一個套餐。</div>'
+            + '<input type="hidden" class="mz-pdf-file-id" value="' + esc(fileId) + '">'
+            + '<input type="hidden" class="mz-pdf-file-name" value="' + esc(fileName) + '">'
+            + '<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">'
+            + '<label class="btn" style="padding:4px 10px; background:#FFF7ED; color:#9A3412; border:1px solid #FDBA74; font-weight:800; font-size:0.76rem; cursor:pointer;">選擇 PDF'
+            + '<input type="file" class="mz-pdf-file" accept="application/pdf,.pdf" style="display:none;"></label>'
+            + '<span class="mz-pdf-name" style="font-size:0.76rem; font-weight:700; color:#7C2D12;">' + (fileName ? esc(fileName) : '尚未上傳') + '</span>'
+            + '</div>'
+            + '<div class="mz-pdf-map-list">' + mapHtml + '</div>'
+            + '<button type="button" class="mz-pdf-add-map btn" style="margin-top:8px; padding:4px 10px; background:#FFF7ED; color:#9A3412; border:1px solid #FDBA74; font-weight:800; font-size:0.74rem;">＋ 增加對照</button>'
+            + '</div>'
+        );
+    }
+
+    function readStudentPdfFromCard(cardEl) {
+        const fileIdEl = cardEl && cardEl.querySelector('.mz-pdf-file-id');
+        const fileNameEl = cardEl && cardEl.querySelector('.mz-pdf-file-name');
+        const rows = [];
+        Array.prototype.forEach.call((cardEl && cardEl.querySelectorAll('.mz-pdf-map-row')) || [], function (el) {
+            rows.push({
+                range_type: (el.querySelector('.mz-pdf-rtype') && el.querySelector('.mz-pdf-rtype').value === 'qnum') ? 'qnum' : 'page',
+                book_start: el.querySelector('.mz-pdf-book-start') ? String(el.querySelector('.mz-pdf-book-start').value || '').trim() : '',
+                book_end: el.querySelector('.mz-pdf-book-end') ? String(el.querySelector('.mz-pdf-book-end').value || '').trim() : '',
+                pdf_start: el.querySelector('.mz-pdf-pdf-start') ? String(el.querySelector('.mz-pdf-pdf-start').value || '').trim() : '',
+                pdf_end: el.querySelector('.mz-pdf-pdf-end') ? String(el.querySelector('.mz-pdf-pdf-end').value || '').trim() : ''
+            });
+        });
+        return {
+            student_pdf_file_id: fileIdEl ? (String(fileIdEl.value || '').trim() || null) : null,
+            student_pdf_file_name: fileNameEl ? String(fileNameEl.value || '').trim() : '',
+            student_pdf_page_map: rows
+        };
+    }
+
+    async function saveMaterialZoneStudentPdfToCombos(comboIds, hostEl) {
+        const ids = [];
+        const seen = {};
+        (comboIds || []).forEach(function (id) {
+            const s = String(id || '').trim();
+            if (!s || seen[s]) return;
+            seen[s] = true;
+            ids.push(s);
+        });
+        if (!ids.length || !hostEl || !hostEl.querySelector('.mz-pdf-block')) return;
+        const patch = readStudentPdfFromCard(hostEl);
+        patch.updated_at = new Date().toISOString();
+        for (let i = 0; i < ids.length; i++) {
+            const { error } = await window.supabaseClient
+                .from('material_combinations')
+                .update(patch)
+                .eq('id', ids[i]);
+            if (error && /student_pdf/i.test(error.message || '')) {
+                throw new Error('資料庫還沒加上 PDF 對照欄，請先跑 migration 20260822020000');
+            }
+            if (error) throw error;
+        }
+    }
+
+    async function resolveZoneDriveFolderId(row) {
+        const folderName = String((row && row.folderName) || '').trim();
+        if (!folderName) throw new Error('找不到教材資料夾名稱');
+        const classId = (row && row.classId) || '';
+        const rootKind = (row && row.rootKind) === 'class' ? 'class' : 'teacher';
+        let folderId = (window.FeatureExamJob && typeof window.FeatureExamJob.getFolderIdForFolder === 'function')
+            ? window.FeatureExamJob.getFolderIdForFolder(classId, rootKind, folderName)
+            : '';
+        if (folderId) return folderId;
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.resolveMaterialsRootFolderId !== 'function') {
+            throw new Error('FeatureTimeline 尚未載入，無法找到教材資料夾');
+        }
+        if (!window.GasService || typeof window.GasService.ensureMaterialFolder !== 'function') {
+            throw new Error('GasService.ensureMaterialFolder 尚未載入');
+        }
+        const rootFolderId = await window.FeatureTimeline.resolveMaterialsRootFolderId(classId, rootKind);
+        const rootName = rootKind === 'class' ? '00_Class_Materials' : '01_My_Materials';
+        const result = await window.GasService.ensureMaterialFolder(rootFolderId, rootName, folderName);
+        if (!result || !result.folderId) throw new Error('找不到教材資料夾「' + folderName + '」');
+        return result.folderId;
+    }
+
+    function readFileAsBase64(file) {
+        return new Promise(function (resolve, reject) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const raw = String((e && e.target && e.target.result) || '');
+                const parts = raw.split(',');
+                resolve(parts.length > 1 ? parts[1] : raw);
+            };
+            reader.onerror = function () { reject(new Error('讀取檔案失敗')); };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function renderMaterialZoneChildHtml(row) {
+        const examIds = examIdsForChildRender(row);
+        const folderLineHtml = '<div class="mz-folder-line" style="font-size:0.8rem; color:#0F766E; font-weight:700; margin-top:8px;">教材　資料夾　' + esc(row.folderName || '（未知名資料夾）') + '</div>';
+        const cardFiles = (row.sheetFiles || []);
+        const cardGrouped = cardFiles.length > 0 && cardFiles.every(function (f) { return f && f.is_group === true; });
+        const roleLineHtml = '<div style="font-size:0.78rem; color:#0F766E; font-weight:800; margin-top:8px;">'
+            + renameRoleTagInnerHtml(row, '', cardGrouped ? cardFiles : null)
+            + '</div>';
+        const examHtml = examTemplateCheckboxesHtml('mz', examIds);
+        const classHtml = classEditorCheckboxesHtml(row.classIds || []);
+        const displayName = comboNameForRow(row);
+        const sourceOnCard = !!row.showSourceOnCard;
+        const sourceHtml = sourceOnCard
+            ? ('<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin:8px 0 2px;">來源　檔案（Excel 檔名，可手填）</label>'
+                + '<input type="text" class="mz-source-file" value="' + esc(row.sourceFile || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名" style="font-size:0.82rem; font-weight:700; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px;">'
+                + folderLineHtml)
+            : '';
+        return (
+            '<div class="mz-card" data-key="' + esc(row.key) + '" style="border:1px dashed #99F6E4; border-radius:8px; padding:12px; margin-top:10px; background:white;">'
+            + '<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">套餐名稱（出作業下拉會顯示這個）</label>'
+            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="套餐名稱" style="font-size:1rem; font-weight:900; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px; margin-bottom:8px;">'
+            + sourceHtml
+            + roleLineHtml
             + '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #99F6E4;">'
             + '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">'
             + '<div style="font-size:0.76rem; font-weight:800; color:#6D28D9;">試卷範本（至少勾一個，這是官方配對）</div>'
@@ -1597,6 +2117,61 @@ window.FeatureClassMaterialCombinations = (function () {
         );
     }
 
+    function groupPdfFromRows(rows) {
+        return (rows || []).find(function (r) {
+            return r && (r.studentPdfFileId || (Array.isArray(r.studentPdfPageMap) && r.studentPdfPageMap.some(function (m) {
+                return m && (m.book_start || m.pdf_start);
+            })));
+        }) || (rows && rows[0]) || {};
+    }
+
+    function groupRowsByBlockType(rows) {
+        const by = {};
+        const order = [];
+        (rows || []).forEach(function (row) {
+            const label = String((row && row.templateName) || '').trim() || '（尚未套用擷取範本）';
+            if (!by[label]) {
+                by[label] = [];
+                order.push(label);
+            }
+            by[label].push(row);
+        });
+        return order.map(function (label) {
+            return { label: label, rows: by[label] };
+        });
+    }
+
+    function renderMaterialZoneGroupHtml(group) {
+        if (group.unused) {
+            return renderMaterialZoneUnusedHtml(group.rows[0] || { folderName: group.folderName });
+        }
+        const folderLineHtml = '<div class="mz-folder-line" style="font-size:0.8rem; color:#0F766E; font-weight:700; margin-top:8px;">教材　資料夾　' + esc(group.folderName || '（未知名資料夾）') + '</div>';
+        const sourceOnParent = group.showSourceOnParent !== false && !group.rows.some(function (r) { return r.showSourceOnCard; });
+        const parentSourceHtml = sourceOnParent
+            ? ('<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">來源　檔案（Excel 檔名，可手填）</label>'
+                + '<input type="text" class="mz-source-file" value="' + esc(group.sourceFile || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名" style="font-size:0.82rem; font-weight:700; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px;">'
+                + folderLineHtml)
+            : folderLineHtml;
+        const blocks = groupRowsByBlockType(group.rows || []);
+        const blockHtml = blocks.map(function (block) {
+            return (
+                '<div class="mz-block-type" style="margin-top:14px;">'
+                + '<div style="font-size:0.8rem; font-weight:900; color:#0F766E; margin-bottom:6px;">區塊類別　' + esc(block.label) + '</div>'
+                + block.rows.map(renderMaterialZoneChildHtml).join('')
+                + '</div>'
+            );
+        }).join('');
+        return (
+            '<div class="mz-group" data-group-key="' + esc(group.key) + '" style="border:1px solid #99F6E4; border-radius:10px; padding:14px; margin-bottom:12px; background:#F0FDFA;">'
+            + parentSourceHtml
+            + studentPdfBlockHtml(groupPdfFromRows(group.rows))
+            + '<div style="margin-top:8px;"><button type="button" class="mz-save-pdf btn" style="padding:4px 10px; background:#FFF7ED; color:#9A3412; border:1px solid #FDBA74; font-weight:800; font-size:0.76rem; cursor:pointer;">儲存這本 PDF 對照</button>'
+            + '<span class="mz-pdf-msg" style="margin-left:8px; font-size:0.74rem; font-weight:700;"></span></div>'
+            + blockHtml
+            + '</div>'
+        );
+    }
+
     function bindMaterialZoneRename(wrap, rows) {
         wrap.querySelectorAll('.mz-label').forEach(function (input) {
             input.addEventListener('keydown', function (ev) {
@@ -1604,6 +2179,18 @@ window.FeatureClassMaterialCombinations = (function () {
                     ev.preventDefault();
                     const card = input.closest('.mz-card');
                     const saveBtn = card && card.querySelector('.mz-save');
+                    if (saveBtn) saveBtn.click();
+                }
+            });
+        });
+        wrap.querySelectorAll('.mz-source-file').forEach(function (input) {
+            input.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    const card = input.closest('.mz-card');
+                    const group = input.closest('.mz-group');
+                    const saveBtn = (card && card.querySelector('.mz-save'))
+                        || (group && group.querySelector('.mz-save'));
                     if (saveBtn) saveBtn.click();
                 }
             });
@@ -1618,7 +2205,7 @@ window.FeatureClassMaterialCombinations = (function () {
                 btn.disabled = true;
                 if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 儲存中…'; }
                 try {
-                    await saveMaterialZoneCard(row, card);
+                    await saveMaterialZoneCard(row, card, rows);
                     window.showFlash && window.showFlash('✅ 已儲存教材設定', 'success');
                     render();
                 } catch (err) {
@@ -1633,12 +2220,120 @@ window.FeatureClassMaterialCombinations = (function () {
             btn.addEventListener('click', function () {
                 const key = btn.getAttribute('data-key');
                 const row = (rows || []).find(function (r) { return r.key === key; });
-                if (row) openMaterialZoneFileRename(row);
+                if (!row || btn.disabled) return;
+                const oldLabel = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = '讀取中…';
+                openMaterialZoneFileRename(row, siblingRenameRows(row, rows)).catch(function (err) {
+                    window.showFlash && window.showFlash('❌ 無法開啟改名視窗：' + ((err && err.message) || err), 'error');
+                }).then(function () {
+                    btn.disabled = false;
+                    btn.textContent = oldLabel;
+                });
             });
         });
         wrap.querySelectorAll('.mz-new-exam-tpl').forEach(function (btn) {
             btn.addEventListener('click', openNewExamTemplateShortcut);
         });
+        wrap.querySelectorAll('.mz-pdf-add-map').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const list = btn.parentElement && btn.parentElement.querySelector('.mz-pdf-map-list');
+                if (!list) return;
+                const hold = document.createElement('div');
+                hold.innerHTML = pdfMapRowHtml({ range_type: 'page', book_start: '', book_end: '', pdf_start: '', pdf_end: '' }, true);
+                const rowEl = hold.firstElementChild;
+                list.appendChild(rowEl);
+                list.querySelectorAll('.mz-pdf-map-row').forEach(function (el) {
+                    if (el.querySelector('.mz-pdf-del-map')) return;
+                    if (list.querySelectorAll('.mz-pdf-map-row').length > 1) {
+                        const del = document.createElement('button');
+                        del.type = 'button';
+                        del.className = 'mz-pdf-del-map btn';
+                        del.style.cssText = 'padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;';
+                        del.textContent = '刪';
+                        el.appendChild(del);
+                    }
+                });
+            });
+        });
+        wrap.addEventListener('click', function (ev) {
+            const del = ev.target && ev.target.closest && ev.target.closest('.mz-pdf-del-map');
+            if (!del) return;
+            const list = del.closest('.mz-pdf-map-list');
+            const rowEl = del.closest('.mz-pdf-map-row');
+            if (!list || !rowEl) return;
+            if (list.querySelectorAll('.mz-pdf-map-row').length <= 1) return;
+            rowEl.remove();
+        });
+        wrap.querySelectorAll('.mz-save-pdf').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                const group = btn.closest('.mz-group');
+                const msgEl = group && group.querySelector('.mz-pdf-msg');
+                const comboIds = comboIdsInGroupEl(group, rows);
+                if (!group || !comboIds.length) {
+                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 這本還沒有可寫入的套餐'; }
+                    return;
+                }
+                btn.disabled = true;
+                if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 儲存中…'; }
+                try {
+                    await saveMaterialZoneStudentPdfToCombos(comboIds, group);
+                    if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 已寫進這本全部套餐'; }
+                    window.showFlash && window.showFlash('✅ 已儲存這本 PDF 對照', 'success');
+                } catch (err) {
+                    console.error('[FeatureClassMaterialCombinations] PDF 對照儲存失敗', err);
+                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ ' + (err.message || err); }
+                    window.showFlash && window.showFlash('❌ 儲存失敗：' + (err.message || err), 'error');
+                }
+                btn.disabled = false;
+            });
+        });
+        wrap.querySelectorAll('.mz-pdf-file').forEach(function (input) {
+            input.addEventListener('change', async function () {
+                const file = input.files && input.files[0];
+                input.value = '';
+                if (!file) return;
+                const group = input.closest('.mz-group');
+                const row = firstRowInGroupEl(group, rows);
+                const nameEl = group && group.querySelector('.mz-pdf-name');
+                const idEl = group && group.querySelector('.mz-pdf-file-id');
+                const fnEl = group && group.querySelector('.mz-pdf-file-name');
+                if (!row || !group) return;
+                if (nameEl) nameEl.textContent = '上傳中…';
+                try {
+                    if (!window.GasService || typeof window.GasService.uploadMaterialFile !== 'function') {
+                        throw new Error('GasService.uploadMaterialFile 尚未載入');
+                    }
+                    const folderId = await resolveZoneDriveFolderId(row);
+                    const base64 = await readFileAsBase64(file);
+                    const res = await window.GasService.uploadMaterialFile(base64, file.name, file.type || 'application/pdf', folderId);
+                    const fileId = res && res.fileId;
+                    const finalName = (res && res.finalFileName) || file.name;
+                    if (!fileId) throw new Error('上傳成功但沒有檔案 id');
+                    if (idEl) idEl.value = fileId;
+                    if (fnEl) fnEl.value = finalName;
+                    if (nameEl) nameEl.textContent = finalName + '（記得按儲存這本 PDF 對照）';
+                } catch (err) {
+                    if (nameEl) nameEl.textContent = '上傳失敗：' + ((err && err.message) || err);
+                }
+            });
+        });
+    }
+
+    function rowsInGroupEl(groupEl, rows) {
+        const gk = groupEl && groupEl.getAttribute && groupEl.getAttribute('data-group-key');
+        if (!gk) return [];
+        return (rows || []).filter(function (r) {
+            return r && !r.unused && materialZoneGroupKey(r) === gk;
+        });
+    }
+
+    function firstRowInGroupEl(groupEl, rows) {
+        return rowsInGroupEl(groupEl, rows)[0] || null;
+    }
+
+    function comboIdsInGroupEl(groupEl, rows) {
+        return rowsInGroupEl(groupEl, rows).map(function (r) { return r.comboId; }).filter(Boolean);
     }
 
     function sheetKeyFromStem(stem) {
@@ -1647,92 +2342,444 @@ window.FeatureClassMaterialCombinations = (function () {
         return s.split('.')[0] || s;
     }
 
-    function inferSheetFormula(sample, sheetKey) {
-        const raw = String(sample || '').trim();
-        const lead = String(sheetKey || '').trim();
-        if (!raw) return '';
-        if (!lead) return raw;
-        if (raw.length >= lead.length && raw.slice(0, lead.length).toUpperCase() === lead.toUpperCase()) {
-            return '{活頁}' + raw.slice(lead.length);
+    /** 兩欄同一把尺：見 020_js_core/material-file-names.js（meta 鎖 .meta.json、文稿鎖 .script.txt）。 */
+    function mf() {
+        return window.MaterialFileNames || null;
+    }
+
+    function asTypedFileName(typed) {
+        return mf() ? mf().typed(typed) : String(typed || '').replace(/^__mzren__/i, '').trim();
+    }
+
+    function stripLockedExt(name, ext) {
+        return mf() ? mf().stripExt(name, ext) : asTypedFileName(name);
+    }
+
+    function withLockedExt(base, ext) {
+        return mf() ? mf().withExt(base, ext) : asTypedFileName(base);
+    }
+
+    const META_LOCKED_EXT = (mf() && mf().META_EXT) || '.meta.json';
+    const SCRIPT_LOCKED_EXT = (mf() && mf().SCRIPT_EXT) || '.script.txt';
+
+    function driveFileNamesForFolder(folderName, rootKind, classId) {
+        if (window.FeatureExamJob && typeof window.FeatureExamJob.getRawFileNamesForFolder === 'function') {
+            return (window.FeatureExamJob.getRawFileNamesForFolder(classId || '', rootKind || 'teacher', folderName) || [])
+                .filter(Boolean);
         }
-        return raw;
+        return [];
     }
 
-    function applyFileNameFormula(pattern, sheetKey, stem) {
-        const key = sheetKey || '';
-        return String(pattern || '')
-            .replace(/\{活頁\}/g, key)
-            .replace(/\{sheet\}/gi, key)
-            .replace(/\{letter\}/gi, key)
-            .replace(/\{stem\}/gi, stem || '');
+    function pickDriveNameExact(driveNames, storedName, used) {
+        const want = asTypedFileName(storedName);
+        if (!want) return '';
+        const wantU = want.toUpperCase();
+        for (let i = 0; i < (driveNames || []).length; i++) {
+            const n = String(driveNames[i] || '');
+            if (!n || used[n.toUpperCase()]) continue;
+            if (n.toUpperCase() === wantU || asTypedFileName(n).toUpperCase() === wantU) {
+                used[n.toUpperCase()] = true;
+                return n;
+            }
+        }
+        return '';
     }
 
-    function openMaterialZoneFileRename(row) {
+    /** 資料庫沒檔名時：雲端剛好一筆對上這本活頁，才採用。多筆不猜。 */
+    function pickDriveNameUniqueBySheetKey(driveNames, sheetKey, ext, used) {
+        const key = String(sheetKey || '').trim().toUpperCase();
+        const e = String(ext || '').toLowerCase();
+        if (!key || !e) return '';
+        const hits = [];
+        (driveNames || []).forEach(function (n) {
+            const typed = asTypedFileName(n);
+            if (!typed || used[n.toUpperCase()] || used[typed.toUpperCase()]) return;
+            const u = typed.toUpperCase();
+            const extU = e.toUpperCase();
+            if (u.slice(-extU.length) !== extU) return;
+            const body = u.slice(0, u.length - extU.length);
+            const head = body.split('.')[0] || body;
+            if (body === key || body.indexOf(key + '.') === 0
+                || head === key
+                || sheetHeadIsClassSuffix(head, key)
+                || sheetHeadIsClassSuffix(key, head)) {
+                hits.push(n);
+            }
+        });
+        if (hits.length !== 1) return '';
+        used[hits[0].toUpperCase()] = true;
+        return hits[0];
+    }
+
+    function templateFileToken(name) {
+        return mf() && typeof mf().templateToken === 'function'
+            ? mf().templateToken(name)
+            : String(name || '').trim().replace(/[\\/]/g, '-');
+    }
+
+    /**
+     * 同一資料夾、同一活頁、不同擷取範本＝不同檔（圖／字）。
+     * 先對 {活頁}.{範本}；對不到才在「剛好一筆」時用活頁名。多筆不猜。
+     */
+    function pickDriveNameBySheetAndTemplate(driveNames, sheetKey, templateName, ext, used) {
+        const key = String(sheetKey || '').trim();
+        const tpl = templateFileToken(templateName);
+        const e = String(ext || '');
+        if (!key || !e) return '';
+        if (tpl) {
+            const exact = pickDriveNameExact(driveNames, key + '.' + tpl + e, used);
+            if (exact) return exact;
+        }
+        const keyU = key.toUpperCase();
+        const tplU = tpl.toUpperCase();
+        const extU = e.toUpperCase();
+        const hits = [];
+        (driveNames || []).forEach(function (n) {
+            const typed = asTypedFileName(n);
+            if (!typed || used[n.toUpperCase()] || used[typed.toUpperCase()]) return;
+            const u = typed.toUpperCase();
+            if (u.slice(-extU.length) !== extU) return;
+            const body = u.slice(0, u.length - extU.length);
+            const head = body.split('.')[0] || body;
+            const headOk = head === keyU
+                || sheetHeadIsClassSuffix(head, keyU)
+                || sheetHeadIsClassSuffix(keyU, head);
+            if (!headOk) return;
+            if (tplU && body.indexOf('.' + tplU) === -1) return;
+            hits.push(n);
+        });
+        if (hits.length === 1) {
+            used[hits[0].toUpperCase()] = true;
+            return hits[0];
+        }
+        if (tpl) return '';
+        return pickDriveNameUniqueBySheetKey(driveNames, key, e, used);
+    }
+
+    function pickDriveNameForSheet(driveNames, storedName, stem, ext, used, templateName) {
+        const key = sheetKeyFromStem(stem);
+        const tpl = templateFileToken(templateName);
+        return pickDriveNameExact(driveNames, storedName, used)
+            || pickDriveNameExact(driveNames, withLockedExt(stem, ext), used)
+            || (tpl ? pickDriveNameExact(driveNames, withLockedExt(key + '.' + tpl, ext), used) : '')
+            || pickDriveNameBySheetAndTemplate(driveNames, key, templateName, ext, used);
+    }
+
+    function displayCurrentFileName(dbName, driveName) {
+        return asTypedFileName(driveName) || asTypedFileName(dbName);
+    }
+
+    function siblingRenameRows(startRow, allRows) {
+        const gk = materialZoneGroupKey(startRow);
+        if (!gk) return startRow ? [startRow] : [];
+        const list = (allRows || []).filter(function (r) {
+            return r && !r.unused && materialZoneGroupKey(r) === gk;
+        });
+        list.sort(function (a, b) {
+            return String(a.templateName || '').localeCompare(String(b.templateName || ''), 'zh-Hant');
+        });
+        return list.length ? list : (startRow ? [startRow] : []);
+    }
+
+    function cloneRenameFiles(row) {
+        return collapseRelatedSheetFiles((row.sheetFiles || []).map(function (f) {
+            return {
+                id: f.id,
+                stem: f.stem || '',
+                meta: f.meta || '',
+                script: f.script || '',
+                relatedIds: (f.relatedIds || []).slice(),
+                is_group: f.is_group === true,
+                dbStem: String(f.stem || '').trim(),
+                dbMeta: String(f.meta || '').trim(),
+                dbScript: String(f.script || '').trim(),
+                driveMeta: '',
+                driveScript: ''
+            };
+        }));
+    }
+
+    function paintRenameFileIdentities(row, files) {
+        const templateName = String((row && row.templateName) || '').trim();
+        (files || []).forEach(function (f) {
+            const poison = String(f.dbStem || f.stem || '').trim();
+            f.poisonStem = poison;
+            f.lockedName = (mf() && typeof mf().resolveLiveSheet === 'function')
+                ? mf().resolveLiveSheet(poison, f.meta, f.script, templateName)
+                : poison;
+            f.alias = currentSheetAlias(f.lockedName, f.id) || currentSheetAlias(poison, f.id) || f.lockedName;
+        });
+    }
+
+    function renamePaneInnerHtml(row, files) {
+        const FN = mf();
+        const tpl = String((row && row.templateName) || '').trim();
+        const rowsHtml = (files || []).map(function (f) {
+            return FN && typeof FN.rowHtml === 'function'
+                ? FN.rowHtml({
+                    id: f.id,
+                    lockedName: f.lockedName,
+                    alias: f.alias,
+                    meta: f.meta,
+                    script: f.script
+                })
+                : '';
+        }).join('');
+        return (FN && typeof FN.formulaBlockHtml === 'function'
+            ? FN.formulaBlockHtml({ templateName: tpl })
+            : '')
+            + (FN && typeof FN.headerHtml === 'function' ? FN.headerHtml() : '')
+            + rowsHtml;
+    }
+
+    async function hydrateRenameFilesFromDrive(row, files, opts) {
+        if (!(opts && opts.skipCatalog) && window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
+            try {
+                await window.FeatureTimeline.ensureMetaCatalog(row.classId || '', row.rootKind || 'teacher', { force: true });
+            } catch (_e) {}
+        }
+        const driveNames = driveFileNamesForFolder(row.folderName, row.rootKind, row.classId);
+        const used = {};
+        const templateName = String((row && row.templateName) || '').trim();
+        (files || []).forEach(function (f) {
+            promoteFileSheetIdentity(f, driveNames);
+            f.driveMeta = pickDriveNameForSheet(driveNames, f.dbMeta, f.stem, META_LOCKED_EXT, used, templateName);
+            f.driveScript = pickDriveNameForSheet(driveNames, f.dbScript, f.stem, SCRIPT_LOCKED_EXT, used, templateName);
+            f.meta = displayCurrentFileName(f.dbMeta, f.driveMeta);
+            f.script = displayCurrentFileName(f.dbScript, f.driveScript);
+            promoteFileSheetIdentity(f, [f.driveMeta, f.driveScript]);
+        });
+    }
+
+    function currentSheetAlias(stem, sheetId) {
+        return mf() && typeof mf().currentAlias === 'function'
+            ? mf().currentAlias(stem, sheetId)
+            : String(stem || '').trim();
+    }
+
+    function friendlyRenameError(err) {
+        const msg = String((err && err.message) || err || '');
+        if (/uq_material_sheets_folder_stem_template/i.test(msg)
+            || /uq_material_sheets_folder_stem_untemplated/i.test(msg)
+            || /uq_material_sheets_folder_stem/i.test(msg)) {
+            return '同一個資料夾、同一個擷取範本裡，活頁名不能重複。不同擷取範本可以同名。';
+        }
+        return msg;
+    }
+
+    async function retireRelatedGhostSheets(relatedIds) {
+        const ids = (relatedIds || []).filter(Boolean);
+        if (!ids.length || !window.supabaseClient) return;
+        const { error } = await window.supabaseClient.from('material_sheets').delete().in('id', ids);
+        if (error) throw error;
+    }
+
+    function renameLoadingHtml() {
+        return (
+            '<div style="background:white; border-radius:14px; width:min(420px,92vw); padding:28px 24px; box-shadow:0 12px 40px rgba(15,23,42,0.18); text-align:center;">'
+            + '<h3 style="margin:0 0 8px 0; color:#0F766E;">改活頁／檔名</h3>'
+            + '<p style="margin:0 0 16px 0; color:#0F766E; font-size:0.9rem; font-weight:800;">正在讀取雲端檔名，請稍候…</p>'
+            + '<p style="margin:0 0 16px 0; color:#64748B; font-size:0.8rem; line-height:1.5;">要對過雲端資料夾，可能需要幾秒，不是失靈。</p>'
+            + '<button type="button" class="mz-rf-load-cancel" style="padding:6px 12px; border-radius:8px; border:1px solid #CBD5E1; background:white; color:#334155; font-weight:800; cursor:pointer;">取消</button>'
+            + '</div>'
+        );
+    }
+
+    function paneIsDirty(pane, paneEl) {
+        if (!pane || !paneEl) return false;
+        const FN = mf();
+        const blocks = paneEl.querySelectorAll('.mf-sheet-row');
+        for (let i = 0; i < blocks.length; i++) {
+            const f = pane.files[i];
+            if (!f) continue;
+            const cur = FN && typeof FN.readRow === 'function' ? FN.readRow(blocks[i]) : {};
+            if (cur.live !== String(f.poisonStem || f.dbStem || '').trim()
+                || cur.alias !== String(f.alias || '').trim()
+                || cur.meta !== String(f.meta || '').trim()
+                || cur.script !== String(f.script || '').trim()) return true;
+        }
+        return false;
+    }
+
+    async function saveRenamePane(pane, paneEl, driveItems, driveMiss) {
+        const FN = mf();
+        const row = pane.row;
+        const blocks = paneEl.querySelectorAll('.mf-sheet-row');
+        for (let i = 0; i < blocks.length; i++) {
+            const f = pane.files[i];
+            if (!f) continue;
+            const cur = FN && typeof FN.readRow === 'function' ? FN.readRow(blocks[i]) : {};
+            const alias = cur.alias || '';
+            const newMeta = cur.meta || '';
+            const newScript = cur.script || '';
+            const liveName = cur.live || String(f.lockedName || '').trim();
+            const poison = String(f.poisonStem || f.dbStem || '').trim();
+            const stemChanged = !!(liveName && liveName !== poison);
+            const aliasChanged = alias && alias !== String(f.alias || '').trim();
+            const filesChanged = newMeta !== String(f.dbMeta || '').trim()
+                || newScript !== String(f.dbScript || '').trim();
+            const oldDriveMeta = f.driveMeta || f.dbMeta || '';
+            const oldDriveScript = f.driveScript || f.dbScript || '';
+            const driveChanged = !!(oldDriveMeta && newMeta && oldDriveMeta !== newMeta)
+                || !!(oldDriveScript && newScript && oldDriveScript !== newScript);
+            if (!stemChanged && !aliasChanged && !filesChanged && !driveChanged) continue;
+            if (stemChanged || filesChanged || aliasChanged) {
+                if (f.relatedIds && f.relatedIds.length) {
+                    await retireRelatedGhostSheets(f.relatedIds);
+                    f.relatedIds = [];
+                }
+                if (stemChanged || filesChanged) {
+                    await window.MaterialNameMap.applySheetCurrentNames({
+                        folderId: row.folderId,
+                        sheetId: f.id,
+                        sheetStem: liveName,
+                        metaFileName: filesChanged ? newMeta : undefined,
+                        scriptFileName: filesChanged ? newScript : undefined
+                    });
+                }
+                if (aliasChanged && typeof window.MaterialNameMap.recordAlias === 'function') {
+                    await window.MaterialNameMap.recordAlias({
+                        kind: 'sheet_stem',
+                        alias: liveName,
+                        currentLabel: alias,
+                        materialFolderId: row.folderId,
+                        materialSheetId: f.id
+                    });
+                }
+            }
+            if (oldDriveMeta && newMeta && oldDriveMeta !== newMeta) {
+                driveItems.push({ oldName: oldDriveMeta, newName: newMeta });
+            } else if (newMeta && !oldDriveMeta) {
+                driveMiss.push(newMeta);
+            }
+            if (oldDriveScript && newScript && oldDriveScript !== newScript) {
+                driveItems.push({ oldName: oldDriveScript, newName: newScript });
+            }
+            f.lockedName = liveName;
+            f.poisonStem = liveName;
+            f.dbStem = liveName;
+            f.alias = alias;
+            f.meta = newMeta;
+            f.script = newScript;
+            f.dbMeta = newMeta;
+            f.dbScript = newScript;
+            f.driveMeta = newMeta;
+            f.driveScript = newScript;
+        }
+    }
+
+    async function openMaterialZoneFileRename(startRow, groupRows) {
         if (!window.ModalOverlay) {
             window.showFlash && window.showFlash('❌ 無法開啟改名視窗', 'error');
             return;
         }
-        const files = (row.sheetFiles || []).slice();
-        if (!files.length) {
+        const rows = siblingRenameRows(startRow, groupRows);
+        const panes = [];
+        rows.forEach(function (row) {
+            const files = cloneRenameFiles(row);
+            if (!files.length) return;
+            panes.push({ row: row, files: files });
+        });
+        if (!panes.length) {
             window.showFlash && window.showFlash('這本教材還沒有活頁紀錄，無法改檔名', 'error');
             return;
         }
-        const first = files[0] || {};
-        const key0 = sheetKeyFromStem(first.stem);
-        const stemFormula0 = '{活頁}';
-        const metaFormula0 = inferSheetFormula(first.meta, key0);
-        const scriptFormula0 = inferSheetFormula(first.script, key0);
         const modalId = 'mz-rename-files-modal';
-        const rowsHtml = files.map(function (f, idx) {
-            const sheetKey = sheetKeyFromStem(f.stem);
-            return (
-                '<div data-sheet-id="' + esc(f.id) + '" data-sheet-key="' + esc(sheetKey) + '" style="display:grid; grid-template-columns:72px 1fr 1.4fr 1.4fr; gap:6px; align-items:center; margin-bottom:6px;">'
-                + '<div style="font-size:0.78rem; font-weight:800; color:#0F766E;">' + esc(sheetKey || String(idx + 1)) + '</div>'
-                + '<input class="mz-rf-stem" value="' + esc(f.stem) + '" title="活頁名" style="width:100%; padding:5px 6px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box; font-size:0.78rem;">'
-                + '<input class="mz-rf-meta" value="' + esc(f.meta) + '" title="meta 檔名" style="width:100%; padding:5px 6px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box; font-size:0.78rem;">'
-                + '<input class="mz-rf-script" value="' + esc(f.script) + '" title="文稿檔名" style="width:100%; padding:5px 6px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box; font-size:0.78rem;">'
-                + '</div>'
-            );
+        window.ModalOverlay.open({
+            id: modalId,
+            tier: 'C',
+            contentHtml: renameLoadingHtml(),
+            onMount: function (loadEl) {
+                const cancelLoad = loadEl.querySelector('.mz-rf-load-cancel');
+                if (cancelLoad) {
+                    cancelLoad.addEventListener('click', function () {
+                        window.ModalOverlay.close(modalId);
+                    });
+                }
+            }
+        });
+        try {
+            if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
+                await window.MaterialNameMap.ensureLoaded(false);
+            }
+            if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
+                await window.FeatureTimeline.ensureMetaCatalog(
+                    startRow.classId || '',
+                    startRow.rootKind || 'teacher',
+                    { force: true }
+                );
+            }
+            for (let p = 0; p < panes.length; p++) {
+                await hydrateRenameFilesFromDrive(panes[p].row, panes[p].files, { skipCatalog: true });
+                paintRenameFileIdentities(panes[p].row, panes[p].files);
+            }
+        } catch (hydrateErr) {
+            window.ModalOverlay.close(modalId);
+            throw hydrateErr;
+        }
+        if (!document.getElementById(modalId)) return;
+        const cardPanes = panes.slice();
+        panes.length = 0;
+        splitRenamePanesByGroup(cardPanes).forEach(function (p) { panes.push(p); });
+        if (!panes.length) {
+            window.showFlash && window.showFlash('這本教材還沒有活頁紀錄，無法改檔名', 'error');
+            window.ModalOverlay.close(modalId);
+            return;
+        }
+        const FN = mf();
+        const startKey = String((startRow && startRow.key) || '');
+        let activeIdx = panes.findIndex(function (p) { return p.row.key === startKey; });
+        if (activeIdx < 0) activeIdx = 0;
+        function paneSheetName(pane, paneEl) {
+            const names = [];
+            if (paneEl && mf() && typeof mf().readRow === 'function') {
+                const blocks = paneEl.querySelectorAll('.mf-sheet-row');
+                for (let i = 0; i < blocks.length; i++) {
+                    const cur = mf().readRow(blocks[i]);
+                    if (cur && cur.live) names.push(cur.live);
+                }
+            }
+            if (!names.length && pane && pane.files) {
+                pane.files.forEach(function (f) {
+                    const n = sheetDisplayName(f);
+                    if (n) names.push(n);
+                });
+            }
+            if (mf() && typeof mf().formatSheetNames === 'function') return mf().formatSheetNames(names);
+            return names.join('、');
+        }
+        const tabBarHtml = '<div class="mz-rf-tabs" style="display:flex; flex-wrap:wrap; gap:6px; margin:0 0 12px 0;">'
+            + panes.map(function (pane, i) {
+                return renameTabButtonHtml(pane.row, paneSheetName(pane), i, i === activeIdx, pane.files);
+            }).join('')
+            + '</div>';
+        const panesHtml = panes.map(function (pane, i) {
+            return '<div class="mz-rf-pane" data-pane="' + i + '" style="' + (i === activeIdx ? '' : 'display:none;') + '">'
+                + renamePaneInnerHtml(pane.row, pane.files)
+                + '</div>';
         }).join('');
         window.ModalOverlay.open({
             id: modalId,
             tier: 'B',
             unsavedMessage: '活頁／檔名已改但尚未儲存，確定要關閉嗎？',
             isDirty: function () {
-                const el = document.getElementById(modalId);
-                if (!el || el.getAttribute('data-mo-busy') === '1') return false;
-                const blocks = el.querySelectorAll('[data-sheet-id]');
-                for (let i = 0; i < blocks.length; i++) {
-                    const f = files[i];
-                    if (!f) continue;
-                    const stem = (blocks[i].querySelector('.mz-rf-stem') || {}).value || '';
-                    const meta = (blocks[i].querySelector('.mz-rf-meta') || {}).value || '';
-                    const script = (blocks[i].querySelector('.mz-rf-script') || {}).value || '';
-                    if (String(stem).trim() !== String(f.stem || '').trim()
-                        || String(meta).trim() !== String(f.meta || '').trim()
-                        || String(script).trim() !== String(f.script || '').trim()) return true;
+                const box = document.getElementById(modalId);
+                if (!box || box.getAttribute('data-mo-busy') === '1') return false;
+                for (let i = 0; i < panes.length; i++) {
+                    const paneEl = box.querySelector('.mz-rf-pane[data-pane="' + i + '"]');
+                    if (paneIsDirty(panes[i], paneEl)) return true;
                 }
                 return false;
             },
             contentHtml: (
-                '<div style="background:white; border-radius:14px; width:min(720px,96vw); max-height:90vh; overflow:auto; padding:20px; box-shadow:0 12px 40px rgba(15,23,42,0.18);">'
+                '<div style="background:white; border-radius:14px; width:min(980px,96vw); max-height:90vh; overflow:auto; padding:20px; box-shadow:0 12px 40px rgba(15,23,42,0.18);">'
                 + '<h3 style="margin:0 0 6px 0; color:#0F766E;">改活頁／檔名</h3>'
-                + '<p style="margin:0 0 10px 0; color:#64748B; font-size:0.8rem; line-height:1.6;">只在這裡改一次。公式用 <code>{活頁}</code> 帶入這一本的活頁名（A、vBK-2 都可以），不必加範本後綴。儲存會同時改系統現用名與雲端檔名；舊名會記住。</p>'
-                + '<div style="background:#F0FDFA; border:1px dashed #99F6E4; border-radius:8px; padding:10px; margin-bottom:12px;">'
-                + '<div style="font-size:0.76rem; font-weight:800; color:#0F766E; margin-bottom:6px;">公式（改一處，套用到全部活頁）</div>'
-                + '<label style="display:block; font-size:0.74rem; color:#334155; font-weight:700; margin-bottom:4px;">活頁名'
-                + '<input class="mz-rf-formula-stem" value="' + esc(stemFormula0) + '" style="display:block; width:100%; margin-top:2px; padding:6px 8px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box;"></label>'
-                + '<label style="display:block; font-size:0.74rem; color:#334155; font-weight:700; margin-bottom:4px;">meta 檔名'
-                + '<input class="mz-rf-formula-meta" value="' + esc(metaFormula0) + '" style="display:block; width:100%; margin-top:2px; padding:6px 8px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box;"></label>'
-                + '<label style="display:block; font-size:0.74rem; color:#334155; font-weight:700; margin-bottom:6px;">文稿檔名'
-                + '<input class="mz-rf-formula-script" value="' + esc(scriptFormula0) + '" style="display:block; width:100%; margin-top:2px; padding:6px 8px; border:1px solid #99F6E4; border-radius:6px; box-sizing:border-box;"></label>'
-                + '<button type="button" class="mz-rf-apply-formula btn" style="padding:5px 10px; border-radius:6px; border:1px solid #5EEAD4; background:#CCFBF1; color:#115E59; font-weight:800; font-size:0.78rem; cursor:pointer;">套用公式到全部</button>'
-                + '</div>'
-                + '<div style="display:grid; grid-template-columns:72px 1fr 1.4fr 1.4fr; gap:6px; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:4px;">'
-                + '<div>活頁</div><div>現用名</div><div>meta</div><div>文稿</div></div>'
-                + rowsHtml
+                + (FN && typeof FN.introHtml === 'function' ? FN.introHtml() : '')
+                + tabBarHtml
+                + panesHtml
+                + '<div class="mz-rf-status" style="min-height:1.4em; margin:10px 0 0 0; font-size:0.78rem; font-weight:700; color:#0F766E;"></div>'
                 + '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">'
-                + '<button type="button" class="mz-rf-cancel" style="padding:6px 12px; border-radius:8px; border:1px solid #CBD5E1; background:white; font-weight:800; cursor:pointer;">取消</button>'
+                + '<button type="button" class="mz-rf-cancel" style="padding:6px 12px; border-radius:8px; border:1px solid #CBD5E1; background:white; color:#334155; font-weight:800; cursor:pointer;">取消</button>'
                 + '<button type="button" class="mz-rf-save" style="padding:6px 12px; border-radius:8px; border:0; background:#0F766E; color:white; font-weight:800; cursor:pointer;">儲存（系統＋雲端）</button>'
                 + '</div>'
                 + '</div>'
@@ -1740,21 +2787,78 @@ window.FeatureClassMaterialCombinations = (function () {
             onMount: function (el) {
                 const cancelBtn = el.querySelector('.mz-rf-cancel');
                 const saveBtn = el.querySelector('.mz-rf-save');
-                const applyBtn = el.querySelector('.mz-rf-apply-formula');
-                function applyFormulaToRows() {
-                    const stemPat = String((el.querySelector('.mz-rf-formula-stem') || {}).value || '').trim();
-                    const metaPat = String((el.querySelector('.mz-rf-formula-meta') || {}).value || '').trim();
-                    const scriptPat = String((el.querySelector('.mz-rf-formula-script') || {}).value || '').trim();
-                    const blocks = el.querySelectorAll('[data-sheet-id]');
-                    blocks.forEach(function (block, i) {
-                        const f = files[i] || {};
-                        const sheetKey = block.getAttribute('data-sheet-key') || sheetKeyFromStem(f.stem);
-                        if (stemPat) block.querySelector('.mz-rf-stem').value = applyFileNameFormula(stemPat, sheetKey, f.stem);
-                        if (metaPat) block.querySelector('.mz-rf-meta').value = applyFileNameFormula(metaPat, sheetKey, f.stem);
-                        if (scriptPat) block.querySelector('.mz-rf-script').value = applyFileNameFormula(scriptPat, sheetKey, f.stem);
+                const statusEl = el.querySelector('.mz-rf-status');
+                function paintTabLooks(idx) {
+                    el.querySelectorAll('.mz-rf-tab').forEach(function (btn) {
+                        const i = Number(btn.getAttribute('data-pane'));
+                        const on = i === idx;
+                        const pane = panes[i];
+                        const paneEl = el.querySelector('.mz-rf-pane[data-pane="' + i + '"]');
+                        btn.innerHTML = renameRoleTagInnerHtml(pane && pane.row, paneSheetName(pane, paneEl), pane && pane.files);
+                        btn.style.border = '1px solid ' + (on ? '#0F766E' : '#99F6E4');
+                        btn.style.background = on ? '#0F766E' : '#F0FDFA';
+                        btn.style.color = on ? 'white' : '#115E59';
                     });
                 }
-                if (applyBtn) applyBtn.addEventListener('click', applyFormulaToRows);
+                function showPane(idx) {
+                    activeIdx = idx;
+                    paintTabLooks(idx);
+                    el.querySelectorAll('.mz-rf-pane').forEach(function (paneEl) {
+                        paneEl.style.display = Number(paneEl.getAttribute('data-pane')) === idx ? '' : 'none';
+                    });
+                }
+                el.querySelectorAll('.mz-rf-tab').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        showPane(Number(btn.getAttribute('data-pane')));
+                    });
+                });
+                el.querySelectorAll('.mz-rf-pane').forEach(function (paneEl) {
+                    const applyBtn = paneEl.querySelector('.mf-apply-formula');
+                    const pane = panes[Number(paneEl.getAttribute('data-pane'))];
+                    if (!applyBtn || !pane) return;
+                    applyBtn.addEventListener('click', function (ev) {
+                        if (ev) ev.preventDefault();
+                        try {
+                            if (!(mf() && typeof mf().applyFormulaToRows === 'function')) return;
+                            const aliasPat = String((paneEl.querySelector('.mf-formula-alias') || {}).value || '').trim();
+                            const metaPat = String((paneEl.querySelector('.mf-formula-meta') || {}).value || '').trim();
+                            const scriptPat = String((paneEl.querySelector('.mf-formula-script') || {}).value || '').trim();
+                            el.querySelectorAll('.mz-rf-pane').forEach(function (otherEl) {
+                                const other = panes[Number(otherEl.getAttribute('data-pane'))];
+                                if (!other) return;
+                                const aliasIn = otherEl.querySelector('.mf-formula-alias');
+                                const metaIn = otherEl.querySelector('.mf-formula-meta');
+                                const scriptIn = otherEl.querySelector('.mf-formula-script');
+                                if (aliasIn) aliasIn.value = aliasPat;
+                                if (metaIn) metaIn.value = metaPat;
+                                if (scriptIn) scriptIn.value = scriptPat;
+                                mf().applyFormulaToRows(otherEl, String(other.row.templateName || '').trim());
+                            });
+                            paintTabLooks(activeIdx);
+                        } catch (applyErr) {
+                            window.showFlash && window.showFlash('❌ 套用公式失敗：' + ((applyErr && applyErr.message) || applyErr), 'error');
+                        }
+                    });
+                });
+                function setSaving(on, message, isError) {
+                    if (statusEl) {
+                        statusEl.textContent = message || '';
+                        statusEl.style.color = isError ? '#B91C1C' : '#0F766E';
+                    }
+                    if (saveBtn) {
+                        saveBtn.disabled = !!on;
+                        saveBtn.textContent = on ? '儲存中…' : '儲存（系統＋雲端）';
+                    }
+                    if (cancelBtn) {
+                        cancelBtn.disabled = !!on;
+                        cancelBtn.style.cursor = on ? 'not-allowed' : 'pointer';
+                        cancelBtn.style.background = on ? '#E2E8F0' : 'white';
+                        cancelBtn.style.color = on ? '#64748B' : '#334155';
+                    }
+                    if (window.ModalOverlay && typeof window.ModalOverlay.setBusy === 'function') {
+                        window.ModalOverlay.setBusy(modalId, !!on);
+                    }
+                }
                 if (cancelBtn) {
                     cancelBtn.addEventListener('click', function () {
                         window.ModalOverlay.requestClose(modalId);
@@ -1763,79 +2867,64 @@ window.FeatureClassMaterialCombinations = (function () {
                 if (saveBtn) {
                     saveBtn.addEventListener('click', async function () {
                         if (!window.MaterialNameMap || typeof window.MaterialNameMap.applySheetCurrentNames !== 'function') {
-                            window.showFlash && window.showFlash('❌ 對照中心尚未載入', 'error');
+                            setSaving(false, '對照中心尚未載入', true);
                             return;
                         }
-                        const blocks = el.querySelectorAll('[data-sheet-id]');
-                        saveBtn.disabled = true;
-                        if (window.ModalOverlay && typeof window.ModalOverlay.setBusy === 'function') {
-                            window.ModalOverlay.setBusy(modalId, true);
-                        }
+                        setSaving(true, '正在儲存系統名稱與雲端檔名…');
                         try {
                             const driveItems = [];
-                            for (let i = 0; i < blocks.length; i++) {
-                                const f = files[i];
-                                if (!f) continue;
-                                const stem = String((blocks[i].querySelector('.mz-rf-stem') || {}).value || '').trim();
-                                const meta = String((blocks[i].querySelector('.mz-rf-meta') || {}).value || '').trim();
-                                const script = String((blocks[i].querySelector('.mz-rf-script') || {}).value || '').trim();
-                                if (stem === String(f.stem || '').trim()
-                                    && meta === String(f.meta || '').trim()
-                                    && script === String(f.script || '').trim()) continue;
-                                await window.MaterialNameMap.applySheetCurrentNames({
-                                    folderId: row.folderId,
-                                    sheetId: f.id,
-                                    sheetStem: stem,
-                                    metaFileName: meta,
-                                    scriptFileName: script
-                                });
-                                if (f.meta && meta && f.meta !== meta) driveItems.push({ oldName: f.meta, newName: meta });
-                                if (f.script && script && f.script !== script) driveItems.push({ oldName: f.script, newName: script });
-                                f.stem = stem;
-                                f.meta = meta;
-                                f.script = script;
+                            const driveMiss = [];
+                            for (let i = 0; i < panes.length; i++) {
+                                const paneEl = el.querySelector('.mz-rf-pane[data-pane="' + i + '"]');
+                                await saveRenamePane(panes[i], paneEl, driveItems, driveMiss);
                             }
                             let driveNote = '';
                             if (driveItems.length
                                 && window.GasService && typeof window.GasService.renameMaterialFiles === 'function'
                                 && window.FeatureTimeline && typeof window.FeatureTimeline.resolveMaterialsRootFolderId === 'function') {
                                 try {
+                                    setSaving(true, '正在改雲端檔名，請稍候…');
                                     const rootId = await window.FeatureTimeline.resolveMaterialsRootFolderId(
-                                        row.classId || '',
-                                        row.rootKind || 'teacher'
+                                        startRow.classId || '',
+                                        startRow.rootKind || 'teacher'
                                     );
                                     const driveResult = await window.GasService.renameMaterialFiles(
                                         rootId,
-                                        row.folderName,
+                                        startRow.folderName,
                                         driveItems,
-                                        row.rootKind || 'teacher'
+                                        startRow.rootKind || 'teacher'
                                     );
                                     const missing = (driveResult && driveResult.missing) || [];
                                     const errs = (driveResult && driveResult.errors) || [];
                                     if (missing.length || errs.length) {
-                                        driveNote = '雲端有 ' + (missing.length + errs.length) + ' 個檔沒改到（系統已記住新名，讀檔仍可靠舊名）。';
+                                        driveNote = '雲端有 ' + (missing.length + errs.length) + ' 個檔沒改到（舊檔名對不到）。';
                                     } else {
                                         driveNote = '雲端檔名已一併改好。';
                                     }
                                     if (typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
-                                        await window.FeatureTimeline.ensureMetaCatalog(row.classId || '', row.rootKind || 'teacher', { force: true });
+                                        await window.FeatureTimeline.ensureMetaCatalog(startRow.classId || '', startRow.rootKind || 'teacher', { force: true });
                                     }
                                 } catch (driveErr) {
-                                    driveNote = '系統已改名；雲端改檔失敗（可能還沒重新部署 GAS）：' + ((driveErr && driveErr.message) || driveErr);
+                                    driveNote = '系統已改名；雲端改檔失敗：' + ((driveErr && driveErr.message) || driveErr);
                                 }
+                            } else if (driveMiss.length) {
+                                driveNote = '系統已改名；找不到雲端舊檔名，Drive 沒改到。';
+                            } else if (!driveItems.length) {
+                                driveNote = '系統已存；沒有偵測到需要改的雲端檔名。';
                             }
                             _materialZoneRowsCache = null;
-                            window.showFlash && window.showFlash('✅ 已更新活頁／檔名。' + (driveNote ? ' ' + driveNote : ' 舊名仍對得上。'), 'success');
+                            const driveFailed = driveNote.indexOf('沒改到') !== -1 || driveNote.indexOf('失敗') !== -1;
+                            window.showFlash && window.showFlash(
+                                (driveFailed ? '⚠️ ' : '✅ ') + '已更新系統名稱。' + driveNote,
+                                driveFailed ? 'error' : 'success'
+                            );
                             window.ModalOverlay.close(modalId);
-                            render();
+                            try { render(); } catch (renderErr) {
+                                console.error('[FeatureClassMaterialCombinations] 改名後重繪失敗', renderErr);
+                            }
                         } catch (err) {
                             console.error('[FeatureClassMaterialCombinations] 活頁改名失敗', err);
-                            window.showFlash && window.showFlash('❌ 改名失敗：' + (err.message || err), 'error');
-                            if (window.ModalOverlay && typeof window.ModalOverlay.setBusy === 'function') {
-                                window.ModalOverlay.setBusy(modalId, false);
-                            }
-                        } finally {
-                            saveBtn.disabled = false;
+                            setSaving(false, '改名失敗：' + friendlyRenameError(err), true);
                         }
                     });
                 }
@@ -1844,8 +2933,9 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function paintMaterialZone(wrap, rows) {
-        const list = rows && rows.length
-            ? rows.map(renderMaterialZoneCardHtml).join('')
+        const groups = groupMaterialZoneRows(rows);
+        const list = groups.length
+            ? groups.map(renderMaterialZoneGroupHtml).join('')
             : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有教材實例。請先到上面「套用／設計範本」把擷取範本套到教材資料夾。</div>';
         wrap.innerHTML = (
             '<div style="background:white; padding:20px; border-radius:12px; border:2px solid #99F6E4; margin-bottom:16px;">'
@@ -1928,9 +3018,8 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     /**
-     * 套用範本並產出 meta/script 後寫入組合＋（可選）考卷角色＋班級指派。
-     * 套用 Excel／Drive 後只確保套餐列存在（活頁連結）。
-     * 套餐名稱、試卷範本、採用班級只在教材區編輯，這裡不准另寫一筆。
+     * 套用範本並產出 meta/script 後寫入組合。
+     * includeExam=true（擷取＆試卷）時，同一份範本也寫進官方試卷配對；已有的其他試卷勾選不刪。
      */
     async function recordApplyFromExcel(opts) {
         const o = opts || {};
@@ -1961,9 +3050,147 @@ window.FeatureClassMaterialCombinations = (function () {
                 sheet_db_ids: []
             };
         }
-        await ensureCombination(userId, group, null);
+        const comboId = await ensureCombination(userId, group, null);
+        if (o.includeExam && comboId && templateId) {
+            const { data: links, error: linkErr } = await window.supabaseClient
+                .from('material_combination_exam_templates')
+                .select('exam_template_id')
+                .eq('material_combination_id', comboId);
+            if (linkErr) throw linkErr;
+            const ids = (links || []).map(function (l) {
+                return l && l.exam_template_id ? String(l.exam_template_id) : '';
+            }).filter(Boolean);
+            if (ids.indexOf(String(templateId)) === -1) ids.push(String(templateId));
+            await setComboExamTemplates(comboId, ids);
+        }
+        if (o.isGroup === true && (o.sheetStems || []).length) {
+            const folderId = group.material_folder_id;
+            const wanted = {};
+            (o.sheetStems || []).forEach(function (s) {
+                const key = sheetKeyFromStem(s);
+                const body = sheetStemBody(s).toUpperCase();
+                if (key) wanted[key] = true;
+                if (body) wanted[body] = true;
+            });
+            if (folderId) {
+                const { data: sheets, error: sheetErr } = await window.supabaseClient
+                    .from('material_sheets')
+                    .select('id, sheet_stem')
+                    .eq('material_folder_id', folderId);
+                if (sheetErr) throw sheetErr;
+                const ids = (sheets || []).filter(function (s) {
+                    return sheetStemMatchesWanted(s.sheet_stem, wanted);
+                }).map(function (s) { return s.id; }).filter(Boolean);
+                if (ids.length) {
+                    const { error: groupErr } = await window.supabaseClient
+                        .from('material_sheets')
+                        .update({ is_group: true })
+                        .in('id', ids);
+                    if (groupErr) throw groupErr;
+                }
+            }
+        }
         invalidateSuggestionCache();
         invalidateDisplayCaches();
+    }
+
+    function sheetStemMatchesWanted(stem, wantedKeys) {
+        const key = sheetKeyFromStem(stem);
+        if (key && wantedKeys[key]) return true;
+        const body = sheetStemBody(stem).toUpperCase();
+        return !!(body && wantedKeys[body]);
+    }
+
+    /**
+     * 雲端「只套試卷」：加到這個資料夾、且含有這次選的活頁的既有套餐。
+     * 不准把試卷範本寫進活頁的擷取欄，也不准新建「試卷當擷取」的套餐。
+     * 當擷取／雙用產檔走 recordApplyFromExcel，不走這裡。
+     */
+    async function recordExamApplyFromDrive(opts) {
+        const o = opts || {};
+        const userId = await getCurrentUserId();
+        if (!userId) return;
+        const folderName = String(o.folderName || '').trim();
+        const examTemplateId = o.examTemplateId || '';
+        const sheetStems = (o.sheetStems || []).map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+        if (!folderName || !examTemplateId) throw new Error('請先選雲端資料夾與試卷範本');
+        const examTpl = (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.getTemplatesCachedSync === 'function')
+            ? window.FeatureTemplateLibrary.getTemplatesCachedSync().find(function (t) { return String(t.id) === String(examTemplateId); })
+            : null;
+        if (!examTpl || !examTpl.is_exam_role) {
+            throw new Error('這份不是試卷範本，雲端只能套用已勾試卷角色的範本。');
+        }
+        const folderU = folderName.toUpperCase();
+        const wanted = {};
+        sheetStems.forEach(function (s) {
+            const key = sheetKeyFromStem(s);
+            const body = sheetStemBody(s).toUpperCase();
+            if (key) wanted[key] = true;
+            if (body) wanted[body] = true;
+        });
+        const combos = await loadCombinations(userId);
+        const hits = (combos || []).filter(function (c) {
+            const fn = (c.material_folders && c.material_folders.folder_name) || '';
+            if (String(fn).trim().toUpperCase() !== folderU) return false;
+            if (!sheetStems.length) return true;
+            const files = comboLinkedSheetFiles(c);
+            return files.some(function (f) { return sheetStemMatchesWanted(f.stem, wanted); });
+        });
+        if (!hits.length) {
+            throw new Error('這個資料夾還沒有套餐（擷取組合）。雲端只能幫既有套餐加試卷配對，不能把試卷範本当擷取寫進去。請先用本機檔案套用擷取，或到下方教材區確認套餐。');
+        }
+        for (let i = 0; i < hits.length; i++) {
+            const comboId = hits[i].id;
+            const { data: links, error: linkErr } = await window.supabaseClient
+                .from('material_combination_exam_templates')
+                .select('exam_template_id')
+                .eq('material_combination_id', comboId);
+            if (linkErr) throw linkErr;
+            const ids = (links || []).map(function (l) {
+                return l && l.exam_template_id ? String(l.exam_template_id) : '';
+            }).filter(Boolean);
+            if (ids.indexOf(String(examTemplateId)) === -1) ids.push(String(examTemplateId));
+            await setComboExamTemplates(comboId, ids);
+        }
+        if (o.isGroup === true && sheetStems.length) {
+            const folder = hits[0].material_folders || {};
+            const folderId = folder.id || hits[0].material_folder_id;
+            if (folderId) {
+                const { data: sheets, error: sheetErr } = await window.supabaseClient
+                    .from('material_sheets')
+                    .select('id, sheet_stem')
+                    .eq('material_folder_id', folderId);
+                if (sheetErr) throw sheetErr;
+                const ids = (sheets || []).filter(function (s) {
+                    return sheetStemMatchesWanted(s.sheet_stem, wanted);
+                }).map(function (s) { return s.id; }).filter(Boolean);
+                if (ids.length) {
+                    const { error: groupErr } = await window.supabaseClient
+                        .from('material_sheets')
+                        .update({ is_group: o.isGroup === true })
+                        .in('id', ids);
+                    if (groupErr) throw groupErr;
+                }
+            }
+        }
+        invalidateSuggestionCache();
+        invalidateDisplayCaches();
+    }
+
+    async function lookupFolderUsage(folderName) {
+        const userId = await getCurrentUserId();
+        if (!userId || !folderName) return { classIds: [], classNames: [] };
+        const combos = await loadCombinations(userId);
+        const folderU = String(folderName || '').trim().toUpperCase();
+        const classIds = [];
+        (combos || []).forEach(function (c) {
+            const fn = (c.material_folders && c.material_folders.folder_name) || '';
+            if (String(fn).trim().toUpperCase() !== folderU) return;
+            (c.class_material_combinations || []).forEach(function (a) {
+                if (a.class_id && classIds.indexOf(a.class_id) === -1) classIds.push(a.class_id);
+            });
+        });
+        return { classIds: classIds, classNames: classIds.map(classNameById) };
     }
 
     /**
@@ -2200,6 +3427,10 @@ window.FeatureClassMaterialCombinations = (function () {
                 pageMin: row.page_min == null ? null : Number(row.page_min),
                 pageMax: row.page_max == null ? null : Number(row.page_max),
                 availableCount: row.available_count == null ? null : Number(row.available_count),
+                hasTemplate: !!row.has_template,
+                examTemplateId: row.exam_template_id || '',
+                hasExtractionTemplate: !!row.has_extraction_template,
+                extractionTemplateId: row.extraction_template_id || '',
                 pageCounts: pageCounts
             };
             map[comboStatsKey(folder, stem)] = rec;
@@ -2248,20 +3479,29 @@ window.FeatureClassMaterialCombinations = (function () {
         const cid = String(classId || '');
         const map = _comboStatsByClass[cid];
         if (!map || !folderName || !sheetHint) return null;
+        const rawFolder = String(folderName || '').trim();
         const folder = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function')
-            ? window.MaterialNameMap.resolveFolderName(folderName) : String(folderName || '').trim();
-        const raw = String(sheetHint || '').trim().replace(/\.meta\.json$/i, '');
+            ? window.MaterialNameMap.resolveFolderName(rawFolder) : rawFolder;
+        const raw = String(sheetHint || '').trim().replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
         if (!raw) return null;
-        const exact = map[comboStatsKey(folder, raw)] || map[comboStatsKey(String(folderName || '').trim(), raw)];
+        const exact = map[comboStatsKey(folder, raw)] || map[comboStatsKey(rawFolder, raw)];
         if (exact) return exact;
         const want = raw.toUpperCase();
+        const folderPrefixes = [String(folder || '').trim().toUpperCase() + '|', rawFolder.toUpperCase() + '|'];
         const keys = Object.keys(map);
+        const hits = [];
+        const seen = {};
         for (let i = 0; i < keys.length; i++) {
-            if (keys[i].indexOf(folder.toUpperCase() + '|') !== 0) continue;
+            const inFolder = folderPrefixes.some(function (p) { return p !== '|' && keys[i].indexOf(p) === 0; });
+            if (!inFolder) continue;
             const rec = map[keys[i]];
             const stem = String(rec.sheetStem || '').toUpperCase();
-            if (stem === want || stem.indexOf(want + '.') === 0 || want.indexOf(stem + '.') === 0) return rec;
+            if (stem !== want) continue;
+            if (seen[keys[i]]) continue;
+            seen[keys[i]] = true;
+            hits.push(rec);
         }
+        if (hits.length === 1) return hits[0];
         return null;
     }
 
@@ -2327,7 +3567,9 @@ window.FeatureClassMaterialCombinations = (function () {
         findAssignedComboForSection: findAssignedComboForSection,
         isFolderAssignedToClass: isFolderAssignedToClass,
         lookupUsage: lookupUsage,
+        lookupFolderUsage: lookupFolderUsage,
         recordApplyFromExcel: recordApplyFromExcel,
+        recordExamApplyFromDrive: recordExamApplyFromDrive,
         summarizeUsageByTemplate: summarizeUsageByTemplate,
         getUsageSummaryCachedSync: getUsageSummaryCachedSync,
         listOverwriteTargets: listOverwriteTargets,
@@ -2339,6 +3581,9 @@ window.FeatureClassMaterialCombinations = (function () {
         renderMaterialZone: renderMaterialZone,
         prefetchForClass: prefetchForClass,
         lookupSheetStats: lookupSheetStats,
-        rememberSheetPageCounts: rememberSheetPageCounts
+        rememberSheetPageCounts: rememberSheetPageCounts,
+        isComboStatsReady: function (classId) {
+            return !!_comboStatsByClass[String(classId || '')];
+        }
     };
 })();

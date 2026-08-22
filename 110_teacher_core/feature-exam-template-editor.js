@@ -44,7 +44,7 @@ window.FeatureExamTemplateEditor = (function () {
     }
 
     function blankDraft() {
-        return { id: null, name: '', fields: '', fields_answer: '', quiz_prompt: '', quiz_answer: '', lines_per_page: DEFAULT_LINES_PER_PAGE, isExtractionRole: false };
+        return { id: null, name: '', fields: '', fields_answer: '', quiz_prompt: '', quiz_answer: '', student_script: '_answer_combined_text', lines_per_page: DEFAULT_LINES_PER_PAGE, isExtractionRole: false };
     }
 
     /** 給其他頁面（例如「🏫 班級教材組合」Step 2）呼叫的捷徑：直接開一個新增表單 */
@@ -61,6 +61,7 @@ window.FeatureExamTemplateEditor = (function () {
             fields_answer: template.fields_answer || '',
             quiz_prompt: template.quiz_prompt || '',
             quiz_answer: template.quiz_answer || '',
+            student_script: String(template.student_script || '').trim() || '_answer_combined_text',
             lines_per_page: template.lines_per_page || DEFAULT_LINES_PER_PAGE,
             // 2026-08-14（老師回報）：雙用範本（同時也勾了擷取角色）的每頁行數只在「擷取範本」那一側
             // 編輯，這裡唯讀顯示同一個值，不要另外開一個輸入框（同一個欄位，不是各自存一份）。
@@ -122,15 +123,20 @@ window.FeatureExamTemplateEditor = (function () {
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                     <div class="form-group">
                         <label style="font-size:0.78rem; font-weight:800; color:#475569;">訊息排版（訊息列公式）</label>
-                        <textarea id="exam-tpl-fields" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='vBK_name&amp;" - "&amp;page&amp;" - "&amp;item_no'>${esc(_draft.fields)}</textarea>
+                        <textarea id="exam-tpl-fields" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='資料項或欄位代號，例如 vBK_name&amp;" - "&amp;page'>${esc(_draft.fields)}</textarea>
                     </div>
                     <div class="form-group">
                         <label style="font-size:0.78rem; font-weight:800; color:#475569;">答案排版（呈現公式）</label>
                         <textarea id="exam-tpl-fields-answer" class="form-control" rows="3" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="TEXTJOIN(&quot; / &quot;, answer_zh)">${esc(_draft.fields_answer)}</textarea>
                     </div>
                     <div class="form-group">
-                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">題目排版（題目公式，例如 display_zh 或 pos&amp;" "&amp;display_zh）</label>
-                        <textarea id="exam-tpl-quiz-prompt" class="form-control" rows="2" style="padding:6px; font-family:monospace; font-size:0.8rem;">${esc(_draft.quiz_prompt)}</textarea>
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">題目排版（資料項或欄位代號皆可）</label>
+                        <textarea id="exam-tpl-quiz-prompt" class="form-control" rows="2" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='display_zh&amp;" "&amp;pos 或 AN&amp;" "&amp;AO'>${esc(_draft.quiz_prompt)}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label style="font-size:0.78rem; font-weight:800; color:#475569;">學生文稿 特殊排版（資料項或欄位代號皆可）</label>
+                        <textarea id="exam-tpl-student-script" class="form-control" rows="5" style="padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="${esc('<page title>vBK_name&" - "&page\n<blank>\n<data>item_no&". "&pos&"  "&pre&" "&answer_en&"    "&display_zh')}">${esc(_draft.student_script)}</textarea>
+                        <div style="font-size:0.68rem; color:#64748B; margin-top:4px;">標記（可選）：&lt;page title&gt; 每頁一次　&lt;blank&gt; 空行　&lt;data&gt; 每列一次。沒標記＝整份當資料列。有標記＝只套公式。</div>
                     </div>
                     <div class="form-group">
                         <label style="font-size:0.78rem; font-weight:800; color:#475569;">quiz_answer（選填，考卷版另外的答案公式）</label>
@@ -253,7 +259,10 @@ window.FeatureExamTemplateEditor = (function () {
                     fields: form.querySelector('#exam-tpl-fields').value,
                     fields_answer: form.querySelector('#exam-tpl-fields-answer').value,
                     quiz_prompt: form.querySelector('#exam-tpl-quiz-prompt').value,
-                    quiz_answer: form.querySelector('#exam-tpl-quiz-answer').value
+                    quiz_answer: form.querySelector('#exam-tpl-quiz-answer').value,
+                    student_script: form.querySelector('#exam-tpl-student-script')
+                        ? form.querySelector('#exam-tpl-student-script').value
+                        : (_draft.student_script || '')
                 };
                 // 雙用範本（也勾了擷取角色）沒有這個輸入框——每頁行數留給擷取範本那一側管，這裡不送出，
                 // 不然會用畫面上沒改過的舊值把老師在擷取範本編輯器裡剛存的新值蓋掉。

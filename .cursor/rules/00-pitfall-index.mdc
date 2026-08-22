@@ -9,7 +9,7 @@ alwaysApply: true
 
 | 規則檔 | 症狀關鍵字 | 對應檔案／glob |
 |---|---|---|
-| `modal-overlay-tiers.mdc` | 自製全螢幕遮罩當 popup | 全站（alwaysApply） |
+| `modal-overlay-tiers.mdc` | 自製全螢幕遮罩當 popup／按儲存視窗還在／取消卻問尚未儲存 | 全站（alwaysApply） |
 | `traditional-chinese.mdc` | 溝通語言 | 全站（alwaysApply） |
 | `ai-grading-pipeline-invariants.mdc` | AI 批改拖垮登入／延遲重試風暴／雙 webhook／沒勾AI批改卻照樣送 | `process-audio-ai/**`, `feature-ai-backfill.js`, `task-script-resolver.js`, `store-assignment-builder.js` |
 | `assignment-id-uuid-invariant.mdc` | assignment id 混血 bigint/uuid | `migrations/**`, `api.js`, `store-assignment-builder.js` |
@@ -28,5 +28,6 @@ alwaysApply: true
 | `template-usage-card-invariant.mdc` | 實際使用卡擷取／試卷列出的名字混用（活頁名 vs 範本名 vs meta 檔名） | `feature-class-material-combinations.js`, `feature-material-layout-pairing.js`, `feature-exam-template-editor.js` |
 | `template-formula-strict-invariant.mdc` | 一份卷多範本被亂套／WORD 公式套到 PIC | 全站（alwaysApply）；出卷／範本庫 |
 | `no-invented-fallback-invariant.mdc` | 退路未提出／未同意就黑箱施作 | 全站（alwaysApply） |
+| `uniform-apply-invariant.mdc` | 規則要全面套用／禁止只修例子、同類列走第二套邏輯／每個 popup 處理方式不一樣 | 全站（alwaysApply）；`material-file-names.js`；`material-pdf-page-map.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

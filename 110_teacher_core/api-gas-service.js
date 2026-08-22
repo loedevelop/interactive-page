@@ -31,9 +31,10 @@ window.GasService = (function() {
    * 修法：用 AbortController 設 55 秒逾時，逾時就丟明確的逾時錯誤，讓呼叫端既有的
    * catch／重試按鈕流程接手，不再無限期卡住。
    */
-  async function postGasJson(payload, _isRetry) {
+  async function postGasJson(payload, _isRetry, timeoutMs) {
+    const waitMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : 55000;
     const controller = new AbortController();
-    const timeoutId = setTimeout(function () { controller.abort(); }, 55000);
+    const timeoutId = setTimeout(function () { controller.abort(); }, waitMs);
     let response;
     try {
       response = await fetch(GAS_WEB_APP_URL, {
@@ -45,7 +46,7 @@ window.GasService = (function() {
     } catch (fetchErr) {
       if (fetchErr && fetchErr.name === 'AbortError') {
         throw new Error(
-          'GAS 逾時（等了 55 秒仍沒有回應，動作：' + (payload && payload.action ? payload.action : '?') + '）。'
+          'GAS 逾時（等了 ' + Math.round(waitMs / 1000) + ' 秒仍沒有回應，動作：' + (payload && payload.action ? payload.action : '?') + '）。'
           + '常見原因：教材資料夾裡的檔案／子資料夾太多、Drive 端暫時變慢，或 GAS 冷啟動。'
           + '請按重試；若持續逾時，可考慮先減少該資料夾底下的檔案數量再試。'
         );
@@ -62,7 +63,7 @@ window.GasService = (function() {
       if (/^\s*</.test(text)) {
         if (!_isRetry) {
           await new Promise(function (resolve) { setTimeout(resolve, 600); });
-          return postGasJson(payload, true);
+          return postGasJson(payload, true, timeoutMs);
         }
         if (/找不到網頁|Moved Temporarily|Page not found/i.test(text)) {
           throw new Error(
@@ -384,7 +385,7 @@ window.GasService = (function() {
             newName: (it && it.newName) || ''
           };
         })
-      });
+      }, false, 180000);
     },
 
     /** 一批讀多個 meta／layout（一次 GAS 往返） */

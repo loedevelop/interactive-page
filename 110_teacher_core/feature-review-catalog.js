@@ -26,7 +26,7 @@ window.FeatureReviewCatalog = (function () {
                     id,
                     label,
                     material_folders ( folder_name, root_kind, class_id ),
-                    material_combination_sheets ( material_sheets ( id, sheet_stem, meta_file_name, meta_file_id ) ),
+                    material_combination_sheets ( material_sheets ( id, sheet_stem, meta_file_name, meta_file_id, extraction_template_id ) ),
                     material_combination_exam_templates ( exam_template_id, is_default )
                 )
             `)
@@ -57,6 +57,7 @@ window.FeatureReviewCatalog = (function () {
                     sheetStem: stem,
                     metaFileName: sh.meta_file_name || (stem + '.meta.json'),
                     metaFileId: sh.meta_file_id || '',
+                    extractionTemplateId: sh.extraction_template_id || '',
                     examTemplateId: examTemplateId
                 });
             });
@@ -226,6 +227,8 @@ window.FeatureReviewCatalog = (function () {
                 available_count: items.length ? items.length : null,
                 has_template: !!spec.examTemplateId,
                 exam_template_id: spec.examTemplateId || null,
+                has_extraction_template: !!spec.extractionTemplateId,
+                extraction_template_id: spec.extractionTemplateId || null,
                 items: items,
                 layout: layout
             });

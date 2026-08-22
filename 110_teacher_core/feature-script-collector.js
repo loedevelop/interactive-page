@@ -169,8 +169,8 @@ window.FeatureScriptCollector = (function () {
             <div class="sc-seg-row" data-idx="${segIdx}" style="display:flex; gap:8px; align-items:flex-start; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px; margin-bottom:6px;">
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;">
                     <input type="text" class="form-control sc-seg-label" style="padding:5px; font-size:0.8rem; font-weight:800; color:#7C3AED; max-width:220px;" placeholder="標籤（如 Page 2／Ex.3）" value="${esc(seg.label)}">
-                    <textarea class="form-control sc-seg-script" style="width:100%; min-height:52px; padding:6px; font-size:0.82rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="AI 批改文稿">${esc(seg.script)}</textarea>
-                    <textarea class="form-control sc-seg-student" style="width:100%; min-height:40px; padding:6px; font-size:0.8rem; border-radius:6px; border:1px solid #E2E8F0; color:#475569;" placeholder="學生顯示文稿（若跟批改文稿不同才需要另外填）">${esc(seg.student)}</textarea>
+                    <textarea class="form-control sc-seg-script" style="width:100%; min-height:52px; padding:6px; font-size:0.82rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="口說答案">${esc(seg.script)}</textarea>
+                    <textarea class="form-control sc-seg-student" style="width:100%; min-height:40px; padding:6px; font-size:0.8rem; border-radius:6px; border:1px solid #E2E8F0; color:#475569;" placeholder="書寫答案（若跟口說答案不同才需要另外填）">${esc(seg.student)}</textarea>
                 </div>
                 <button type="button" class="btn sc-seg-del" style="padding:5px 7px; color:#B91C1C;" title="刪除此段">🗑</button>
             </div>`;
@@ -283,11 +283,11 @@ window.FeatureScriptCollector = (function () {
                 lines.push('');
                 lines.push('【段 ' + (idx + 1) + (seg.label ? '：' + seg.label : '') + '】');
                 if (seg.script) {
-                    lines.push('--- AI 批改文稿 ---');
+                    lines.push('--- 口說答案 ---');
                     lines.push(seg.script);
                 }
                 if (seg.student && seg.student !== seg.script) {
-                    lines.push('--- 學生顯示文稿 ---');
+                    lines.push('--- 書寫答案 ---');
                     lines.push(seg.student);
                 }
             });

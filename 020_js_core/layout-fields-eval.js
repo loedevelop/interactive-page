@@ -1,6 +1,7 @@
 /**
  * 📂 020_js_core/layout-fields-eval.js
- * 購物車「欄位」公式求值：頂層逗號＝輸出網格欄；支援 STACK / FONTSIZE / SUBSTITUTE / TEXTJOIN / & / Excel 欄代號。
+ * 全站公式求值（訊息／題目／學生文稿／書寫結合／口說公式同一把鑰匙）：
+ * 資料項名稱或該範本欄位代號皆可；頂層逗號＝輸出網格欄；支援 STACK / FONTSIZE / SUBSTITUTE / TEXTJOIN / &。
  */
 window.LayoutFieldsEval = (function () {
     'use strict';

@@ -8,6 +8,149 @@ window.MaterialSnapshot = (function () {
     var DISPLAY_KEYS = ['display_zh', 'pos', 'page', 'item_no', 'unit', 'note', 'teacher_note'];
     var SKIP_DISPLAY_KEYS = { script: true };
 
+    function firstNonEmptyCell(row, keys) {
+        if (!row) return '';
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            var v = row[keys[i]];
+            if (v != null && String(v).trim() !== '') return String(v).trim();
+        }
+        return '';
+    }
+
+    /**
+     * 口說答案：資料項正式家在 .script.txt（產檔 scriptLines）。
+     * meta 列上的 script／「口說答案」只有單欄口說、且沒兼任書寫時才會寫回。
+     * 禁止拿 display_zh／answer_en 充當口說。
+     */
+    function spokenAnswerFromRow(row) {
+        return firstNonEmptyCell(row, ['script', '口說答案']);
+    }
+
+    var DEFAULT_STUDENT_SCRIPT = '_answer_combined_text';
+    var STUDENT_SCRIPT_TAG_RE = /^<(page\s*title|data|blank)>\s*/i;
+
+    function studentScriptHasTags(raw) {
+        return /<(page\s*title|data|blank)>/i.test(String(raw || ''));
+    }
+
+    /**
+     * 學生文稿公式＝由上往下的標記列。
+     * 沒有任何標記＝整份當 <data>（相容舊的單行公式）。
+     * 有標記：<page title>／其前的 <blank> 每頁一次；第一個 <data> 起（含其後 <blank>）每列一次。
+     */
+    function parseStudentScriptTemplate(raw) {
+        var text = String(raw == null ? '' : raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        if (!studentScriptHasTags(text)) {
+            var plain = text.trim() || DEFAULT_STUDENT_SCRIPT;
+            return { tagged: false, pageParts: [], itemParts: [{ kind: 'data', formula: plain }] };
+        }
+        var parts = [];
+        text.split('\n').forEach(function (line) {
+            var s = String(line || '');
+            var m = s.match(STUDENT_SCRIPT_TAG_RE);
+            if (!m) {
+                if (!s.trim()) return;
+                parts.push({ kind: 'data', formula: s.trim() });
+                return;
+            }
+            var tag = String(m[1] || '').toLowerCase().replace(/\s+/g, ' ');
+            if (tag === 'blank') {
+                parts.push({ kind: 'blank', formula: '' });
+                return;
+            }
+            parts.push({
+                kind: tag === 'page title' ? 'page_title' : 'data',
+                formula: s.slice(m[0].length)
+            });
+        });
+        var pageParts = [];
+        var itemParts = [];
+        var seenData = false;
+        parts.forEach(function (p) {
+            if (!seenData && p.kind !== 'data') {
+                pageParts.push(p);
+                return;
+            }
+            seenData = true;
+            itemParts.push(p);
+        });
+        if (!itemParts.length && !pageParts.length) {
+            itemParts = [{ kind: 'data', formula: DEFAULT_STUDENT_SCRIPT }];
+        }
+        return { tagged: true, pageParts: pageParts, itemParts: itemParts };
+    }
+
+    function evalLayoutFormulaToText(formula, row, colMap) {
+        var src = String(formula || '').trim();
+        if (!src) return '';
+        if (!window.LayoutFieldsEval || typeof window.LayoutFieldsEval.evaluateFields !== 'function') {
+            return firstNonEmptyCell(row, [src]);
+        }
+        try {
+            var cells = window.LayoutFieldsEval.evaluateFields(src, row, colMap || {});
+            return (cells || []).map(function (c) {
+                return window.LayoutFieldsEval.cellText(c);
+            }).map(function (t) {
+                return String(t || '').trim();
+            }).filter(Boolean).join(' ');
+        } catch (_e) {
+            return '';
+        }
+    }
+
+    /**
+     * 書寫答案：結合結果在 _answer_combined_text；否則依 _answer_keys 各欄；
+     * 單欄正式語意鍵是 answer_en。禁止拿 display_zh（題目）或口說稿充當書寫。
+     */
+    function writtenAnswerFromRow(row) {
+        if (!row) return '';
+        var combined = firstNonEmptyCell(row, ['_answer_combined_text', '書寫答案']);
+        if (combined) return combined;
+        var keys = row._answer_keys;
+        if (Array.isArray(keys) && keys.length) {
+            var parts = [];
+            keys.forEach(function (k) {
+                var v = row[k];
+                if (v != null && String(v).trim() !== '') parts.push(String(v).trim());
+            });
+            if (parts.length) return parts.join(' ');
+        }
+        return firstNonEmptyCell(row, ['answer_en']);
+    }
+
+    function siblingScriptFileName(metaFile) {
+        var name = String(metaFile || '').trim();
+        if (!name) return '';
+        if (/\.meta\.json$/i.test(name)) return name.replace(/\.meta\.json$/i, '.script.txt');
+        if (/\.json$/i.test(name)) return name.replace(/\.json$/i, '.script.txt');
+        return '';
+    }
+
+    function scriptLinesFromText(raw) {
+        var text = String(raw == null ? '' : raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        if (text.slice(-1) === '\n') text = text.slice(0, -1);
+        if (text === '') return [];
+        return text.split('\n');
+    }
+
+    /**
+     * 把同 stem 的 .script.txt 依列序貼回口說答案。行數對不上＝不猜、不套。
+     */
+    function attachSpokenAnswersFromScript(rows, scriptText) {
+        var list = rows || [];
+        if (!list.length) return list;
+        var lines = scriptLinesFromText(scriptText);
+        if (lines.length !== list.length) return list;
+        return list.map(function (row, i) {
+            var spoken = String(lines[i] || '').trim();
+            if (!spoken) return row;
+            var out = Object.assign({}, row);
+            out.script = spoken;
+            return out;
+        });
+    }
+
     function parseMetaContent(raw) {
         if (!raw) return [];
         var data = raw;
@@ -447,10 +590,9 @@ window.MaterialSnapshot = (function () {
     }
 
     /**
-     * 學生顯示輸出模板（存於 meta 資料夾 _Student_Display_Template.txt）：
-     * 【A】[1]
-     * 1.  中文。  English.
-     * 2.  ...
+     * 學生文稿＝該擷取範本「學生文稿 特殊排版」。
+     * 有 <page title>／<data>／<blank>＝只套公式（不再加【檔名】[頁] 與題號.）。
+     * 沒標記＝整份當資料列，仍加系統頁首（舊公式相容）。
      */
     function formatStudentDisplayBlock(rows, context) {
         context = context || {};
@@ -473,6 +615,26 @@ window.MaterialSnapshot = (function () {
             byPage[pageKey].push(row);
         });
 
+        var formulaRaw = String((context && (context.student_script || context.studentScript)) || '').trim()
+            || DEFAULT_STUDENT_SCRIPT;
+        var tpl = parseStudentScriptTemplate(formulaRaw);
+        var colMap = (context && context.col_map) || {};
+
+        function emitTaggedParts(partList, row, into) {
+            var wrote = false;
+            (partList || []).forEach(function (p) {
+                if (p.kind === 'blank') {
+                    into.push('');
+                    return;
+                }
+                var text = evalLayoutFormulaToText(p.formula, row, colMap);
+                if (!text) return;
+                into.push(text);
+                wrote = true;
+            });
+            return wrote;
+        }
+
         var blocks = [];
         pageOrder.forEach(function (pageKey) {
             var pageRows = byPage[pageKey].slice().sort(function (a, b) {
@@ -483,21 +645,34 @@ window.MaterialSnapshot = (function () {
                 if (isNaN(bi)) return -1;
                 return ai - bi;
             });
+            if (!pageRows.length) return;
             var headerPage = pageKey === '_' ? '?' : pageKey;
-            var lines = ['【' + stem + '】[' + headerPage + ']'];
+            var lines = [];
             var localIdx = 1;
-            pageRows.forEach(function (row) {
-                var zh = String(row.display_zh || row.display || '').trim();
-                var en = String(row.script || '').trim();
-                if (!zh && !en) return;
-                var itemNo = row.item_no != null ? row.item_no : row.itemNo;
-                // 編號須採用 meta JSON 的 item_no（教材原始題號），缺值才退回頁內序號
-                var num = !isNaN(toNumber(itemNo)) ? String(itemNo) : String(localIdx);
-                var body = (zh ? zh : '') + (zh && en ? '  ' : '') + (en ? en : '');
-                lines.push(num + '.  ' + body);
-                localIdx += 1;
-            });
-            if (lines.length > 1) blocks.push(lines.join('\n'));
+
+            if (tpl.tagged) {
+                emitTaggedParts(tpl.pageParts, pageRows[0], lines);
+                pageRows.forEach(function (row) {
+                    var chunk = [];
+                    if (emitTaggedParts(tpl.itemParts, row, chunk)) {
+                        chunk.forEach(function (ln) { lines.push(ln); });
+                    }
+                });
+            } else {
+                lines.push('【' + stem + '】[' + headerPage + ']');
+                var dataFormula = (tpl.itemParts[0] && tpl.itemParts[0].formula) || DEFAULT_STUDENT_SCRIPT;
+                pageRows.forEach(function (row) {
+                    var written = evalLayoutFormulaToText(dataFormula, row, colMap);
+                    if (!written) return;
+                    var itemNo = row.item_no != null ? row.item_no : row.itemNo;
+                    var num = !isNaN(toNumber(itemNo)) ? String(itemNo) : String(localIdx);
+                    lines.push(num + '.  ' + written);
+                    localIdx += 1;
+                });
+            }
+            if (lines.some(function (ln) { return String(ln || '') !== ''; })) {
+                blocks.push(lines.join('\n'));
+            }
         });
         return blocks.join('\n\n');
     }
@@ -545,7 +720,7 @@ window.MaterialSnapshot = (function () {
             var scriptLines = [];
             var itemNos = [];
             pageRows.forEach(function (row) {
-                var line = String(row.script || '').trim();
+                var line = spokenAnswerFromRow(row);
                 if (line === '') return;
                 scriptLines.push(line);
                 var itemNo = toNumber(row.item_no != null ? row.item_no : row.itemNo);
@@ -581,7 +756,6 @@ window.MaterialSnapshot = (function () {
         if (!stem) stem = 'M';
         var out = [];
         (rows || []).forEach(function (row) {
-            if (!String(row.script || '').trim()) return;
             var itemNo = toNumber(row.item_no != null ? row.item_no : row.itemNo);
             if (isNaN(itemNo)) return;
             var pageNum = toNumber(row.page != null ? row.page : row.Page);
@@ -597,13 +771,10 @@ window.MaterialSnapshot = (function () {
     function buildSnapshot(rows, context) {
         context = context || {};
         var scriptLines = rows.map(function (row) {
-            return String(row.script || '').trim();
+            return spokenAnswerFromRow(row);
         }).filter(function (line) { return line !== ''; });
 
         var displayText = formatStudentDisplayBlock(rows, context);
-        if (!displayText) {
-            displayText = rows.map(formatDisplayLine).filter(function (line) { return line !== ''; }).join('\n');
-        }
 
         var gradingUnits = buildGradingUnits(rows, context);
         var metaItems = buildMetaItems(rows, context);
@@ -646,9 +817,14 @@ window.MaterialSnapshot = (function () {
         formatRangeLabel: formatRangeLabel,
         filterRows: filterRows,
         filterRowsByRangeSpec: filterRowsByRangeSpec,
+        spokenAnswerFromRow: spokenAnswerFromRow,
+        writtenAnswerFromRow: writtenAnswerFromRow,
+        siblingScriptFileName: siblingScriptFileName,
+        attachSpokenAnswersFromScript: attachSpokenAnswersFromScript,
         buildSnapshot: buildSnapshot,
         buildGradingUnits: buildGradingUnits,
         formatStudentDisplayBlock: formatStudentDisplayBlock,
+        parseStudentScriptTemplate: parseStudentScriptTemplate,
         sliceAndBuild: sliceAndBuild,
         collectMetaRowKeys: collectMetaRowKeys,
         describeMetaRowKeys: describeMetaRowKeys,
@@ -659,6 +835,7 @@ window.MaterialSnapshot = (function () {
         canonicalizeMetaRows: canonicalizeMetaRows,
         summarizeMetaPages: summarizeMetaPages,
         RECORDING_UNIT: RECORDING_UNIT,
-        RECORDING_UNIT_HINT: RECORDING_UNIT_HINT
+        RECORDING_UNIT_HINT: RECORDING_UNIT_HINT,
+        DEFAULT_STUDENT_SCRIPT: DEFAULT_STUDENT_SCRIPT
     };
 })();

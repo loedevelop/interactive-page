@@ -52,8 +52,9 @@ window.FeatureMaterialLayoutPairing = (function () {
     let _excelRawData = null;
     let _excelFileName = '';
     let _excelMaterialFolder = '';
-    /** 雲端來源時，若老師選的是「資料夾底下的某一個檔案」才有值（原始檔名，例如 A.meta.json） */
+    /** 雲端來源時：空＝整個資料夾；__pick__＝自選活頁複選；其餘＝點名的 .meta.json */
     let _excelDriveFileName = '';
+    const DRIVE_PICK_SHEETS = '__pick__';
     /** local＝本機 Excel（圖一：選檔＋目的資料夾）；drive＝雲端教材資料夾／檔案下拉 */
     let _excelSourceMode = 'local';
     /** @type {Array<object>} */
@@ -88,6 +89,11 @@ window.FeatureMaterialLayoutPairing = (function () {
      * 這次要修的東西，見該檔案的說明）。
      */
     const SEMANTIC_KEY_SEED = ['vBK_name', 'page', 'item_no', 'display_zh', 'pos', 'pre', 'answer_en', 'article', 'sheet_id', 'blank_1', 'blank_2', 'blank_1_zh', 'blank_2_zh', 'image_url'];
+    /** 全站公式同一把鑰匙：資料項名稱或該範本欄位代號皆可。禁止只對某一格另寫一套。 */
+    const FORMULA_BOTH_HINT = '資料項名稱或該範本欄位代號皆可，例如 pre&amp;" "&amp;answer_en 或 AO&amp;" "&amp;AP';
+    const FORMULA_BOTH_PLACEHOLDER = 'pre&" "&answer_en 或 AO&" "&AP';
+    const STUDENT_SCRIPT_TAG_HINT = '標記（可選）：&lt;page title&gt; 每頁一次　&lt;blank&gt; 空行（在 title 與 data 中間＝每頁一次；在 data 後＝每題一次）　&lt;data&gt; 每列一次。沒標記＝整份當資料列（仍加系統頁首）。有標記＝只套公式。';
+    const STUDENT_SCRIPT_TAG_PLACEHOLDER = '<page title>vBK_name&" - "&page\n<blank>\n<data>item_no&". "&pos&"  "&pre&" "&answer_en&"    "&display_zh';
     let _sessionSemanticKeys = [];
     /** folder|templateId → { classIds, classNames }，給套用區塊即時顯示「哪些班已在用」 */
     let _comboUsageCache = {};
@@ -114,8 +120,10 @@ window.FeatureMaterialLayoutPairing = (function () {
              * 沒有任何範本時預設 design，否則預設 apply。
              */
             workflowMode: '',
-            /** extraction＝只當擷取範本；both＝擷取範本與試卷範本。雲端來源固定試卷。 */
-            quickApplyRole: isDriveSource() ? 'both' : 'extraction',
+            /** exam＝只當試卷（雲端不產檔）；extraction＝只當擷取（產檔）；both＝擷取＋試卷（產檔）。 */
+            quickApplyRole: 'extraction',
+            /** 這次勾的活頁當成一組（出作業再選活頁）。沒勾＝各自獨立。寫進每一本活頁。 */
+            isGroup: false,
             /** 這次套用要指派的班級 id → true */
             quickApplyClassIds: {},
             quickApplyTemplateName: '',
@@ -231,13 +239,14 @@ window.FeatureMaterialLayoutPairing = (function () {
                     <div style="font-size:0.74rem; font-weight:800; color:#475569; margin-bottom:4px;">書寫 批改標準（共 ${aCount} 欄）</div>
                     <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:pointer; margin-bottom:3px;">
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="separate" ${answerMode === 'separate' ? 'checked' : ''}${lockAttr}>
-                        分開比對（每欄各自獨立比對，例如 AN、AO 各一個空格分開判定）
+                        分開比對（每欄各自獨立比對）
                     </label>
                     <label style="display:flex; align-items:center; gap:5px; font-size:0.78rem; color:#334155; cursor:${gradingLocked ? 'not-allowed' : 'pointer'};">
                         <input type="radio" name="${prefix}-answer-mode-${esc(cfg.id || '')}" class="${prefix}-answer-mode-opt" value="combine" ${answerMode === 'combine' ? 'checked' : ''}${lockAttr}>
-                        結合成一個答案（用公式組合多欄，例如 AN&amp;" "&amp;AO）
+                        結合成一個答案（用公式組合多欄）
                     </label>
-                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='結合公式，照欄位代號寫，例如 AO&amp;" "&amp;AP' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};"${lockAttr}>
+                    <input type="text" class="form-control ${prefix}-answer-combine-note" value="${esc(cfg.answerCombineNote || '')}" placeholder='${FORMULA_BOTH_PLACEHOLDER}' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${answerMode === 'combine' ? 'block' : 'none'};"${lockAttr}>
+                    <div style="font-size:0.68rem; color:#64748B; margin-top:4px; display:${answerMode === 'combine' ? 'block' : 'none'};">${FORMULA_BOTH_HINT}</div>
                 </div>` : `
                 <div style="margin-bottom:10px; font-size:0.76rem; color:#94A3B8;">書寫 批改標準：書寫答案欄數≤1，沒有「多欄合併／分開比對」的選擇。</div>`;
         const speakHint = gradingLocked
@@ -267,7 +276,8 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <input type="radio" name="${prefix}-speak-mode-${esc(cfg.id || '')}" class="${prefix}-speak-mode-opt" value="paste" ${speakMode === 'paste' ? 'checked' : ''}${speakLockAttr}>
                         直接貼上多筆資料（標注起始題號，可再逐列個別修正）
                     </label>
-                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='例如 AN&amp;" "&amp;AO，可用資料項名稱或欄位代號' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};"${speakLockAttr}>
+                    <input type="text" class="form-control ${prefix}-speak-formula" value="${esc(cfg.speakFormula || '')}" placeholder='${FORMULA_BOTH_PLACEHOLDER}' style="width:100%; padding:6px; margin-top:4px; font-size:0.78rem; display:${speakMode === 'formula' ? 'block' : 'none'};"${speakLockAttr}>
+                    <div style="font-size:0.68rem; color:#64748B; margin-top:4px; display:${speakMode === 'formula' ? 'block' : 'none'};">${FORMULA_BOTH_HINT}</div>
                 </div>
                 <div style="font-size:0.68rem; color:${gradingLocked ? '#94A3B8' : '#92400E'}; margin-top:8px;">${gradingLocked ? '批改屬於試卷範本。只勾擷取時這裡不能用。' : '💡 這裡先記錄批改標準／預設公式；實際口說答案內容（含公式算出來的值／貼上的值）可以到「⚡ 快速套用」產生預覽後逐列個別修正，修正後的值才是最終寫入 meta.json／script.txt 的內容。'}</div>
             </div>
@@ -349,6 +359,20 @@ window.FeatureMaterialLayoutPairing = (function () {
         return isDriveSource() && !!_excelMaterialFolder && !_excelDriveFileName;
     }
 
+    function isDrivePickSheets() {
+        return isDriveSource() && _excelDriveFileName === DRIVE_PICK_SHEETS;
+    }
+
+    function isDriveApplyMetaFile(o) {
+        const name = String((o && o.fileName) || '').trim();
+        if (!name || name === DRIVE_PICK_SHEETS) return false;
+        if (o && o.fileKind === 'script') return false;
+        if (window.MaterialFileNames && typeof window.MaterialFileNames.isMetaFileName === 'function') {
+            return window.MaterialFileNames.isMetaFileName(name);
+        }
+        return /\.meta\.json$/i.test(name);
+    }
+
     function seedDriveFileCheck(seg) {
         if (!seg || !isDriveSource()) return;
         if (!seg.checkedSheets) seg.checkedSheets = {};
@@ -356,7 +380,11 @@ window.FeatureMaterialLayoutPairing = (function () {
             currentSheetNames().forEach(function (n) { seg.checkedSheets[n] = true; });
             return;
         }
-        if (!_excelDriveFileName) return;
+        if (isDrivePickSheets() || !_excelDriveFileName) return;
+        if (window.MaterialFileNames && typeof window.MaterialFileNames.isMetaFileName === 'function'
+            && !window.MaterialFileNames.isMetaFileName(_excelDriveFileName)) {
+            return;
+        }
         const stem = stemFromMetaFileName(_excelDriveFileName);
         if (!stem) return;
         const already = Object.keys(seg.checkedSheets).some(function (k) { return seg.checkedSheets[k]; });
@@ -374,7 +402,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 byFolder[folder] = [];
                 order.push(folder);
             }
-            if (o.fileName) byFolder[folder].push(String(o.fileName));
+            if (isDriveApplyMetaFile(o)) byFolder[folder].push(String(o.fileName));
         });
         uniqueFolderNames('', 'teacher').forEach(function (f) {
             if (!byFolder[f]) {
@@ -393,9 +421,12 @@ window.FeatureMaterialLayoutPairing = (function () {
             });
             html += '<optgroup label="📁 ' + esc(folder) + '">';
             const folderSelected = cur === folder;
-            if (folderSelected) matched = true;
+            const pickVal = folder + '::' + DRIVE_PICK_SHEETS;
+            const pickSelected = cur === pickVal;
+            if (folderSelected || pickSelected) matched = true;
             html += '<option value="' + esc(folder) + '"' + (folderSelected ? ' selected' : '') + '>整個資料夾（'
-                + (files.length ? (files.length + ' 個檔案') : '尚無檔案') + '）</option>';
+                + (files.length ? (files.length + ' 個 meta') : '尚無 .meta.json') + '）</option>';
+            html += '<option value="' + esc(pickVal) + '"' + (pickSelected ? ' selected' : '') + '>自選活頁（可複選）</option>';
             files.forEach(function (fn) {
                 const val = folder + '::' + fn;
                 const isCur = cur === val;
@@ -684,12 +715,18 @@ window.FeatureMaterialLayoutPairing = (function () {
                     source_file_name: row.source_file_name || '',
                     row_start: row.row_start || '',
                     row_end: row.row_end || '',
+                    is_group: !!row.is_group,
+                    _groupSheetCount: 0,
+                    _groupTrueCount: 0,
                     _latestUpdatedAt: ''
                 };
                 order.push(groupKey);
             }
             const g = groups[groupKey];
             g.sheet_ids.push(row.sheet_stem);
+            g._groupSheetCount += 1;
+            if (row.is_group) g._groupTrueCount += 1;
+            g.is_group = g._groupSheetCount > 0 && g._groupTrueCount === g._groupSheetCount;
             // 同一組裡取「最近一次更新」的那個活頁決定要顯示的行數起迄／來源——這幾個欄位
             // 舊版是整組共用一份，現在改成逐活頁存，用最新那筆當代表值最貼近老師目前的意圖
             if (!g._latestUpdatedAt || (row.updated_at && row.updated_at > g._latestUpdatedAt)) {
@@ -723,6 +760,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     source_file_name,
                     row_start,
                     row_end,
+                    is_group,
                     updated_at,
                     material_folders!inner ( id, root_kind, class_id, folder_name, teacher_id ),
                     material_templates ( id, name )
@@ -790,35 +828,48 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (folderIds.length) {
             const { data: beforeRows, error: beforeErr } = await window.supabaseClient
                 .from('material_sheets')
-                .select('id, material_folder_id, sheet_stem')
+                .select('id, material_folder_id, sheet_stem, extraction_template_id')
                 .in('material_folder_id', folderIds);
             if (beforeErr) throw beforeErr;
             beforeSheets = beforeRows || [];
         }
+        function sheetLookupKey(stem, templateId) {
+            return String(stem || '').trim().toUpperCase() + '|' + String(templateId || '');
+        }
         const existingSheetsByFolder = {};
         beforeSheets.forEach(function (s) {
             if (!existingSheetsByFolder[s.material_folder_id]) existingSheetsByFolder[s.material_folder_id] = {};
-            existingSheetsByFolder[s.material_folder_id][String(s.sheet_stem || '').trim().toUpperCase()] = s.id;
+            existingSheetsByFolder[s.material_folder_id][sheetLookupKey(s.sheet_stem, s.extraction_template_id)] = s.id;
         });
         if (window.MaterialNameMap && typeof window.MaterialNameMap.ensureLoaded === 'function') {
             await window.MaterialNameMap.ensureLoaded(false);
         }
 
-        function existingSheetIdForStem(folderId, stem) {
+        function existingSheetIdForStem(folderId, stem, templateId) {
             const map = existingSheetsByFolder[folderId] || {};
             const keys = (window.MaterialNameMap && typeof window.MaterialNameMap.lookupKeys === 'function')
                 ? window.MaterialNameMap.lookupKeys('sheet_stem', stem)
                 : [stem];
             for (let i = 0; i < keys.length; i++) {
-                const id = map[String(keys[i] || '').trim().toUpperCase()];
+                const id = map[sheetLookupKey(keys[i], templateId)];
                 if (id) return id;
             }
             const hit = window.MaterialNameMap && window.MaterialNameMap.resolve
                 ? window.MaterialNameMap.resolve('sheet_stem', stem)
                 : null;
             if (hit && hit.materialSheetId && String(hit.materialFolderId) === String(folderId)) {
-                return hit.materialSheetId;
+                const before = beforeSheets.find(function (s) { return String(s.id) === String(hit.materialSheetId); });
+                if (before && String(before.extraction_template_id || '') === String(templateId || '')) {
+                    return hit.materialSheetId;
+                }
             }
+            const folderIdS = String(folderId || '');
+            const stemU = String(stem || '').trim().toUpperCase();
+            const sameStem = beforeSheets.filter(function (s) {
+                return String(s.material_folder_id || '') === folderIdS
+                    && String(s.sheet_stem || '').trim().toUpperCase() === stemU;
+            });
+            if (sameStem.length === 1) return sameStem[0].id;
             return null;
         }
 
@@ -850,7 +901,7 @@ window.FeatureMaterialLayoutPairing = (function () {
 
             for (const stem of sheetStems) {
                 const upperStem = stem.toUpperCase();
-                const existingId = existingSheetIdForStem(materialFolderId, stem);
+                const existingId = existingSheetIdForStem(materialFolderId, stem, extractionTemplateId);
                 const payload = {
                     material_folder_id: materialFolderId,
                     extraction_template_id: extractionTemplateId,
@@ -860,6 +911,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                     source_file_name: d.source_file_name || null,
                     row_start: d.row_start || null,
                     row_end: d.row_end || null,
+                    is_group: d.is_group === true,
                     updated_at: new Date().toISOString()
                 };
                 if (existingId) {
@@ -875,13 +927,13 @@ window.FeatureMaterialLayoutPairing = (function () {
                             newStem: stem
                         });
                     }
-                    existingSheetsByFolder[materialFolderId][upperStem] = existingId;
+                    existingSheetsByFolder[materialFolderId][sheetLookupKey(stem, extractionTemplateId)] = existingId;
                     touchedSheetIds[String(existingId)] = true;
                 } else {
                     const { data: inserted, error } = await window.supabaseClient
                         .from('material_sheets').insert(payload).select('id').single();
                     if (error) throw error;
-                    existingSheetsByFolder[materialFolderId][upperStem] = inserted.id;
+                    existingSheetsByFolder[materialFolderId][sheetLookupKey(stem, extractionTemplateId)] = inserted.id;
                     touchedSheetIds[String(inserted.id)] = true;
                 }
             }
@@ -1367,9 +1419,22 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (!isDriveSource()) return renderSegmentSheetChecklistHtml(seg);
         if (isDriveWholeFolder()) {
             const n = currentSheetNames().length;
-            return '<div style="font-size:0.76rem; color:#047857; font-weight:700; margin-bottom:10px;">已選整個資料夾，' + n + ' 個 meta 全部納入，不用再勾選。</div>';
+            return (
+                '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">'
+                + '<div style="font-size:0.76rem; color:#047857; font-weight:700;">已選整個資料夾，' + n + ' 個 meta 全部納入，不用再勾選。要只套其中幾本，上面改選「自選活頁（可複選）」。</div>'
+                + sheetsGroupCheckboxHtml('mlp-excel-sheets-group', !!seg.isGroup)
+                + '</div>'
+            );
         }
         return renderSegmentSheetChecklistHtml(seg);
+    }
+
+    function sheetsGroupCheckboxHtml(inputClass, checked) {
+        return (
+            '<label style="display:inline-flex; align-items:center; gap:5px; margin-left:auto; font-size:0.76rem; font-weight:800; color:#0F766E; cursor:pointer; white-space:nowrap; flex-shrink:0;">'
+            + '<input type="checkbox" class="' + inputClass + '" ' + (checked ? 'checked' : '') + ' style="margin:0;">'
+            + '群組</label>'
+        );
     }
 
     function renderSegmentSheetChecklistHtml(seg) {
@@ -1379,11 +1444,16 @@ window.FeatureMaterialLayoutPairing = (function () {
                 ? '<div style="font-size:0.76rem; color:#B45309; font-weight:800; margin-bottom:10px;">這個雲端教材資料夾目前偵測不到活頁（.meta.json）。清單可能還沒載入，或資料夾是空的。</div>'
                 : '';
         }
-        const driveFileHint = (isDriveSource() && _excelDriveFileName)
-            ? '已自動勾選所選檔案，其餘 meta 可再複選：'
+        const driveFileHint = isDriveSource()
+            ? (isDrivePickSheets()
+                ? '自選活頁，可複選（跟本機勾活頁同一套）：'
+                : '已自動勾選所選檔案，其餘 meta 可再複選：')
             : '這組（Template）要套用到哪些活頁？偵測到 ' + names.length + ' 個活頁，可多選：';
-        return '<div style="font-size:0.76rem; font-weight:800; color:#475569; margin-bottom:6px;">' + driveFileHint
+        return '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">'
+            + '<div style="font-size:0.76rem; font-weight:800; color:#475569;">' + driveFileHint
             + ' <span class="mlp-excel-sheets-status" style="font-weight:700; color:#0F766E;"></span></div>'
+            + sheetsGroupCheckboxHtml('mlp-excel-sheets-group', !!seg.isGroup)
+            + '</div>'
             + '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">'
             + names.map(function (name) {
                 const checked = !!seg.checkedSheets[name];
@@ -1420,6 +1490,11 @@ window.FeatureMaterialLayoutPairing = (function () {
      *    讓老師至少先看到「打勾生效＋處理中」，不是整段時間畫面完全靜止
      */
     function bindSegmentSheetChecklistEvents(seg, cardEl) {
+        cardEl.querySelectorAll('.mlp-excel-sheets-group').forEach(function (groupEl) {
+            groupEl.addEventListener('change', function () {
+                seg.isGroup = !!this.checked;
+            });
+        });
         cardEl.querySelectorAll('.mlp-excel-sheet-chk').forEach(function (chk) {
             chk.addEventListener('change', function () {
                 const sheetName = this.getAttribute('data-sheet');
@@ -1798,7 +1873,7 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function templatesForCurrentSource() {
         const all = getAllTemplatesForApply();
-        if (isDriveSource()) return all.filter(function (t) { return t && t.is_exam_role; });
+        if (isDriveSource()) return all.filter(function (t) { return t && (t.is_exam_role || t.is_extraction_role); });
         return all.filter(function (t) { return t && t.is_extraction_role; });
     }
 
@@ -1838,7 +1913,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <div class="mlp-excel-workflow-radios" style="display:flex; flex-direction:column; gap:6px; margin-bottom:10px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:0.82rem; font-weight:800; color:#047857; cursor:pointer;">
                         <input type="radio" name="mlp-excel-workflow-${esc(seg.id)}" class="mlp-excel-workflow-opt" value="apply" ${isApply ? 'checked' : ''}>
-                        ${isDriveSource() ? '套用目前的試卷範本' : '套用目前的範本'}
+                        套用目前的範本
                     </label>
                     <label style="display:flex; align-items:center; gap:6px; font-size:0.82rem; font-weight:800; color:#0F766E; cursor:pointer;">
                         <input type="radio" name="mlp-excel-workflow-${esc(seg.id)}" class="mlp-excel-workflow-opt" value="design" ${!isApply ? 'checked' : ''}>
@@ -1851,7 +1926,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <div class="mlp-excel-quickapply-results">${(seg.quickApplyResults || []).map(function (app) { return renderAppRow(app, { collapsedSummary: true }); }).join('')}</div>
                 <div class="mlp-excel-design-body" style="display:${isApply ? 'none' : 'block'}; margin-top:8px; padding-top:8px; border-top:1px dashed #CBD5E1;">
                     <div class="mlp-excel-sheets-area">${renderDriveSheetAreaHtml(seg)}</div>
-                    ${isDriveSource() ? '<div style="font-size:0.76rem; color:#1D4ED8; font-weight:700; margin-bottom:10px;">雲端教材已是發布後的 meta，這裡是套用或新設計<b>試卷範本</b>並指派班級，不是從 Excel 擷取欄位。要擷取欄位請改選本機檔案。</div>' : ''}
+                    ${isDriveSource() ? '<div style="font-size:0.76rem; color:#1D4ED8; font-weight:700; margin-bottom:10px;">雲端教材已是發布後的 meta。套用目前的範本：只套試卷不產檔；只要當擷取（含雙用）就從現有 json 產檔。這裡的「設計新試卷範本」不是從 Excel 擷取欄位。</div>' : ''}
                     <div class="mlp-excel-cols-area">${isDriveSource() ? '' : renderColsAreaHtml(seg, cols)}</div>
                     <div class="mlp-excel-mapping-area">${(!isDriveSource() && seg.confirmed) ? renderMappingAreaHtml(seg) : ''}</div>
                     <div class="mlp-excel-design-assign">${isApply ? '' : renderDesignAssignHtml(seg)}</div>
@@ -2399,23 +2474,74 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
     }
 
-    async function ensureApplyRoles(matchedTpl, includeExam) {
-        if (!matchedTpl || !window.FeatureTemplateLibrary || typeof window.FeatureTemplateLibrary.addRole !== 'function') return;
+    function templateHasExtraction(t) {
+        return !!(t && t.is_extraction_role);
+    }
+
+    function templateHasExam(t) {
+        return !!(t && t.is_exam_role);
+    }
+
+    function templateIsDual(t) {
+        return templateHasExtraction(t) && templateHasExam(t);
+    }
+
+    /** 雲端雙勾預設只套試卷（不產檔）；不准預設成雙用。 */
+    function defaultApplyRole(tpl) {
         if (isDriveSource()) {
-            if (!matchedTpl.is_exam_role) await window.FeatureTemplateLibrary.addRole(matchedTpl.id, 'exam');
+            if (templateIsDual(tpl) || (templateHasExam(tpl) && !templateHasExtraction(tpl))) return 'exam';
+            return 'extraction';
+        }
+        return 'extraction';
+    }
+
+    function resolveApplyRole(seg, tpl) {
+        const raw = (seg && seg.quickApplyRole) || '';
+        if (isDriveSource()) {
+            if (raw === 'exam' && templateHasExam(tpl)) return 'exam';
+            if (raw === 'both' && templateIsDual(tpl)) return 'both';
+            if (raw === 'extraction' && templateHasExtraction(tpl)) return 'extraction';
+            return defaultApplyRole(tpl);
+        }
+        if (raw === 'both' && templateIsDual(tpl)) return 'both';
+        return 'extraction';
+    }
+
+    /** 套用時只認庫裡已勾的角色，不准在這裡加開角色（會把單用變成雙用）。 */
+    function assertApplyRoles(matchedTpl, role) {
+        const want = role === 'both' ? 'both' : (role === 'exam' ? 'exam' : 'extraction');
+        if (want === 'exam') {
+            if (!matchedTpl || !templateHasExam(matchedTpl)) {
+                throw new Error('這份不是試卷範本，不能只套試卷。');
+            }
             return;
         }
-        if (!matchedTpl.is_extraction_role) {
-            await window.FeatureTemplateLibrary.addRole(matchedTpl.id, 'extraction');
+        if (!matchedTpl || !templateHasExtraction(matchedTpl)) {
+            throw new Error('這份不是擷取範本，不能當擷取產檔。');
         }
-        if (includeExam && !matchedTpl.is_exam_role) {
-            await window.FeatureTemplateLibrary.addRole(matchedTpl.id, 'exam');
+        if (want === 'both' && !templateHasExam(matchedTpl)) {
+            throw new Error('「' + (matchedTpl.name || '') + '」只有擷取角色，不能同時當試卷用。要雙用請先在範本庫勾選試卷角色。');
         }
     }
 
     async function persistApplyComboRecord(seg, appRecord, matchedTpl) {
-        const includeExam = isDriveSource() || !!(seg && seg.quickApplyRole === 'both');
-        await ensureApplyRoles(matchedTpl, includeExam);
+        const driveMode = isDriveSource();
+        const role = resolveApplyRole(seg, matchedTpl);
+        const includeExam = role === 'both';
+        assertApplyRoles(matchedTpl, role);
+        if (driveMode && role === 'exam') {
+            if (!window.FeatureClassMaterialCombinations || typeof window.FeatureClassMaterialCombinations.recordExamApplyFromDrive !== 'function') {
+                throw new Error('教材組合模組未載入，無法只套用試卷');
+            }
+            await window.FeatureClassMaterialCombinations.recordExamApplyFromDrive({
+                folderName: (appRecord && appRecord.material_folder) || _excelMaterialFolder || '',
+                examTemplateId: matchedTpl && matchedTpl.id,
+                sheetStems: (appRecord && appRecord.sheet_ids) || [],
+                isGroup: !!(appRecord && appRecord.is_group)
+            });
+            if (seg) seg.quickApplyRole = defaultApplyRole(matchedTpl);
+            return;
+        }
         if (appRecord && appRecord.template_name && appRecord.material_folder && (appRecord.sheet_ids || []).length) {
             const latest = await fetchTemplateApplications(true);
             const merged = mergeAppRecordIntoList(latest, appRecord);
@@ -2424,9 +2550,13 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.recordApplyFromExcel === 'function' && matchedTpl) {
             await window.FeatureClassMaterialCombinations.recordApplyFromExcel({
                 folderName: (appRecord && appRecord.material_folder) || _excelMaterialFolder || '',
-                templateId: matchedTpl.id
+                templateId: matchedTpl.id,
+                includeExam: includeExam,
+                sheetStems: (appRecord && appRecord.sheet_ids) || [],
+                isGroup: !!(appRecord && appRecord.is_group)
             });
         }
+        if (seg) seg.quickApplyRole = defaultApplyRole(matchedTpl);
     }
 
     function handleApplyExistingTemplate(seg, cardEl) {
@@ -2434,7 +2564,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const matchedEarly = findApplyTemplateForSeg(seg);
         const templateName = (matchedEarly && matchedEarly.name) || (seg.quickApplyTemplateName || '').trim();
         if (!templateName && !seg.quickApplyTemplateId) {
-            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = isDriveSource() ? '❌ 請先選一個要套用的試卷範本' : '❌ 請先選一個要套用的現成擷取範本'; }
+            if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請先選一個要套用的範本'; }
             return;
         }
         const driveMode = isDriveSource();
@@ -2459,20 +2589,17 @@ window.FeatureMaterialLayoutPairing = (function () {
             return;
         }
         const resultsEl = cardEl.querySelector('.mlp-excel-quickapply-results');
-        if (!driveMode && !resultsEl) {
+        const matchedTpl = matchedEarly || findApplyTemplateByName(templateName);
+        const role = resolveApplyRole(seg, matchedTpl);
+        if ((role === 'extraction' || role === 'both') && !resultsEl) {
             window.showFlash && window.showFlash('❌ 系統錯誤：找不到產生結果容器，請重新整理頁面', 'error');
             return;
         }
         try {
+            assertApplyRoles(matchedTpl, role);
             // template_id 一定要一起存：跟「+新增套用」（collectAppFromRow）用同一套自然鍵比對邏輯
             // （naturalAppKey 優先用 template_id），否則快速套用產生的紀錄跟手動新增列各用不同的鍵
             // （一個用 id、一個用名稱），同一組配對永遠合併不到一起，繼續長出重複項。
-            const matchedTpl = matchedEarly || findApplyTemplateByName(templateName);
-            if (driveMode) {
-                seg.quickApplyRole = 'both';
-            } else if (matchedTpl && matchedTpl.is_exam_role) {
-                seg.quickApplyRole = 'both';
-            }
             const newApp = {
                 id: 'mta_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
                 template_name: templateName,
@@ -2484,18 +2611,47 @@ window.FeatureMaterialLayoutPairing = (function () {
                 row_start: driveMode ? '' : rowStart,
                 row_end: driveMode ? '' : (seg.quickApplyRowEnd || '').trim(),
                 source_kind: driveMode ? 'drive' : 'local',
-                source_file_name: driveMode ? '' : (_excelFileName || '')
+                source_file_name: driveMode ? '' : (_excelFileName || ''),
+                is_group: !!seg.isGroup
             };
-            if (driveMode) {
+            if (driveMode && role === 'exam') {
                 if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 正在寫入教材與範本組合…'; }
-            persistApplyComboRecord(seg, newApp, matchedTpl).then(function () {
-                if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = '✅ 已寫入資料庫：這個教材＋範本組合，以及指派的班級'; }
-                refreshComboUsageForSeg(seg, cardEl);
-                refreshTemplateUsageCache();
-                    window.showFlash && window.showFlash('已套用「' + templateName + '」到雲端教材並寫入資料庫', 'success');
+                persistApplyComboRecord(seg, newApp, matchedTpl).then(function () {
+                    if (msgEl) { msgEl.style.color = '#059669'; msgEl.textContent = '✅ 已寫入資料庫：這個教材＋範本組合，以及指派的班級（未產檔）'; }
+                    refreshComboUsageForSeg(seg, cardEl);
+                    refreshTemplateUsageCache();
+                    window.showFlash && window.showFlash('已套用「' + templateName + '」到雲端教材並寫入資料庫（只套試卷，未產檔）', 'success');
                 }).catch(function (persistErr) {
                     console.error('[FeatureMaterialLayoutPairing] 寫入教材與範本組合失敗', persistErr);
                     if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 寫入組合失敗：' + (persistErr.message || persistErr); }
+                });
+                return;
+            }
+            if (driveMode && (role === 'extraction' || role === 'both')) {
+                if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '⏳ 正在讀取雲端現有 meta.json…'; }
+                readDriveMetaRowsForSheets(_excelMaterialFolder, sheetNames).then(function (bySheet) {
+                    const failed = [];
+                    sheetNames.forEach(function (name) {
+                        const gen = buildGenerationFromMetaRows(bySheet[name], matchedTpl);
+                        if (!gen.ok) failed.push(name + '：' + (gen.error || '無法從現有 json 產檔'));
+                    });
+                    if (failed.length) throw new Error(failed.join('\n'));
+                    const state = ensureAppRowState(newApp.id, newApp);
+                    state.existingMetaBySheet = bySheet;
+                    state.fromDriveMeta = true;
+                    seg.quickApplyResults = (seg.quickApplyResults || []).concat([newApp]);
+                    const div = document.createElement('div');
+                    div.innerHTML = renderAppRow(newApp, { collapsedSummary: true });
+                    const newRow = div.firstElementChild;
+                    resultsEl.appendChild(newRow);
+                    bindQuickApplyResultRowEvents(seg, newRow);
+                    highlightNewRow(newRow);
+                    handleGeneratePreview(newRow, newApp.id);
+                    if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 已從現有 json 產生預覽。確認後上傳（新檔名含這次擷取範本，不會蓋掉舊擷取檔）'; }
+                    window.showFlash && window.showFlash('已從現有 json 套用「' + templateName + '」，請確認下方預覽後上傳', 'success');
+                }).catch(function (readErr) {
+                    console.error('[FeatureMaterialLayoutPairing] 從現有 json 產檔失敗', readErr);
+                    if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ ' + (readErr.message || readErr); }
                 });
                 return;
             }
@@ -2562,13 +2718,18 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function driveTargetSheetNames(seg) {
         if (!isDriveSource() || !_excelMaterialFolder) return [];
-        if (!_excelDriveFileName) return currentSheetNames();
+        if (!_excelDriveFileName || isDrivePickSheets()) {
+            if (isDrivePickSheets() && seg) {
+                return Object.keys(seg.checkedSheets || {}).filter(function (k) { return seg.checkedSheets[k]; }).sort();
+            }
+            return currentSheetNames();
+        }
         if (seg) {
             const picked = Object.keys(seg.checkedSheets || {}).filter(function (k) { return seg.checkedSheets[k]; }).sort();
             if (picked.length) return picked;
         }
         const stem = stemFromMetaFileName(_excelDriveFileName);
-        return stem ? [stem] : [];
+        return stem && stem !== DRIVE_PICK_SHEETS ? [stem] : [];
     }
 
     function renderComboUsageBoxHtml(seg, templateName) {
@@ -2581,23 +2742,41 @@ window.FeatureMaterialLayoutPairing = (function () {
     }
 
     function renderComboAssignBlockHtml(seg, templateName) {
+        const selectedTpl = findApplyTemplateByName(templateName) || findApplyTemplateForSeg(seg);
+        const canExtract = templateHasExtraction(selectedTpl);
+        const canExam = templateHasExam(selectedTpl);
+        const canBoth = canExtract && canExam;
+        const role = resolveApplyRole(seg, selectedTpl);
+        if (seg) seg.quickApplyRole = role;
+        const name = 'mlp-excel-apply-role-' + esc(seg.id);
+        function roleRadio(value, label, extraStyle) {
+            return (
+                '<label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:700; color:#334155; cursor:pointer; ' + (extraStyle || 'margin-bottom:3px;') + '">'
+                + '<input type="radio" name="' + name + '" class="mlp-excel-quickapply-role" value="' + value + '" ' + (role === value ? 'checked' : '') + '>'
+                + label
+                + '</label>'
+            );
+        }
         if (isDriveSource()) {
-            seg.quickApplyRole = 'both';
+            let roleHtml = '';
+            if (canExam) roleHtml += roleRadio('exam', '試卷範本（不產檔）');
+            if (canExtract) roleHtml += roleRadio('extraction', '擷取範本（從現有 json 產檔）');
+            if (canBoth) roleHtml += roleRadio('both', '擷取範本與試卷範本（從現有 json 產檔）', 'margin-bottom:10px;');
+            else roleHtml += '<div style="font-size:0.74rem; color:#64748B; font-weight:700; margin:0 0 10px 0;">'
+                + (canExam ? '這份只有試卷角色，只能套試卷、不產檔。' : '這份只有擷取角色，套用就會從現有 json 產檔。')
+                + '</div>';
             return (
                 '<div style="font-size:0.76rem; font-weight:800; color:#047857; margin-bottom:4px;">套用為</div>'
-                + '<div style="font-size:0.78rem; font-weight:800; color:#1D4ED8; margin-bottom:10px;">試卷範本</div>'
+                + roleHtml
                 + renderComboUsageBoxHtml(seg, templateName)
             );
         }
-        const role = seg.quickApplyRole === 'both' ? 'both' : 'extraction';
         return (
             '<div style="font-size:0.76rem; font-weight:800; color:#047857; margin-bottom:4px;">套用為</div>'
-            + '<label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:700; color:#334155; cursor:pointer; margin-bottom:3px;">'
-                + '<input type="radio" name="mlp-excel-apply-role-' + esc(seg.id) + '" class="mlp-excel-quickapply-role" value="extraction" ' + (role === 'extraction' ? 'checked' : '') + '>擷取範本'
-            + '</label>'
-            + '<label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:700; color:#334155; cursor:pointer; margin-bottom:10px;">'
-                + '<input type="radio" name="mlp-excel-apply-role-' + esc(seg.id) + '" class="mlp-excel-quickapply-role" value="both" ' + (role === 'both' ? 'checked' : '') + '>擷取範本與試卷範本'
-            + '</label>'
+            + roleRadio('extraction', '擷取範本')
+            + (canBoth
+                ? roleRadio('both', '擷取範本與試卷範本', 'margin-bottom:10px;')
+                : '<div style="font-size:0.74rem; color:#64748B; font-weight:700; margin:0 0 10px 0;">這份只有擷取角色，只能當擷取用。</div>')
             + renderComboUsageBoxHtml(seg, templateName)
         );
     }
@@ -2621,23 +2800,32 @@ window.FeatureMaterialLayoutPairing = (function () {
         const applyable = templatesForCurrentSource();
         if (!applyable.length) {
             return isDriveSource()
-                ? '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何試卷範本，請改選「🆕 設計新試卷範本」先建立一份。</div>'
+                ? '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何可套用的範本，請改選「🆕 設計新試卷範本」先建立一份。</div>'
                 : '<div style="margin-bottom:10px; padding:10px; background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:8px; color:#94A3B8; font-size:0.8rem;">💡 目前還沒有任何擷取範本，請改選「🆕 設計新擷取範本」先設計一份。</div>';
         }
         const selectedName = (seg.quickApplyTemplateName || '').trim();
         const selectedId = (seg.quickApplyTemplateId || '').trim();
         const driveMode = isDriveSource();
         const driveSheets = driveMode ? driveTargetSheetNames(seg) : [];
-        const canConfirm = driveMode ? !!_excelMaterialFolder : !!sheetNames.length;
+        const canConfirm = driveMode
+            ? (!!_excelMaterialFolder && (isDriveWholeFolder() || driveSheets.length > 0))
+            : !!sheetNames.length;
         const driveTargetHint = driveMode
-            ? (_excelDriveFileName
-                ? ('已選檔案：' + _excelDriveFileName + '（可再複選同資料夾其他 meta）')
-                : ('將套用到整個資料夾「' + _excelMaterialFolder + '」' + (driveSheets.length ? ('（' + driveSheets.length + ' 個 meta，不用再勾選）') : '')))
+            ? (isDriveWholeFolder()
+                ? ('將套用到整個資料夾「' + _excelMaterialFolder + '」' + (driveSheets.length ? ('（' + driveSheets.length + ' 個 meta，不用再勾選）') : ''))
+                : (isDrivePickSheets()
+                    ? ('自選活頁：已勾 ' + driveSheets.length + ' 個 meta')
+                    : ('已選檔案：' + _excelDriveFileName + '（可再複選同資料夾其他 meta）')))
             : '';
+        const driveSheetsHtml = driveMode
+            ? ('<div class="mlp-excel-sheets-area" style="margin-top:10px;">' + renderDriveSheetAreaHtml(seg) + '</div>')
+            : '';
+        const selectedTplForBtn = findApplyTemplateForSeg(seg) || findApplyTemplateByName(selectedName);
+        const driveExamOnly = driveMode && resolveApplyRole(seg, selectedTplForBtn) === 'exam';
         const afterSelectHtml = (selectedId || selectedName) ? (
             '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #A7F3D0;">'
                 + renderComboAssignBlockHtml(seg, selectedName)
-                + '<div class="mlp-excel-sheets-area">' + (driveMode ? renderDriveSheetAreaHtml(seg) : renderSegmentSheetChecklistHtml(seg)) + '</div>'
+                + (driveMode ? '' : '<div class="mlp-excel-sheets-area">' + renderSegmentSheetChecklistHtml(seg) + '</div>')
                 + (driveMode && driveTargetHint ? '<div style="font-size:0.76rem; color:#047857; font-weight:700; margin-bottom:8px;">' + esc(driveTargetHint) + '</div>' : '')
                 + '<div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">'
                     + (driveMode ? '' : (
@@ -2649,7 +2837,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         + '</label>'
                     ))
                     + '<button type="button" class="mlp-excel-quickapply-btn btn" style="padding:7px 16px; font-weight:800; background:#059669; color:white; border:1px solid #059669;" ' + (canConfirm ? '' : 'disabled') + '>'
-                        + (driveMode ? '確認套用並寫入資料庫' : '🚀 產生 meta/script')
+                        + (driveExamOnly ? '確認套用並寫入資料庫' : '🚀 產生 meta/script')
                     + '</button>'
                     + '<span class="mlp-excel-quickapply-msg" style="font-size:0.78rem; font-weight:800;"></span>'
                 + '</div>'
@@ -2658,10 +2846,11 @@ window.FeatureMaterialLayoutPairing = (function () {
         ) : '';
         return (
             '<div style="margin-bottom:10px; padding:12px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px;">'
-                + '<div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">' + (driveMode ? '套用目前的試卷範本：選範本後確認並指派班級' : '套用目前的範本：先選範本，再決定套用角色，然後勾活頁') + '</div>'
+                + '<div style="font-size:0.8rem; font-weight:800; color:#047857; margin-bottom:6px;">' + (driveMode ? '套用目前的範本：選範本後決定套用為（只套試卷不產檔；只要當擷取就從現有 json 產檔）' : '套用目前的範本：先選範本，再決定套用角色，然後勾活頁') + '</div>'
                 + '<label style="font-size:0.78rem; font-weight:700; color:#334155;">選一個範本'
                     + '<select class="form-control mlp-excel-quickapply-select" style="width:100%; max-width:640px; padding:6px; margin-top:2px;">' + buildApplyTemplateOptionsHtml(selectedId, selectedName) + '</select>'
                 + '</label>'
+                + driveSheetsHtml
                 + afterSelectHtml
             + '</div>'
         );
@@ -2685,13 +2874,14 @@ window.FeatureMaterialLayoutPairing = (function () {
             const tpl = findApplyTemplateByName(this.value);
             seg.quickApplyTemplateId = tpl ? tpl.id : this.value;
             seg.quickApplyTemplateName = tpl ? String(tpl.name || '').trim() : '';
-            if (tpl && tpl.is_exam_role) seg.quickApplyRole = 'both';
+            seg.quickApplyRole = defaultApplyRole(tpl);
             renderExcelSegments();
         });
         cardEl.querySelectorAll('.mlp-excel-quickapply-role').forEach(function (radio) {
             radio.addEventListener('change', function () {
                 if (!this.checked) return;
-                seg.quickApplyRole = this.value === 'both' ? 'both' : 'extraction';
+                seg.quickApplyRole = this.value === 'both' ? 'both' : (this.value === 'exam' ? 'exam' : 'extraction');
+                if (isDriveSource()) renderExcelSegments();
             });
         });
         bindQuickApplyClassChecks(seg, cardEl);
@@ -2708,8 +2898,13 @@ window.FeatureMaterialLayoutPairing = (function () {
         const box = cardEl.querySelector('.mlp-excel-combo-usage');
         const tpl = findApplyTemplateForSeg(seg) || findApplyTemplateByName(seg.quickApplyTemplateName || seg.name);
         if (!box || !tpl || !_excelMaterialFolder) return;
-        if (!window.FeatureClassMaterialCombinations || typeof window.FeatureClassMaterialCombinations.lookupUsage !== 'function') return;
-        window.FeatureClassMaterialCombinations.lookupUsage(_excelMaterialFolder, tpl.id).then(function (usage) {
+        const lookupFn = isDriveSource() && typeof window.FeatureClassMaterialCombinations.lookupFolderUsage === 'function'
+            ? function () { return window.FeatureClassMaterialCombinations.lookupFolderUsage(_excelMaterialFolder); }
+            : (typeof window.FeatureClassMaterialCombinations.lookupUsage === 'function'
+                ? function () { return window.FeatureClassMaterialCombinations.lookupUsage(_excelMaterialFolder, tpl.id); }
+                : null);
+        if (!lookupFn) return;
+        lookupFn().then(function (usage) {
             _comboUsageCache[comboUsageCacheKey(_excelMaterialFolder, tpl.id)] = usage;
             const liveBox = cardEl.querySelector('.mlp-excel-combo-usage');
             if (!liveBox) return;
@@ -2807,7 +3002,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             const hit = matchOverwriteTarget(sheetName, overwriteTargets);
             const names = hit
                 ? { meta: hit.meta, script: hit.script || String(hit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt' }
-                : defaultOutputNames(sheetName, templateName, folderName, sheetIds.length);
+                : defaultOutputNames(sheetName, templateName);
             if (hit && existingFieldCount == null) {
                 existingFieldCount = await readExistingMetaFieldCount(folderId, folderName, names.meta);
             }
@@ -2938,7 +3133,10 @@ window.FeatureMaterialLayoutPairing = (function () {
                 await window.FeatureTemplateLibrary.updateTemplate(existing.id, record);
                 record.id = existing.id;
             } else {
-                record.id = await window.FeatureTemplateLibrary.createTemplate(Object.assign({ is_extraction_role: true }, record));
+                record.id = await window.FeatureTemplateLibrary.createTemplate(Object.assign({
+                    is_extraction_role: true,
+                    is_exam_role: !isDriveSource() && seg.quickApplyRole === 'both'
+                }, record));
             }
             await fetchFieldTemplates(true);
             const savedTpl = findApplyTemplateByName(name);
@@ -2954,7 +3152,8 @@ window.FeatureMaterialLayoutPairing = (function () {
                     row_start: seg.rowStart || (seg.mapping && seg.mapping.rowStart) || '',
                     row_end: seg.rowEnd || (seg.mapping && seg.mapping.rowEnd) || '',
                     source_kind: isDriveSource() ? 'drive' : 'local',
-                    source_file_name: isDriveSource() ? '' : (_excelFileName || '')
+                    source_file_name: isDriveSource() ? '' : (_excelFileName || ''),
+                    is_group: !!seg.isGroup
                 };
                 try {
                     await persistApplyComboRecord(seg, appRecord, savedTpl);
@@ -3029,7 +3228,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     // ------------------------------------------------------------------
 
     function openTemplateEditorForNew() {
-        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'direct', speakFormula: '', linesPerPage: 10, fields: '', quizPrompt: '', isExtractionRole: true, isExamRole: false };
+        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'direct', speakFormula: '', linesPerPage: 10, fields: '', quizPrompt: '', studentScript: '_answer_combined_text', isExtractionRole: true, isExamRole: false };
         renderTemplateEditor();
         renderTemplateList();
         const editorEl = document.getElementById('mlp-template-editor');
@@ -3064,6 +3263,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             // 只有勾了考卷範本才算得出來的唯讀預覽——跟每頁行數一樣放在編輯表單裡，直接讀寫 fields 欄位。
             fields: String((t && t.fields) || ''),
             quizPrompt: String((t && t.quiz_prompt) || ''),
+            studentScript: String((t && t.student_script) || '').trim() || '_answer_combined_text',
             // 2026-08-15（老師回報意外刪除事件後要求）：角色勾選（擷取範本／考卷範本）只在編輯表單
             // 裡才能改，不放在清單上，見 renderTemplateEditor() 的角色勾選那一行。
             isExtractionRole: t && t.is_extraction_role !== false,
@@ -3117,14 +3317,22 @@ window.FeatureMaterialLayoutPairing = (function () {
                         <button type="button" id="mlp-tpl-clear-airef" class="btn" style="padding:5px 12px; font-size:0.78rem; font-weight:800; background:white; color:#6D28D9; border:1px solid #DDD6FE; border-radius:6px;">✕ 清除所有已選的口說答案欄（允許不指定）</button>
                     </div>
                 </div>
-                <div style="margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid ${st.isExamRole ? '#C7D2FE' : '#CBD5E1'}; background:${st.isExamRole ? '#F8FAFC' : '#F1F5F9'}; opacity:${st.isExamRole ? '1' : '0.55'}; pointer-events:${st.isExamRole ? 'auto' : 'none'};">
-                    <div style="font-size:0.76rem; font-weight:800; color:${st.isExamRole ? '#4338CA' : '#94A3B8'}; margin-bottom:8px;">特殊排版${st.isExamRole ? '' : '（未勾試卷範本，不使用）'}</div>
-                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">訊息 特殊排版
-                        <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="（預設空白）" ${st.isExamRole ? '' : 'disabled'}>${esc(st.fields || '')}</textarea>
+                <div style="margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid #C7D2FE; background:#F8FAFC;">
+                    <div style="font-size:0.76rem; font-weight:800; color:#4338CA; margin-bottom:8px;">特殊排版</div>
+                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">學生文稿 特殊排版
+                        <textarea id="mlp-tpl-student-script" class="form-control" rows="5" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="${esc(STUDENT_SCRIPT_TAG_PLACEHOLDER)}">${esc(st.studentScript || '_answer_combined_text')}</textarea>
                     </label>
-                    <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">題目 特殊排版
-                        <textarea id="mlp-tpl-quiz-prompt" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="（預設空白）" ${st.isExamRole ? '' : 'disabled'}>${esc(st.quizPrompt || '')}</textarea>
-                    </label>
+                    <div style="font-size:0.7rem; color:#64748B; margin-top:4px; margin-bottom:10px;">${STUDENT_SCRIPT_TAG_HINT} ${FORMULA_BOTH_HINT}。擷取／出作業 Snapshot 都讀這一格，沒有第二套。</div>
+                    <div style="padding-top:8px; border-top:1px dashed #C7D2FE; opacity:${st.isExamRole ? '1' : '0.55'}; pointer-events:${st.isExamRole ? 'auto' : 'none'};">
+                        <div style="font-size:0.72rem; font-weight:800; color:${st.isExamRole ? '#4338CA' : '#94A3B8'}; margin-bottom:8px;">試卷用${st.isExamRole ? '' : '（未勾試卷範本，不使用）'}</div>
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">訊息 特殊排版
+                            <textarea id="mlp-tpl-fields" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='${FORMULA_BOTH_PLACEHOLDER}' ${st.isExamRole ? '' : 'disabled'}>${esc(st.fields || '')}</textarea>
+                        </label>
+                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569; margin-top:10px;">題目 特殊排版
+                            <textarea id="mlp-tpl-quiz-prompt" class="form-control" rows="2" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder='${FORMULA_BOTH_PLACEHOLDER}' ${st.isExamRole ? '' : 'disabled'}>${esc(st.quizPrompt || '')}</textarea>
+                        </label>
+                        <div style="font-size:0.68rem; color:#64748B; margin-top:6px;">${FORMULA_BOTH_HINT}</div>
+                    </div>
                 </div>
                 <div class="mlp-tpl-answer-grading-wrap">${renderAnswerGradingSettingsHtml('mlp-tpl', st, countAnswerColsFromColumns(st.columns), templateExamGradingOpts(st))}</div>
                 <div style="margin-top:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -3225,6 +3433,8 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (fieldsEl) fieldsEl.addEventListener('change', function () { _templateEditorState.fields = this.value; });
         const quizPromptEl = document.getElementById('mlp-tpl-quiz-prompt');
         if (quizPromptEl) quizPromptEl.addEventListener('change', function () { _templateEditorState.quizPrompt = this.value; });
+        const studentScriptEl = document.getElementById('mlp-tpl-student-script');
+        if (studentScriptEl) studentScriptEl.addEventListener('change', function () { _templateEditorState.studentScript = this.value; });
         const addColBtn = document.getElementById('mlp-tpl-add-col');
         if (addColBtn) addColBtn.addEventListener('click', function () {
             _templateEditorState.columns.push({ letter: '', semantic_key: '', is_question: false, is_answer: false, is_info: false, is_ai_ref: false });
@@ -3318,7 +3528,11 @@ window.FeatureMaterialLayoutPairing = (function () {
                     return;
                 }
                 const fresh = getFieldTemplatesCachedSync().find(function (x) { return x.id === st.id; });
-                if (fresh) st.fields = fresh.fields || '';
+                if (fresh) {
+                    st.fields = fresh.fields || '';
+                    st.quizPrompt = fresh.quiz_prompt || '';
+                    st.studentScript = String(fresh.student_script || '').trim() || '_answer_combined_text';
+                }
                 renderTemplateEditor();
                 const freshMsgEl = document.getElementById('mlp-tpl-role-msg');
                 if (freshMsgEl) { freshMsgEl.style.color = '#0F766E'; freshMsgEl.textContent = flashText; }
@@ -3364,7 +3578,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             speak_formula: st.speakFormula || '',
             lines_per_page: parseInt(st.linesPerPage, 10) || 10,
             fields: st.fields || '',
-            quiz_prompt: st.quizPrompt || ''
+            quiz_prompt: st.quizPrompt || '',
+            student_script: st.studentScript || ''
         };
         record.columns.forEach(function (c) { rememberSemanticKey(c.semantic_key); });
         const saveBtn = document.getElementById('mlp-tpl-save');
@@ -3503,13 +3718,14 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const announceLine = function (label, value) {
                     return '<div style="font-size:0.8rem; color:' + announceColor + '; margin-top:2px;">' + label + '：' + esc(value) + '</div>';
                 };
+                const rowStudent = announceLine('學生文稿 特殊排版', t.student_script || '_answer_combined_text');
                 const rowFields = announceLine('訊息 特殊排版', t.fields || '尚無');
                 const rowQuiz = announceLine('題目 特殊排版', t.quiz_prompt || '尚無');
                 const row3 = announceLine('書寫 批改標準', aCount > 1 ? (t.answer_mode === 'separate' ? '分開比對' : '結合') : '—（書寫答案欄數≤1）');
                 const row4 = announceLine('口說 批改標準', speakModeLabel);
                 const rowUsage = templateUsageHtml(t);
                 return '<li data-id="' + esc(t.id) + '" style="' + liStyle + '">'
-                    + row1 + row2 + rowFields + rowQuiz + row3 + row4 + rowUsage
+                    + row1 + row2 + rowStudent + rowFields + rowQuiz + row3 + row4 + rowUsage
                     + '</li>';
             }).join('')
             + '</ul>';
@@ -3593,7 +3809,13 @@ window.FeatureMaterialLayoutPairing = (function () {
             answerMode: (t && t.answer_mode === 'separate') ? 'separate' : 'combine',
             answerCombineNote: (t && t.answer_combine_note) || '',
             speakMode: normalizeSpeakMode(t && t.speak_mode),
-            speakFormula: (t && t.speak_formula) || ''
+            speakFormula: (t && t.speak_formula) || '',
+            linesPerPage: (t && t.lines_per_page) || 10,
+            fields: String((t && t.fields) || ''),
+            quizPrompt: String((t && t.quiz_prompt) || ''),
+            studentScript: String((t && t.student_script) || '').trim() || '_answer_combined_text',
+            isExtractionRole: true,
+            isExamRole: !!(t && t.is_exam_role)
         };
         renderTemplateEditor();
         renderTemplateList();
@@ -3638,7 +3860,8 @@ window.FeatureMaterialLayoutPairing = (function () {
                 // 活頁名稱 → 完整逐列矩陣（array of arrays，含表頭列），避免同一活頁重複解析
                 sheetMatrixCache: {},
                 // 活頁名稱 → 這次「產生預覽」的結果 { rows, scriptLines, warnings, outputMeta, outputScript, uploadStatus }
-                gen: {}
+                gen: {},
+                isGroup: !!(app && app.is_group)
             };
         }
         return _appRowState[appId];
@@ -3675,12 +3898,16 @@ window.FeatureMaterialLayoutPairing = (function () {
                 + '<div class="mlp-app-local-status" style="font-size:0.74rem; color:#EF4444; min-height:1.1em; margin-bottom:4px;"></div>'
                 + (state.localFileName ? '<div style="font-size:0.72rem; color:#64748B; margin-bottom:4px;">目前參考檔案：' + esc(state.localFileName) + '</div>' : '')
                 + (names.length
-                    ? ('<div style="font-size:0.74rem; font-weight:800; color:#475569;">活頁（可複選，偵測到 ' + names.length + ' 個）：</div>' + renderSheetCheckboxGridHtml(names, state.checkedSheets))
+                    ? ('<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><div style="font-size:0.74rem; font-weight:800; color:#475569;">活頁（可複選，偵測到 ' + names.length + ' 個）：</div>'
+                        + sheetsGroupCheckboxHtml('mlp-app-sheets-group', !!state.isGroup) + '</div>'
+                        + renderSheetCheckboxGridHtml(names, state.checkedSheets))
                     : '<div style="color:#94A3B8; font-size:0.78rem;">請選擇本機 Excel 檔案，讀取後會列出所有活頁</div>');
         } else {
             const stems = folder ? sheetStemsForFolder(classId, rootKind, folder) : [];
             bodyHtml = stems.length
-                ? ('<div style="font-size:0.74rem; font-weight:800; color:#475569;">活頁（可複選，偵測到 ' + stems.length + ' 個）：</div>' + renderSheetCheckboxGridHtml(stems, state.checkedSheets))
+                ? ('<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><div style="font-size:0.74rem; font-weight:800; color:#475569;">活頁（可複選，偵測到 ' + stems.length + ' 個）：</div>'
+                    + sheetsGroupCheckboxHtml('mlp-app-sheets-group', !!state.isGroup) + '</div>'
+                    + renderSheetCheckboxGridHtml(stems, state.checkedSheets))
                 : '<div style="color:#94A3B8; font-size:0.78rem;">' + (folder ? '這個資料夾目前偵測不到任何活頁' : '請先在上面選好歸屬檔案的教材資料夾') + '</div>';
         }
         return toggleHtml + bodyHtml;
@@ -3759,6 +3986,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         });
         const fileEl = rowEl.querySelector('.mlp-app-local-file');
         if (fileEl) fileEl.addEventListener('change', function () { handleAppLocalFileChange(appId, this, rowEl); });
+        const appGroupEl = rowEl.querySelector('.mlp-app-sheets-group');
+        if (appGroupEl) {
+            appGroupEl.addEventListener('change', function () {
+                state.isGroup = !!this.checked;
+            });
+        }
         rowEl.querySelectorAll('.mlp-app-sheet-chk').forEach(function (chk) {
             chk.addEventListener('change', function () {
                 const name = this.getAttribute('data-sheet');
@@ -4204,32 +4437,36 @@ window.FeatureMaterialLayoutPairing = (function () {
      * （檔名雖然還是不會記錄原始 Excel 檔案名稱，但至少能看出活頁＋擷取範本的組合）。
      * templateName 留空（例如還沒選擷取範本時）就退回舊行為，只用活頁名，不留多餘的句點。
      */
-    function stripTemplateSuffixFromStem(stem, templateName) {
-        let s = String(stem || '').trim().replace(/\.meta\.json$/i, '');
-        const t = sanitizeForFileNamePart(templateName || '');
-        if (t) {
-            const re = new RegExp('\\.' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
-            s = s.replace(re, '');
-        }
-        return s || String(stem || '').trim().replace(/\.meta\.json$/i, '');
+    function currentSheetAlias(stem, sheetId) {
+        const FN = window.MaterialFileNames;
+        return FN && typeof FN.currentAlias === 'function'
+            ? FN.currentAlias(stem, sheetId)
+            : String(stem || '').trim();
     }
 
-    function defaultOutputNames(sheetName, templateName, folderName, selectedCount) {
+    /** 全站同一公式：有擷取範本＝{活頁}.{範本}，沒有＝{活頁}。 */
+    function defaultOutputNames(sheetName, templateName, alias) {
+        const FN = window.MaterialFileNames;
+        const live = String(sheetName || '').trim() || 'output';
+        const nick = String(alias || live).trim() || live;
+        if (FN && typeof FN.applyFormula === 'function' && typeof FN.fileFormula === 'function') {
+            const body = FN.applyFormula(FN.fileFormula(templateName), live, nick, templateName);
+            return { meta: FN.fullMeta(body), script: FN.fullScript(body) };
+        }
         const layoutPart = sanitizeForFileNamePart(templateName || '');
-        // 檔名活頁段＝老師勾的那一頁。禁止「只勾一頁就把活頁名換成資料夾名」
-        // （勾 VerbIrregular-3、資料夾叫 Jessie-vBK-2 時會產成錯的 Jessie-vBK-2.vocab-word）。
-        const sheetPart = stripTemplateSuffixFromStem(sheetName, templateName) || 'output';
-        const base = layoutPart ? (sheetPart + '.' + layoutPart) : sheetPart;
+        const base = layoutPart ? (live + '.' + layoutPart) : live;
         return { meta: base + '.meta.json', script: base + '.script.txt' };
     }
 
-    /** 老師沒改過檔名時，把舊的「Excel 分頁名」預設升級成資料夾名；手改過的檔名保留。 */
-    function resolveOutputNames(sheetName, templateName, folderName, selectedCount, existing) {
-        const next = defaultOutputNames(sheetName, templateName, folderName, selectedCount);
-        const sheetDefault = defaultOutputNames(sheetName, templateName, '', 0);
+    /** 老師手改過的檔名／別稱保留；沒改過才用同一套公式重算。 */
+    function resolveOutputNames(sheetName, templateName, existing) {
+        const alias = (existing && existing.alias) || currentSheetAlias(sheetName, existing && (existing.id || existing.sheetId || existing.sheet_id));
+        const next = defaultOutputNames(sheetName, templateName, alias);
+        const sheetDefault = defaultOutputNames(sheetName, templateName, sheetName);
         const existingMeta = existing && existing.outputMeta;
         const existingScript = existing && existing.outputScript;
         return {
+            alias: alias,
             meta: (!existingMeta || existingMeta === sheetDefault.meta) ? next.meta : existingMeta,
             script: (!existingScript || existingScript === sheetDefault.script) ? next.script : existingScript
         };
@@ -4245,6 +4482,258 @@ window.FeatureMaterialLayoutPairing = (function () {
         return Object.keys(row).filter(function (k) {
             return k && String(k).charAt(0) !== '_';
         }).length;
+    }
+
+    function existingMetaPublicKeys(rows) {
+        const keys = {};
+        (rows || []).forEach(function (row) {
+            if (!row || typeof row !== 'object') return;
+            Object.keys(row).forEach(function (k) {
+                if (k && String(k).charAt(0) !== '_') keys[k] = true;
+            });
+        });
+        return keys;
+    }
+
+    /** 雲端現有 json 對活頁：同一把 stem 對到多個 meta 就停，不准猜。 */
+    function driveMetaFileNameForSheet(sheetName) {
+        const files = rawFileNamesForFolder('', 'teacher', _excelMaterialFolder);
+        const raw = String(sheetName || '').trim();
+        if (!raw || !files.length) return '';
+        const asFile = /\.meta\.json$/i.test(raw) ? raw : (raw + '.meta.json');
+        const exactFile = files.find(function (fn) { return String(fn).toUpperCase() === asFile.toUpperCase(); });
+        if (exactFile) return exactFile;
+        const key = sheetMatchKey(raw);
+        const hits = files.filter(function (fn) { return sheetMatchKey(fn) === key; });
+        if (hits.length === 1) return hits[0];
+        if (hits.length > 1) {
+            throw new Error('活頁「' + raw + '」對到多個現有 meta（' + hits.join('、') + '），請改選自選活頁或指定檔案，不准猜哪一份');
+        }
+        return '';
+    }
+
+    function parseMetaRowsFromContent(content) {
+        if (window.MaterialSnapshot && typeof window.MaterialSnapshot.parseMetaContent === 'function') {
+            return window.MaterialSnapshot.parseMetaContent(content) || [];
+        }
+        const parsed = JSON.parse(content);
+        return Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.rows) ? parsed.rows : []);
+    }
+
+    async function resolveTeacherMaterialsRootId() {
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.resolveMaterialsRootFolderId !== 'function') {
+            throw new Error('FeatureTimeline 尚未載入，無法讀取雲端教材');
+        }
+        const rootId = await window.FeatureTimeline.resolveMaterialsRootFolderId('', 'teacher');
+        if (!rootId) throw new Error('找不到老師個人教材根，無法讀取現有 json');
+        return rootId;
+    }
+
+    function catalogFileIdForMeta(folderName, fileName) {
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMetaCatalogEntry !== 'function') return '';
+        const wantFolder = String(folderName || '').trim().toUpperCase();
+        const wantFile = String(fileName || '').trim().toUpperCase();
+        if (!wantFolder || !wantFile) return '';
+        const entry = window.FeatureTimeline.getMetaCatalogEntry('', 'teacher');
+        const opts = (entry && entry.options) || [];
+        for (let i = 0; i < opts.length; i++) {
+            const o = opts[i];
+            if (!o || !o.fileId) continue;
+            if (String(o.folderName || '').trim().toUpperCase() !== wantFolder) continue;
+            if (String(o.fileName || '').trim().toUpperCase() === wantFile) return o.fileId;
+        }
+        return '';
+    }
+
+    async function readDriveMetaRowsForSheets(folderName, sheetNames) {
+        if (!window.GasService || typeof window.GasService.readMaterialFiles !== 'function') {
+            throw new Error('GasService.readMaterialFiles 尚未載入');
+        }
+        const rootFolderId = await resolveTeacherMaterialsRootId();
+        const items = [];
+        const errors = [];
+        (sheetNames || []).forEach(function (name) {
+            try {
+                const fileName = driveMetaFileNameForSheet(name);
+                if (!fileName) errors.push(name + '：找不到現有 .meta.json');
+                else items.push({
+                    sheet: name,
+                    fileName: fileName,
+                    fileId: catalogFileIdForMeta(folderName, fileName)
+                });
+            } catch (err) {
+                errors.push(err.message || String(err));
+            }
+        });
+        if (errors.length) throw new Error(errors.join('\n'));
+        const files = await window.GasService.readMaterialFiles(rootFolderId, items.map(function (it) {
+            return { materialFolder: folderName, fileName: it.fileName, fileId: it.fileId };
+        }), 'teacher');
+        const byFile = {};
+        const failByFile = {};
+        (files || []).forEach(function (f) {
+            const fn = String((f && (f.fileName || f.name)) || '').trim();
+            const key = fn.toUpperCase();
+            if (!f || !f.ok || !f.content) {
+                if (key) failByFile[key] = (f && f.message) || '讀取失敗';
+                return;
+            }
+            if (key) byFile[key] = f;
+        });
+        const bySheet = {};
+        items.forEach(function (it) {
+            const hit = byFile[it.fileName.toUpperCase()];
+            if (!hit) {
+                const why = failByFile[it.fileName.toUpperCase()];
+                errors.push(it.sheet + '：讀不到現有「' + it.fileName + '」' + (why ? ('（' + why + '）') : ''));
+                return;
+            }
+            let rows = [];
+            try {
+                rows = parseMetaRowsFromContent(hit.content);
+            } catch (_e) {
+                errors.push(it.sheet + '：現有 json 解析失敗');
+                return;
+            }
+            if (!rows.length) {
+                errors.push(it.sheet + '：現有 json 沒有列');
+                return;
+            }
+            bySheet[it.sheet] = rows;
+        });
+        if (errors.length) throw new Error(errors.join('\n'));
+        return bySheet;
+    }
+
+    /**
+     * 雲端擷取：資料項只從現有 json 拿。新範本資料項必須 ⊆ 現有 json；缺一筆就停。
+     * 書寫／口說衍生欄依這次擷取範本重算，不准抄舊 json 的 _answer／script。
+     */
+    function buildGenerationFromMetaRows(existingRows, template) {
+        const cols = Array.isArray(template && template.columns) ? template.columns : [];
+        const needed = cols.map(function (c) { return String((c && c.semantic_key) || '').trim(); }).filter(Boolean);
+        const uniqueNeeded = needed.filter(function (k, i) { return needed.indexOf(k) === i; });
+        if (!uniqueNeeded.length) {
+            return { ok: false, error: '這份擷取範本沒有資料項，不能從現有 json 產檔' };
+        }
+        const have = existingMetaPublicKeys(existingRows);
+        const missing = uniqueNeeded.filter(function (k) { return !have[k]; });
+        if (missing.length) {
+            return { ok: false, error: '現有 json 缺少資料項：' + missing.join('、') + '（新範本資料項必須等於或少於現有 json）' };
+        }
+        const airefCols = cols.filter(function (c) { return c && c.is_ai_ref && c.semantic_key; });
+        const answerCols = cols.filter(function (c) { return c && c.is_answer && c.semantic_key; });
+        const aCount = answerCols.length;
+        const answerMode = template && template.answer_mode === 'separate' ? 'separate' : 'combine';
+        const answerCombineNote = (template && template.answer_combine_note) || '';
+        const speakMode = normalizeSpeakMode(template && template.speak_mode);
+        const speakFormula = (template && template.speak_formula) || '';
+        const letterToSemantic = {};
+        cols.forEach(function (c) {
+            const letter = String((c && c.letter) || '').trim().toUpperCase();
+            const key = String((c && c.semantic_key) || '').trim();
+            if (letter && key) letterToSemantic[letter] = key;
+        });
+        const rows = [];
+        const scriptLines = [];
+        const warnings = [];
+        let missingAiRefCount = 0;
+        (existingRows || []).forEach(function (src) {
+            if (!src || typeof src !== 'object') return;
+            const rowObj = {};
+            let hasAny = false;
+            uniqueNeeded.forEach(function (key) {
+                const v = src[key];
+                rowObj[key] = (v === null || v === undefined) ? '' : v;
+                if (String(rowObj[key]).trim() !== '') hasAny = true;
+            });
+            if (!hasAny) return;
+            if (aCount > 1) {
+                rowObj._answer_mode = answerMode;
+                rowObj._answer_keys = answerCols.map(function (c) { return c.semantic_key; });
+                if (answerMode === 'combine') {
+                    let answerCandidate = '';
+                    if (answerCombineNote && window.LayoutFieldsEval) {
+                        try {
+                            const aCells = window.LayoutFieldsEval.evaluateFields(answerCombineNote, rowObj, letterToSemantic);
+                            answerCandidate = (aCells && aCells[0] && aCells[0].text != null) ? String(aCells[0].text) : '';
+                        } catch (_ae) {
+                            answerCandidate = '';
+                        }
+                    }
+                    if (!answerCandidate) {
+                        answerCandidate = answerCols.map(function (c) { return rowObj[c.semantic_key]; })
+                            .filter(function (v) { return v !== null && v !== undefined && String(v).trim() !== ''; })
+                            .map(function (v) { return String(v).trim(); })
+                            .join(' ');
+                    }
+                    rowObj._answer_combined_text = answerCandidate;
+                }
+            }
+            const seedFn = window.QuizPaperBuilder && window.QuizPaperBuilder.equivalentAcceptedSeed;
+            if (typeof seedFn === 'function') {
+                if (aCount > 1 && answerMode === 'separate') {
+                    const byKey = {};
+                    answerCols.forEach(function (c) {
+                        const raw = rowObj[c.semantic_key];
+                        if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+                            const variants = seedFn(String(raw).trim());
+                            if (variants.length) byKey[c.semantic_key] = variants;
+                        }
+                    });
+                    if (Object.keys(byKey).length) rowObj._accepted_answers_by_key = byKey;
+                } else {
+                    const mainAnswer = (aCount > 1 && answerMode === 'combine')
+                        ? rowObj._answer_combined_text
+                        : (answerCols[0] ? rowObj[answerCols[0].semantic_key] : null);
+                    if (mainAnswer !== null && mainAnswer !== undefined && String(mainAnswer).trim() !== '') {
+                        const variants = seedFn(String(mainAnswer).trim());
+                        if (variants.length) rowObj._accepted_answers = variants;
+                    }
+                }
+            }
+            let candidate = '';
+            if (speakMode === 'direct') {
+                if (airefCols.length > 1) {
+                    candidate = airefCols.map(function (c) { return rowObj[c.semantic_key]; })
+                        .filter(function (v) { return v !== null && v !== undefined && String(v).trim() !== ''; })
+                        .map(function (v) { return String(v).trim(); })
+                        .join(' ');
+                } else {
+                    const airefVal = airefCols[0] ? rowObj[airefCols[0].semantic_key] : null;
+                    candidate = (airefVal !== null && airefVal !== undefined) ? String(airefVal).trim() : '';
+                }
+            } else if (aCount > 1 && speakMode === 'formula' && speakFormula && window.LayoutFieldsEval) {
+                try {
+                    const cells = window.LayoutFieldsEval.evaluateFields(speakFormula, rowObj, letterToSemantic);
+                    candidate = (cells && cells[0] && cells[0].text != null) ? String(cells[0].text) : '';
+                } catch (_e) {
+                    candidate = '';
+                }
+            } else if (airefCols.length > 1) {
+                candidate = airefCols.map(function (c) { return rowObj[c.semantic_key]; })
+                    .filter(function (v) { return v !== null && v !== undefined && String(v).trim() !== ''; })
+                    .map(function (v) { return String(v).trim(); })
+                    .join(' ');
+            } else {
+                const airefVal = airefCols[0] ? rowObj[airefCols[0].semantic_key] : null;
+                candidate = (airefVal !== null && airefVal !== undefined) ? String(airefVal).trim() : '';
+            }
+            const airefIsAlsoMultiAnswerCol = aCount > 1 && airefCols[0] && !!airefCols[0].is_answer;
+            if (airefCols.length === 1 && !airefIsAlsoMultiAnswerCol) rowObj[airefCols[0].semantic_key] = candidate;
+            rows.push(rowObj);
+            scriptLines.push(candidate.trim());
+            if (!candidate.trim()) missingAiRefCount++;
+        });
+        if (!rows.length) {
+            return { ok: false, error: '現有 json 對這次擷取範本產不出任何列' };
+        }
+        if (!airefCols.length) {
+            warnings.push('💡 這個擷取範本尚未指定口說答案欄，script.txt 會整份留白（' + rows.length + ' 個空行）——不影響 meta.json。');
+        } else if (missingAiRefCount) {
+            warnings.push('💡 這 ' + rows.length + ' 列裡有 ' + missingAiRefCount + ' 列口說答案留白，script.txt 對應那幾行會是空行。');
+        }
+        return { ok: true, rows: rows, scriptLines: scriptLines, warnings: warnings, rowNos: rows.map(function (_, i) { return i + 1; }), speakComputed: scriptLines.slice(), answerComputed: rows.map(function () { return ''; }) };
     }
 
     function sheetMatchKey(name) {
@@ -4267,11 +4756,13 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     async function readExistingMetaFieldCount(folderId, folderName, metaFileName) {
         if (!window.GasService || typeof window.GasService.readMaterialFiles !== 'function') return null;
-        if (!folderId || !metaFileName) return null;
+        if (!metaFileName) return null;
         try {
-            const files = await window.GasService.readMaterialFiles(folderId, [{
+            const rootFolderId = await resolveTeacherMaterialsRootId();
+            const files = await window.GasService.readMaterialFiles(rootFolderId, [{
                 materialFolder: folderName,
-                fileName: metaFileName
+                fileName: metaFileName,
+                fileId: catalogFileIdForMeta(folderName, metaFileName)
             }], 'teacher');
             const hit = (files || []).find(function (f) { return f && f.ok && f.content; });
             if (!hit) return null;
@@ -4437,9 +4928,20 @@ window.FeatureMaterialLayoutPairing = (function () {
         }
         const rowsHtml = sheetNames.map(function (name) {
             const g = state.gen[name] || {};
-            const defaults = resolveOutputNames(name, templateName, _excelMaterialFolder, sheetNames.length, g);
+            const defaults = resolveOutputNames(name, templateName, g);
             const metaName = defaults.meta;
             const scriptName = defaults.script;
+            const FN = window.MaterialFileNames;
+            const rowFields = (FN && typeof FN.rowHtml === 'function')
+                ? FN.rowHtml({
+                    lockedName: name,
+                    sheetName: name,
+                    alias: defaults.alias,
+                    meta: metaName,
+                    script: scriptName,
+                    inputStyle: 'padding:4px; font-size:0.74rem;'
+                })
+                : '';
             let bodyHtml = '';
             if (g.previewed) {
                 if (g.error) {
@@ -4458,16 +4960,51 @@ window.FeatureMaterialLayoutPairing = (function () {
                 ? ('<div style="font-size:0.76rem; font-weight:800; margin-top:4px; color:' + (g.uploadStatus.ok ? '#059669' : '#DC2626') + ';">' + esc(g.uploadStatus.text) + '</div>')
                 : '';
             return '<div class="mlp-app-gen-sheet" data-sheet="' + esc(name) + '" style="background:white; border:1px solid #E2E8F0; border-radius:6px; padding:8px 10px; margin-bottom:8px;">'
-                + '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">'
-                + '<strong style="font-size:0.8rem; color:#334155; min-width:90px;">📄 ' + esc(name) + '</strong>'
-                + '<label style="font-size:0.72rem; color:#64748B;">meta 檔名<br><input type="text" class="form-control mlp-app-gen-metaname" value="' + esc(metaName) + '" style="width:190px; padding:4px; font-size:0.74rem;"></label>'
-                + '<label style="font-size:0.72rem; color:#64748B;">script 檔名<br><input type="text" class="form-control mlp-app-gen-scriptname" value="' + esc(scriptName) + '" style="width:190px; padding:4px; font-size:0.74rem;"></label>'
-                + '</div>'
+                + rowFields
                 + bodyHtml + uploadHtml
                 + '</div>';
         }).join('');
+        const FN = window.MaterialFileNames;
+        const tplName = String(templateName || '').trim();
+        const matchingSeg = _excelSegments.find(function (seg) {
+            return String((seg && seg.quickApplyTemplateName) || '').trim() === tplName;
+        });
+        const applyRole = matchingSeg
+            ? resolveApplyRole(matchingSeg, findApplyTemplateByName(tplName))
+            : 'extraction';
+        const showExtract = applyRole === 'extraction' || applyRole === 'both';
+        const showExam = applyRole === 'exam' || applyRole === 'both';
+        const roleItems = sheetNames.map(function (n) {
+            return {
+                name: n,
+                extract: showExtract ? tplName : '',
+                exam: showExam ? tplName : '',
+                isGroup: state.isGroup === true
+            };
+        });
+        const roleGroups = (FN && typeof FN.groupRoleTagItems === 'function')
+            ? FN.groupRoleTagItems(roleItems)
+            : [{ names: sheetNames.length === 1 ? [sheetNames[0]] : [], extract: showExtract ? tplName : '', exam: showExam ? tplName : '' }];
+        const roleTags = (FN && typeof FN.roleTagHtmlFromGroup === 'function')
+            ? ('<div style="margin:0 0 10px 0; display:flex; flex-wrap:wrap; gap:6px;">'
+                + roleGroups.map(function (g, i) {
+                    return '<div style="padding:6px 12px; border-radius:8px; border:1px solid '
+                        + (i === 0 ? '#0F766E' : '#99F6E4') + '; background:'
+                        + (i === 0 ? '#0F766E' : '#F0FDFA') + '; color:'
+                        + (i === 0 ? 'white' : '#115E59') + ';">'
+                        + FN.roleTagHtmlFromGroup(g)
+                        + '</div>';
+                }).join('')
+                + '</div>')
+            : '';
 
         return '<div>'
+            + roleTags
+            + (FN && typeof FN.introHtml === 'function' ? FN.introHtml() : '')
+            + (FN && typeof FN.formulaBlockHtml === 'function'
+                ? FN.formulaBlockHtml({ templateName: templateName })
+                : '')
+            + (FN && typeof FN.headerHtml === 'function' ? FN.headerHtml() : '')
             + rowsHtml
             + '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">'
             /**
@@ -4554,22 +5091,38 @@ window.FeatureMaterialLayoutPairing = (function () {
         bindAppGenAreaEvents(rowEl, appId);
     }
 
+    function syncGenNamesFromDom(rowEl, appId) {
+        const state = ensureAppRowState(appId);
+        const FN = window.MaterialFileNames;
+        rowEl.querySelectorAll('.mlp-app-gen-sheet').forEach(function (sheetEl) {
+            const name = sheetEl.getAttribute('data-sheet');
+            if (!name) return;
+            if (!state.gen[name]) state.gen[name] = {};
+            const cur = FN && typeof FN.readRow === 'function' ? FN.readRow(sheetEl) : {};
+            state.gen[name].alias = cur.alias || '';
+            state.gen[name].outputMeta = cur.meta || '';
+            state.gen[name].outputScript = cur.script || '';
+        });
+    }
+
     function bindAppGenAreaEvents(rowEl, appId) {
         const state = ensureAppRowState(appId);
-        rowEl.querySelectorAll('.mlp-app-gen-metaname').forEach(function (input) {
-            input.addEventListener('change', function () {
-                const name = this.closest('.mlp-app-gen-sheet').getAttribute('data-sheet');
-                if (!state.gen[name]) state.gen[name] = {};
-                state.gen[name].outputMeta = this.value.trim();
-            });
+        rowEl.querySelectorAll('.mf-alias, .mf-meta, .mf-script').forEach(function (input) {
+            input.addEventListener('change', function () { syncGenNamesFromDom(rowEl, appId); });
         });
-        rowEl.querySelectorAll('.mlp-app-gen-scriptname').forEach(function (input) {
-            input.addEventListener('change', function () {
-                const name = this.closest('.mlp-app-gen-sheet').getAttribute('data-sheet');
-                if (!state.gen[name]) state.gen[name] = {};
-                state.gen[name].outputScript = this.value.trim();
+        const applyBtn = rowEl.querySelector('.mf-apply-formula');
+        if (applyBtn) {
+            applyBtn.addEventListener('click', function (ev) {
+                if (ev) ev.preventDefault();
+                const FN = window.MaterialFileNames;
+                const area = rowEl.querySelector('.mlp-app-gen-area') || rowEl;
+                const tpl = (rowEl.querySelector('.mlp-app-template') || {}).value || '';
+                if (FN && typeof FN.applyFormulaToRows === 'function') {
+                    FN.applyFormulaToRows(area, tpl);
+                }
+                syncGenNamesFromDom(rowEl, appId);
             });
-        });
+        }
         const uploadBtn = rowEl.querySelector('.mlp-app-gen-upload');
         if (uploadBtn) uploadBtn.addEventListener('click', function () { handleConfirmUpload(rowEl, appId); });
 
@@ -4705,14 +5258,18 @@ window.FeatureMaterialLayoutPairing = (function () {
         sheetNames.forEach(function (name) {
             const prevOutputMeta = state.gen[name] && state.gen[name].outputMeta;
             const prevOutputScript = state.gen[name] && state.gen[name].outputScript;
+            const prevAlias = state.gen[name] && state.gen[name].alias;
             // speakOverrides／answerOverrides（老師逐列修正／貼上的口說答案、書寫答案結合修正）
             // 要跨「重新產生預覽」保留下來，不能因為改了行數起迄或重按一次預覽就整批被
             // 公式算出來的候選值蓋掉
             const prevOverrides = (state.gen[name] && state.gen[name].speakOverrides) || {};
             const prevAnswerOverrides = (state.gen[name] && state.gen[name].answerOverrides) || {};
-            const result = buildGenerationForSheet(appId, name, template, rowStartStr, rowEndStr, prevOverrides, prevAnswerOverrides);
+            const result = (state.existingMetaBySheet && state.existingMetaBySheet[name])
+                ? buildGenerationFromMetaRows(state.existingMetaBySheet[name], template)
+                : buildGenerationForSheet(appId, name, template, rowStartStr, rowEndStr, prevOverrides, prevAnswerOverrides);
             state.gen[name] = Object.assign({}, result, {
                 previewed: true,
+                alias: prevAlias,
                 outputMeta: prevOutputMeta,
                 outputScript: prevOutputScript,
                 uploadStatus: null,
@@ -4720,6 +5277,14 @@ window.FeatureMaterialLayoutPairing = (function () {
                 answerOverrides: prevAnswerOverrides
             });
         });
+        if (state.fromDriveMeta) {
+            const failed = sheetNames.filter(function (name) {
+                return state.gen[name] && state.gen[name].ok === false;
+            }).map(function (name) {
+                return name + '：' + (state.gen[name].error || '無法從現有 json 產檔');
+            });
+            if (failed.length) return { ok: false, error: failed.join('\n') };
+        }
         return { ok: true, sheetNames: sheetNames };
     }
 
@@ -4762,6 +5327,7 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     async function handleConfirmUpload(rowEl, appId) {
         if (_metaPublishBusy) return;
+        syncGenNamesFromDom(rowEl, appId);
         const state = ensureAppRowState(appId);
         // 💣 雷區：msgEl／uploadBtn 不能只在函式開頭查一次就整個 async 流程沿用同一個參考——
         // 迴圈裡每上傳完一個活頁就會呼叫 refreshAppGenArea() 重寫 .mlp-app-gen-area 的 innerHTML，
@@ -4800,9 +5366,11 @@ window.FeatureMaterialLayoutPairing = (function () {
                 ? ((folderSelectEl.value === '__manual__' ? (rowEl.querySelector('.mlp-app-folder-manual') || {}).value : folderSelectEl.value) || '').trim()
                 : (_excelMaterialFolder || '');
             const currentTemplate = getCurrentAppTemplate(rowEl);
-            const overwriteTargets = (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.listOverwriteTargets === 'function')
-                ? await window.FeatureClassMaterialCombinations.listOverwriteTargets(folderName, currentTemplate && currentTemplate.id)
-                : [];
+            const overwriteTargets = state.fromDriveMeta
+                ? []
+                : ((window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.listOverwriteTargets === 'function')
+                    ? await window.FeatureClassMaterialCombinations.listOverwriteTargets(folderName, currentTemplate && currentTemplate.id)
+                    : []);
             let existingFieldCount = null;
             let newFieldCount = null;
             let overwriteCount = 0;
@@ -4814,7 +5382,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                 if (hit) {
                     overwriteCount += 1;
                     g.outputMeta = hit.meta;
-                    g.outputScript = hit.script || String(hit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt';
+                    g.outputScript = hit.script
+                        ? (window.MaterialFileNames ? window.MaterialFileNames.fullScript(hit.script) : hit.script)
+                        : (String(hit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt');
                     if (existingFieldCount == null) {
                         existingFieldCount = await readExistingMetaFieldCount(folderId, folderName, hit.meta);
                     }
@@ -4843,17 +5413,19 @@ window.FeatureMaterialLayoutPairing = (function () {
                     rowEl.querySelectorAll('.mlp-app-gen-sheet').forEach(function (el) {
                         if (el.getAttribute('data-sheet') === name) sheetRowEl = el;
                     });
-                    const metaNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-metaname') : null;
-                    const scriptNameInput = sheetRowEl ? sheetRowEl.querySelector('.mlp-app-gen-scriptname') : null;
                     const currentTemplateName = (rowEl.querySelector('.mlp-app-template') || {}).value || '';
-                    const defaults = resolveOutputNames(name, currentTemplateName, _excelMaterialFolder, sheetNames.length, g);
+                    const defaults = resolveOutputNames(name, currentTemplateName, g);
                     const overwriteHit = matchOverwriteTarget(name, overwriteTargets);
+                    const FN = window.MaterialFileNames;
+                    const cur = (FN && typeof FN.readRow === 'function' && sheetRowEl) ? FN.readRow(sheetRowEl) : {};
+                    const typedMeta = cur.meta || '';
+                    const typedScript = cur.script || '';
                     const finalMetaName = overwriteHit
                         ? overwriteHit.meta
-                        : ((metaNameInput && metaNameInput.value.trim()) || defaults.meta);
+                        : (typedMeta || defaults.meta);
                     const finalScriptName = overwriteHit
-                        ? (overwriteHit.script || String(overwriteHit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt')
-                        : ((scriptNameInput && scriptNameInput.value.trim()) || defaults.script);
+                        ? (overwriteHit.script || (String(overwriteHit.stem || '').replace(/\.meta\.json$/i, '') + '.script.txt'))
+                        : (typedScript || defaults.script);
                     g.outputMeta = finalMetaName;
                     g.outputScript = finalScriptName;
 
@@ -4898,6 +5470,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             const failedCount = sheetNames.filter(function (name) {
                 return state.gen[name] && state.gen[name].uploadStatus && !state.gen[name].uploadStatus.ok;
             }).length;
+            let persistErrMsg = '';
             if (anyUploadSucceeded) {
                 try {
                     const appRecord = collectAppFromRow(rowEl);
@@ -4952,6 +5525,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                         }
                     }
                 } catch (persistErr) {
+                    persistErrMsg = String((persistErr && persistErr.message) || persistErr || '寫入擷取範本失敗');
                     console.error('[FeatureMaterialLayoutPairing] 自動記錄配對紀錄失敗（不影響已完成的上傳）', persistErr);
                 }
             }
@@ -4971,6 +5545,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                 } else if (failedCount > 0) {
                     finalMsgEl.style.color = '#B45309';
                     finalMsgEl.textContent = '⚠️ 處理完畢，但有 ' + failedCount + '／' + sheetNames.length + ' 個活頁上傳失敗，請看上方各活頁卡片內的錯誤訊息';
+                } else if (persistErrMsg) {
+                    finalMsgEl.style.color = '#DC2626';
+                    finalMsgEl.textContent = '檔已上傳，但擷取範本沒寫進資料庫：' + persistErrMsg;
                 } else {
                     finalMsgEl.style.color = '#059669';
                     finalMsgEl.textContent = '✅ 全部處理完畢，請看上方各活頁卡片內的上傳結果';
@@ -5242,7 +5819,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             source_kind: state.sourceKind,
             source_file_name: state.sourceKind === 'local' ? (state.localFileName || '') : '',
             row_start: rowStart,
-            row_end: rowEnd
+            row_end: rowEnd,
+            is_group: !!state.isGroup
         };
     }
 

@@ -10,6 +10,7 @@ material_folders.id / material_sheets.id / material_templates.id = 身分
 名稱（folder_name／sheet_stem／meta_file_name／script_file_name／templates.name）= 現用標籤
 舊名 → material_name_maps → 同一 UUID
 讀取：現用名對不到時，先 MaterialNameMap.resolve／lookupKeys，禁止只做字串相等
+活頁別稱跟活頁列走（sheet id）；同一夾同一個活頁名、不同擷取範本不准共用一筆別名
 ```
 
 ## 禁止

@@ -255,7 +255,7 @@ window.FeatureStudentPdfQuiz = (function () {
                     'style="font-size:0.65rem; font-weight:900; color:' + accent + '; background:white; border:1px solid ' + accent + '; border-radius:50%; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; cursor:' + (locked ? 'default' : 'grab') + '; touch-action:none; user-select:none;">' + (orderIdx + 1) + '</span>' +
                 '<input type="text" class="pdf-quiz-answer-input" data-box-id="' + esc(box.id) + '" value="' + esc(box.text || '') + '" ' + (locked ? 'disabled' : '') + ' ' +
                     'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-gramm="false" ' +
-                    'style="width:' + initialW + 'px; border:2px solid ' + accent + '; background:' + inputBg + '; font-size:' + fontPx + 'px; padding:2px 4px; box-sizing:border-box; border-radius:3px; font-family:' + _fontFamilyForMeasure() + ';">' +
+                    'style="width:' + initialW + 'px; border:2px solid ' + accent + '; background:' + inputBg + '; color:#0F172A; -webkit-text-fill-color:#0F172A; opacity:1; font-size:' + fontPx + 'px; padding:2px 4px; box-sizing:border-box; border-radius:3px; font-family:' + _fontFamilyForMeasure() + ';">' +
                 removeBtnHtml +
             '</div>'
         );
@@ -1296,8 +1296,9 @@ window.FeatureStudentPdfQuiz = (function () {
             '</div>';
         }).join('');
         var wrongHtml = (result.wrong_items || []).map(function (w) {
+            var label = String(w.prompt_zh || w.item_id || '').trim() || '錯題';
             return '<div style="border:1px solid #FECACA; background:#FFF7F7; border-radius:8px; padding:10px; margin-bottom:8px;">' +
-                '<div style="font-size:0.8rem; font-weight:800; color:#B91C1C;">' + esc(w.prompt_zh || '') + '</div>' +
+                '<div style="font-size:0.8rem; font-weight:800; color:#B91C1C;">' + esc(label) + '</div>' +
                 '<div style="font-size:0.85rem; margin-top:4px;">你的答案：<b>' + esc(w.answer || '(未填)') + '</b></div>' +
             '</div>';
         }).join('');

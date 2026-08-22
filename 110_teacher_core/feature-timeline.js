@@ -78,25 +78,40 @@ window.FeatureTimeline = (() => {
         const prefix = kind === 'teacher' ? '👤老師 ' : '🏫班級 ';
         const options = [];
         (materials || []).forEach(function (pack) {
-            if (!pack.metaFiles || !pack.metaFiles.length) {
+            const metas = pack.metaFiles || [];
+            const scripts = pack.scriptFiles || [];
+            if (!metas.length && !scripts.length) {
                 options.push({
                     rootKind: kind,
                     folderName: pack.folderName,
                     folderId: pack.folderId || '',
                     fileName: '',
                     fileId: '',
+                    fileKind: '',
                     label: prefix + (pack.folderName || '（未命名）') + '（尚無 .meta.json）'
                 });
                 return;
             }
-            (pack.metaFiles || []).forEach(function (mf) {
+            metas.forEach(function (mf) {
                 options.push({
                     rootKind: kind,
                     folderName: pack.folderName,
                     folderId: pack.folderId || '',
                     fileName: mf.name,
                     fileId: mf.fileId || '',
+                    fileKind: 'meta',
                     label: prefix + (pack.folderName ? pack.folderName + ' / ' : '') + mf.name
+                });
+            });
+            scripts.forEach(function (sf) {
+                options.push({
+                    rootKind: kind,
+                    folderName: pack.folderName,
+                    folderId: pack.folderId || '',
+                    fileName: sf.name,
+                    fileId: sf.fileId || '',
+                    fileKind: 'script',
+                    label: prefix + (pack.folderName ? pack.folderName + ' / ' : '') + sf.name
                 });
             });
         });
@@ -605,9 +620,9 @@ window.FeatureTimeline = (() => {
                 if (previewEl) {
                     previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
                         + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                        + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                        + '</div><strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
                         + (snapshot.original_script || '').replace(/</g, '&lt;')
-                        + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+                        + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
                         + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
                 }
                 if (statusEl) {
@@ -963,6 +978,22 @@ window.FeatureTimeline = (() => {
         titleEl.setAttribute('data-title-from-range', rangeText);
     }
 
+    function parentRangeGroupOf(pathStr) {
+        const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+        if (arr.length < 2) return null;
+        const parent = getTaskNodeByPathStr(arr.slice(0, -1).join('-'));
+        if (parent && parent.type === 'group' && parent.raw_data && parent.raw_data.group_role === 'range') {
+            return parent;
+        }
+        return null;
+    }
+
+    function isPackHostNode(node) {
+        if (!node) return false;
+        if (node.type === 'group' && node.raw_data && node.raw_data.group_role === 'range') return true;
+        return node.type === 'audio_record';
+    }
+
     /** 依 pathStr 取得該任務節點（只讀，不建立），找不到回傳 null */
     function getTaskNodeByPathStr(pathStr) {
         const bStateObj = window.BuilderStore && window.BuilderStore.getState();
@@ -1010,9 +1041,17 @@ window.FeatureTimeline = (() => {
         if (rangeText) applyInheritedTitleFromRange(pathStr, rangeText);
     }
 
+    function isScriptOrTextFileName(name) {
+        const s = String(name || '').trim();
+        if (!s) return false;
+        if (/\.script\.txt(\.meta\.json)?$/i.test(s)) return true;
+        if (/\.txt(\.meta\.json)?$/i.test(s)) return true;
+        return false;
+    }
+
     function asMetaFileName(name) {
         const raw = String(name || '').trim();
-        if (!raw) return '';
+        if (!raw || isScriptOrTextFileName(raw)) return '';
         return /\.meta\.json$/i.test(raw) ? raw : (raw + '.meta.json');
     }
 
@@ -1037,34 +1076,33 @@ window.FeatureTimeline = (() => {
     function listPackMetaFiles(classId, combo) {
         const names = [];
         const seen = {};
-        function push(name) {
+        (combo && Array.isArray(combo.metaFiles) ? combo.metaFiles : []).forEach(function (name) {
+            if (isScriptOrTextFileName(name)) return;
             const file = asMetaFileName(name);
             if (!file) return;
             const key = file.replace(/\.meta\.json$/i, '').toUpperCase();
-            if (seen[key]) return;
+            if (!key || seen[key]) return;
             seen[key] = true;
             names.push(file);
-        }
-        if (combo && Array.isArray(combo.metaFiles)) combo.metaFiles.forEach(push);
-        const folder = combo && String(combo.folderName || '').trim();
-        if (folder) {
-            const folderU = folder.toUpperCase();
-            ['teacher', 'class'].forEach(function (kind) {
-                const entry = getMetaCatalogEntry(classId, kind);
-                ((entry && entry.options) || []).forEach(function (o) {
-                    if (String((o && o.folderName) || '').trim().toUpperCase() !== folderU) return;
-                    push(o && o.fileName);
-                });
-            });
-        }
+        });
+        names.sort(function (a, b) {
+            return String(a).localeCompare(String(b), 'en', { numeric: true, sensitivity: 'base' });
+        });
         return names;
     }
 
     function normalizePackRows(raw) {
+        const fallbackComboId = String((raw && raw.pack_combo_id) || '').trim();
+        const fallbackComboLabel = String((raw && raw.pack_combo_label) || '').trim();
         if (raw && Array.isArray(raw.pack_rows) && raw.pack_rows.length) {
             return raw.pack_rows.map(function (r) {
+                const ownId = String((r && r.combo_id) || '').trim();
+                const metaFile = String((r && r.meta_file) || '').trim();
+                const comboId = ownId || (metaFile ? fallbackComboId : '');
                 return {
-                    meta_file: String((r && r.meta_file) || '').trim(),
+                    combo_id: comboId,
+                    combo_label: String((r && r.combo_label) || (comboId ? fallbackComboLabel : '')).trim(),
+                    meta_file: metaFile,
                     range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
                     start: r && r.start != null ? String(r.start) : '',
                     end: r && r.end != null ? String(r.end) : ''
@@ -1072,6 +1110,8 @@ window.FeatureTimeline = (() => {
             });
         }
         return [{
+            combo_id: fallbackComboId,
+            combo_label: fallbackComboLabel,
             meta_file: String((raw && raw.pack_meta_file) || '').trim(),
             range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
             start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
@@ -1081,8 +1121,10 @@ window.FeatureTimeline = (() => {
 
     function writePackRowsToGroup(group, rows) {
         if (!group.raw_data) group.raw_data = {};
-        const list = (rows && rows.length) ? rows : [{ meta_file: '', range_type: 'page', start: '', end: '' }];
+        const list = (rows && rows.length) ? rows : [{ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }];
         group.raw_data.pack_rows = list;
+        group.raw_data.pack_combo_id = list[0].combo_id || '';
+        group.raw_data.pack_combo_label = list[0].combo_label || '';
         group.raw_data.pack_meta_file = list[0].meta_file;
         group.raw_data.pack_range_type = list[0].range_type;
         group.raw_data.pack_start = list[0].start;
@@ -1090,42 +1132,53 @@ window.FeatureTimeline = (() => {
     }
 
     function readRangePackFromDom(pathStr) {
-        const comboEl = document.getElementById('range-pack-combo-' + pathStr);
-        const comboId = comboEl ? String(comboEl.value || '').trim() : '';
-        const opt = comboEl && comboEl.options[comboEl.selectedIndex];
         const rows = [];
         const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
-        const rowEls = panel ? panel.querySelectorAll('.range-pack-row') : [];
-        if (rowEls.length) {
-            Array.prototype.forEach.call(rowEls, function (rowEl, idx) {
-                const sheetEl = document.getElementById('range-pack-sheet-' + pathStr + '-' + idx)
-                    || (rowEl && rowEl.querySelector('.range-pack-sheet'));
-                const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr + '-' + idx);
-                const startEl = document.getElementById('range-pack-start-' + pathStr + '-' + idx);
-                const endEl = document.getElementById('range-pack-end-' + pathStr + '-' + idx);
-                rows.push({
-                    metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
-                    rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
-                    start: startEl ? String(startEl.value || '').trim() : '',
-                    end: endEl ? String(endEl.value || '').trim() : ''
-                });
+        const blockEls = panel ? panel.querySelectorAll('.range-pack-block') : [];
+        if (blockEls.length) {
+            Array.prototype.forEach.call(blockEls, function (blockEl, bi) {
+                const comboEl = document.getElementById('range-pack-combo-' + pathStr + '-' + bi)
+                    || (blockEl && blockEl.querySelector('.range-pack-combo'));
+                const comboId = comboEl ? String(comboEl.value || '').trim() : '';
+                const opt = comboEl && comboEl.options[comboEl.selectedIndex];
+                const comboLabel = (comboId && opt) ? String(opt.text || '').trim() : '';
+                const rowEls = blockEl.querySelectorAll('.range-pack-row');
+                if (rowEls.length) {
+                    Array.prototype.forEach.call(rowEls, function (rowEl) {
+                        const idx = rowEl.getAttribute('data-row-idx');
+                        const sheetEl = (idx != null ? document.getElementById('range-pack-sheet-' + pathStr + '-' + idx) : null)
+                            || (rowEl && rowEl.querySelector('.range-pack-sheet'));
+                        const rtypeEl = (idx != null ? document.getElementById('range-pack-rtype-' + pathStr + '-' + idx) : null)
+                            || (rowEl && rowEl.querySelector('select'));
+                        const startEl = idx != null ? document.getElementById('range-pack-start-' + pathStr + '-' + idx) : null;
+                        const endEl = idx != null ? document.getElementById('range-pack-end-' + pathStr + '-' + idx) : null;
+                        rows.push({
+                            comboId: comboId,
+                            comboLabel: comboLabel,
+                            metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
+                            rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
+                            start: startEl ? String(startEl.value || '').trim() : '',
+                            end: endEl ? String(endEl.value || '').trim() : ''
+                        });
+                    });
+                } else {
+                    rows.push({
+                        comboId: comboId,
+                        comboLabel: comboLabel,
+                        metaFile: '',
+                        rangeType: 'page',
+                        start: '',
+                        end: ''
+                    });
+                }
             });
         }
         if (!rows.length) {
-            const sheetEl = document.getElementById('range-pack-sheet-' + pathStr);
-            const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr);
-            const startEl = document.getElementById('range-pack-start-' + pathStr);
-            const endEl = document.getElementById('range-pack-end-' + pathStr);
-            rows.push({
-                metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
-                rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
-                start: startEl ? String(startEl.value || '').trim() : '',
-                end: endEl ? String(endEl.value || '').trim() : ''
-            });
+            rows.push({ comboId: '', comboLabel: '', metaFile: '', rangeType: 'page', start: '', end: '' });
         }
         return {
-            comboId: comboId,
-            comboLabel: (comboId && opt) ? String(opt.text || '').trim() : '',
+            comboId: rows[0] ? rows[0].comboId : '',
+            comboLabel: rows[0] ? rows[0].comboLabel : '',
             rows: rows
         };
     }
@@ -1136,47 +1189,180 @@ window.FeatureTimeline = (() => {
         return fcmc.getAssignedComboById(classId, comboId) || null;
     }
 
+    /** 這個 meta 只屬於一個已指派套餐時才回傳；0 或 2+ 不准猜。 */
+    function findAssignedComboForMetaFile(classId, metaFile) {
+        const want = String(metaFile || '').replace(/\.meta\.json$/i, '').toUpperCase();
+        if (!want) return null;
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!fcmc || typeof fcmc.listAssignedCombosForClass !== 'function') return null;
+        const hits = (fcmc.listAssignedCombosForClass(classId) || []).filter(function (c) {
+            return listPackMetaFiles(classId, c).some(function (f) {
+                return String(f || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
+            });
+        });
+        return hits.length === 1 ? hits[0] : null;
+    }
+
+    function studentScriptContextForPicker(picker, classId, pathStr) {
+        const DEFAULT_FORMULA = (window.MaterialSnapshot && window.MaterialSnapshot.DEFAULT_STUDENT_SCRIPT)
+            || (window.FeatureTemplateLibrary && window.FeatureTemplateLibrary.DEFAULT_STUDENT_SCRIPT)
+            || '_answer_combined_text';
+        let tplId = String((picker && picker.extraction_template_id) || '').trim();
+        if (!tplId && picker && picker.combo_id) {
+            const comboById = resolvePackCombo(classId, picker.combo_id);
+            if (comboById) tplId = String(comboById.extractionTemplateId || '').trim();
+        }
+        if (!tplId && classId && picker && picker.published_file) {
+            const one = findAssignedComboForMetaFile(classId, picker.published_file);
+            if (one) tplId = String(one.extractionTemplateId || '').trim();
+        }
+        if (!tplId && pathStr) {
+            const parent = String(pathStr || '').split('-');
+            if (parent.length > 1) {
+                parent.pop();
+                const group = getTaskNodeByPathStr(parent.join('-'));
+                const packRows = group && group.raw_data && Array.isArray(group.raw_data.pack_rows)
+                    ? group.raw_data.pack_rows : [];
+                const want = String((picker && picker.published_file) || '').replace(/\.meta\.json$/i, '').toUpperCase();
+                const hit = packRows.find(function (r) {
+                    return String((r && r.meta_file) || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
+                });
+                if (hit && hit.combo_id) {
+                    const combo = resolvePackCombo(classId, hit.combo_id);
+                    if (combo) tplId = String(combo.extractionTemplateId || '').trim();
+                }
+            }
+        }
+        const lib = window.FeatureTemplateLibrary;
+        let template = null;
+        if (tplId && lib && typeof lib.getTemplatesCachedSync === 'function') {
+            template = (lib.getTemplatesCachedSync() || []).find(function (x) {
+                return String(x.id) === tplId;
+            }) || null;
+        }
+        let formula = DEFAULT_FORMULA;
+        if (template && typeof lib.studentScriptOf === 'function') formula = lib.studentScriptOf(template);
+        else if (template && String(template.student_script || '').trim()) formula = String(template.student_script).trim();
+        const colMap = (template && lib && typeof lib.colMapFromTemplate === 'function')
+            ? lib.colMapFromTemplate(template)
+            : {};
+        return { student_script: formula, col_map: colMap };
+    }
+
     function resolvePackMetaFile(combo, pickedMeta, classId) {
         const want = String(pickedMeta || '').trim();
         if (!want) return '';
         return asMetaFileName(want);
     }
 
+    function expandPackRowsForCombo(classId, combo, prevRows) {
+        if (!combo) {
+            return [{ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }];
+        }
+        const files = listPackMetaFiles(classId, combo);
+        const prev = Array.isArray(prevRows) ? prevRows : [];
+        function prevFor(file) {
+            const want = String(file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+            return prev.find(function (r) {
+                return String((r && (r.meta_file || r.metaFile)) || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
+            }) || null;
+        }
+        if (!files.length) {
+            return [{
+                combo_id: combo.id,
+                combo_label: String(combo.label || '').trim(),
+                meta_file: '',
+                range_type: 'page',
+                start: '',
+                end: ''
+            }];
+        }
+        return files.map(function (file) {
+            const hit = prevFor(file);
+            return {
+                combo_id: combo.id,
+                combo_label: String(combo.label || '').trim(),
+                meta_file: file,
+                range_type: (hit && (hit.range_type || hit.rangeType) === 'qnum') ? 'qnum' : 'page',
+                start: hit ? String(hit.start || '').trim() : '',
+                end: hit ? String(hit.end || '').trim() : ''
+            };
+        });
+    }
+
     function applyRangePackToAudio(audioTask, pack) {
         if (!audioTask) return '';
         if (!audioTask.raw_data) audioTask.raw_data = {};
         const raw = audioTask.raw_data;
-        raw.script_source = raw.script_source || 'meta';
-        const combo = pack.combo;
+        if (!raw.script_source) raw.script_source = 'meta';
         const packRows = Array.isArray(pack.rows) && pack.rows.length
             ? pack.rows
-            : [{ metaFile: pack.metaFile, rangeType: pack.rangeType, start: pack.start, end: pack.end, rangeSpec: pack.rangeSpec }];
-        if (!combo) return String(raw.material_range || '').trim();
+            : [{ combo: pack.combo, metaFile: pack.metaFile, rangeType: pack.rangeType, start: pack.start, end: pack.end, rangeSpec: pack.rangeSpec }];
         const refs = [];
         const labels = [];
         const MS = window.MaterialSnapshot;
         packRows.forEach(function (row) {
+            const rowCombo = (row && row.combo) || pack.combo;
             const metaFile = String((row && row.metaFile) || '').trim();
             const rangeSpec = (row && row.rangeSpec) || buildPackRangeSpec(row && row.rangeType, row && row.start, row && row.end);
-            if (!metaFile || !rangeSpec) return;
-            const stem = displayStemFromMetaFileLocal(metaFile);
+            if (!rowCombo || !metaFile || !rangeSpec) return;
+            const stem = String(metaFile).replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
             refs.push({
-                materials_root_kind: combo.rootKind === 'class' ? 'class' : 'teacher',
-                material_folder: combo.folderName || '',
+                materials_root_kind: rowCombo.rootKind === 'class' ? 'class' : 'teacher',
+                material_folder: rowCombo.folderName || '',
                 published_file: metaFile,
                 metaFile: metaFile,
                 label: stem,
                 range_spec: rangeSpec,
-                select_mode: 'range_spec'
+                select_mode: 'range_spec',
+                combo_id: rowCombo.id || '',
+                extraction_template_id: rowCombo.extractionTemplateId || ''
             });
             if (MS && typeof MS.formatRangeLabel === 'function') labels.push(MS.formatRangeLabel(stem, rangeSpec));
             else labels.push(stem + ' ' + rangeSpec);
         });
-        if (!refs.length) return String(raw.material_range || '').trim();
+        if (!refs.length) {
+            applyPackPdfToAudio(raw, packRows);
+            return String(raw.material_range || '').trim();
+        }
         raw.material_refs = refs;
         raw.material_ref = refs[0];
         raw.material_range = labels.join('；');
+        applyPackPdfToAudio(raw, packRows);
         return raw.material_range;
+    }
+
+    function applyPackPdfToAudio(raw, packRows) {
+        if (!raw) return;
+        const Map = window.MaterialPdfPageMap;
+        const pages = [];
+        let fileId = '';
+        let fileName = '';
+        (packRows || []).forEach(function (row) {
+            const combo = (row && row.combo) || null;
+            if (!combo) return;
+            if (combo.studentPdfFileId) {
+                fileId = combo.studentPdfFileId;
+                fileName = combo.studentPdfFileName || '';
+            }
+            if (!Map || typeof Map.resolvePages !== 'function') return;
+            const resolved = Map.resolvePages(
+                combo.studentPdfPageMap,
+                row.rangeType || row.range_type,
+                row.start,
+                row.end
+            );
+            (resolved.pages || []).forEach(function (p) {
+                if (pages.indexOf(p) === -1) pages.push(p);
+            });
+        });
+        pages.sort(function (a, b) { return a - b; });
+        raw.student_pdf_file_id = fileId || '';
+        raw.student_pdf_file_name = fileName || '';
+        raw.student_pdf_pages = pages;
+        if (fileId && raw.script_source === 'resource') {
+            raw.material_url = 'https://drive.google.com/file/d/' + fileId + '/preview';
+        }
     }
 
     function syncRangePackChildDom(groupPathStr, pack, coverage) {
@@ -1188,20 +1374,13 @@ window.FeatureTimeline = (() => {
             const audioPath = groupPathStr + '-' + audioIdx;
             const rangeEl = document.getElementById('node-material-range-' + audioPath);
             if (rangeEl && coverage) rangeEl.value = coverage;
-            const rowsEl = document.getElementById('node-material-rows-' + audioPath);
-            const packRows = Array.isArray(pack.rows) && pack.rows.length
-                ? pack.rows
-                : [{ metaFile: pack.metaFile, rangeSpec: pack.rangeSpec }];
-            const metaRows = rowsEl ? rowsEl.querySelectorAll('.material-meta-row') : [];
-            packRows.forEach(function (row, i) {
-                const rowEl = metaRows[i];
-                if (!rowEl || !pack.combo || !row.metaFile) return;
-                const fileEl = rowEl.querySelector('.material-meta-file');
-                const specEl = rowEl.querySelector('.material-meta-range');
-                const value = (pack.combo.folderName || '') + '::' + row.metaFile;
-                if (fileEl) fileEl.value = value;
-                if (specEl && row.rangeSpec) specEl.value = row.rangeSpec;
-            });
+            const audio = group.subTasks[audioIdx];
+            const refs = audio && audio.raw_data && Array.isArray(audio.raw_data.material_refs)
+                ? audio.raw_data.material_refs
+                : [];
+            if (refs.length && typeof renderMaterialMetaRows === 'function') {
+                renderMaterialMetaRows(audioPath, _materialMetaOptionsCache[audioPath] || [], refsToSavedRows(refs));
+            }
             const audioTitleEl = document.getElementById('node-title-' + audioPath);
             if (audioTitleEl && coverage && audioTitleEl.getAttribute('data-title-auto') !== '0') {
                 audioTitleEl.textContent = coverage;
@@ -1211,19 +1390,31 @@ window.FeatureTimeline = (() => {
         }
         if (examIdx >= 0) {
             const examPath = groupPathStr + '-' + examIdx;
-            const comboEl = document.getElementById('exam-inline-materialfolder-' + examPath + '-0')
-                || document.getElementById('exam-inline-materialfolder-' + examPath);
-            if (comboEl && pack.combo) comboEl.value = pack.combo.id;
             const packRows = Array.isArray(pack.rows) && pack.rows.length
                 ? pack.rows
-                : [{ rangeType: pack.rangeType, start: pack.start, end: pack.end }];
-            packRows.forEach(function (row, i) {
-                const rtypeEl = document.getElementById('exam-inline-rtype-' + examPath + '-0-' + i);
-                const startEl = document.getElementById('exam-inline-start-' + examPath + '-0-' + i);
-                const endEl = document.getElementById('exam-inline-end-' + examPath + '-0-' + i);
-                if (rtypeEl && row.rangeType) rtypeEl.value = row.rangeType;
-                if (startEl && row.start !== '') startEl.value = row.start;
-                if (endEl && (row.end !== '' || row.start !== '')) endEl.value = row.end || row.start;
+                : [{ combo: pack.combo, rangeType: pack.rangeType, start: pack.start, end: pack.end }];
+            const examGroups = [];
+            packRows.forEach(function (row) {
+                const id = String((row.combo && row.combo.id) || row.comboId || '').trim();
+                let g = examGroups.find(function (x) { return x.id === id; });
+                if (!g) {
+                    g = { id: id, combo: row.combo || pack.combo, rows: [] };
+                    examGroups.push(g);
+                }
+                g.rows.push(row);
+            });
+            examGroups.forEach(function (g, secIdx) {
+                const comboEl = document.getElementById('exam-inline-materialfolder-' + examPath + '-' + secIdx)
+                    || (secIdx === 0 ? document.getElementById('exam-inline-materialfolder-' + examPath) : null);
+                if (comboEl && g.combo) comboEl.value = g.combo.id;
+                g.rows.forEach(function (row, i) {
+                    const rtypeEl = document.getElementById('exam-inline-rtype-' + examPath + '-' + secIdx + '-' + i);
+                    const startEl = document.getElementById('exam-inline-start-' + examPath + '-' + secIdx + '-' + i);
+                    const endEl = document.getElementById('exam-inline-end-' + examPath + '-' + secIdx + '-' + i);
+                    if (rtypeEl && row.rangeType) rtypeEl.value = row.rangeType;
+                    if (startEl && row.start !== '') startEl.value = row.start;
+                    if (endEl && (row.end !== '' || row.start !== '')) endEl.value = row.end || row.start;
+                });
             });
             const examTitleEl = document.getElementById('node-title-' + examPath);
             if (examTitleEl && coverage && !String(examTitleEl.textContent || '').trim()) {
@@ -1241,30 +1432,58 @@ window.FeatureTimeline = (() => {
     function onRangePackChange(pathStr, opts) {
         opts = opts || {};
         const rerender = opts.rerender !== false;
-        if (rerender && window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+        if (rerender && !opts.skipSync && window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
             window.BuilderStore.sync();
         }
         const group = getTaskNodeByPathStr(pathStr);
-        if (!group || group.type !== 'group') return;
+        if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
-        group.raw_data.group_role = 'range';
+        if (group.type === 'group') group.raw_data.group_role = 'range';
 
         const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
         const classId = (bState && bState.classId) || '';
-        const fromDom = readRangePackFromDom(pathStr);
-        const combo = resolvePackCombo(classId, fromDom.comboId);
+        const fromDom = opts.skipSync
+            ? {
+                rows: normalizePackRows(group.raw_data).map(function (r) {
+                    return {
+                        comboId: r.combo_id,
+                        comboLabel: r.combo_label,
+                        metaFile: r.meta_file,
+                        rangeType: r.range_type,
+                        start: r.start,
+                        end: r.end
+                    };
+                })
+            }
+            : readRangePackFromDom(pathStr);
         const rows = (fromDom.rows || []).map(function (r) {
+            let rowCombo = resolvePackCombo(classId, r.comboId);
+            let metaFile = resolvePackMetaFile(rowCombo, r.metaFile, classId);
+            if (rowCombo && metaFile) {
+                const allowed = listPackMetaFiles(classId, rowCombo);
+                const want = metaFile.replace(/\.meta\.json$/i, '').toUpperCase();
+                const ok = allowed.some(function (f) {
+                    return String(f || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
+                });
+                if (!ok) {
+                    const owner = findAssignedComboForMetaFile(classId, metaFile);
+                    if (owner) rowCombo = owner;
+                    else metaFile = '';
+                }
+            } else if (!rowCombo && metaFile) {
+                const owner = findAssignedComboForMetaFile(classId, metaFile);
+                if (owner) rowCombo = owner;
+            }
             return {
-                meta_file: resolvePackMetaFile(combo, r.metaFile, classId),
+                combo_id: rowCombo ? rowCombo.id : '',
+                combo_label: rowCombo ? String(rowCombo.label || r.comboLabel || '').trim() : '',
+                meta_file: metaFile,
                 range_type: r.rangeType === 'qnum' ? 'qnum' : 'page',
                 start: String(r.start || '').trim(),
                 end: String(r.end || '').trim()
             };
         });
-        if (!rows.length) rows.push({ meta_file: '', range_type: 'page', start: '', end: '' });
-
-        group.raw_data.pack_combo_id = combo ? combo.id : '';
-        group.raw_data.pack_combo_label = combo ? String(combo.label || fromDom.comboLabel || '').trim() : '';
+        if (!rows.length) rows.push({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' });
         writePackRowsToGroup(group, rows);
 
         const titleEl = document.getElementById('node-title-' + pathStr);
@@ -1283,10 +1502,17 @@ window.FeatureTimeline = (() => {
             }
         }
 
-        const audio = (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
-        const exam = (group.subTasks || []).find(function (t) { return t && t.type === 'exam'; });
+        const audio = group.type === 'audio_record'
+            ? group
+            : (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
+        const exam = group.type === 'group'
+            ? (group.subTasks || []).find(function (t) { return t && t.type === 'exam'; })
+            : null;
         const packRows = rows.map(function (r) {
+            const rowCombo = resolvePackCombo(classId, r.combo_id);
             return {
+                combo: rowCombo,
+                comboId: r.combo_id,
                 metaFile: r.meta_file,
                 rangeType: r.range_type,
                 start: r.start,
@@ -1295,48 +1521,58 @@ window.FeatureTimeline = (() => {
             };
         });
         const pack = {
-            combo: combo,
+            combo: packRows[0] && packRows[0].combo,
             rows: packRows,
-            metaFile: packRows[0].metaFile,
-            rangeType: packRows[0].rangeType,
-            start: packRows[0].start,
-            end: packRows[0].end,
-            rangeSpec: packRows[0].rangeSpec
+            metaFile: packRows[0] && packRows[0].metaFile,
+            rangeType: packRows[0] && packRows[0].rangeType,
+            start: packRows[0] && packRows[0].start,
+            end: packRows[0] && packRows[0].end,
+            rangeSpec: packRows[0] && packRows[0].rangeSpec
         };
         const coverage = applyRangePackToAudio(audio, pack);
         if (exam && window.FeatureExamJob && typeof window.FeatureExamJob.applyRangePackToExam === 'function') {
             window.FeatureExamJob.applyRangePackToExam(exam, pack);
         }
-        const hasCompleteRow = packRows.some(function (r) { return !!(combo && r.metaFile && r.rangeSpec); });
+        const hasCompleteRow = packRows.some(function (r) { return !!(r.combo && r.metaFile && r.rangeSpec); });
 
         if (rerender) {
             if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
                 window.FeatureTimeline.refreshBuilder({ skipSync: true });
             }
-            const audioIdx = (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
-            if (audioIdx >= 0 && hasCompleteRow) {
+            const audioIdx = group.type === 'audio_record'
+                ? -2
+                : (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
+            if (group.type === 'audio_record' && hasCompleteRow) {
+                scheduleAutoSnapshot(pathStr);
+            } else if (audioIdx >= 0 && hasCompleteRow) {
                 scheduleAutoSnapshot(pathStr + '-' + audioIdx);
             }
             return;
         }
-        syncRangePackChildDom(pathStr, pack, coverage);
-        const audioIdx = (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
-        if (audioIdx >= 0 && hasCompleteRow) {
+        if (group.type === 'group') syncRangePackChildDom(pathStr, pack, coverage);
+        const audioIdx = group.type === 'audio_record'
+            ? -2
+            : (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
+        if (group.type === 'audio_record' && hasCompleteRow) {
+            scheduleAutoSnapshot(pathStr);
+        } else if (audioIdx >= 0 && hasCompleteRow) {
             scheduleAutoSnapshot(pathStr + '-' + audioIdx);
         }
     }
 
-    function addRangePackRow(pathStr) {
+    function addRangePackCombo(pathStr) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
             window.BuilderStore.sync();
         }
         const group = getTaskNodeByPathStr(pathStr);
-        if (!group || group.type !== 'group') return;
+        if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
         const rows = normalizePackRows(group.raw_data);
         rows.push({
+            combo_id: '',
+            combo_label: '',
             meta_file: '',
-            range_type: rows[0] ? rows[0].range_type : 'page',
+            range_type: 'page',
             start: '',
             end: ''
         });
@@ -1346,12 +1582,144 @@ window.FeatureTimeline = (() => {
         }
     }
 
+    function addRangePackRow(pathStr) {
+        addRangePackCombo(pathStr);
+    }
+
+    function addRangePackSheet(pathStr, blockIdx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group)) return;
+        if (!group.raw_data) group.raw_data = {};
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const rows = normalizePackRows(group.raw_data);
+        const blocks = [];
+        rows.forEach(function (r) {
+            const id = String(r.combo_id || '').trim();
+            const last = blocks[blocks.length - 1];
+            if (!last || String(last.combo_id || '') !== id) {
+                blocks.push({ combo_id: id, combo_label: r.combo_label || '', rows: [r] });
+                return;
+            }
+            last.rows.push(r);
+        });
+        const bi = Number(blockIdx);
+        const block = blocks[bi];
+        if (!block) return;
+        const combo = resolvePackCombo(classId, block.combo_id);
+        const files = combo ? listPackMetaFiles(classId, combo) : [];
+        const have = {};
+        block.rows.forEach(function (r) {
+            const k = String(r.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+            if (k) have[k] = true;
+        });
+        const missing = files.find(function (f) {
+            return !have[String(f || '').replace(/\.meta\.json$/i, '').toUpperCase()];
+        });
+        const last = block.rows[block.rows.length - 1] || {};
+        const metaFile = missing || last.meta_file || (files[0] || '');
+        let insertAt = 0;
+        for (let i = 0; i < bi; i++) insertAt += blocks[i].rows.length;
+        insertAt += block.rows.length;
+        rows.splice(insertAt, 0, {
+            combo_id: block.combo_id || '',
+            combo_label: block.combo_label || last.combo_label || '',
+            meta_file: metaFile,
+            range_type: last.range_type === 'qnum' ? 'qnum' : 'page',
+            start: '',
+            end: ''
+        });
+        writePackRowsToGroup(group, rows);
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+    }
+
+    function onRangePackComboChange(pathStr, blockIdx) {
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group)) return;
+        if (!group.raw_data) group.raw_data = {};
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const fromDom = readRangePackFromDom(pathStr);
+        const blocks = [];
+        (fromDom.rows || []).forEach(function (r) {
+            const id = String(r.comboId || '').trim();
+            const last = blocks[blocks.length - 1];
+            if (!last || String(last.comboId || '') !== id) {
+                blocks.push({ comboId: id, comboLabel: r.comboLabel || '', rows: [r] });
+                return;
+            }
+            last.rows.push(r);
+        });
+        const bi = Number(blockIdx);
+        const block = blocks[bi];
+        if (!block) return;
+        const combo = resolvePackCombo(classId, block.comboId);
+        const prev = normalizePackRows(group.raw_data);
+        const expanded = expandPackRowsForCombo(classId, combo, prev);
+        const next = [];
+        blocks.forEach(function (b, i) {
+            if (i === bi) {
+                expanded.forEach(function (r) { next.push(r); });
+                return;
+            }
+            b.rows.forEach(function (r) {
+                next.push({
+                    combo_id: r.comboId || '',
+                    combo_label: r.comboLabel || '',
+                    meta_file: r.metaFile || '',
+                    range_type: r.rangeType === 'qnum' ? 'qnum' : 'page',
+                    start: String(r.start || '').trim(),
+                    end: String(r.end || '').trim()
+                });
+            });
+        });
+        if (!next.length) next.push({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' });
+        writePackRowsToGroup(group, next);
+        onRangePackChange(pathStr, { rerender: true, skipSync: true });
+    }
+
+    function removeRangePackCombo(pathStr, blockIdx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group)) return;
+        if (!group.raw_data) group.raw_data = {};
+        const rows = normalizePackRows(group.raw_data);
+        const blocks = [];
+        rows.forEach(function (r) {
+            const id = String(r.combo_id || '').trim();
+            const last = blocks[blocks.length - 1];
+            if (!last || String(last.combo_id || '') !== id) {
+                blocks.push({ combo_id: id, rows: [r] });
+                return;
+            }
+            last.rows.push(r);
+        });
+        if (blocks.length <= 1) return;
+        blocks.splice(Number(blockIdx), 1);
+        const next = [];
+        blocks.forEach(function (b) {
+            b.rows.forEach(function (r) { next.push(r); });
+        });
+        writePackRowsToGroup(group, next);
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+        onRangePackChange(pathStr, { rerender: false });
+    }
+
     function removeRangePackRow(pathStr, idx) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
             window.BuilderStore.sync();
         }
         const group = getTaskNodeByPathStr(pathStr);
-        if (!group || group.type !== 'group') return;
+        if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
         const rows = normalizePackRows(group.raw_data);
         if (rows.length <= 1) return;
@@ -1446,6 +1814,20 @@ window.FeatureTimeline = (() => {
         const rowsEl = document.getElementById('node-material-rows-' + pathStr);
         const actualRowCount = rowsEl ? rowsEl.querySelectorAll('.material-meta-row').length : 0;
         const selected = readMaterialMetaRows(pathStr);
+        const snapNode = getTaskNodeByPathStr(pathStr);
+        const savedRefs = snapNode && snapNode.raw_data && Array.isArray(snapNode.raw_data.material_refs)
+            ? snapNode.raw_data.material_refs : [];
+        selected.forEach(function (picker) {
+            const want = String((picker && picker.published_file) || '').replace(/\.meta\.json$/i, '').toUpperCase();
+            const hit = savedRefs.find(function (r) {
+                return String((r && (r.published_file || r.metaFile)) || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
+            });
+            if (!hit) return;
+            if (!picker.extraction_template_id && hit.extraction_template_id) {
+                picker.extraction_template_id = hit.extraction_template_id;
+            }
+            if (!picker.combo_id && hit.combo_id) picker.combo_id = hit.combo_id;
+        });
         if (!selected.length) throw new Error('請至少新增一列 meta');
         if (selected.length < actualRowCount) {
             throw new Error(
@@ -1483,6 +1865,31 @@ window.FeatureTimeline = (() => {
             } catch (batchErr) {
                 console.warn('[FeatureTimeline] batch read 失敗，改逐檔', batchErr);
                 batchFiles = null;
+            }
+        }
+
+        // 口說答案正式家在同 stem 的 .script.txt；讀不到就留空，不准改套題目／書寫欄。
+        const scriptNameOf = (window.MaterialSnapshot && window.MaterialSnapshot.siblingScriptFileName)
+            ? window.MaterialSnapshot.siblingScriptFileName
+            : function (metaFile) {
+                return String(metaFile || '').replace(/\.meta\.json$/i, '.script.txt');
+            };
+        const scriptBatchItems = selected.map(function (picker) {
+            const scriptName = scriptNameOf(picker.published_file);
+            const sid = scriptName ? lookupMetaFileId(pathStr, picker.material_folder, scriptName) : '';
+            return {
+                materialFolder: resolveStoredFolderName(picker.material_folder),
+                fileName: scriptName || '',
+                fileId: sid || ''
+            };
+        });
+        let batchScripts = null;
+        if (typeof window.GasService.readMaterialFiles === 'function' && scriptBatchItems.some(function (it) { return it.fileName || it.fileId; })) {
+            try {
+                batchScripts = await window.GasService.readMaterialFiles(folderId, scriptBatchItems, rootKind);
+            } catch (scriptBatchErr) {
+                console.warn('[FeatureTimeline] 口說 .script.txt 批次讀取失敗，改逐檔或不帶', scriptBatchErr);
+                batchScripts = null;
             }
         }
 
@@ -1526,12 +1933,35 @@ window.FeatureTimeline = (() => {
                     );
                 }
             }
-            const rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
+            let rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
+            let scriptText = '';
+            if (batchScripts && batchScripts[i] && batchScripts[i].ok) {
+                scriptText = batchScripts[i].content || '';
+            } else if (scriptBatchItems[i] && (scriptBatchItems[i].fileName || scriptBatchItems[i].fileId)) {
+                try {
+                    const sf = await window.GasService.readMaterialFile(
+                        folderId,
+                        scriptBatchItems[i].materialFolder,
+                        scriptBatchItems[i].fileName,
+                        rootKind,
+                        scriptBatchItems[i].fileId ? { fileId: scriptBatchItems[i].fileId } : undefined
+                    );
+                    if (sf && (sf.ok !== false) && sf.content) scriptText = sf.content;
+                } catch (_scriptErr) {
+                    scriptText = '';
+                }
+            }
+            if (scriptText && window.MaterialSnapshot.attachSpokenAnswersFromScript) {
+                rows = window.MaterialSnapshot.attachSpokenAnswersFromScript(rows, scriptText);
+            }
             const sliceOpts = { range_spec: picker.range_spec, select_mode: 'range_spec' };
+            const scriptCtx = studentScriptContextForPicker(picker, classId, pathStr);
             const ctx = Object.assign({}, picker, sliceOpts, {
                 materials_root_kind: rootKind,
                 label: picker.label,
-                range_spec: picker.range_spec
+                range_spec: picker.range_spec,
+                student_script: scriptCtx.student_script,
+                col_map: scriptCtx.col_map
             });
             const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, ctx);
             const stem = picker.label || metaStemFromFileName(picker.published_file);
@@ -1557,7 +1987,10 @@ window.FeatureTimeline = (() => {
             refs.push(Object.assign({}, snapshot.material_ref, {
                 range_spec: picker.range_spec,
                 label: stem,
-                fileId: fileResult.fileId || lookupMetaFileId(pathStr, picker.material_folder, picker.published_file) || ''
+                fileId: fileResult.fileId || lookupMetaFileId(pathStr, picker.material_folder, picker.published_file) || '',
+                combo_id: picker.combo_id || '',
+                extraction_template_id: picker.extraction_template_id || '',
+                student_script: scriptCtx.student_script
             }));
         }
 
@@ -1687,7 +2120,7 @@ window.FeatureTimeline = (() => {
             }
         }
         if (scriptLabelEl) {
-            scriptLabelEl.textContent = '🎯 AI 批改文稿' + (units.length > 1 ? '（合併預覽，唯讀）' : '（可微調）');
+            scriptLabelEl.textContent = '🎯 口說答案' + (units.length > 1 ? '（合併預覽，唯讀）' : '（可微調）');
         }
         if (units.length > 1 && gradingUnitsWrap) {
             const wrap = document.createElement('div');
@@ -1746,8 +2179,8 @@ window.FeatureTimeline = (() => {
             const refCount = (snapshot.material_refs && snapshot.material_refs.length) || (snapshot.material_ref ? 1 : 0);
             const unitCount = Array.isArray(snapshot.grading_units) ? snapshot.grading_units.length : 0;
             previewEl.textContent = '已合併 ' + refCount + ' 個 meta｜批改單位 '
-                + unitCount + ' 頁（一頁一檔）｜AI 稿 '
-                + (snapshot.original_script || '').length + ' 字；學生顯示 '
+                + unitCount + ' 頁（一頁一檔）｜口說答案 '
+                + (snapshot.original_script || '').length + ' 字；書寫答案 '
                 + displayText.length + ' 字；凍結於 ' + (snapshot.snapshot_at || '')
                 + (snapshot.material_range ? ('｜' + snapshot.material_range) : '')
                 + (snapshot.recording_unit_hint ? ('｜' + snapshot.recording_unit_hint) : '');
@@ -2903,9 +3336,9 @@ window.FeatureTimeline = (() => {
                 if (previewEl) {
                     previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
                         + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                        + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                        + '</div><strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
                         + (snapshot.original_script || '').replace(/</g, '&lt;')
-                        + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+                        + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
                         + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
                 }
             } catch (err) {
@@ -2925,9 +3358,9 @@ window.FeatureTimeline = (() => {
                 if (previewEl) {
                     previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
                         + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                        + '</div><strong>AI 稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+                        + '</div><strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
                         + (snapshot.original_script || '').replace(/</g, '&lt;')
-                        + '</pre><strong>學生顯示預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+                        + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
                         + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
                 }
                 window.showFlash('已寫入 Snapshot：' + (snapshot.material_range || '') + '（請記得儲存作業）');
@@ -2997,9 +3430,17 @@ window.FeatureTimeline = (() => {
 
         onNodeTitleInput: onNodeTitleInput,
         onGroupTitleInput: onGroupTitleInput,
+        parentRangeGroupOf: parentRangeGroupOf,
         onRangePackChange: onRangePackChange,
+        onRangePackComboChange: onRangePackComboChange,
+        expandPackRowsForCombo: expandPackRowsForCombo,
         listPackMetaFiles: listPackMetaFiles,
+        findAssignedComboForMetaFile: findAssignedComboForMetaFile,
+        displayStemFromMetaFile: displayStemFromMetaFileLocal,
         addRangePackRow: addRangePackRow,
+        addRangePackCombo: addRangePackCombo,
+        addRangePackSheet: addRangePackSheet,
+        removeRangePackCombo: removeRangePackCombo,
         removeRangePackRow: removeRangePackRow,
 
         onScriptSourceChange: function (pathStr) {
@@ -3012,9 +3453,17 @@ window.FeatureTimeline = (() => {
             });
             // 資源／PDF 面板：D 專用，E 骨架模式下當「選填對照」共用同一組欄位
             const resourceEl = document.getElementById('script-source-panel-resource-' + pathStr);
-            if (resourceEl) resourceEl.style.display = (source === 'resource' || source === 'skeleton') ? 'block' : 'none';
+            if (resourceEl) resourceEl.style.display = (source === 'resource') ? 'block' : 'none';
             const baseWrap = document.getElementById('node-base-range-wrap-' + pathStr);
-            if (baseWrap) baseWrap.style.display = (source === 'meta') ? 'none' : 'flex';
+            if (baseWrap) baseWrap.style.display = (source === 'skeleton') ? 'flex' : 'none';
+            if (source === 'resource') {
+                const audioNode = getTaskNodeByPathStr(pathStr);
+                if (audioNode && audioNode.raw_data) audioNode.raw_data.script_source = 'resource';
+                const hostPath = parentRangeGroupOf(pathStr)
+                    ? String(pathStr).split('-').slice(0, -1).join('-')
+                    : pathStr;
+                onRangePackChange(hostPath, { rerender: false, skipSync: true });
+            }
             // 骨架模式：至少給一個空白列，避免老師誤以為要先按別的按鈕才能開始
             if (source === 'skeleton') {
                 const listEl = document.getElementById('node-skeleton-units-' + pathStr);

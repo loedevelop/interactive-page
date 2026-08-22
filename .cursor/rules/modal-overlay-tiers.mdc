@@ -40,6 +40,19 @@ ModalOverlay.requestClose('my-modal');
 const ok = await ModalOverlay.confirm('確定要刪除嗎？');
 ```
 
+## 儲存／關閉契約（2026-08-21 反覆踩：改檔名視窗按儲存還在、按取消卻問尚未儲存）
+
+B 級表單「儲存」不是裝飾。按下去之後，視窗必須進入可辨識的儲存中，結束後要嘛關、要嘛留著並把錯誤寫在視窗裡。禁止看起來像沒按。
+
+```
+按儲存 → 立刻「儲存中…」＋ setBusy(true)＋取消停用
+成功 → ModalOverlay.close(id)（不准 requestClose，不准再問尚未儲存）
+失敗 → setBusy(false)，視窗留著，錯誤寫在視窗內（flash 在 overlay 後面／一閃不算有通知）
+儲存中 → 取消／點灰色背景不准跳出「尚未儲存」
+```
+
+`setBusy` 一定要配畫面上的「儲存中…」。只 `disabled`、按鈕長得跟沒按一樣＝使用者會再按取消，然後被尚未儲存嗆回來。
+
 ## 反例（禁止）
 
 ```js
@@ -48,6 +61,25 @@ overlay.style.cssText = 'position:fixed;inset:0;...';
 document.body.appendChild(overlay); // ❌ 會讓關閉準則破功
 
 if (!confirm('確定？')) return; // ❌ 改走 ModalOverlay.confirm
+
+saveBtn.disabled = true;
+await longRpc();
+saveBtn.disabled = false; // ❌ 成功了卻沒 close；失敗了也沒寫在視窗裡
+ModalOverlay.requestClose(id); // ❌ 儲存成功不准走這條（會被 isDirty 攔成尚未儲存）
+```
+
+## 正確
+
+```js
+ModalOverlay.setBusy(id, true);
+saveBtn.textContent = '儲存中…';
+try {
+  await save();
+  ModalOverlay.close(id); // 成功＝關。不要問。
+} catch (err) {
+  ModalOverlay.setBusy(id, false);
+  statusEl.textContent = '儲存失敗：' + err.message; // 寫在視窗裡
+}
 ```
 
 ## 審查清單
@@ -56,6 +88,14 @@ if (!confirm('確定？')) return; // ❌ 改走 ModalOverlay.confirm
 
 1. 有傳 `tier: 'A'|'B'|'C'`
 2. 關閉鈕：沒改過／已儲存 → `ModalOverlay.close(id)`；使用者放棄編輯 → `requestClose(id)`（不要只 `el.remove()`）
-3. B 級有 `isDirty`；存檔期間用 `setBusy(id, true)`，避免還沒存完就跳出「尚未儲存」
-4. C 級絕不綁 backdrop 關閉
-5. 是否題走 `ModalOverlay.confirm`，不要 `window.confirm`
+3. B 級有 `isDirty`；存檔期間用 `setBusy(id, true)`，且按鈕／狀態列要看得出「儲存中」
+4. 儲存成功走 `close`；不要讓使用者再按取消才離開，更不要在儲存後問尚未儲存
+5. C 級絕不綁 backdrop 關閉
+6. 是否題走 `ModalOverlay.confirm`，不要 `window.confirm`
+
+## 改動前自問
+
+1. 按儲存之後，視窗會不會自己關？還是要使用者再按取消？
+2. 儲存中按取消／點外面，會不會跳出尚未儲存？
+3. 失敗時錯誤寫在視窗裡，還是只靠 flash？
+任一「會／只靠 flash」→ 停、改到契約成立。

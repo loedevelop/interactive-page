@@ -55,6 +55,7 @@ window.FeatureTemplateLibrary = (function () {
             fields_answer: row.fields_answer || '',
             quiz_prompt: row.quiz_prompt || '',
             quiz_answer: row.quiz_answer || '',
+            student_script: row.student_script || '',
             lines_per_page: row.lines_per_page || DEFAULT_LINES_PER_PAGE,
             legacy_profile_id: row.legacy_profile_id || '',
             is_builtin_seed: !!row.is_builtin_seed,
@@ -64,7 +65,7 @@ window.FeatureTemplateLibrary = (function () {
 
     const SELECT_COLUMNS = 'id, name, is_extraction_role, is_exam_role, sort_order, columns, designed_from, '
         + 'answer_mode, answer_combine_note, speak_mode, speak_formula, legacy_id, '
-        + 'fields, fields_answer, quiz_prompt, quiz_answer, lines_per_page, legacy_profile_id, '
+        + 'fields, fields_answer, quiz_prompt, quiz_answer, student_script, lines_per_page, legacy_profile_id, '
         + 'is_builtin_seed, created_at, updated_at';
 
     async function fetchTemplates(force) {
@@ -124,6 +125,7 @@ window.FeatureTemplateLibrary = (function () {
         if (f.fields_answer !== undefined) out.fields_answer = f.fields_answer || '';
         if (f.quiz_prompt !== undefined) out.quiz_prompt = f.quiz_prompt || '';
         if (f.quiz_answer !== undefined) out.quiz_answer = f.quiz_answer || '';
+        if (f.student_script !== undefined) out.student_script = f.student_script || '';
         if (f.lines_per_page !== undefined) out.lines_per_page = Number(f.lines_per_page) || DEFAULT_LINES_PER_PAGE;
         if (f.sort_order !== undefined) out.sort_order = Number(f.sort_order) || 0;
         return out;
@@ -348,6 +350,7 @@ window.FeatureTemplateLibrary = (function () {
             fields: oldPaperStack ? 'vBK_name&" - "&page&" - "&item_no' : storedFields,
             fields_answer: storedAnswer,
             quiz_prompt: String(t.quiz_prompt || '').trim() || 'display_zh',
+            student_script: String(t.student_script || '').trim() || '_answer_combined_text',
             quiz_answer: templateOwnFormula(t),
             col_map: colMapFromTemplate(t),
             lines_per_page: t.lines_per_page || DEFAULT_LINES_PER_PAGE
@@ -365,6 +368,12 @@ window.FeatureTemplateLibrary = (function () {
         addRole: addRole,
         moveTemplateInVisibleList: moveTemplateInVisibleList,
         computeExamDraftFromColumns: computeExamDraftFromColumns,
-        resolveTemplateProfile: resolveTemplateProfile
+        resolveTemplateProfile: resolveTemplateProfile,
+        colMapFromTemplate: colMapFromTemplate,
+        DEFAULT_STUDENT_SCRIPT: '_answer_combined_text',
+        studentScriptOf: function (template) {
+            const raw = String((template && template.student_script) || '').trim();
+            return raw || '_answer_combined_text';
+        }
     };
 })();

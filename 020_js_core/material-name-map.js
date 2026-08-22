@@ -90,6 +90,20 @@ window.MaterialNameMap = (function () {
         return hit && hit.currentLabel ? hit.currentLabel : '';
     }
 
+    /** 活頁別稱只認這一列（sheet id）。不准只靠活頁名去共用。 */
+    function currentLabelForSheet(kind, alias, sheetId) {
+        const sid = String(sheetId || '').trim();
+        if (!sid) return '';
+        const u = upper(alias);
+        if (!u) return '';
+        const hit = rowsSync().find(function (r) {
+            return r.kind === kind
+                && upper(r.alias) === u
+                && String(r.material_sheet_id || '') === sid;
+        });
+        return hit && hit.current_label ? String(hit.current_label).trim() : '';
+    }
+
     /** 資料夾現用名：舊名對到別名就回現用標籤，否則原字。未套用的雲端夾清單不要用這個去合併。 */
     function resolveFolderName(name) {
         const n = norm(name);
@@ -172,6 +186,10 @@ window.MaterialNameMap = (function () {
         const existing = rowsSync().find(function (r) {
             if (r.kind !== kind || upper(r.alias) !== upper(alias)) return false;
             if (kind === 'template') return String(r.teacher_id) === String(uid);
+            if (kind === 'sheet_stem' || kind === 'meta_file' || kind === 'script_file') {
+                return String(r.material_sheet_id || '') === String(payload.material_sheet_id || '')
+                    && String(r.material_folder_id || '') === String(payload.material_folder_id || '');
+            }
             return String(r.material_folder_id) === String(payload.material_folder_id);
         });
 
@@ -199,7 +217,16 @@ window.MaterialNameMap = (function () {
         if (error) {
             if (error.code === '23505') {
                 await ensureLoaded(true);
-                return recordAlias(opts);
+                const again = rowsSync().find(function (r) {
+                    if (r.kind !== kind || upper(r.alias) !== upper(alias)) return false;
+                    if (kind === 'template') return String(r.teacher_id) === String(uid);
+                    if (kind === 'sheet_stem' || kind === 'meta_file' || kind === 'script_file') {
+                        return String(r.material_sheet_id || '') === String(payload.material_sheet_id || '');
+                    }
+                    return String(r.material_folder_id) === String(payload.material_folder_id);
+                });
+                if (again) return recordAlias(opts);
+                throw new Error('活頁別稱不能再只靠活頁名共用。請先在 Supabase 跑 20260821210000_material_name_maps_sheet_alias_unique.sql');
             }
             throw error;
         }
@@ -332,6 +359,7 @@ window.MaterialNameMap = (function () {
         ensureLoaded: ensureLoaded,
         resolve: resolve,
         currentLabel: currentLabel,
+        currentLabelForSheet: currentLabelForSheet,
         resolveFolderName: resolveFolderName,
         lookupKeys: lookupKeys,
         namesMatch: namesMatch,

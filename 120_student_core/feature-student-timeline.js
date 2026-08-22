@@ -1739,7 +1739,14 @@ window.FeatureStudentTimeline = (() => {
                 }, {
                     pages: studioPages,
                     initialIndex: initialIndex < 0 ? 0 : initialIndex,
-                    submittedKeys: submittedKeys
+                    submittedKeys: submittedKeys,
+                    pdfFileId: foundTask && foundTask.raw_data && foundTask.raw_data.script_source === 'resource'
+                        ? String(foundTask.raw_data.student_pdf_file_id || '')
+                        : '',
+                    pdfPages: foundTask && foundTask.raw_data && foundTask.raw_data.script_source === 'resource'
+                        && Array.isArray(foundTask.raw_data.student_pdf_pages)
+                        ? foundTask.raw_data.student_pdf_pages
+                        : []
                 });
             } else {
                 window.showFlash('系統正在載入錄音模組，請稍候重試。', 'error');

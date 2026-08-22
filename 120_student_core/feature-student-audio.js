@@ -502,6 +502,47 @@ window.FeatureStudentAudio = (function() {
         }
     }
 
+    async function renderMappedPdfPages(fileId, pages) {
+        const host = document.getElementById('audio-mapped-pdf');
+        if (!host) return;
+        const id = String(fileId || '').trim();
+        const list = Array.isArray(pages) ? pages.filter(function (n) { return Number(n) > 0; }) : [];
+        if (!id || !list.length) return;
+        if (!window.PdfExamPaper || typeof window.PdfExamPaper.loadPdfDocumentFromDrive !== 'function') {
+            host.textContent = '無法載入對照 PDF（PdfExamPaper 尚未載入）';
+            return;
+        }
+        host.textContent = '載入對照頁…';
+        try {
+            const pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(id);
+            host.innerHTML = '';
+            for (let i = 0; i < list.length; i++) {
+                const pageNum = Number(list[i]);
+                if (pageNum < 1 || pageNum > pdfDoc.numPages) {
+                    const miss = document.createElement('div');
+                    miss.style.cssText = 'margin:8px 0; color:#B91C1C; font-weight:800;';
+                    miss.textContent = '對照到的檔案頁 ' + pageNum + ' 超出這份 PDF（共 ' + pdfDoc.numPages + ' 頁）';
+                    host.appendChild(miss);
+                    continue;
+                }
+                const page = await pdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 1.4 });
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.cssText = 'width:100%; height:auto; display:block; margin-bottom:10px; background:white; box-shadow:0 1px 4px rgba(15,23,42,0.12);';
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+                const cap = document.createElement('div');
+                cap.style.cssText = 'font-size:0.78rem; font-weight:800; color:#64748B; margin:8px 0 4px;';
+                cap.textContent = '檔案頁 ' + pageNum;
+                host.appendChild(cap);
+                host.appendChild(canvas);
+            }
+        } catch (err) {
+            host.textContent = '無法載入對照 PDF：' + ((err && err.message) || err);
+        }
+    }
+
     return {
         openStudio: function(taskTitle, transcriptText, materialUrl, materialRange, submitCallback, studioOpts) {
             closeStudio(); 
@@ -518,11 +559,12 @@ window.FeatureStudentAudio = (function() {
             const initialText = (initialPage && String(initialPage.student_display || initialPage.original_script || '').trim())
                 ? String(initialPage.student_display || initialPage.original_script)
                 : (studioPages.length > 1 ? '' : fallbackTranscript);
-            const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(initialText, taskTitle, materialUrl, materialRange);
+            const htmlString = window.UIAudioTemplates.getRecordingStudioHTML(initialText, taskTitle, materialUrl, materialRange, studioOpts);
             document.body.insertAdjacentHTML('beforeend', htmlString);
             
             initDOM();
-            setupVisualViewport(); 
+            setupVisualViewport();
+            renderMappedPdfPages(studioOpts.pdfFileId, studioOpts.pdfPages);
         },
         convertBlobToWav: convertToWav
     };

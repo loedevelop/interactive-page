@@ -18,26 +18,65 @@ window.BuilderStore = (() => {
             .trim();
     }
 
+    function displayStemFromMetaFile(fileName) {
+        const stem = String(fileName || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+        const m = stem.match(/^(.+)\.([A-Za-z][A-Za-z0-9_-]*)$/);
+        return m ? m[1] : stem;
+    }
+
+    function packLabelWithSheets(base, gRaw) {
+        const label = String(base || '').trim();
+        const rows = (gRaw && Array.isArray(gRaw.pack_rows) && gRaw.pack_rows.length)
+            ? gRaw.pack_rows
+            : [{ meta_file: gRaw && gRaw.pack_meta_file }];
+        const extra = [];
+        const seen = {};
+        rows.forEach(function (r) {
+            const stem = displayStemFromMetaFile((r && r.meta_file) || '');
+            const u = stem.toUpperCase();
+            if (!stem || seen[u]) return;
+            seen[u] = true;
+            if (label && label.toUpperCase().indexOf(u) !== -1) return;
+            extra.push(stem);
+        });
+        if (!extra.length) return label;
+        return (label ? (label + ' ') : '') + extra.join(' ');
+    }
+
     /**
      * 範圍層組標題：
-     * - 已選套餐 → 套餐名稱（pack_combo_label）
+     * - 已選套餐 → 套餐名稱（pack_combo_label），活頁名再加上
      * - 舊作業沒有 pack_combo_id → 才退回錄音 material_range（相容舊資料）
      * 沒選套餐、或本班尚未指派套餐 → 空白，不拿別班／別套餐補。
      */
     function deriveRangeTitleFromGroup(groupNode) {
         if (!groupNode) return '';
         const gRaw = groupNode.raw_data || {};
-        const packId = String(gRaw.pack_combo_id || '').trim();
-        const packLabel = String(gRaw.pack_combo_label || '').trim();
-        if (packId) {
-            if (packLabel) return packLabel;
+        const packRows = (gRaw && Array.isArray(gRaw.pack_rows)) ? gRaw.pack_rows : [];
+        const comboLabels = [];
+        const seenCombo = {};
+        packRows.forEach(function (r) {
+            const lab = String((r && r.combo_label) || '').trim();
+            const id = String((r && r.combo_id) || '').trim();
+            const key = id || lab;
+            if (!key || seenCombo[key]) return;
+            seenCombo[key] = true;
+            if (lab) comboLabels.push(lab);
+        });
+        const packId = String(gRaw.pack_combo_id || (packRows[0] && packRows[0].combo_id) || '').trim();
+        const packLabel = comboLabels.length
+            ? comboLabels.join('／')
+            : String(gRaw.pack_combo_label || '').trim();
+        if (packId || comboLabels.length) {
+            if (packLabel) return packLabelWithSheets(packLabel, gRaw);
             const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
             const classId = (bState && bState.classId) || '';
             const fcmc = window.FeatureClassMaterialCombinations;
             const combo = (fcmc && typeof fcmc.getAssignedComboById === 'function')
                 ? fcmc.getAssignedComboById(classId, packId)
                 : null;
-            return (combo && combo.label) ? String(combo.label).trim() : '';
+            const named = (combo && combo.label) ? String(combo.label).trim() : '';
+            return named ? packLabelWithSheets(named, gRaw) : '';
         }
         if (!Array.isArray(groupNode.subTasks)) return '';
         const audio = groupNode.subTasks.find(function (t) { return t && t.type === 'audio_record'; });
@@ -60,33 +99,44 @@ window.BuilderStore = (() => {
     }
 
     function syncRangePackFieldsFromDom(t, pathStr) {
-        if (!t || !t.raw_data || t.raw_data.group_role !== 'range') return;
-        const comboEl = document.getElementById('range-pack-combo-' + pathStr);
-        if (comboEl) {
-            t.raw_data.pack_combo_id = String(comboEl.value || '').trim();
-            const opt = comboEl.options[comboEl.selectedIndex];
-            t.raw_data.pack_combo_label = (t.raw_data.pack_combo_id && opt)
-                ? String(opt.text || '').trim()
-                : '';
-        }
+        if (!t || !t.raw_data) return;
+        const isHost = t.raw_data.group_role === 'range' || t.type === 'audio_record';
+        if (!isHost) return;
         const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
-        const rowEls = panel ? panel.querySelectorAll('.range-pack-row') : [];
-        if (rowEls.length) {
+        const blockEls = panel ? panel.querySelectorAll('.range-pack-block') : [];
+        if (blockEls.length) {
             const rows = [];
-            Array.prototype.forEach.call(rowEls, function (rowEl, idx) {
-                const sheetEl = document.getElementById('range-pack-sheet-' + pathStr + '-' + idx)
-                    || (rowEl && rowEl.querySelector('.range-pack-sheet'));
-                const rtypeEl = document.getElementById('range-pack-rtype-' + pathStr + '-' + idx);
-                const startEl = document.getElementById('range-pack-start-' + pathStr + '-' + idx);
-                const endEl = document.getElementById('range-pack-end-' + pathStr + '-' + idx);
-                rows.push({
-                    meta_file: sheetEl ? String(sheetEl.value || '').trim() : '',
-                    range_type: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
-                    start: startEl ? String(startEl.value || '').trim() : '',
-                    end: endEl ? String(endEl.value || '').trim()
+            Array.prototype.forEach.call(blockEls, function (blockEl, bi) {
+                const comboEl = document.getElementById('range-pack-combo-' + pathStr + '-' + bi)
+                    || (blockEl && blockEl.querySelector('.range-pack-combo'));
+                const comboId = comboEl ? String(comboEl.value || '').trim() : '';
+                const opt = comboEl && comboEl.options[comboEl.selectedIndex];
+                const comboLabel = (comboId && opt) ? String(opt.text || '').trim() : '';
+                const rowEls = blockEl.querySelectorAll('.range-pack-row');
+                if (!rowEls.length) {
+                    rows.push({ combo_id: comboId, combo_label: comboLabel, meta_file: '', range_type: 'page', start: '', end: '' });
+                    return;
+                }
+                Array.prototype.forEach.call(rowEls, function (rowEl) {
+                    const idx = rowEl.getAttribute('data-row-idx');
+                    const sheetEl = (idx != null ? document.getElementById('range-pack-sheet-' + pathStr + '-' + idx) : null)
+                        || (rowEl && rowEl.querySelector('.range-pack-sheet'));
+                    const rtypeEl = idx != null ? document.getElementById('range-pack-rtype-' + pathStr + '-' + idx) : null;
+                    const startEl = idx != null ? document.getElementById('range-pack-start-' + pathStr + '-' + idx) : null;
+                    const endEl = idx != null ? document.getElementById('range-pack-end-' + pathStr + '-' + idx) : null;
+                    rows.push({
+                        combo_id: comboId,
+                        combo_label: comboLabel,
+                        meta_file: sheetEl ? String(sheetEl.value || '').trim() : '',
+                        range_type: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
+                        start: startEl ? String(startEl.value || '').trim() : '',
+                        end: endEl ? String(endEl.value || '').trim() : ''
+                    });
                 });
             });
             t.raw_data.pack_rows = rows;
+            t.raw_data.pack_combo_id = rows[0].combo_id || '';
+            t.raw_data.pack_combo_label = rows[0].combo_label || '';
             t.raw_data.pack_meta_file = rows[0].meta_file;
             t.raw_data.pack_range_type = rows[0].range_type;
             t.raw_data.pack_start = rows[0].start;
@@ -187,6 +237,7 @@ window.BuilderStore = (() => {
 
                 if (t.type === 'audio_record') {
                     if (!t.raw_data) t.raw_data = {};
+                    syncRangePackFieldsFromDom(t, pathStr);
                     
                     const useAiEl = document.getElementById(`node-use-ai-${pathStr}`); 
                     const useGrammarEl = document.getElementById(`node-use-grammar-${pathStr}`);
@@ -741,7 +792,7 @@ window.BuilderStore = (() => {
                     pack_range_type: 'page',
                     pack_start: '',
                     pack_end: '',
-                    pack_rows: [{ meta_file: '', range_type: 'page', start: '', end: '' }]
+                    pack_rows: [{ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }]
                 },
                 subTasks: [
                     window.BuilderStore._makeLeafNode('audio_record', '', window.BuilderStore._defaultAudioRaw()),

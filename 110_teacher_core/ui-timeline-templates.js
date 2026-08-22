@@ -21,12 +21,19 @@ window.TimelineTemplates = (() => {
         return m ? m[1] : stem;
     }
 
-    /** 範圍層開包：套餐＋每一行必選活頁＋ page/# 起迄（資料夾有數個活頁，不准省略） */
+    /** 範圍層開包：選套餐 → 該套餐活頁自動列出，各列只填頁碼。 */
     function normalizePackRowsForRender(raw) {
+        const fallbackComboId = String((raw && raw.pack_combo_id) || '').trim();
+        const fallbackComboLabel = String((raw && raw.pack_combo_label) || '').trim();
         if (raw && Array.isArray(raw.pack_rows) && raw.pack_rows.length) {
             return raw.pack_rows.map(function (r) {
+                const ownId = String((r && r.combo_id) || '').trim();
+                const metaFile = String((r && r.meta_file) || '').trim();
+                const comboId = ownId || (metaFile ? fallbackComboId : '');
                 return {
-                    meta_file: String((r && r.meta_file) || '').trim(),
+                    combo_id: comboId,
+                    combo_label: String((r && r.combo_label) || (comboId ? fallbackComboLabel : '')).trim(),
+                    meta_file: metaFile,
                     range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
                     start: r && r.start != null ? String(r.start) : '',
                     end: r && r.end != null ? String(r.end) : ''
@@ -34,6 +41,8 @@ window.TimelineTemplates = (() => {
             });
         }
         return [{
+            combo_id: fallbackComboId,
+            combo_label: fallbackComboLabel,
             meta_file: String((raw && raw.pack_meta_file) || '').trim(),
             range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
             start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
@@ -41,18 +50,99 @@ window.TimelineTemplates = (() => {
         }];
     }
 
-    function renderPackSheetOptions(metas, currentMeta) {
-        let html = '<option value="">— 請選活頁 —</option>';
-        const curKey = String(currentMeta || '').replace(/\.meta\.json$/i, '').toUpperCase();
-        (metas || []).forEach(function (name) {
-            const file = String(name || '').trim();
-            if (!file) return;
-            const fileKey = file.replace(/\.meta\.json$/i, '').toUpperCase();
-            const selected = !!(curKey && fileKey === curKey);
-            html += '<option value="' + escapeHtml(file) + '"' + (selected ? ' selected' : '') + '>'
-                + escapeHtml(displayStemFromMetaFile(file)) + '</option>';
+    function renderPackComboOptions(combos, currentId, currentLabel, cacheReady) {
+        let html = '<option value="">— 請選擇這個班已指派的套餐 —</option>';
+        if (!cacheReady) {
+            if (currentId) {
+                html += '<option value="' + escapeHtml(currentId) + '" selected>'
+                    + escapeHtml(currentLabel || '目前套餐') + '</option>';
+            }
+            html += '<option value="" disabled>⏳ 載入套餐…</option>';
+            return html;
+        }
+        let matched = !currentId;
+        (combos || []).forEach(function (c) {
+            if (!c || !c.id) return;
+            const selected = String(c.id) === String(currentId);
+            if (selected) matched = true;
+            html += '<option value="' + escapeHtml(c.id) + '"' + (selected ? ' selected' : '') + '>'
+                + escapeHtml(c.label) + '</option>';
         });
+        if (!matched && currentId) {
+            html += '<option value="' + escapeHtml(currentId) + '" selected>'
+                + escapeHtml(currentLabel || currentId) + '</option>';
+        }
+        if (!(combos || []).length) {
+            html += '<option value="" disabled>（這個班還沒有已指派且搭配試卷範本的套餐）</option>';
+        }
         return html;
+    }
+
+    function packSheetDisplayName(file) {
+        return String(file || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+    }
+
+    function packBlocksFromRows(rows) {
+        const blocks = [];
+        (rows || []).forEach(function (r) {
+            const id = String((r && r.combo_id) || '').trim();
+            const last = blocks[blocks.length - 1];
+            if (!last || String(last.combo_id || '') !== id) {
+                blocks.push({
+                    combo_id: id,
+                    combo_label: String((r && r.combo_label) || '').trim(),
+                    rows: [r]
+                });
+                return;
+            }
+            last.rows.push(r);
+        });
+        return blocks.length ? blocks : [{ combo_id: '', combo_label: '', rows: [{ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }] }];
+    }
+
+    function audioPdfStatusHtml(pathStr, audioNode) {
+        const FT = window.FeatureTimeline;
+        const parent = (FT && typeof FT.parentRangeGroupOf === 'function') ? FT.parentRangeGroupOf(pathStr) : null;
+        const host = parent || audioNode;
+        const raw = (host && host.raw_data) || {};
+        const rows = Array.isArray(raw.pack_rows) && raw.pack_rows.length
+            ? raw.pack_rows
+            : [{ combo_id: raw.pack_combo_id, meta_file: raw.pack_meta_file, range_type: raw.pack_range_type, start: raw.pack_start, end: raw.pack_end }];
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const fcmc = window.FeatureClassMaterialCombinations;
+        const Map = window.MaterialPdfPageMap;
+        const bits = [];
+        let anyCombo = false;
+        rows.forEach(function (r) {
+            const comboId = String((r && r.combo_id) || '').trim();
+            if (!comboId) return;
+            anyCombo = true;
+            const combo = (fcmc && typeof fcmc.getAssignedComboById === 'function')
+                ? fcmc.getAssignedComboById(classId, comboId)
+                : null;
+            const sheet = String((r && r.meta_file) || '').replace(/\.meta\.json$/i, '');
+            if (!combo) {
+                bits.push((sheet || '套餐') + '：找不到這份套餐');
+                return;
+            }
+            const fileId = combo.studentPdfFileId || '';
+            const fileName = combo.studentPdfFileName || '';
+            if (!fileId) {
+                bits.push((sheet || combo.label || '套餐') + '：教材範本管理還沒上傳 PDF');
+                return;
+            }
+            const resolved = (Map && typeof Map.resolvePages === 'function')
+                ? Map.resolvePages(combo.studentPdfPageMap, r.range_type, r.start, r.end)
+                : { pages: [], missing: true };
+            if (resolved.missing || !resolved.pages.length) {
+                bits.push((sheet || combo.label || '套餐') + '（' + fileName + '）：對照表對不到這段範圍');
+                return;
+            }
+            bits.push((sheet || combo.label || '套餐') + '（' + fileName + '）檔案頁 ' + resolved.pages.join('、'));
+        });
+        if (!anyCombo) return '請先在上面的範圍選套餐。PDF 在教材範本管理上傳與對照，這裡不另傳。';
+        return bits.join('；');
     }
 
     function renderRangePackHtml(pathStr, groupNode) {
@@ -64,94 +154,93 @@ window.TimelineTemplates = (() => {
         const combos = (cacheReady && fcmc && typeof fcmc.listAssignedCombosForClass === 'function')
             ? fcmc.listAssignedCombosForClass(classId)
             : [];
-        const currentId = String(raw.pack_combo_id || '').trim();
         const rows = normalizePackRowsForRender(raw);
+        const blocks = packBlocksFromRows(rows);
+        let globalIdx = 0;
 
-        let combo = null;
-        if (currentId && fcmc && typeof fcmc.getAssignedComboById === 'function') {
-            combo = fcmc.getAssignedComboById(classId, currentId);
-        }
-        const metas = (window.FeatureTimeline && typeof window.FeatureTimeline.listPackMetaFiles === 'function')
-            ? window.FeatureTimeline.listPackMetaFiles(classId, combo)
-            : ((combo && Array.isArray(combo.metaFiles)) ? combo.metaFiles.slice() : []);
-
-        let comboOpts = '<option value="">— 請選擇這個班已指派的套餐 —</option>';
-        if (!cacheReady) {
-            if (currentId) {
-                comboOpts += '<option value="' + escapeHtml(currentId) + '" selected>'
-                    + escapeHtml(raw.pack_combo_label || '目前套餐') + '</option>';
+        const blockHtml = blocks.map(function (block, bi) {
+            let blockCombo = null;
+            if (block.combo_id && fcmc && typeof fcmc.getAssignedComboById === 'function') {
+                blockCombo = fcmc.getAssignedComboById(classId, block.combo_id);
             }
-            comboOpts += '<option value="" disabled>⏳ 載入套餐…</option>';
-        } else {
-            let matched = !currentId;
-            combos.forEach(function (c) {
-                if (!c || !c.id) return;
-                const selected = String(c.id) === currentId;
-                if (selected) matched = true;
-                comboOpts += '<option value="' + escapeHtml(c.id) + '"' + (selected ? ' selected' : '') + '>'
-                    + escapeHtml(c.label) + '</option>';
-            });
-            if (!matched && currentId) {
-                comboOpts += '<option value="' + escapeHtml(currentId) + '" selected>'
-                    + escapeHtml(raw.pack_combo_label || currentId) + '</option>';
+            if (blockCombo && window.FeatureTimeline && typeof window.FeatureTimeline.expandPackRowsForCombo === 'function'
+                && (block.rows || []).every(function (r) { return !String((r && r.meta_file) || '').trim(); })) {
+                block.rows = window.FeatureTimeline.expandPackRowsForCombo(classId, blockCombo, block.rows);
             }
-            if (!combos.length) {
-                comboOpts += '<option value="" disabled>（這個班還沒有已指派且搭配試卷範本的套餐）</option>';
-            }
-        }
-
-        const rowHtml = rows.map(function (row, idx) {
-            const sheetOpts = combo
-                ? renderPackSheetOptions(metas, row.meta_file)
-                : '<option value="">— 請先選套餐 —</option>';
-            const delBtn = rows.length > 1
-                ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="刪這一行"'
-                    + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>')
+            const comboOpts = renderPackComboOptions(combos, block.combo_id, block.combo_label, cacheReady);
+            const delBlock = blocks.length > 1
+                ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這份套餐"'
+                    + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')">刪套餐</button>')
                 : '';
-            return '<div class="range-pack-row" data-row-idx="' + idx + '" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-top:8px;">'
-                + '<div style="flex:1 1 160px; min-width:140px;">'
-                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">活頁</label>'
-                + '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet" style="width:100%; padding:6px;"'
-                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
-                + sheetOpts + '</select></div>'
-                + '<div style="display:flex; flex-direction:column;">'
-                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">基準</label>'
-                + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control" style="padding:6px; min-width:80px;"'
-                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
-                + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
-                + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
-                + '</select></div>'
-                + '<div style="display:flex; flex-direction:column;">'
-                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">起</label>'
-                + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.start) + '" style="width:72px; padding:6px;"'
-                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+            const sheetRows = (block.rows || []).map(function (row) {
+                const idx = globalIdx++;
+                const sheetName = packSheetDisplayName(row.meta_file);
+                const delSheet = (block.rows.length > 1)
+                    ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="這次作業不用這本活頁"'
+                        + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>')
+                    : '';
+                const sheetCell = row.meta_file
+                    ? ('<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(row.meta_file) + '">'
+                        + '<div style="font-weight:800; color:#0F172A; padding:6px 0;">' + escapeHtml(sheetName) + '</div>')
+                    : ('<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                        + '<div style="font-size:0.78rem; color:#94A3B8; font-weight:700; padding:6px 0;">選套餐後會自動列出區塊</div>');
+                return '<div class="range-pack-row" data-row-idx="' + idx + '" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-top:8px;">'
+                    + '<div style="flex:1 1 160px; min-width:140px;">'
+                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">區塊</label>'
+                    + sheetCell + '</div>'
+                    + '<div style="display:flex; flex-direction:column;">'
+                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">基準</label>'
+                    + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control" style="padding:6px; min-width:80px;"'
+                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
+                    + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
+                    + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
+                    + '</select></div>'
+                    + '<div style="display:flex; flex-direction:column;">'
+                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">起</label>'
+                    + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.start) + '" style="width:72px; padding:6px;"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '</div>'
+                    + '<div style="display:flex; flex-direction:column;">'
+                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">迄</label>'
+                    + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.end) + '" style="width:72px; padding:6px;"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '</div>'
+                    + delSheet
+                    + '</div>';
+            }).join('');
+            return '<div class="range-pack-block" data-block-idx="' + bi + '" style="margin-top:10px; padding:10px; border:1px dashed #93C5FD; border-radius:8px; background:#F8FAFC;">'
+                + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
+                + '<div style="flex:1 1 240px; min-width:200px;">'
+                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐</label>'
+                + '<select id="range-pack-combo-' + pathStr + '-' + bi + '" class="form-control range-pack-combo" style="width:100%; padding:6px;"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackComboChange && window.FeatureTimeline.onRangePackComboChange(\'' + pathStr + '\', ' + bi + ')">'
+                + comboOpts + '</select></div>'
+                + delBlock
                 + '</div>'
-                + '<div style="display:flex; flex-direction:column;">'
-                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">迄</label>'
-                + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.end) + '" style="width:72px; padding:6px;"'
-                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + sheetRows
+                + '<div style="margin-top:8px;">'
+                + (function () {
+                    const hasRow = !!(block.combo_id && (block.rows || []).some(function (r) {
+                        return !!String((r && r.meta_file) || '').trim();
+                    }));
+                    if (hasRow) {
+                        return '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
+                            + ' onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackSheet && window.FeatureTimeline.addRangePackSheet(\'' + pathStr + '\', ' + bi + ')">＋ 增加區塊</button>';
+                    }
+                    return '<button type="button" class="btn" disabled style="padding:4px 10px; background:#E2E8F0; color:#64748B; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="請先選套餐">＋ 增加區塊</button>';
+                }())
                 + '</div>'
-                + delBtn
                 + '</div>';
         }).join('');
 
         return `
             <div class="range-pack-panel" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
-                <div style="font-size:0.82rem; font-weight:900; color:#1E3A8A; margin-bottom:8px;">這一包的範圍（錄音與考試預設共用）</div>
-                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
-                    <div style="flex:1 1 220px; min-width:200px;">
-                        <label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐</label>
-                        <select id="range-pack-combo-${pathStr}" class="form-control range-pack-combo" style="width:100%; padding:6px;"
-                            onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange('${pathStr}', { rerender: true })">
-                            ${comboOpts}
-                        </select>
-                    </div>
-                </div>
-                ${rowHtml}
+                <div style="font-size:0.82rem; font-weight:900; color:#1E3A8A; margin-bottom:8px;">範圍（選套餐後區塊自動列出）</div>
+                ${blockHtml}
                 <div style="margin-top:10px;">
                     <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
-                        onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackRow && window.FeatureTimeline.addRangePackRow('${pathStr}')">＋ 增加行</button>
-                    <span style="margin-left:8px; font-size:0.75rem; color:#64748B; font-weight:700;">這個資料夾有數個活頁，每一行都要選活頁。</span>
+                        onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackCombo && window.FeatureTimeline.addRangePackCombo('${pathStr}')">＋ 增加套餐</button>
+                    <span style="margin-left:8px; font-size:0.75rem; color:#64748B; font-weight:700;">選了套餐，區塊會自動列出。同一套餐要另一段範圍就按「增加區塊」。不同擷取請另加一套餐。</span>
                 </div>
             </div>
         `;
@@ -452,12 +541,12 @@ window.TimelineTemplates = (() => {
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
                     <input type="text" class="form-control paste-window-label" style="padding:6px; font-size:0.85rem; font-weight:800; color:#7C3AED; max-width:260px;" placeholder="這段標籤（選填，如 Page 2／Ex.3）" value="${safeLabel}">
                     <div>
-                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">🎯 批改文稿（AI 基準）</div>
-                        <textarea class="form-control paste-window-script" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上 AI 評分用英文稿…">${safeWinScript}</textarea>
+                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">🎯 口說答案（AI 基準）</div>
+                        <textarea class="form-control paste-window-script" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上口說答案…">${safeWinScript}</textarea>
                     </div>
                     <div>
-                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">👀 學生顯示文稿</div>
-                        <textarea class="form-control paste-window-student" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上學生錄音艙看到的內容…">${safeWinStudent}</textarea>
+                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">👀 書寫答案</div>
+                        <textarea class="form-control paste-window-student" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上書寫答案…">${safeWinStudent}</textarea>
                     </div>
                 </div>
                 ${removeBtn}
@@ -788,6 +877,11 @@ window.TimelineTemplates = (() => {
                     const snapshotPreview = raw.snapshot_at
                         ? ('已凍結 snapshot：' + raw.snapshot_at + (safeMaterialRange ? ('｜' + safeMaterialRange) : ''))
                         : '尚未套用 Material snapshot';
+                    const underRangePack = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.parentRangeGroupOf === 'function'
+                        && window.FeatureTimeline.parentRangeGroupOf(pathStr));
+                    const rangePackOnAudio = underRangePack ? '' : renderRangePackHtml(pathStr, t);
+                    const pdfStatusText = audioPdfStatusHtml(pathStr, t);
 
                     let resOptsHtmlForResource = '';
                     if (classResOpts) {
@@ -827,6 +921,7 @@ window.TimelineTemplates = (() => {
 
                     audioInputHtml = `
                         <div style="margin-top:15px; width:100%; background:#F8FAFC; padding:15px; border-radius:8px; border:1px solid #E2E8F0;">
+                            ${rangePackOnAudio}
 
                             <div style="display:flex; gap:20px; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px dashed #CBD5E1; flex-wrap:wrap;">
                                 <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#4338CA;">
@@ -853,16 +948,16 @@ window.TimelineTemplates = (() => {
                             <div style="margin-bottom:14px; padding:12px; background:white; border:1px solid #E2E8F0; border-radius:8px;">
                                 <div style="font-weight:900; color:#0F172A; margin-bottom:8px;">📄 文稿來源</div>
                                 <select id="node-script-source-${pathStr}" class="form-control" style="width:100%; max-width:560px; padding:8px; font-size:0.9rem; font-weight:800;" onchange="window.FeatureTimeline.onScriptSourceChange('${pathStr}')">
-                                    <option value="meta" ${scriptSource === 'meta' ? 'selected' : ''}>A. meta + base 範圍（套用 Snapshot；一定有顯示文稿）</option>
-                                    <option value="range_only" ${scriptSource === 'range_only' ? 'selected' : ''}>B. 無 meta + base 範圍（僅範圍，無文稿本體）</option>
-                                    <option value="paste" ${scriptSource === 'paste' ? 'selected' : ''}>C. 無 meta + 自行貼上 + base 範圍</option>
-                                    <option value="resource" ${scriptSource === 'resource' ? 'selected' : ''}>D. 無 meta + 資源（如 PDF）+ base 範圍 → 班級 01</option>
-                                    <option value="skeleton" ${scriptSource === 'skeleton' ? 'selected' : ''}>E. 單元骨架（無 meta，先建結構，文稿現在或之後補；可選掛 PDF）</option>
+                                    <option value="meta" ${scriptSource === 'meta' ? 'selected' : ''}>跟範圍走（口說＝文稿檔，書寫＝公式）</option>
+                                    <option value="range_only" ${scriptSource === 'range_only' ? 'selected' : ''}>只錄、不顯示文稿</option>
+                                    <option value="paste" ${scriptSource === 'paste' ? 'selected' : ''}>手貼文稿</option>
+                                    <option value="skeleton" ${scriptSource === 'skeleton' ? 'selected' : ''}>單元骨架</option>
+                                    <option value="resource" ${scriptSource === 'resource' ? 'selected' : ''}>PDF 對照頁（教材範本管理已上傳的）</option>
                                 </select>
-                                <div style="font-size:0.78rem; color:#64748B; margin-top:6px;">老師指哪裡就讀哪裡；班級真相是 Snapshot。有 meta 時學生可收起文稿，只留錄音鍵。</div>
+                                <div style="font-size:0.78rem; color:#64748B; margin-top:6px;">範圍只出現一次。預設跟範圍走；文稿不健全就改「只錄」。PDF 不在這裡上傳。</div>
                             </div>
 
-                            <div id="node-base-range-wrap-${pathStr}" style="display:${showMeta ? 'none' : 'flex'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">
+                            <div id="node-base-range-wrap-${pathStr}" style="display:${showSkeleton ? 'flex' : 'none'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">
                                 <span style="font-weight:900; color:#92400E; font-size:0.9rem; flex:0 0 100%;">📍 base 範圍（必填）</span>
                                 <input type="text" id="node-material-range-manual-${pathStr}" class="form-control" style="flex:1; min-width:160px; padding:8px;" value="${safeMaterialRange}" placeholder="${showSkeleton ? '依下方單元路徑自動整理（可手動微調）' : '例：A pp. 1~2 B pp. 1~2'}" ${showSkeleton ? `data-range-auto="${skeletonRangeAuto ? '1' : '0'}" oninput="window.FeatureTimeline.onSkeletonRangeManualInput('${pathStr}', this)"` : ''}>
                                 ${showSkeleton ? `<button type="button" class="btn-action" style="flex:0 0 auto; font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer; white-space:nowrap;" onclick="window.FeatureTimeline.refreshSkeletonRangeLabel('${pathStr}', {force:true})">🔄 依路徑重算</button>` : ''}
@@ -871,25 +966,22 @@ window.TimelineTemplates = (() => {
 
                             <div id="script-source-panel-meta-${pathStr}" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-                                    <div style="font-weight:900; color:#5B21B6;">📦 Material Snapshot（＋新增 meta 列）</div>
+                                    <div style="font-weight:900; color:#5B21B6;">📦 文稿結果（跟上面範圍走）</div>
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')" title="清單會在開啟編輯器時自動載入；此鈕僅供失敗時重抓">🔄 重新整理清單</button>
                                 </div>
-                                <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+                                <div style="display:none;">
                                     <select id="node-material-root-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:800;" onchange="window.FeatureTimeline.onMaterialRootChange('${pathStr}')">
                                         <option value="teacher" ${materialRootKind === 'teacher' ? 'selected' : ''}>👤 老師個人母稿</option>
                                         <option value="class" ${materialRootKind === 'class' ? 'selected' : ''}>🏫 班級 00（若有）</option>
                                     </select>
-                                    <span style="font-size:0.78rem; color:#64748B;">每列一個 meta；範圍例：<code>pp. 1~2, 5, 10</code> 或 <code>#11~16, 26</code></span>
                                 </div>
-                                <div id="node-material-rows-${pathStr}" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;"></div>
+                                <div id="node-material-rows-${pathStr}" style="display:none;"></div>
                                 <input type="hidden" id="node-material-selected-json-${pathStr}" value="${selectedMetaJson}">
-                                <div style="margin-bottom:8px;">
+                                <div style="display:none;">
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#4F46E5; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.addMaterialMetaRow('${pathStr}')">＋ 新增 meta</button>
                                 </div>
-                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; padding:10px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px;">
-                                    <span style="font-weight:900; color:#92400E; font-size:0.85rem;">📍 base 範圍</span>
-                                    <input type="text" id="node-material-range-${pathStr}" class="form-control" style="flex:1; min-width:220px; padding:8px; font-weight:800;" value="${safeMaterialRange}" placeholder="例：A pp. 1~2, 5, 10；D #11~16, 26">
-                                    <button type="button" class="btn-action" style="font-size:0.8rem; padding:6px 10px; background:#F59E0B; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.refreshMaterialRangeLabel('${pathStr}')">依列重算</button>
+                                <div style="display:none;">
+                                    <input type="text" id="node-material-range-${pathStr}" class="form-control" value="${safeMaterialRange}">
                                 </div>
                                 <div style="margin-bottom:8px; padding:10px 12px; background:#EEF2FF; border:1px solid #C7D2FE; border-radius:6px; font-size:0.82rem; color:#3730A3; font-weight:700; line-height:1.45;">
                                     🎙 錄音單位提示：以「一頁」為唯一錄音單位。學生同一作業可複選多檔上傳；Snapshot 會依頁準備 AI 批改稿（一頁一份）。
@@ -904,19 +996,19 @@ window.TimelineTemplates = (() => {
                                 <input type="hidden" id="node-material-snapshot-json-${pathStr}" value="${snapshotJsonAttr}">
                                 <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
                                     <div>
-                                        <div id="node-script-label-${pathStr}" style="font-weight:800; font-size:0.85rem; color:#4338CA; margin-bottom:4px;">🎯 AI 批改文稿${gradingUnits.length > 1 ? '（合併預覽，唯讀）' : '（可微調）'}</div>
-                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1; ${gradingUnits.length > 1 ? 'background:#F1F5F9; color:#64748B;' : ''}" placeholder="套用 Snapshot 後會填入；可再微調" ${gradingUnits.length > 1 ? 'readonly' : ''}>${safeScript}</textarea>
+                                        <div id="node-script-label-${pathStr}" style="font-weight:800; font-size:0.85rem; color:#4338CA; margin-bottom:4px;">🎯 口說答案${gradingUnits.length > 1 ? '（合併預覽，唯讀）' : '（可微調）'}</div>
+                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1; ${gradingUnits.length > 1 ? 'background:#F1F5F9; color:#64748B;' : ''}" placeholder="套用 Snapshot 後會填入口說答案；可再微調" ${gradingUnits.length > 1 ? 'readonly' : ''}>${safeScript}</textarea>
                                         ${gradingUnitsHtml}
                                     </div>
                                     <div>
-                                        <div style="font-weight:800; font-size:0.85rem; color:#065F46; margin-bottom:4px;">👀 學生顯示文稿（有 meta 必有；學生端可收起）</div>
-                                        <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="套用 Snapshot 後會填入">${safeStudentText}</textarea>
+                                        <div style="font-weight:800; font-size:0.85rem; color:#065F46; margin-bottom:4px;">👀 書寫答案（有 meta 必有；學生端可收起）</div>
+                                        <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="套用 Snapshot 後會填入書寫答案">${safeStudentText}</textarea>
                                     </div>
                                 </div>
                             </div>
 
                             <div id="script-source-panel-range_only-${pathStr}" style="display:${showRangeOnly ? 'block' : 'none'}; margin-bottom:14px; padding:12px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:8px; font-size:0.85rem; color:#475569;">
-                                僅交代學生念哪一段（上方 base 範圍）。無顯示文稿本體；若要 AI 請改選 C 貼上、A meta，或 E 單元骨架（可拆成多個單元、文稿之後補）。
+                                只錄、不顯示文稿。範圍用上面那張卡。若要 AI 請改「跟範圍走」、手貼，或單元骨架。
                             </div>
 
                             <div id="script-source-panel-paste-${pathStr}" style="display:${showPaste ? 'block' : 'none'}; margin-bottom:14px;">
@@ -933,23 +1025,18 @@ window.TimelineTemplates = (() => {
                                 <div style="font-size:0.78rem; color:#64748B; margin-top:8px;">內容寫入作業 Snapshot 欄位；建議歸檔本班 01_Class_Resources。</div>
                             </div>
 
-                            <div id="script-source-panel-resource-${pathStr}" style="display:${(showResource || showSkeleton) ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
-                                <div style="font-weight:900; color:#334155; margin-bottom:8px;">📁 資源（PDF 等）→ 班級 01_Class_Resources${showSkeleton ? '（選填，給學生對照；AI 不會讀 PDF）' : ''}</div>
-                                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-                                    <input type="url" id="node-material-url-${pathStr}" class="form-control" style="flex:2; min-width:180px; padding:8px; font-size:0.85rem;" placeholder="Drive／資源網址" value="${safeMaterialUrl}">
-                                    ${resOptsHtmlForResource}
-                                </div>
-                                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
-                                    <input type="file" id="node-student-local-file-${pathStr}" accept=".pdf,.xlsx,.xls,.csv,image/*" class="form-control" style="flex:2; min-width:150px; font-size:0.85rem; padding:4px;" onchange="window.FeatureTimeline.handleStudentLocalFileChange(this, '${pathStr}')">
-                                    <input type="text" id="node-student-local-desc-${pathStr}" class="form-control" style="flex:1; min-width:80px; padding:6px; font-size:0.85rem;" placeholder="說明（選填）" value="${safeStudentLocalDesc}">
-                                    <span style="font-size:0.78rem; color:#64748B; width:100%;">選本機檔後，儲存作業時會上傳到本班 01_Class_Resources。</span>
-                                    <input type="hidden" id="node-student-local-b64-${pathStr}" value="${safeStudentLocalB64}">
-                                    <input type="hidden" id="node-student-local-mime-${pathStr}" value="${safeStudentLocalMime}">
-                                    <input type="hidden" id="node-student-local-filename-${pathStr}" value="${safeStudentLocalFilename}">
-                                    <input type="hidden" id="node-student-drive-url-${pathStr}" value="${safeStudentDriveUrl}">
-                                    <input type="hidden" id="node-student-drive-desc-${pathStr}" value="${safeStudentDriveDesc}">
-                                    <input type="hidden" id="node-student-source-type-${pathStr}" value="${studentSourceTypeHidden}">
-                                </div>
+                            <div id="script-source-panel-resource-${pathStr}" style="display:${showResource ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #FDBA74; border-radius:8px; padding:12px;">
+                                <div style="font-weight:900; color:#9A3412; margin-bottom:8px;">📄 PDF 對照頁</div>
+                                <div style="font-size:0.82rem; color:#7C2D12; font-weight:700; line-height:1.5;">${pdfStatusText}</div>
+                                <div style="font-size:0.75rem; color:#9A3412; margin-top:8px;">依上面範圍的頁碼／題號，到教材範本管理那份 PDF 找對應檔案頁。沒對到就不顯示。這裡不另傳檔。</div>
+                                <input type="hidden" id="node-material-url-${pathStr}" value="${safeMaterialUrl}">
+                                <input type="hidden" id="node-student-local-b64-${pathStr}" value="${safeStudentLocalB64}">
+                                <input type="hidden" id="node-student-local-mime-${pathStr}" value="${safeStudentLocalMime}">
+                                <input type="hidden" id="node-student-local-filename-${pathStr}" value="${safeStudentLocalFilename}">
+                                <input type="hidden" id="node-student-local-desc-${pathStr}" value="${safeStudentLocalDesc}">
+                                <input type="hidden" id="node-student-drive-url-${pathStr}" value="${safeStudentDriveUrl}">
+                                <input type="hidden" id="node-student-drive-desc-${pathStr}" value="${safeStudentDriveDesc}">
+                                <input type="hidden" id="node-student-source-type-${pathStr}" value="${studentSourceTypeHidden}">
                             </div>
 
                             <div id="script-source-panel-skeleton-${pathStr}" style="display:${showSkeleton ? 'block' : 'none'}; margin-bottom:14px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px;">

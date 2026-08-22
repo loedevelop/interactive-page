@@ -6,7 +6,12 @@
  */
 
 window.UIAudioTemplates = {
-    getRecordingStudioHTML: function(transcriptText, taskTitle, materialUrl, materialRange) {
+    getRecordingStudioHTML: function(transcriptText, taskTitle, materialUrl, materialRange, studioOpts) {
+        studioOpts = studioOpts || {};
+        const mappedPages = Array.isArray(studioOpts.pdfPages) ? studioOpts.pdfPages : [];
+        const pdfFileId = String(studioOpts.pdfFileId || '').trim();
+        const useMappedPdf = !!(pdfFileId && mappedPages.length);
+        const mappedMissing = !!(pdfFileId && !mappedPages.length);
         
         function escapeHTML(str) { 
             let res = '';
@@ -39,7 +44,7 @@ window.UIAudioTemplates = {
             }
         }
 
-        if (hasMatUrl) {
+        if (hasMatUrl && !pdfFileId) {
             let rawUrl = String(materialUrl).trim();
             
             if (rawUrl.startsWith('data:')) {
@@ -116,6 +121,8 @@ window.UIAudioTemplates = {
         let needToggle = false;
         if (showText) needToggle = true;
         else if (embedUrl) needToggle = true;
+        else if (useMappedPdf) needToggle = true;
+        else if (mappedMissing) needToggle = true;
 
         if (needToggle) {
             toggleBtnHtml = `
@@ -142,7 +149,11 @@ window.UIAudioTemplates = {
             bodyHtml += `<div id="audio-studio-transcript" style="color: #334155; line-height: 1.6; overflow-y: auto; background: #ffffff; flex: 1; max-height: none; height: 100%; padding: 24px 32px; font-size: 1.15rem;">${safeText}</div>`;
         }
         
-        if (embedUrl) {
+        if (useMappedPdf) {
+            bodyHtml += `<div id="audio-mapped-pdf" style="width:100%; flex:1; overflow:auto; background:#F8FAFC; padding:12px; color:#334155; font-weight:700;">載入對照頁…</div>`;
+        } else if (mappedMissing) {
+            bodyHtml += `<div style="padding:20px; color:#9A3412; font-weight:800; text-align:center; flex:1; display:flex; align-items:center; justify-content:center; background:#FFF7ED;">這段範圍對不到檔案頁，請老師在教材範本管理補對照。</div>`;
+        } else if (embedUrl) {
             bodyHtml += `
                 <div style="width: 100%; height: 100%; flex: 1; position: relative; background: #323639;">
                     <iframe src="${embedUrl}" style="width: 100%; height: 100%; border: none; display: block; background: #323639;" allow="autoplay"></iframe>
@@ -151,10 +162,8 @@ window.UIAudioTemplates = {
         }
         
         let showEmpty = false;
-        if (!showText) {
-            if (!embedUrl) {
-                showEmpty = true;
-            }
+        if (!showText && !embedUrl && !useMappedPdf && !mappedMissing) {
+            showEmpty = true;
         }
 
         if (showEmpty) {

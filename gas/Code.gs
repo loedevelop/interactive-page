@@ -353,7 +353,7 @@ function resolveFolderPath(parentFolder, pathArray) {
  *   我以為的那個資料夹」（例如帳號綁錯、Drive 捷徑 vs 真實資料夾等，肉眼比 ID 最準）。
  * - subFolderCount：GAS 這次真的數到幾個子資料夾（在套用任何 .meta.json 或其他前端過濾之前）。
  */
-var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-13-searchbatch';
+var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-21-scriptfiles';
 
 /**
  * 2026-08-13（老師回報「資料夾內容出不來，很容易出問題」）：舊版對「每一個子資料夾」各打
@@ -388,7 +388,7 @@ function listMaterialMasters(rootFolderId, rootKind) {
   var subFolders = mastersRoot.getFolders();
   while (subFolders.hasNext()) {
     var sub = subFolders.next();
-    var bucket = { folderName: sub.getName(), folderId: sub.getId(), manifest: null, metaFiles: [] };
+    var bucket = { folderName: sub.getName(), folderId: sub.getId(), manifest: null, metaFiles: [], scriptFiles: [] };
     materialsList.push(bucket);
     bucketByFolderId[bucket.folderId] = bucket;
   }
@@ -397,26 +397,29 @@ function listMaterialMasters(rootFolderId, rootKind) {
   for (var start = 0; start < materialsList.length; start += CHUNK_SIZE) {
     var chunk = materialsList.slice(start, start + CHUNK_SIZE);
     var parentClauses = chunk.map(function (f) { return "'" + f.folderId + "' in parents"; }).join(' or ');
-    var query = '(' + parentClauses + ") and trashed = false and (title contains '.meta.json' or title = '_manifest.json')";
+    var query = '(' + parentClauses + ") and trashed = false and (title contains '.meta.json' or title contains '.script.txt' or title = '_manifest.json')";
     var found = DriveApp.searchFiles(query);
     while (found.hasNext()) {
       var file = found.next();
       var fileName = file.getName();
       var isManifest = fileName === '_manifest.json';
       var isMeta = fileName.indexOf('.meta.json') !== -1;
-      if (!isManifest && !isMeta) continue; // Drive 的 contains 是全文模糊比對，保險起見還是精確再篩一次
+      var isScript = fileName.indexOf('.script.txt') !== -1;
+      if (!isManifest && !isMeta && !isScript) continue;
       var parents = file.getParents();
       while (parents.hasNext()) {
         var parentBucket = bucketByFolderId[parents.next().getId()];
-        if (!parentBucket) continue; // 不是這批子資料夾（例如同名檔案被複製到別處），略過
+        if (!parentBucket) continue;
         if (isManifest) {
           try {
             parentBucket.manifest = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
           } catch (manifestErr) {
             parentBucket.manifest = null;
           }
-        } else {
+        } else if (isMeta) {
           parentBucket.metaFiles.push({ name: fileName, fileId: file.getId() });
+        } else {
+          parentBucket.scriptFiles.push({ name: fileName, fileId: file.getId() });
         }
       }
     }
@@ -616,36 +619,56 @@ function renameMaterialFiles(rootFolderId, materialFolderName, items, rootKind) 
   var missing = [];
   var errors = [];
 
-  function findOne(name) {
-    var files = targetSub.getFilesByName(name);
-    if (!files.hasNext()) return null;
-    return files.next();
+  function stripTmp(name) {
+    var n = String(name || '');
+    return n.indexOf(TMP) === 0 ? n.slice(TMP.length) : n;
   }
 
+  function findOne(name) {
+    var want = String(name || '').trim();
+    if (!want) return null;
+    var files = targetSub.getFilesByName(want);
+    if (files.hasNext()) return files.next();
+    var stripped = stripTmp(want);
+    if (stripped && stripped !== want) {
+      files = targetSub.getFilesByName(stripped);
+      if (files.hasNext()) return files.next();
+    }
+    files = targetSub.getFilesByName(TMP + stripped);
+    if (files.hasNext()) return files.next();
+    return null;
+  }
+
+  // 上一輪若卡在 __mzren__ 前綴，findOne 會找到暫存檔，下面直接改成目標名（不再先拆前綴再改一次）。
   for (i = 0; i < pairs.length; i++) {
     var found = findOne(pairs[i].oldName);
     if (!found) {
       missing.push(pairs[i].oldName);
       continue;
     }
-    try {
-      found.setName(TMP + pairs[i].newName);
-      pairs[i].file = found;
-    } catch (e1) {
-      errors.push(pairs[i].oldName + '：' + String(e1 && e1.message ? e1.message : e1));
-    }
-  }
-  for (i = 0; i < pairs.length; i++) {
-    if (!pairs[i].file) continue;
-    try {
-      pairs[i].file.setName(pairs[i].newName);
+    var dest = findOne(pairs[i].newName);
+    if (dest && dest.getId() === found.getId()) {
       renamed.push({
         oldName: pairs[i].oldName,
         newName: pairs[i].newName,
-        fileId: pairs[i].file.getId()
+        fileId: found.getId()
       });
-    } catch (e2) {
-      errors.push(pairs[i].oldName + ' → ' + pairs[i].newName + '：' + String(e2 && e2.message ? e2.message : e2));
+      continue;
+    }
+    try {
+      if (!dest) {
+        found.setName(pairs[i].newName);
+      } else {
+        found.setName(TMP + pairs[i].newName);
+        found.setName(pairs[i].newName);
+      }
+      renamed.push({
+        oldName: pairs[i].oldName,
+        newName: pairs[i].newName,
+        fileId: found.getId()
+      });
+    } catch (e1) {
+      errors.push(pairs[i].oldName + ' → ' + pairs[i].newName + '：' + String(e1 && e1.message ? e1.message : e1));
     }
   }
   return {
