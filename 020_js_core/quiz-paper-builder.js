@@ -479,25 +479,20 @@ window.QuizPaperBuilder = (function () {
         return {};
     }
 
-    function sheetStemsLooselyMatch(a, b) {
-        function full(s) {
-            return String(s || '').trim().replace(/\.meta\.json$/i, '').toUpperCase();
+    /**
+     * 這批 rows 已是該 meta 檔讀出來的。列上 stem／sheet_id 可能帶資料夾前綴、
+     * 或少了範本後綴，不准因此整批丟掉。只有兩邊都有擷取後綴且不一樣
+     * （PIC vs WORD）才當另一本活頁。
+     */
+    function rowIsOtherTemplateSheet(rowSheet, sectionSheet) {
+        function suffix(s) {
+            const t = String(s || '').trim().replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '').toUpperCase();
+            const m = t.match(/^(.+)\.([A-Z][A-Z0-9_+-]*)$/);
+            return m ? String(m[2] || '') : '';
         }
-        const fa = full(a);
-        const fb = full(b);
-        if (!fa || !fb) return true;
-        if (fa === fb) return true;
-        const suffixRe = /\.([A-Z][A-Z0-9_+-]*)$/;
-        const sa = fa.match(suffixRe);
-        const sb = fb.match(suffixRe);
-        if (sa && sb) return false;
-        function core(s) {
-            let t = s;
-            const m = t.match(/^(.+)\.([A-Za-z][A-Za-z0-9_+-]*)$/);
-            if (m) t = m[1];
-            return t.replace(/-/g, '');
-        }
-        return core(fa) === core(fb);
+        const ta = suffix(rowSheet);
+        const tb = suffix(sectionSheet);
+        return !!(ta && tb && ta !== tb);
     }
 
     /**
@@ -541,7 +536,7 @@ window.QuizPaperBuilder = (function () {
             // 列上的 stem／sheet_id 可能是 A、AvaLiu-vBK-2，區段卻被寫成 AvaLiu-vBK-2.vocab-word
             // 或連字號不同。這批 rows 已是該 meta 檔讀出來的，只在「明顯是另一本活頁」時才略過。
             const rowSheet = String(row.sheet_id || row.stem || '').trim();
-            if (rowSheet && sheet && !sheetStemsLooselyMatch(rowSheet, sheet)) return false;
+            if (rowSheet && sheet && rowIsOtherTemplateSheet(rowSheet, sheet)) return false;
 
             const itemNo = toNum(row.item_no != null ? row.item_no : row.itemNo);
             const pageNums = (MS && typeof MS.pageNumsFromCell === 'function')
@@ -1465,6 +1460,7 @@ window.QuizPaperBuilder = (function () {
 
     return {
         buildQuizPaper: buildQuizPaper,
+        filterRowsForSection: filterRowsForSection,
         gradeAnswers: gradeAnswers,
         normalizeAnswer: normalizeAnswer,
         tokenizeWords: tokenizeWords,

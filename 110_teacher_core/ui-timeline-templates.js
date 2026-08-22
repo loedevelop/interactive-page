@@ -187,14 +187,16 @@ window.TimelineTemplates = (() => {
                 return '<div class="range-pack-row" data-row-idx="' + idx + '">'
                     + '<div>' + sheetCell + '</div>'
                     + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control asg-field-input"'
-                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
+                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
                     + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
                     + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
                     + '</select>'
                     + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.start) + '"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
                     + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.end) + '"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
                     + '<div>' + delSheet + '</div>'
                     + '</div>';
             }).join('');
@@ -423,13 +425,16 @@ window.TimelineTemplates = (() => {
             const grammarBadge = useGrammar ? `<span style="font-size:0.8rem; background:#FEF3C7; color:#D97706; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">📝 文法</span>` : '';
             extraTag = `<span style="font-size:0.9rem; color:#EF4444; margin-left:8px; font-weight:bold;">(語音錄製)</span>${aiBadge}${grammarBadge}`;
         } else if (t.type === 'exam') {
-            const jobId = (t.raw_data && (t.raw_data.exam_job_id || (t.raw_data.exam_job && t.raw_data.exam_job.job_id))) || '';
             const paperN = (t.raw_data && t.raw_data.quiz_paper && Array.isArray(t.raw_data.quiz_paper.items))
                 ? t.raw_data.quiz_paper.items.length : 0;
+            const paperStale = !!(t.raw_data && (t.raw_data.last_generate_error
+                || (paperN && window.FeatureExamJob && typeof window.FeatureExamJob.needsExamRegeneration === 'function'
+                    && window.FeatureExamJob.needsExamRegeneration(t))));
             extraTag = '<span style="font-size:0.9rem; color:#0F766E; margin-left:8px; font-weight:bold;">(考試出題單)</span>'
-                + (jobId ? `<span style="font-size:0.8rem; background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">job: ${jobId}</span>` : '')
                 + (paperN
-                    ? `<span style="font-size:0.8rem; background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">線上卷 ${paperN} 題</span>`
+                    ? (paperStale
+                        ? `<span style="font-size:0.8rem; background:#FFFBEB; color:#92400E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">舊卷 ${paperN} 題</span>`
+                        : `<span style="font-size:0.8rem; background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">線上卷 ${paperN} 題</span>`)
                     : `<span style="font-size:0.8rem; background:#FFFBEB; color:#92400E; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:bold;">尚未產生線上卷</span>`);
         } else if (t.type === 'pdf_exam') {
             const pdfJob = (t.raw_data && t.raw_data.pdf_exam_job) || null;

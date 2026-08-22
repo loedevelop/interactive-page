@@ -758,7 +758,7 @@ window.FeatureClassMaterialCombinations = (function () {
         _suggestionLoadPromise = (async function () {
             const userId = await getCurrentUserId();
             if (!userId) { _suggestionCache = {}; return _suggestionCache; }
-            const comboSelect = function (withPdf) {
+            const comboSelect = function (withPdf, withAvail) {
                 return `
                     id,
                     label,
@@ -767,20 +767,32 @@ window.FeatureClassMaterialCombinations = (function () {
                     ${withPdf ? 'student_pdf_file_id, student_pdf_file_name, student_pdf_page_map,' : ''}
                     material_folders!inner ( root_kind, class_id, folder_name, teacher_id ),
                     material_templates ( name ),
-                    material_combination_sheets ( material_sheets ( sheet_stem, meta_file_name ) ),
+                    material_combination_sheets ( material_sheets ( sheet_stem, meta_file_name${withAvail ? ', available_count' : ''} ) ),
                     material_combination_exam_templates ( exam_template_id, is_default ),
                     class_material_combinations ( class_id )
                 `;
             };
             let comboRes = await window.supabaseClient
                 .from('material_combinations')
-                .select(comboSelect(true))
+                .select(comboSelect(true, true))
                 .eq('material_folders.teacher_id', userId);
             if (comboRes.error && /student_pdf/i.test(comboRes.error.message || '')) {
                 comboRes = await window.supabaseClient
                     .from('material_combinations')
-                    .select(comboSelect(false))
+                    .select(comboSelect(false, true))
                     .eq('material_folders.teacher_id', userId);
+            }
+            if (comboRes.error && /available_count/i.test(comboRes.error.message || '')) {
+                comboRes = await window.supabaseClient
+                    .from('material_combinations')
+                    .select(comboSelect(true, false))
+                    .eq('material_folders.teacher_id', userId);
+                if (comboRes.error && /student_pdf/i.test(comboRes.error.message || '')) {
+                    comboRes = await window.supabaseClient
+                        .from('material_combinations')
+                        .select(comboSelect(false, false))
+                        .eq('material_folders.teacher_id', userId);
+                }
             }
             if (comboRes.error) {
                 console.warn('[FeatureClassMaterialCombinations] 讀取官方試卷配對失敗', comboRes.error);
@@ -790,16 +802,29 @@ window.FeatureClassMaterialCombinations = (function () {
             const data = comboRes.data;
             const applyByTplFolder = {};
             try {
-                const applyRes = await window.supabaseClient
+                let applyRes = await window.supabaseClient
                     .from('material_sheets')
                     .select(`
                         sheet_stem,
                         meta_file_name,
+                        available_count,
                         extraction_template_id,
                         material_folders!inner ( folder_name, teacher_id )
                     `)
                     .eq('material_folders.teacher_id', userId)
                     .not('extraction_template_id', 'is', null);
+                if (applyRes.error && /available_count/i.test(applyRes.error.message || '')) {
+                    applyRes = await window.supabaseClient
+                        .from('material_sheets')
+                        .select(`
+                            sheet_stem,
+                            meta_file_name,
+                            extraction_template_id,
+                            material_folders!inner ( folder_name, teacher_id )
+                        `)
+                        .eq('material_folders.teacher_id', userId)
+                        .not('extraction_template_id', 'is', null);
+                }
                 if (!applyRes.error) {
                     (applyRes.data || []).forEach(function (row) {
                         const folderName = String((row.material_folders && row.material_folders.folder_name) || '').trim().toUpperCase();
@@ -847,19 +872,27 @@ window.FeatureClassMaterialCombinations = (function () {
                     || templateNameById(combo.extraction_template_id)
                     || '';
                 const publishedNames = [];
-                function pushPublished(fileName) {
+                const sheetAvailableByStem = {};
+                function rememberSheetTotal(fileName, count) {
+                    const key = String(fileName || '').replace(/\.meta\.json$/i, '').trim().toUpperCase();
+                    const n = count == null ? NaN : Number(count);
+                    if (!key || isNaN(n) || n < 0) return;
+                    sheetAvailableByStem[key] = n;
+                }
+                function pushPublished(fileName, count) {
                     const published = String(fileName || '').trim();
                     if (!published) return;
                     if (publishedNames.indexOf(published) === -1) publishedNames.push(published);
+                    rememberSheetTotal(published, count);
                 }
                 sheets.forEach(function (cs) {
                     const sh = cs.material_sheets || {};
-                    pushPublished(publishedMetaNameFromSheet(sh.sheet_stem, sh.meta_file_name, tplName));
+                    pushPublished(publishedMetaNameFromSheet(sh.sheet_stem, sh.meta_file_name, tplName), sh.available_count);
                 });
                 const applyKey = String(combo.extraction_template_id || '') + '|'
                     + String(folderName || '').trim().toUpperCase();
                 (applyByTplFolder[applyKey] || []).forEach(function (row) {
-                    pushPublished(publishedMetaNameFromSheet(row.sheet_stem, row.meta_file_name, tplName));
+                    pushPublished(publishedMetaNameFromSheet(row.sheet_stem, row.meta_file_name, tplName), row.available_count);
                 });
                 keys.forEach(function (fKey) {
                     if (!map[fKey]) map[fKey] = {};
@@ -887,6 +920,7 @@ window.FeatureClassMaterialCombinations = (function () {
                         return String(n || '').replace(/\.meta\.json$/i, '');
                     }),
                     metaFiles: publishedNames.slice(),
+                    sheetAvailableByStem: sheetAvailableByStem,
                     examTemplateId: String(chosen.exam_template_id),
                     studentPdfFileId: String(combo.student_pdf_file_id || ''),
                     studentPdfFileName: String(combo.student_pdf_file_name || ''),
@@ -3624,6 +3658,70 @@ window.FeatureClassMaterialCombinations = (function () {
         return null;
     }
 
+    function stemAvailKey(name) {
+        return String(name || '').replace(/\.meta\.json$/i, '').trim().toUpperCase();
+    }
+
+    function lookupSheetAvailableCount(classId, comboOrId, sheetHint) {
+        let combo = comboOrId;
+        if (!combo || typeof combo === 'string') {
+            combo = getAssignedComboById(classId, comboOrId || '');
+        }
+        const map = combo && combo.sheetAvailableByStem;
+        const key = stemAvailKey(sheetHint);
+        if (!map || !key) return null;
+        if (map[key] != null && !isNaN(Number(map[key])) && Number(map[key]) >= 0) {
+            return Number(map[key]);
+        }
+        const hits = Object.keys(map).filter(function (k) {
+            return k === key || k.indexOf(key + '.') === 0 || key.indexOf(k + '.') === 0;
+        });
+        if (hits.length === 1 && !isNaN(Number(map[hits[0]]))) return Number(map[hits[0]]);
+        return null;
+    }
+
+    async function writeSheetAvailableCounts(folderName, templateId, stemCounts) {
+        const userId = await getCurrentUserId();
+        const counts = stemCounts && typeof stemCounts === 'object' ? stemCounts : {};
+        const keys = Object.keys(counts);
+        if (!userId || !folderName || !keys.length || !window.supabaseClient) return;
+        const { data: folders, error: folderErr } = await window.supabaseClient
+            .from('material_folders')
+            .select('id')
+            .eq('teacher_id', userId)
+            .eq('folder_name', folderName);
+        if (folderErr || !(folders || []).length) return;
+        const folderIds = folders.map(function (f) { return f.id; });
+        const { data: sheets, error: sheetErr } = await window.supabaseClient
+            .from('material_sheets')
+            .select('id, sheet_stem, meta_file_name, extraction_template_id')
+            .in('material_folder_id', folderIds);
+        if (sheetErr || !(sheets || []).length) return;
+        const tpl = String(templateId || '');
+        for (let i = 0; i < sheets.length; i++) {
+            const sh = sheets[i];
+            if (tpl && String(sh.extraction_template_id || '') !== tpl) continue;
+            const stemKey = stemAvailKey(sh.sheet_stem);
+            const metaKey = stemAvailKey(sh.meta_file_name);
+            let n = null;
+            keys.forEach(function (k) {
+                const want = stemAvailKey(k);
+                if (want && (want === stemKey || want === metaKey)) n = Number(counts[k]);
+            });
+            if (n == null || isNaN(n) || n < 0) continue;
+            const { error } = await window.supabaseClient
+                .from('material_sheets')
+                .update({ available_count: n, updated_at: new Date().toISOString() })
+                .eq('id', sh.id);
+            if (error && /available_count/i.test(error.message || '')) {
+                console.warn('[FeatureClassMaterialCombinations] 活頁尚無 available_count 欄，略過寫入總題數');
+                return;
+            }
+            if (error) console.warn('[FeatureClassMaterialCombinations] 寫入活頁總題數失敗', error);
+        }
+        invalidateSuggestionCache();
+    }
+
     function rememberSheetPageCounts(classId, folderName, sheetHint, pageCounts) {
         const cid = String(classId || '');
         const folder = String(folderName || '').trim();
@@ -3700,6 +3798,8 @@ window.FeatureClassMaterialCombinations = (function () {
         renderMaterialZone: renderMaterialZone,
         prefetchForClass: prefetchForClass,
         lookupSheetStats: lookupSheetStats,
+        lookupSheetAvailableCount: lookupSheetAvailableCount,
+        writeSheetAvailableCounts: writeSheetAvailableCounts,
         rememberSheetPageCounts: rememberSheetPageCounts,
         isComboStatsReady: function (classId) {
             return !!_comboStatsByClass[String(classId || '')];

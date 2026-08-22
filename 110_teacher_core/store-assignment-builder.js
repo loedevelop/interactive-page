@@ -1006,7 +1006,17 @@ window.BuilderStore = (() => {
                     const cloned = { ...t, id: `task_${Date.now()}_${Math.random()}` };
                     delete cloned.resource_id;
                     if (!cloned.raw_data) cloned.raw_data = {};
-                    
+                    if (window.AssignmentClone && typeof window.AssignmentClone.stripExamTaskOutputs === 'function') {
+                        cloned.raw_data = window.AssignmentClone.stripExamTaskOutputs(cloned.raw_data);
+                    } else {
+                        delete cloned.raw_data.quiz_paper;
+                        delete cloned.raw_data.quiz_paper_no;
+                        delete cloned.raw_data.quiz_paper_signature;
+                        delete cloned.raw_data.exam_job_id;
+                        delete cloned.raw_data.meta_rows_by_stem;
+                        delete cloned.raw_data.last_generate_error;
+                    }
+
                     if (cloned.type === 'audio_record') {
                         if (cloned.raw_data.use_ai_grading === undefined) cloned.raw_data.use_ai_grading = true;
                         if (cloned.raw_data.use_ai_grammar === undefined) cloned.raw_data.use_ai_grammar = false;

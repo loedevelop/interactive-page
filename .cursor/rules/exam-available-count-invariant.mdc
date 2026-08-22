@@ -1,6 +1,6 @@
 ---
-description: 考試區段「可用題／顯示%」鐵律（B 顯示 ~20 與 — 的老問題）
-globs: 110_teacher_core/feature-exam-job.js,110_teacher_core/feature-timeline.js,020_js_core/quiz-paper-builder.js
+description: 考試可用題綠字與抽題不同源／複製作業帶舊卷／線上卷條是舊凍結
+globs: 110_teacher_core/feature-exam-job.js,110_teacher_core/feature-timeline.js,110_teacher_core/ui-timeline-templates.js,020_js_core/quiz-paper-builder.js,020_js_core/assignment-clone.js
 alwaysApply: false
 ---
 
@@ -8,27 +8,31 @@ alwaysApply: false
 
 > 右欄：**可用題**、**顯示%**。  
 > 2026-08-15：老師明確否決「用錄音 Snapshot／`grading_units` 算可用題」。  
+> 2026-08-22：綠字改回活頁總題數＋每頁行數（曾解過又被改成現讀 Drive）。做法全文見 `sheet-available-count-invariant.mdc`。  
 > 動 `feature-exam-job.js` 的可用題／產卷時必讀。
 
 ## 症狀
 
 | 活頁 | 題數 | 可用題 | 顯示% | 意義 |
 |------|------|--------|-------|------|
-| A | 20 | **20**（綠） | 100% | 已按「讀取可用題數」，從該列選中的 `.meta.json` 算到範圍內實際列數 |
-| B | 20 | **需讀取**（橘） | **—** | 考試任務自己還沒讀進這本 meta；不要用 Snapshot 或 `~20` 粉飾 |
+| A | 20 | **20**（綠） | 100% | 這本活頁已有 `available_count`，用總題數＋每頁行數算出範圍內題數 |
+| B | 20 | **需讀取**（橘） | **—** | 這本活頁還沒寫入總題數（舊列、尚未再產生上傳）；不要用 Snapshot 粉飾 |
 
-## 可用題怎麼算（唯一來源）
+## 可用題怎麼算（畫面綠字）
 
 ```
-考試任務 raw_data.meta_rows_by_stem
-  ← 「🔄 讀取可用題數」用該列 meta_file_id／真實檔名從 Drive 讀 .meta.json
-可用題 = 範圍內每一頁的實際 meta 列數加總（最後一頁常不滿行）
-頁碼欄不一定叫 page：讀檔後要用 col_map／E 欄／課本頁數字欄寫回 page
-對不上時必須告訴老師「檔內頁碼」或「現有欄位」，禁止只顯示 0
+活頁 material_sheets.available_count（產生上傳時寫入的整本列數）
+  ＋ 這一列試卷範本 lines_per_page
+  ＋ 起迄（頁碼從這本第 1 頁起算；除最後一頁外每頁滿行）
+SheetRangeBounds.countAvailable
+沒有總題數才退回考試任務 meta_rows_by_stem（舊活頁）
 ```
+
+超出這本最後一頁／最後題號：`ModalOverlay` 告知，並自動改起迄。  
+起也超出：頁碼→起迄都改最後一頁；題號→起改最後一頁第一題、迄改最後題號。
 
 每頁行數必須帶入這一列考卷範本的 `lines_per_page`，不可用預設 10 蓋過範本。  
-「從同作業錄音範圍帶入」**只帶範圍**，不算可用題。
+產生線上卷仍讀 `.meta.json` 抽題。綠字不再為了數字去打 Drive。
 
 ## 禁止
 
@@ -37,7 +41,7 @@ alwaysApply: false
 countAvailableFromMeta(section, siblingAudio)
 countAvailableFromGradingUnits(audio.raw_data.grading_units, ...)
 
-// ❌ 頁數 × 每頁行數 充當可用題（最後一頁不滿行）
+// ❌ 一律頁數 × 每頁行數，不理最後一頁餘數
 avail = (end - start + 1) * lines_per_page;
 
 // ❌ 寫死 10，不理考卷範本自己的每頁行數
@@ -45,38 +49,52 @@ section.lines_per_page = 10
 
 // ❌ 錄音 Snapshot 後用 audio 快取覆寫考試區段 count
 refreshAfterAudioSnapshot → countAvailableFromMeta(sec, audio)
+
+// ❌ 套組統計／舊 available_count 當綠字（畫面有題、抽題沒題）
+countAvailableFromPageCounts(section, comboStats.pageCounts)
+if (section.available_count > 0) return section.available_count
 ```
 
 ## 正確顯示
 
 ```
-可用題 = 考試任務自己的 meta 檔、範圍內各頁實際列數加總（綠字）
-還沒按「讀取可用題數」→ 「需讀取」（橘字），顯示% 為 —
-不要寫「需Snapshot」，不要用滿行估算粉飾
+可用題 = 這本活頁 available_count＋每頁行數＋起迄（最後一頁用餘數）
+沒有總題數 → 「需讀取」（橘字），顯示% 為 —
+不要寫「需Snapshot」，不要用複習目錄套組統計粉飾
 每頁行數 = 考卷範本.lines_per_page（區段沒手動改過時）
+超出 → popup 並改起迄，不准顯示 0 假裝沒題
 ```
 
 ## 不變量
 
 ```
-綠字可用題 ⇔ 考試任務 raw_data.meta_rows_by_stem 真有該活頁／檔名的列
-countAvailableFromMeta(section, examTask) 只吃考試任務，不吃錄音任務
-產生線上卷讀同一個 meta 檔（fileId／真實檔名），快取只寫回考試任務
+綠字優先吃 material_sheets.available_count（跟每本活頁走，不准收成套餐一個總和）
+沒有總題數才退回考試任務 raw_data.meta_rows_by_stem
+不准用複習目錄套組統計／「所有活頁裡最大數」當綠字
+countAvailableFromMeta(section, examTask) 不吃錄音任務
+產生線上卷仍讀同一個 meta 檔抽題
 錄音 Snapshot 後禁止重算／覆寫考試可用題與題數
 BuilderStore.sync 對錄音的 meta_rows_by_stem 只能 merge（錄音存檔用，與考試可用題無關）
+
+複製歷史作業／套用上次設定＝新作業。只繼承輸入（活頁、範圍、題數、範本）。
+不准繼承：quiz_paper、卷號、quiz_paper_signature、exam_job_id、available_count、meta_rows_by_stem
+線上卷條只認這份作業這次成功的 quiz_paper。產生失敗或設定已改＝標「舊卷」，不准看起來像現在的
 ```
 
 ## 連動
 
 錄音 Snapshot 縮水問題仍見 `material-snapshot-refs-invariant.mdc`（那是錄音存檔，不是考試可用題）。  
-考試缺 meta → 顯示「需讀取」，逼老師按「讀取可用題數」。
+活頁沒有 `available_count`（尚未再產生上傳）→ 顯示「需讀取」。
 
 ## 實測
 
-1. 還沒按「讀取可用題數」→ 可用題＝「需讀取」、顯示%＝—（不是綠字、不是 ~20、不是需Snapshot）  
-2. 選好活頁 meta＋範圍 → 按「讀取可用題數」→ 綠字＝範圍內實際列數（最後一頁不滿行也加進去）  
-3. 同層錄音已 Snapshot 也不准讓可用題自己變綠；仍要讀考試選中的 meta 檔  
-4. 產生線上卷不應因錄音缺快取而靜默少題（缺則打 GAS 或明確報錯）
+1. 活頁已有總題數 94、每頁 20、頁 3～4 → 綠字 40；頁 5 → 綠字 14  
+2. 頁碼起迄 80～82、這本只有 5 頁 → popup 超出，起迄改成 5～5，不是綠字 0  
+3. 題號起 100、總題 94 → 起改 81、迄改 94  
+4. 同層錄音已 Snapshot 也不准讓可用題自己變綠  
+5. 產生線上卷不應因錄音缺快取而靜默少題（缺則打 GAS 或明確報錯）
+6. 複製歷史作業／套用上次設定 → 尚未產生線上卷；舊卷號不准跟走
+7. 產生失敗 → 條上是「舊卷」＋日期，不是綠字「線上卷 N 題」裝成功
 
 ## `include_nums`（必考#）語意（2026-08-02 修正，曾反覆搞混）
 
@@ -150,3 +168,12 @@ Python 端腳本是否同步支援尚未確認**——若 Python 那邊仍是舊
 2. 指定# 填的題號在範圍內能找到對應 meta → 產生線上卷時這些題號一定出現在 `items` 裡  
 3. 指定# 題號數 > 題數設定 → 線上卷實際題數 = 必考題號數（不是原題數），且有提示訊息  
 4. 指定# 填了範圍外／meta 找不到的題號 → 產生線上卷時明確報錯（不是默默漏題或吃到別的題）
+
+## 改動前自問
+
+動可用題／產生試卷／複製作業／套用上次設定時：
+1. 綠字是不是這本活頁 `available_count`＋每頁行數＋起迄（沒總題數才退回 meta 列）？
+2. 超出是否 popup 並改起迄，而不是顯示 0？
+3. 複製／套用是否只帶輸入、沒把舊卷／卷號帶過來？
+4. 產生失敗或設定已改，條上是不是「舊卷」，而不是綠字裝成功？
+任一否 → 停。

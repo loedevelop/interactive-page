@@ -13,6 +13,7 @@
 | [quiz-json-contract-v0.1.md](./quiz-json-contract-v0.1.md) | interactive-page ↔ Python 出題系統 JSON 合約 v0.1 |
 | [quiz-json-contract-v0.2.md](./quiz-json-contract-v0.2.md) | 同上合約 v0.2（`exam_job` 取代 `quiz_spec`，排版交給 Python `layout_profile_id`） |
 | [雷區撰寫規範.md](./雷區撰寫規範.md) | `.cursor/rules/*.mdc` 雷區規則的撰寫模板與 globs／alwaysApply 使用規範 |
+| [活頁總題數與可用題.md](./活頁總題數與可用題.md) | 出作業可用題：活頁記總題數、用每頁行數算範圍；超出 popup 並改起迄（2026-08-22，曾解過又回來） |
 
 相關但留在功能目錄：
 

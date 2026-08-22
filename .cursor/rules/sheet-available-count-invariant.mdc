@@ -1,0 +1,99 @@
+---
+description: 可用題又變 0／又要讀 Drive／超出範圍卻顯示 0（活頁總題數做法被改掉）
+globs: 020_js_core/sheet-range-bounds.js,110_teacher_core/feature-exam-job.js,110_teacher_core/feature-timeline.js,110_teacher_core/ui-timeline-templates.js,110_teacher_core/feature-class-material-combinations.js,110_teacher_core/feature-material-layout-pairing.js,supabase/migrations/**material_sheets*
+alwaysApply: false
+---
+
+# 活頁總題數算可用題（曾解過又回來｜2026-08-22 再定案）
+
+> 這套**很早以前就定過**。後來綠字改去讀 Drive／複習目錄／作業裡的 `meta_rows_by_stem`，可用題又變 0。  
+> **不准再改回「出作業才現讀 .meta.json 才有數字」。**
+
+## 症狀
+
+- 範圍／考試選了套餐、填了起迄，可用題是 **0** 或「需讀取」
+- 按帶入還是 0；以為要「更新目錄」或「讀取可用題數」才有數字
+- WORD 填頁 80～82 顯示 0，但其實是超出這本頁碼、卻沒人講
+
+## 根因
+
+套餐／活頁基本資料以前只存檔名、範本 id，**沒有整本總題數**。  
+出作業只好現讀 Drive 的 `.meta.json` 再篩頁碼。讀不到、篩錯、或頁碼當題號，綠字就 0。  
+複習目錄的 `available_count` 是學生練習專區快照，**不是**出作業綠字。
+
+## 定案做法（一把鑰匙）
+
+```
+一本活頁＝一個數字。寫在 material_sheets.available_count。
+何時寫：教材範本管理「產生上傳」成功，這本產出幾列就寫幾。
+套餐不另存總和。A～Z 合併只是顯示／公式，總數仍跟每本活頁走。
+畫面可用題＝總題數＋這一列每頁行數＋起迄。
+  除最後一頁外，每一頁一定滿行。
+  頁碼從這本第 1 頁起算。
+  最後一頁題數＝總題數 −（最後一頁 − 1）× 每頁行數
+  例：94 題、每頁 20 → 第 1～4 頁各 20，第 5 頁 14；頁 3～4＝40。
+超出＝popup 告知最後一頁／最後題號，並自動改起迄：
+  只有迄超出：迄＝最後一頁（頁碼）或最後題號（題號）
+  起也超出、頁碼：起迄都＝最後一頁
+  起也超出、題號：起＝最後一頁第一題，迄＝最後題號
+沒有總題數的舊活頁＝需讀取。不准拿目錄或現讀 Drive 偷偷補。
+產生線上卷仍讀 .meta.json 抽題；綠字不為了數字去打 Drive。
+```
+
+共用入口：`020_js_core/sheet-range-bounds.js`（`countAvailable`／`clampRange`／`notifyOverflow`）。  
+範圍卡失焦、考試改起迄、按帶入，同一把。Popup 走 `ModalOverlay` tier A。
+
+## 不變量
+
+```
+available_count 跟 material_sheets 走，產生上傳時寫入
+綠字＝SheetRangeBounds.countAvailable（總題數＋每頁行數＋起迄−排除）
+不准用複習目錄／錄音 Snapshot／頁數×行數（不理最後一頁）當綠字
+超出不准顯示 0；要 popup 並改起迄
+PIC 一個 tag、WORD 一個 tag；A～Z 畫面可合併，數字仍 26 本各自算
+```
+
+## 禁止
+
+```javascript
+// ❌ 出作業現讀 Drive／複習目錄當綠字
+countAvailableFromPageCounts(section, comboStats.pageCounts)
+avail = fetch_class_combo_stats(...)
+
+// ❌ 一律滿頁相乘，最後一頁餘數不見了
+avail = (end - start + 1) * lines_per_page
+
+// ❌ 超出就顯示 0，不告訴老師
+if (start > lastPage) return 0
+
+// ❌ 套餐一列一個總和，把多本活頁收成一個數字
+combo.available_count = sum(sheets)
+```
+
+## 正確
+
+```javascript
+// ✅ 上傳成功：這本 rows.length 寫進該活頁
+writeSheetAvailableCounts(folderName, templateId, { stem: rows.length })
+
+// ✅ 94 題、每頁 20、頁 3～4 → 40；頁 5 → 14
+SheetRangeBounds.countAvailable({ total: 94, lpp: 20, rangeType: 'page', start: 3, end: 4 })
+
+// ✅ 頁碼 80～82、這本只有 5 頁 → popup，起迄改 5～5
+SheetRangeBounds.clampRange({ total: 94, lpp: 20, rangeType: 'page', start: 80, end: 82 })
+```
+
+## 實測
+
+1. 新上傳的活頁，出作業選套餐填頁 3～4（總 94、每頁 20）→ 綠字 40，不必按讀取  
+2. 頁碼填超過最後一頁 → popup 寫最後頁／最後題，迄（或起迄）自動改  
+3. 題號起超過最後題 → 起改最後一頁第一題、迄改最後題號  
+4. 沒再上傳的舊活頁 → 仍「需讀取」，不是亂猜一個數  
+
+## 改動前自問
+
+動可用題／帶入／範圍起迄／產生上傳時：
+1. 綠字是否還吃活頁 `available_count`，而不是又改回讀 Drive／目錄？
+2. 超出是 popup＋改起迄，還是又顯示 0？
+3. 總數是否還跟每本活頁走（沒收成套餐一個數字）？
+任一「又改回／顯示 0／收成一個」→ 停。這套已經丟過一次。

@@ -1482,6 +1482,53 @@ window.FeatureTimeline = (() => {
             || String((r && r.start) || '').trim());
     }
 
+    function clampPackRows(classId, packRows, opts) {
+        opts = opts || {};
+        const SR = window.SheetRangeBounds;
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (!SR || typeof SR.clampRange !== 'function' || !fcmc) return [];
+        const notes = [];
+        (packRows || []).forEach(function (r) {
+            const combo = r.combo || resolvePackCombo(classId, r.comboId);
+            if (!combo) return;
+            const total = (typeof fcmc.lookupSheetAvailableCount === 'function')
+                ? fcmc.lookupSheetAvailableCount(classId, combo, r.metaFile)
+                : null;
+            const lpp = SR.examLppForCombo(combo);
+            const result = SR.clampRange({
+                total: total,
+                lpp: lpp,
+                rangeType: r.rangeType,
+                start: r.start,
+                end: r.end
+            });
+            if (!result || !result.overflow) return;
+            r.start = String(result.start);
+            r.end = String(result.end);
+            notes.push({
+                overflow: true,
+                label: r.metaFile || combo.label || '活頁',
+                lastPage: result.lastPage,
+                lastItem: result.lastItem,
+                start: result.start,
+                end: result.end
+            });
+        });
+        if (notes.length && opts.notify !== false && typeof SR.notifyOverflow === 'function') {
+            SR.notifyOverflow(notes);
+        }
+        return notes;
+    }
+
+    function writePackBoundsToDom(pathStr, packRows) {
+        (packRows || []).forEach(function (r, idx) {
+            const startEl = document.getElementById('range-pack-start-' + pathStr + '-' + idx);
+            const endEl = document.getElementById('range-pack-end-' + pathStr + '-' + idx);
+            if (startEl && r.start != null) startEl.value = String(r.start);
+            if (endEl && r.end != null) endEl.value = String(r.end);
+        });
+    }
+
     /**
      * 組合包 → 帶入／Snapshot 同一把鑰匙：畫面有幾套餐、幾區塊就帶幾筆。
      * 對不到套餐物件仍保留該列 comboId／活頁／起迄，不准默默丟掉套餐二。
@@ -1516,6 +1563,13 @@ window.FeatureTimeline = (() => {
                 rangeSpec: buildPackRangeSpec(r.rangeType, r.start, r.end)
             };
         });
+        if (opts.clamp) {
+            clampPackRows(classId, packRows, { notify: opts.notify !== false });
+            packRows.forEach(function (r) {
+                r.rangeSpec = buildPackRangeSpec(r.rangeType, r.start, r.end);
+            });
+            writePackBoundsToDom(pathStr, packRows);
+        }
         if (group) {
             writePackRowsToGroup(group, packRows.map(function (r) {
                 return {
@@ -1575,7 +1629,11 @@ window.FeatureTimeline = (() => {
         if (!group.raw_data) group.raw_data = {};
         if (group.type === 'group') group.raw_data.group_role = 'range';
 
-        const pack = buildRangePackForApply(pathStr, { useState: !!opts.skipSync });
+        const pack = buildRangePackForApply(pathStr, {
+            useState: !!opts.skipSync,
+            clamp: !!opts.clamp,
+            notify: opts.notify !== false
+        });
         const packRows = pack.rows || [];
 
         const titleEl = document.getElementById('node-title-' + pathStr);

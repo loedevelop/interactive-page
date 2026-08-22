@@ -2993,6 +2993,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         let askedFieldCount = false;
         const uploaded = [];
         const stems = [];
+        const stemCounts = {};
         for (let i = 0; i < sheetIds.length; i++) {
             const sheetName = sheetIds[i];
             const result = generateMetaForDesignSheet(seg, sheetName);
@@ -3020,6 +3021,9 @@ window.FeatureMaterialLayoutPairing = (function () {
             const finalScript = (scriptRes && scriptRes.finalFileName) || names.script;
             uploaded.push(finalMeta + '、' + finalScript);
             stems.push(stemFromMetaFileName(finalMeta));
+            if (Array.isArray(result.rows) && result.rows.length) {
+                stemCounts[stemFromMetaFileName(finalMeta)] = result.rows.length;
+            }
             seg.lastGen = {
                 sheetName: sheetName,
                 rows: result.rows,
@@ -3027,6 +3031,23 @@ window.FeatureMaterialLayoutPairing = (function () {
                 rowStart: seg.rowStart,
                 rowEnd: seg.rowEnd
             };
+        }
+        if (window.FeatureClassMaterialCombinations
+            && typeof window.FeatureClassMaterialCombinations.writeSheetAvailableCounts === 'function'
+            && Object.keys(stemCounts).length) {
+            try {
+                await window.FeatureClassMaterialCombinations.writeSheetAvailableCounts(
+                    folderName,
+                    (function () {
+                        const byName = (typeof findApplyTemplateByName === 'function')
+                            ? findApplyTemplateByName(templateName) : null;
+                        return (byName && byName.id)
+                            || (seg && (seg.templateId || seg.quickApplyTemplateId))
+                            || '';
+                    }()),
+                    stemCounts
+                );
+            } catch (_availErr) { /* 總題數寫入失敗不擋已完成的上傳 */ }
         }
         if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
             try {
@@ -5517,6 +5538,25 @@ window.FeatureMaterialLayoutPairing = (function () {
                         const latest = await fetchTemplateApplications(true);
                         const merged = mergeAppRecordIntoList(latest, appRecord);
                         await saveTemplateApplications(merged);
+                        const stemCounts = {};
+                        sheetNames.forEach(function (name) {
+                            const g = state.gen[name];
+                            if (!g || !g.uploadStatus || !g.uploadStatus.ok) return;
+                            const stem = g.finalStem || name;
+                            const n = Array.isArray(g.rows) ? g.rows.length : 0;
+                            if (stem && n > 0) stemCounts[stem] = n;
+                        });
+                        if (window.FeatureClassMaterialCombinations
+                            && typeof window.FeatureClassMaterialCombinations.writeSheetAvailableCounts === 'function'
+                            && Object.keys(stemCounts).length) {
+                            try {
+                                await window.FeatureClassMaterialCombinations.writeSheetAvailableCounts(
+                                    appRecord.material_folder,
+                                    appRecord.template_id,
+                                    stemCounts
+                                );
+                            } catch (_availErr) { /* 總題數寫入失敗不擋已完成的上傳 */ }
+                        }
                         // 存檔成功後畫面也要立刻切回 Drive 模式，不能等下次整頁重新整理才對——
                         // 否則老師會覺得「明明存了，畫面還是卡在本機」
                         state.sourceKind = 'drive';
