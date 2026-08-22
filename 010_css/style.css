@@ -438,3 +438,73 @@ button:disabled,
     flex-shrink: 0;
 }
 .pdf-quiz-color-dot.is-active { border-color: #0F172A; }
+
+/* 教材區：同一字級。資料夾／套餐用顏色分層，不用字級分層。 */
+#material-zone-container,
+#material-zone-container * {
+    font-size: 16px !important;
+    line-height: 1.4;
+}
+#material-zone-container .mz-group {
+    background: #A5F3FC;
+    border: 2px solid #0E7490;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+    color: #134E4A;
+}
+#material-zone-container .mz-card {
+    background: #FEF3C7;
+    border: 2px solid #D97706;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+}
+#material-zone-container .mz-role-tags-wrap .mf-role-tags {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid #D97706;
+    background: #FFFBEB;
+    color: #92400E;
+}
+#material-zone-container .mz-card.mz-unused {
+    background: #F1F5F9;
+    border: 2px dashed #64748B;
+}
+#material-zone-container .mz-source-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+#material-zone-container .mz-source-row label {
+    white-space: nowrap;
+    font-weight: 800;
+    color: #134E4A;
+}
+#material-zone-container .mz-source-row .mz-source-file {
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+#material-zone-container input.mz-label,
+#material-zone-container input.mz-source-file {
+    height: 36px;
+    padding: 4px 8px;
+    box-sizing: border-box;
+    border: 1px solid #0E7490;
+    border-radius: 6px;
+    background: #FFFFFF;
+    width: 100%;
+    max-width: 100%;
+}
+#material-zone-container .mz-source-row .mz-source-file {
+    width: auto;
+}
+#material-zone-container .btn,
+#material-zone-container button {
+    height: 36px;
+    padding: 4px 10px;
+    box-sizing: border-box;
+}

@@ -156,8 +156,9 @@ window.QuizPaperBuilder = (function () {
     function formatItemHeadline(item, displayNo) {
         const seq = displayNo != null ? String(displayNo) : (item && item.seq != null ? String(item.seq) : '');
         const meta = formatItemSourceLabel(item);
-        if (seq && meta) return seq + '. ' + meta;
-        if (seq) return seq + '.';
+        const seqDot = seq && /\.\s*$/.test(seq) ? seq.replace(/\s+$/, '') : (seq ? seq + '.' : '');
+        if (seqDot && meta) return seqDot + ' ' + meta;
+        if (seqDot) return seqDot;
         return meta || '';
     }
 
@@ -479,16 +480,24 @@ window.QuizPaperBuilder = (function () {
     }
 
     function sheetStemsLooselyMatch(a, b) {
-        function core(s) {
-            let t = String(s || '').trim().replace(/\.meta\.json$/i, '');
-            const m = t.match(/^(.+)\.([A-Za-z][A-Za-z0-9_-]*)$/);
-            if (m) t = m[1];
-            return t.replace(/-/g, '').toUpperCase();
+        function full(s) {
+            return String(s || '').trim().replace(/\.meta\.json$/i, '').toUpperCase();
         }
-        const na = core(a);
-        const nb = core(b);
-        if (!na || !nb) return true;
-        return na === nb;
+        const fa = full(a);
+        const fb = full(b);
+        if (!fa || !fb) return true;
+        if (fa === fb) return true;
+        const suffixRe = /\.([A-Z][A-Z0-9_+-]*)$/;
+        const sa = fa.match(suffixRe);
+        const sb = fb.match(suffixRe);
+        if (sa && sb) return false;
+        function core(s) {
+            let t = s;
+            const m = t.match(/^(.+)\.([A-Za-z][A-Za-z0-9_+-]*)$/);
+            if (m) t = m[1];
+            return t.replace(/-/g, '');
+        }
+        return core(fa) === core(fb);
     }
 
     /**

@@ -28,10 +28,14 @@ window.MaterialSnapshot = (function () {
     }
 
     var DEFAULT_STUDENT_SCRIPT = '_answer_combined_text';
-    var STUDENT_SCRIPT_TAG_RE = /^<(page\s*title|data|blank)>\s*/i;
+    var STUDENT_SCRIPT_TAG_RE = /^<\s*(page\s*title|data|blank)\s*>\s*/i;
 
     function studentScriptHasTags(raw) {
-        return /<(page\s*title|data|blank)>/i.test(String(raw || ''));
+        return /<\s*(page\s*title|data|blank)\s*>/i.test(String(raw || ''));
+    }
+
+    function stripStudentScriptTag(raw) {
+        return String(raw == null ? '' : raw).replace(STUDENT_SCRIPT_TAG_RE, '');
     }
 
     /**
@@ -42,6 +46,19 @@ window.MaterialSnapshot = (function () {
     function parseStudentScriptTemplate(raw) {
         var text = String(raw == null ? '' : raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         if (!studentScriptHasTags(text)) {
+            var lines = text.split('\n');
+            var nonempty = lines.filter(function (l) { return String(l || '').trim(); });
+            // 多行無標記：一行一個公式。不准整份當一個運算式（只算出第一行，或尾端多餘整段失敗）。
+            if (nonempty.length > 1) {
+                return {
+                    tagged: true,
+                    pageParts: [],
+                    itemParts: lines.map(function (l) {
+                        if (!String(l || '').trim()) return { kind: 'blank', formula: '' };
+                        return { kind: 'data', formula: String(l).trim() };
+                    })
+                };
+            }
             var plain = text.trim() || DEFAULT_STUDENT_SCRIPT;
             return { tagged: false, pageParts: [], itemParts: [{ kind: 'data', formula: plain }] };
         }
@@ -81,22 +98,43 @@ window.MaterialSnapshot = (function () {
         return { tagged: true, pageParts: pageParts, itemParts: itemParts };
     }
 
-    function evalLayoutFormulaToText(formula, row, colMap) {
-        var src = String(formula || '').trim();
-        if (!src) return '';
+    function evalLayoutFormulaToText(formula, row, colMap, opts) {
+        opts = opts || {};
+        var src = String(formula || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        src = src.replace(/＆/g, '&');
+        src = stripStudentScriptTag(src).trim();
+        if (!src) {
+            if (opts.errorBox) opts.errorBox.err = '空公式';
+            return '';
+        }
+        // 多行＝一行一個公式。整份丟進 evaluateFields 會只算出第一行或「運算式尾端多餘」整段空。
+        if (src.indexOf('\n') !== -1) {
+            return src.split('\n').map(function (line) {
+                return evalLayoutFormulaToText(line, row, colMap, opts);
+            }).join('\n');
+        }
         if (!window.LayoutFieldsEval || typeof window.LayoutFieldsEval.evaluateFields !== 'function') {
             return firstNonEmptyCell(row, [src]);
         }
         try {
-            var cells = window.LayoutFieldsEval.evaluateFields(src, row, colMap || {});
+            var cells = window.LayoutFieldsEval.evaluateFields(src, row, colMap || {}, opts);
             return (cells || []).map(function (c) {
                 return window.LayoutFieldsEval.cellText(c);
             }).map(function (t) {
                 return String(t || '').trim();
             }).filter(Boolean).join(' ');
-        } catch (_e) {
+        } catch (e) {
+            if (opts.errorBox) opts.errorBox.err = (e && e.message) ? e.message : String(e);
             return '';
         }
+    }
+
+    /** 學生文稿每一行公式：空欄（如 pre）跳過，不准把該行整段吃掉。 */
+    function evalStudentScriptFormulaToText(formula, row, colMap, errorBox) {
+        return evalLayoutFormulaToText(formula, row, colMap, {
+            skipBlankConcat: true,
+            errorBox: errorBox || null
+        });
     }
 
     /**
@@ -117,6 +155,32 @@ window.MaterialSnapshot = (function () {
             if (parts.length) return parts.join(' ');
         }
         return firstNonEmptyCell(row, ['answer_en']);
+    }
+
+    /**
+     * 擷取範本公式套到 meta 列：col_map 對欄，answer_combine_note 寫進 _answer_combined_text。
+     * 沒填結合公式＝不寫、不准拿別欄合成。學生文稿公式另外用 student_script。
+     */
+    function applyExtractionFormulasToRows(rows, context) {
+        context = context || {};
+        var colMap = context.col_map || {};
+        var formula = String(context.answer_combine_note || context.answerCombineNote || '').trim();
+        return (rows || []).map(function (row) {
+            if (!row || typeof row !== 'object') return row;
+            var out = Object.assign({}, row);
+            Object.keys(colMap).forEach(function (letter) {
+                var sem = colMap[letter];
+                if (!sem) return;
+                if ((out[sem] == null || out[sem] === '') && out[letter] != null && out[letter] !== '') {
+                    out[sem] = out[letter];
+                }
+            });
+            if (formula) {
+                var combined = evalLayoutFormulaToText(formula, out, colMap);
+                out._answer_combined_text = combined || '';
+            }
+            return out;
+        });
     }
 
     function siblingScriptFileName(metaFile) {
@@ -343,6 +407,14 @@ window.MaterialSnapshot = (function () {
         return pages[0] + '～' + pages[pages.length - 1] + '（' + pages.length + ' 頁）';
     }
 
+    /** 題號後面加點：原始資料已有句點就不再加。 */
+    function itemNoWithDot(raw) {
+        var s = String(raw == null ? '' : raw).trim();
+        if (!s) return '';
+        if (/\.\s*$/.test(s)) return s.replace(/\s+$/, '');
+        return s + '.';
+    }
+
     function toNumber(val) {
         if (val === null || val === undefined || val === '') return NaN;
         var n = Number(String(val).replace(/[^\d.-]/g, ''));
@@ -466,11 +538,17 @@ window.MaterialSnapshot = (function () {
      */
     function describeAvailableForKind(rows, kind) {
         var seen = {};
+        var pageKey = kind === 'page' ? resolveMetaPageKey(rows) : '';
         (rows || []).forEach(function (row) {
-            var v = kind === 'item'
-                ? toNumber(row.item_no != null ? row.item_no : row.itemNo)
-                : toNumber(row.page);
-            if (!isNaN(v)) seen[v] = true;
+            if (kind === 'item') {
+                var v = toNumber(row.item_no != null ? row.item_no : row.itemNo);
+                if (!isNaN(v)) seen[v] = true;
+                return;
+            }
+            var nums = pageKey
+                ? pageNumsFromCell(row && row[pageKey])
+                : (isNaN(toNumber(row && row.page)) ? [] : [toNumber(row.page)]);
+            nums.forEach(function (n) { if (!isNaN(n)) seen[n] = true; });
         });
         var nums = Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
         if (!nums.length) return '這份 meta 完全沒有可辨識的' + (kind === 'item' ? '題號' : '頁碼') + '（可能欄位對應設錯，或該欄整批留白）';
@@ -489,9 +567,12 @@ window.MaterialSnapshot = (function () {
         if (spec.kind === 'page') {
             var pageSet = {};
             (spec.pages || []).forEach(function (p) { pageSet[p] = true; });
+            var pageKey = resolveMetaPageKey(rows);
             list = (rows || []).filter(function (row) {
-                var pageNum = toNumber(row.page);
-                return !isNaN(pageNum) && pageSet[pageNum];
+                var nums = pageKey
+                    ? pageNumsFromCell(row && row[pageKey])
+                    : (isNaN(toNumber(row && row.page)) ? [] : [toNumber(row.page)]);
+                return nums.some(function (p) { return !!pageSet[p]; });
             });
         } else if (spec.kind === 'item') {
             var itemSet = {};
@@ -589,6 +670,27 @@ window.MaterialSnapshot = (function () {
         return parts.join('  ');
     }
 
+    function studentLineFromRow(row, context) {
+        context = context || {};
+        var formulaRaw = String(context.student_script || context.studentScript || '').trim() || DEFAULT_STUDENT_SCRIPT;
+        var tpl = parseStudentScriptTemplate(formulaRaw);
+        var colMap = context.col_map || {};
+        var parts = (tpl.itemParts && tpl.itemParts.length)
+            ? tpl.itemParts
+            : [{ kind: 'data', formula: formulaRaw }];
+        var lines = [];
+        parts.forEach(function (p) {
+            if (p.kind === 'blank') {
+                lines.push('');
+                return;
+            }
+            if (p.kind !== 'data') return;
+            var text = evalStudentScriptFormulaToText(p.formula, row, colMap);
+            if (text) lines.push(text);
+        });
+        return lines.join('\n');
+    }
+
     /**
      * 學生文稿＝該擷取範本「學生文稿 特殊排版」。
      * 有 <page title>／<data>／<blank>＝只套公式（不再加【檔名】[頁] 與題號.）。
@@ -620,14 +722,14 @@ window.MaterialSnapshot = (function () {
         var tpl = parseStudentScriptTemplate(formulaRaw);
         var colMap = (context && context.col_map) || {};
 
-        function emitTaggedParts(partList, row, into) {
+        function emitTaggedParts(partList, row, into, errorBox) {
             var wrote = false;
             (partList || []).forEach(function (p) {
                 if (p.kind === 'blank') {
                     into.push('');
                     return;
                 }
-                var text = evalLayoutFormulaToText(p.formula, row, colMap);
+                var text = evalStudentScriptFormulaToText(p.formula, row, colMap, errorBox);
                 if (!text) return;
                 into.push(text);
                 wrote = true;
@@ -650,23 +752,42 @@ window.MaterialSnapshot = (function () {
             var lines = [];
             var localIdx = 1;
 
+            var dataErr = { err: '' };
+            var dataEmitted = 0;
             if (tpl.tagged) {
                 emitTaggedParts(tpl.pageParts, pageRows[0], lines);
                 pageRows.forEach(function (row) {
                     var chunk = [];
-                    if (emitTaggedParts(tpl.itemParts, row, chunk)) {
+                    if (emitTaggedParts(tpl.itemParts, row, chunk, dataErr)) {
+                        dataEmitted += 1;
                         chunk.forEach(function (ln) { lines.push(ln); });
                     }
                 });
+                if (context && !context._studentDataDiag) {
+                    var dataFormula = '';
+                    (tpl.itemParts || []).forEach(function (p) {
+                        if (p.kind === 'data' && String(p.formula || '').trim()) dataFormula = p.formula;
+                    });
+                    context._studentDataDiag = {
+                        dataFormula: dataFormula,
+                        dataEmitted: dataEmitted,
+                        dataErr: dataErr.err || ''
+                    };
+                } else if (context && context._studentDataDiag) {
+                    context._studentDataDiag.dataEmitted += dataEmitted;
+                    if (!context._studentDataDiag.dataErr && dataErr.err) {
+                        context._studentDataDiag.dataErr = dataErr.err;
+                    }
+                }
             } else {
                 lines.push('【' + stem + '】[' + headerPage + ']');
                 var dataFormula = (tpl.itemParts[0] && tpl.itemParts[0].formula) || DEFAULT_STUDENT_SCRIPT;
                 pageRows.forEach(function (row) {
-                    var written = evalLayoutFormulaToText(dataFormula, row, colMap);
+                    var written = evalStudentScriptFormulaToText(dataFormula, row, colMap);
                     if (!written) return;
                     var itemNo = row.item_no != null ? row.item_no : row.itemNo;
                     var num = !isNaN(toNumber(itemNo)) ? String(itemNo) : String(localIdx);
-                    lines.push(num + '.  ' + written);
+                    lines.push(itemNoWithDot(num) + '  ' + written);
                     localIdx += 1;
                 });
             }
@@ -675,6 +796,59 @@ window.MaterialSnapshot = (function () {
             }
         });
         return blocks.join('\n\n');
+    }
+
+    /** 書寫答案：只取該列書寫欄，不加學生文稿公式。沒有就跳過該列，不准抄口說／題目。 */
+    function formatWrittenAnswerBlock(rows, context) {
+        context = context || {};
+        var stem = String(context.label || context.stem || '').trim();
+        if (!stem) {
+            var file = context.published_file || context.metaFile || '';
+            stem = String(file).replace(/\.meta\.json$/i, '').replace(/\.json$/i, '');
+            var parts = stem.split(/[\/_]/);
+            stem = parts[parts.length - 1] || stem || '?';
+        }
+        var byPage = {};
+        var pageOrder = [];
+        (rows || []).forEach(function (row) {
+            var pageKey = row.page != null && String(row.page).trim() !== '' ? String(row.page) : '_';
+            if (!byPage[pageKey]) {
+                byPage[pageKey] = [];
+                pageOrder.push(pageKey);
+            }
+            byPage[pageKey].push(row);
+        });
+        var blocks = [];
+        pageOrder.forEach(function (pageKey) {
+            var pageRows = byPage[pageKey].slice().sort(function (a, b) {
+                var ai = toNumber(a.item_no != null ? a.item_no : a.itemNo);
+                var bi = toNumber(b.item_no != null ? b.item_no : b.itemNo);
+                if (isNaN(ai) && isNaN(bi)) return 0;
+                if (isNaN(ai)) return 1;
+                if (isNaN(bi)) return -1;
+                return ai - bi;
+            });
+            var lines = [];
+            var localIdx = 1;
+            pageRows.forEach(function (row) {
+                var written = writtenAnswerFromRow(row);
+                if (!written) return;
+                var itemNo = row.item_no != null ? row.item_no : row.itemNo;
+                var num = !isNaN(toNumber(itemNo)) ? String(itemNo) : String(localIdx);
+                lines.push(itemNoWithDot(num) + '  ' + written);
+                localIdx += 1;
+            });
+            if (!lines.length) return;
+            var headerPage = pageKey === '_' ? '?' : pageKey;
+            blocks.push('【' + stem + '】[' + headerPage + ']\n' + lines.join('\n'));
+        });
+        return blocks.join('\n\n');
+    }
+
+    function rowsHaveSpoken(rows) {
+        return (rows || []).some(function (row) {
+            return !!spokenAnswerFromRow(row);
+        });
     }
 
     var RECORDING_UNIT = 'page';
@@ -775,6 +949,7 @@ window.MaterialSnapshot = (function () {
         }).filter(function (line) { return line !== ''; });
 
         var displayText = formatStudentDisplayBlock(rows, context);
+        var writtenText = formatWrittenAnswerBlock(rows, context);
 
         var gradingUnits = buildGradingUnits(rows, context);
         var metaItems = buildMetaItems(rows, context);
@@ -796,6 +971,7 @@ window.MaterialSnapshot = (function () {
                 label: context.label || null
             },
             original_script: scriptLines.join('\n'),
+            written_display: writtenText,
             student_display: displayText,
             student_display_text: displayText,
             grading_units: gradingUnits,
@@ -807,8 +983,48 @@ window.MaterialSnapshot = (function () {
     }
 
     function sliceAndBuild(rows, sliceOptions, context) {
-        var filtered = filterRows(rows, sliceOptions);
-        return buildSnapshot(filtered, Object.assign({}, context, sliceOptions));
+        context = context || {};
+        var notes = [];
+        var ready = applyExtractionFormulasToRows(
+            canonicalizeMetaRows(rows, context.layout),
+            context
+        );
+        var scriptText = context.script_text || '';
+        var fullLines = scriptText ? scriptLinesFromText(scriptText) : [];
+        if (scriptText && !rowsHaveSpoken(ready) && fullLines.length === ready.length) {
+            ready = attachSpokenAnswersFromScript(ready, scriptText);
+        }
+        var filtered = filterRows(ready, sliceOptions);
+        if (scriptText && !rowsHaveSpoken(filtered)) {
+            var sliceLines = scriptLinesFromText(scriptText);
+            if (sliceLines.length === filtered.length) {
+                filtered = attachSpokenAnswersFromScript(filtered, scriptText);
+            } else {
+                notes.push('口說未帶入：.script.txt 有 ' + sliceLines.length + ' 行，切片後 meta 有 '
+                    + filtered.length + ' 列（整份 ' + ready.length + ' 列），對不上所以不猜');
+            }
+        } else if (!scriptText && !rowsHaveSpoken(filtered)) {
+            notes.push('口說未帶入：找不到同 stem 的 .script.txt，列上也沒有 script');
+        }
+        var snapCtx = Object.assign({}, context, sliceOptions);
+        var snap = buildSnapshot(filtered, snapCtx);
+        if (!String(snap.written_display || '').trim()) {
+            notes.push('書寫未帶入：列上沒有 _answer_combined_text／_answer_keys／answer_en');
+        }
+        if (!String(snap.student_display || '').trim()) {
+            notes.push('學生文稿未帶入：擷取範本公式沒對到欄');
+        } else if (snapCtx._studentDataDiag && snapCtx._studentDataDiag.dataEmitted === 0) {
+            var diag = snapCtx._studentDataDiag;
+            if (!String(diag.dataFormula || '').trim()) {
+                notes.push('學生文稿只有標題：<data> 後面沒有公式');
+            } else if (diag.dataErr) {
+                notes.push('學生文稿 <data> 算不出：' + diag.dataErr + '｜公式 ' + diag.dataFormula);
+            } else {
+                notes.push('學生文稿 <data> 沒對到欄｜公式 ' + diag.dataFormula);
+            }
+        }
+        snap.import_notes = notes;
+        return snap;
     }
 
     return {
@@ -819,11 +1035,14 @@ window.MaterialSnapshot = (function () {
         filterRowsByRangeSpec: filterRowsByRangeSpec,
         spokenAnswerFromRow: spokenAnswerFromRow,
         writtenAnswerFromRow: writtenAnswerFromRow,
+        applyExtractionFormulasToRows: applyExtractionFormulasToRows,
         siblingScriptFileName: siblingScriptFileName,
         attachSpokenAnswersFromScript: attachSpokenAnswersFromScript,
         buildSnapshot: buildSnapshot,
         buildGradingUnits: buildGradingUnits,
         formatStudentDisplayBlock: formatStudentDisplayBlock,
+        studentLineFromRow: studentLineFromRow,
+        formatWrittenAnswerBlock: formatWrittenAnswerBlock,
         parseStudentScriptTemplate: parseStudentScriptTemplate,
         sliceAndBuild: sliceAndBuild,
         collectMetaRowKeys: collectMetaRowKeys,

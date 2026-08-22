@@ -309,6 +309,33 @@ window.FeatureTemplateLibrary = (function () {
         return map;
     }
 
+    function studentScriptOf(template) {
+        const raw = String((template && template.student_script) || '').trim();
+        return raw || '_answer_combined_text';
+    }
+
+    /**
+     * 擷取公式一把鑰匙：出作業／統計表／Snapshot 只換 template id，不准各寫各的。
+     * 書寫＝answer_combine_note（擷取角色才有）；學生文稿＝student_script（沒填才是 _answer_combined_text）。
+     */
+    function extractionContext(templateId) {
+        const t = findTemplateByAnyId(templateId);
+        if (!t) {
+            return {
+                extraction_template_id: String(templateId || ''),
+                student_script: '_answer_combined_text',
+                col_map: {},
+                answer_combine_note: ''
+            };
+        }
+        return {
+            extraction_template_id: String(t.id || ''),
+            student_script: studentScriptOf(t),
+            col_map: colMapFromTemplate(t),
+            answer_combine_note: t.is_extraction_role ? String(t.answer_combine_note || '').trim() : ''
+        };
+    }
+
     /**
      * 統一考卷排版解析：新格式 uuid／legacy_profile_id（舊 LAYOUT_CATALOG 字串）／
      * legacy_id（遷移前 mft_xxx 字串）／'tpl:{uuid或字串id}'（唯讀相容前綴，歷史上已經存過
@@ -370,10 +397,9 @@ window.FeatureTemplateLibrary = (function () {
         computeExamDraftFromColumns: computeExamDraftFromColumns,
         resolveTemplateProfile: resolveTemplateProfile,
         colMapFromTemplate: colMapFromTemplate,
+        extractionContext: extractionContext,
+        findTemplateByAnyId: findTemplateByAnyId,
         DEFAULT_STUDENT_SCRIPT: '_answer_combined_text',
-        studentScriptOf: function (template) {
-            const raw = String((template && template.student_script) || '').trim();
-            return raw || '_answer_combined_text';
-        }
+        studentScriptOf: studentScriptOf
     };
 })();

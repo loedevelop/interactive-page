@@ -39,7 +39,8 @@ unique(stems in grading_units) === length(material_refs)
 凍結後 grading_units = AI／一頁一檔主真相
 禁止用較短 DOM／單一 material_ref 覆寫較長 material_refs
 hydrate：無論清單 API 成敗，都必須先畫出 meta 列
-自動套用：busy 期間變更必須 pending，結束後重跑
+進頁只自動套用一次；重繪／autoPrime／改範圍不准再排自動套用。之後只走「更新內容」
+自動套用（僅進頁那一次）：busy 期間變更必須 pending，結束後重跑
 async 重繪 rows：世代號 + DOM 冊數 > snapshot 冊數時禁止縮水
 meta_rows_by_stem：sync 時 merge，禁止用較舊單冊 snap 蓋掉已累積冊
 多冊批次讀取：單冊失敗須重試，仍失敗才整批中斷（不可靜默只套用部分冊，但也不可一冊失敗就無提示地維持舊結果）

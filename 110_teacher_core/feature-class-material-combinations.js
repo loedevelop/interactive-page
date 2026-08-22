@@ -1015,8 +1015,8 @@ window.FeatureClassMaterialCombinations = (function () {
         const list = listAssignedCombosForClass(classId);
         const wantId = String(hint.combinationId || hint.combination_id || '').trim();
         if (wantId) {
-            const byId = list.find(function (c) { return String(c.id) === wantId; });
-            if (byId) return byId;
+            // 已指定套餐＝只認這一筆。對不到就報沒有，不准改套同資料夾另一份（pic／word）。
+            return list.find(function (c) { return String(c.id) === wantId; }) || null;
         }
         const rawFolder = String(hint.folderName || hint.material_folder || '').trim();
         const folder = (window.MaterialNameMap && typeof window.MaterialNameMap.resolveFolderName === 'function'
@@ -1034,7 +1034,8 @@ window.FeatureClassMaterialCombinations = (function () {
                 return String(c.examTemplateId || '') === tplId;
             });
             if (byTpl.length === 1) return byTpl[0];
-            if (byTpl.length > 1) return byTpl[0];
+            // 同一資料夾多套餐共用試卷範本（pic＋word）＝不准猜第一筆
+            return null;
         }
         if (matches.length === 1) return matches[0];
         return null;
@@ -1270,8 +1271,18 @@ window.FeatureClassMaterialCombinations = (function () {
         return '';
     }
 
-    function materialZoneRowKey(folderId, templateId, sourceFile) {
-        return [String(folderId || ''), String(templateId || ''), sourceFileKey(sourceFile)].join('|');
+    function ungroupedSheetKeyOf(r) {
+        if (!r || r.is_group === true) return '';
+        return sheetMatchKey(r.sheet_stem || r.stem || '') || String(r.id || '');
+    }
+
+    function materialZoneRowKey(folderId, templateId, sourceFile, ungroupedSheetKey) {
+        return [
+            String(folderId || ''),
+            String(templateId || ''),
+            sourceFileKey(sourceFile),
+            String(ungroupedSheetKey || '')
+        ].join('|');
     }
 
     function sheetMatchKey(name) {
@@ -1408,8 +1419,65 @@ window.FeatureClassMaterialCombinations = (function () {
         return out;
     }
 
+    function cloneZoneRowShell(row, key) {
+        return {
+            key: key,
+            sheetKey: '',
+            comboId: row.comboId || '',
+            comboLabel: row.comboLabel || '',
+            folderId: row.folderId || '',
+            templateId: row.templateId || '',
+            folderName: row.folderName || '',
+            rootKind: row.rootKind,
+            classId: row.classId || '',
+            templateName: row.templateName || '',
+            sourceFile: row.sourceFile || '',
+            sourceKey: row.sourceKey || MZ_NO_SOURCE_KEY,
+            sourceLabels: row.sourceLabels,
+            label: row.label || '',
+            sheetStems: [],
+            sheetDbIds: [],
+            sheetFiles: [],
+            examTemplateIds: (row.examTemplateIds || []).slice(),
+            classIds: (row.classIds || []).slice(),
+            assignmentByClassId: Object.assign({}, row.assignmentByClassId || {}),
+            classNames: (row.classNames || []).slice(),
+            studentPdfFileId: row.studentPdfFileId || '',
+            studentPdfFileName: row.studentPdfFileName || '',
+            studentPdfPageMap: Array.isArray(row.studentPdfPageMap) ? row.studentPdfPageMap.slice() : []
+        };
+    }
+
+    function addSheetFileToZoneRow(target, f) {
+        if (!target || !f || !f.id) return;
+        if (target.sheetDbIds.indexOf(f.id) === -1) target.sheetDbIds.push(f.id);
+        const related = (target.sheetFiles || []).find(function (x) {
+            return sheetStemsRelated(x.stem, f.stem);
+        }) || uniqueClassSuffixKeep(target.sheetFiles, f);
+        if (related) {
+            mergeRelatedSheetFile(related, {
+                id: f.id,
+                stem: f.stem || '',
+                meta: f.meta || '',
+                script: f.script || '',
+                is_group: f.is_group === true,
+                relatedIds: []
+            });
+            return;
+        }
+        target.sheetStems.push(f.stem);
+        target.sheetFiles.push({
+            id: f.id,
+            stem: f.stem || '',
+            meta: f.meta || '',
+            script: f.script || '',
+            is_group: f.is_group === true,
+            relatedIds: []
+        });
+    }
+
     /**
-     * 改活頁清單補上套餐已連、但擷取範本欄還沒對齊的活頁。
+     * 改活頁清單補上套餐已連的活頁。沒勾群組＝自己一張卡，不准塞進別本。
      * 「幾個 meta」仍只看統計表，不拿這裡的數量去顯示。
      */
     function mergeLinkedComboSheetsIntoZoneRows(rows, comboByFolderTpl) {
@@ -1427,43 +1495,110 @@ window.FeatureClassMaterialCombinations = (function () {
             group.forEach(function (row) {
                 (row.sheetDbIds || []).forEach(function (id) { seenIds[String(id)] = true; });
             });
-            const missing = comboLinkedSheetFiles(combo).filter(function (f) {
-                if (seenIds[String(f.id)]) return false;
-                if (f.extraction_template_id && String(f.extraction_template_id) !== String(combo.extraction_template_id || '')) {
-                    return false;
-                }
-                return true;
-            });
-            if (!missing.length) return;
-            const target = group.length === 1
-                ? group[0]
-                : (group.find(function (r) { return !r.sourceFile; }) || group[0]);
-            missing.forEach(function (f) {
-                if (target.sheetDbIds.indexOf(f.id) === -1) target.sheetDbIds.push(f.id);
-                const related = target.sheetFiles.find(function (x) {
-                    return sheetStemsRelated(x.stem, f.stem);
-                }) || uniqueClassSuffixKeep(target.sheetFiles, f);
-                if (related) {
-                    mergeRelatedSheetFile(related, {
-                        id: f.id,
-                        stem: f.stem || '',
-                        meta: f.meta || '',
-                        script: f.script || '',
-                        relatedIds: []
+            comboLinkedSheetFiles(combo).forEach(function (f) {
+                if (seenIds[String(f.id)]) return;
+                seenIds[String(f.id)] = true;
+                const uk = ungroupedSheetKeyOf(f);
+                let target = null;
+                if (uk) {
+                    target = group.find(function (row) {
+                        return String(row.sheetKey || '') === uk
+                            || (row.sheetFiles || []).some(function (x) {
+                                return sheetMatchKey(x.stem) === uk || String(x.id) === String(f.id);
+                            });
                     });
-                    return;
+                    if (!target) {
+                        const base = group[0];
+                        target = cloneZoneRowShell(base, materialZoneRowKey(base.folderId, base.templateId, base.sourceFile, uk));
+                        target.sheetKey = uk;
+                        rows.push(target);
+                        group.push(target);
+                    }
+                } else {
+                    target = group.find(function (r) { return !r.sheetKey; }) || group[0];
                 }
-                target.sheetStems.push(f.stem);
-                target.sheetFiles.push({
-                    id: f.id,
-                    stem: f.stem || '',
-                    meta: f.meta || '',
-                    script: f.script || '',
-                    is_group: f.is_group === true,
-                    relatedIds: []
-                });
+                addSheetFileToZoneRow(target, f);
             });
         });
+    }
+
+    /** 沒勾＝一本一張。混在同一張的要拆開，不准收成一筆。 */
+    function explodeUngroupedZoneRows(rows) {
+        const out = [];
+        (rows || []).forEach(function (row) {
+            const files = row.sheetFiles || [];
+            const grouped = files.filter(function (f) { return f && f.is_group === true; });
+            const singles = files.filter(function (f) { return !f || f.is_group !== true; });
+            if (singles.length <= 1 && !grouped.length) {
+                if (singles[0]) row.sheetKey = ungroupedSheetKeyOf(singles[0]);
+                out.push(row);
+                return;
+            }
+            if (grouped.length && !singles.length) {
+                row.sheetKey = '';
+                out.push(row);
+                return;
+            }
+            if (grouped.length) {
+                const gRow = cloneZoneRowShell(row, materialZoneRowKey(row.folderId, row.templateId, row.sourceFile, ''));
+                gRow.sheetKey = '';
+                gRow.sheetFiles = grouped;
+                gRow.sheetStems = grouped.map(function (f) { return f.stem; });
+                gRow.sheetDbIds = grouped.map(function (f) { return f.id; }).filter(Boolean);
+                out.push(gRow);
+            }
+            singles.forEach(function (f) {
+                const uk = ungroupedSheetKeyOf(f);
+                const sRow = cloneZoneRowShell(row, materialZoneRowKey(row.folderId, row.templateId, row.sourceFile, uk));
+                sRow.sheetKey = uk;
+                sRow.sheetFiles = [f];
+                sRow.sheetStems = f.stem ? [f.stem] : [];
+                sRow.sheetDbIds = f.id ? [f.id] : [];
+                out.push(sRow);
+            });
+        });
+        return out;
+    }
+
+    function emptyZoneRowFromCombo(combo, folder, templateId, templateName, sourceFile, sheetKey) {
+        const folderId = (folder && folder.id) || (combo && combo.material_folder_id) || '';
+        const assigns = combo ? (combo.class_material_combinations || []) : [];
+        const assignmentByClassId = {};
+        assigns.forEach(function (a) {
+            if (a && a.class_id && a.id) assignmentByClassId[String(a.class_id)] = a.id;
+        });
+        return {
+            key: materialZoneRowKey(folderId, templateId, sourceFile, sheetKey),
+            sheetKey: sheetKey || '',
+            comboId: combo ? combo.id : '',
+            comboLabel: combo ? String(combo.label || '').trim() : '',
+            folderId: folderId,
+            templateId: templateId,
+            folderName: (folder && folder.folder_name) || '',
+            rootKind: folder && folder.root_kind === 'class' ? 'class' : 'teacher',
+            classId: (folder && folder.class_id) || '',
+            templateName: templateName || '',
+            sourceFile: sourceFile,
+            sourceKey: sourceFile || MZ_NO_SOURCE_KEY,
+            sourceLabels: combo ? combo.source_labels : {},
+            label: sourceLabelFromMap(combo && combo.source_labels, sourceFile),
+            sheetStems: [],
+            sheetDbIds: [],
+            sheetFiles: [],
+            examTemplateIds: combo
+                ? (combo.material_combination_exam_templates || []).map(function (l) {
+                    return l && l.exam_template_id ? String(l.exam_template_id) : '';
+                }).filter(Boolean)
+                : [],
+            classIds: assigns.map(function (a) { return a && a.class_id ? String(a.class_id) : ''; }).filter(Boolean),
+            assignmentByClassId: assignmentByClassId,
+            classNames: uniqueSortedNames(assigns.map(function (a) {
+                return classNameById(a.class_id);
+            })),
+            studentPdfFileId: combo ? String(combo.student_pdf_file_id || '') : '',
+            studentPdfFileName: combo ? String(combo.student_pdf_file_name || '') : '',
+            studentPdfPageMap: combo && Array.isArray(combo.student_pdf_page_map) ? combo.student_pdf_page_map : []
+        };
     }
 
     function buildMaterialZoneRows(_groups, combos, applyRows) {
@@ -1478,64 +1613,67 @@ window.FeatureClassMaterialCombinations = (function () {
             const folderId = folder.id || '';
             const templateId = r.extraction_template_id || '';
             const sourceFile = normalizeSourceFileName(r.source_file_name);
-            const key = materialZoneRowKey(folderId, templateId, sourceFile);
+            const sheetKey = ungroupedSheetKeyOf(r);
+            const key = materialZoneRowKey(folderId, templateId, sourceFile, sheetKey);
             if (!byKey[key]) {
                 const combo = comboByFolderTpl[String(folderId) + '|' + String(templateId)] || null;
-                const assigns = combo ? (combo.class_material_combinations || []) : [];
-                const assignmentByClassId = {};
-                assigns.forEach(function (a) {
-                    if (a && a.class_id && a.id) assignmentByClassId[String(a.class_id)] = a.id;
-                });
-                byKey[key] = {
-                    key: key,
-                    comboId: combo ? combo.id : '',
-                    comboLabel: combo ? String(combo.label || '').trim() : '',
-                    folderId: folderId,
-                    templateId: templateId,
-                    folderName: folder.folder_name || '',
-                    rootKind: folder.root_kind === 'class' ? 'class' : 'teacher',
-                    classId: folder.class_id || '',
-                    templateName: (r.material_templates && r.material_templates.name) || templateNameById(templateId),
-                    sourceFile: sourceFile,
-                    sourceKey: sourceFile || MZ_NO_SOURCE_KEY,
-                    sourceLabels: combo ? combo.source_labels : {},
-                    label: sourceLabelFromMap(combo && combo.source_labels, sourceFile),
-                    sheetStems: [],
-                    sheetDbIds: [],
-                    sheetFiles: [],
-                    examTemplateIds: combo
-                        ? (combo.material_combination_exam_templates || []).map(function (l) {
-                            return l && l.exam_template_id ? String(l.exam_template_id) : '';
-                        }).filter(Boolean)
-                        : [],
-                    classIds: assigns.map(function (a) { return a && a.class_id ? String(a.class_id) : ''; }).filter(Boolean),
-                    assignmentByClassId: assignmentByClassId,
-                    classNames: uniqueSortedNames(assigns.map(function (a) {
-                        return classNameById(a.class_id);
-                    })),
-                    studentPdfFileId: combo ? String(combo.student_pdf_file_id || '') : '',
-                    studentPdfFileName: combo ? String(combo.student_pdf_file_name || '') : '',
-                    studentPdfPageMap: combo && Array.isArray(combo.student_pdf_page_map) ? combo.student_pdf_page_map : []
-                };
+                byKey[key] = emptyZoneRowFromCombo(
+                    combo,
+                    folder,
+                    templateId,
+                    (r.material_templates && r.material_templates.name) || templateNameById(templateId),
+                    sourceFile,
+                    sheetKey
+                );
                 order.push(key);
             }
             const row = byKey[key];
             if (sourceFile && !row.sourceFile) row.sourceFile = sourceFile;
-            if (r.sheet_stem) row.sheetStems.push(r.sheet_stem);
-            if (r.id && row.sheetDbIds.indexOf(r.id) === -1) {
-                row.sheetDbIds.push(r.id);
-                row.sheetFiles.push({
-                    id: r.id,
-                    stem: r.sheet_stem || '',
-                    meta: r.meta_file_name || '',
-                    script: r.script_file_name || '',
-                    is_group: r.is_group === true,
-                    relatedIds: []
-                });
-            }
+            addSheetFileToZoneRow(row, {
+                id: r.id,
+                stem: r.sheet_stem || '',
+                meta: r.meta_file_name || '',
+                script: r.script_file_name || '',
+                is_group: r.is_group === true
+            });
         });
-        const rows = order.map(function (k) { return byKey[k]; });
+        (combos || []).forEach(function (c) {
+            const folder = c.material_folders || {};
+            const folderId = String(c.material_folder_id || folder.id || '');
+            const templateId = String(c.extraction_template_id || '');
+            if (!folderId || !templateId) return;
+            let sourceFile = '';
+            order.forEach(function (k) {
+                const row = byKey[k];
+                if (String(row.folderId || '') === folderId && String(row.templateId || '') === templateId && row.sourceFile) {
+                    sourceFile = row.sourceFile;
+                }
+            });
+            const tplName = (c.material_templates && c.material_templates.name) || templateNameById(templateId);
+            const linked = comboLinkedSheetFiles(c);
+            const singles = linked.filter(function (f) { return f.is_group !== true; });
+            const hasGrouped = linked.some(function (f) { return f.is_group === true; });
+            if (hasGrouped || !linked.length) {
+                const key = materialZoneRowKey(folderId, templateId, sourceFile, '');
+                if (!byKey[key]) {
+                    byKey[key] = emptyZoneRowFromCombo(c, folder, templateId, tplName, sourceFile, '');
+                    order.push(key);
+                }
+            }
+            singles.forEach(function (f) {
+                const uk = ungroupedSheetKeyOf(f);
+                const key = materialZoneRowKey(folderId, templateId, sourceFile, uk);
+                if (!byKey[key]) {
+                    const row = emptyZoneRowFromCombo(c, folder, templateId, tplName, sourceFile, uk);
+                    addSheetFileToZoneRow(row, f);
+                    byKey[key] = row;
+                    order.push(key);
+                }
+            });
+        });
+        let rows = order.map(function (k) { return byKey[k]; });
         mergeLinkedComboSheetsIntoZoneRows(rows, comboByFolderTpl);
+        rows = explodeUngroupedZoneRows(rows);
         const sorted = rows.map(function (row) {
             row.sheetStems = collapseRelatedSheetStems(row.sheetStems);
             row.sheetFiles = collapseRelatedSheetFiles(row.sheetFiles);
@@ -1551,6 +1689,10 @@ window.FeatureClassMaterialCombinations = (function () {
         }).sort(function (a, b) {
             const fa = String(a.folderName || '').localeCompare(String(b.folderName || ''), 'zh-Hant');
             if (fa) return fa;
+            const ta = String(a.templateName || '').localeCompare(String(b.templateName || ''), 'zh-Hant');
+            if (ta) return ta;
+            const sa = String(a.sheetKey || '').localeCompare(String(b.sheetKey || ''), 'en', { numeric: true, sensitivity: 'base' });
+            if (sa) return sa;
             const la = a.label || a.defaultLabel;
             const lb = b.label || b.defaultLabel;
             return String(la).localeCompare(String(lb), 'zh-Hant');
@@ -1893,29 +2035,37 @@ window.FeatureClassMaterialCombinations = (function () {
     function renameRoleTagInnerHtml(row, sheetName, files) {
         const FN = mf();
         const lines = renameTabRoleLines(row);
-        if (files && files.length && FN && typeof FN.groupRoleTagItems === 'function') {
-            const groups = FN.groupRoleTagItems(roleTagItemsForFiles(row, files));
-            if (groups.length === 1 && typeof FN.roleTagHtml === 'function') {
-                const label = String(sheetName || '').trim()
-                    || (typeof FN.formatSheetNames === 'function' ? FN.formatSheetNames(groups[0].names) : '');
-                return FN.roleTagHtml(label, groups[0].extract, groups[0].exam);
-            }
-            if (groups.length > 1 && typeof FN.roleTagHtmlFromGroup === 'function') {
-                return groups.map(function (g) { return FN.roleTagHtmlFromGroup(g); }).join('');
-            }
+        let items = roleTagItemsForFiles(row, files);
+        if (!items.length && String(sheetName || '').trim()) {
+            items = [{
+                name: String(sheetName).trim(),
+                extract: lines.extract,
+                exam: lines.exam,
+                isGroup: false
+            }];
         }
-        const sheet = String(sheetName || '').trim();
-        if (FN && typeof FN.roleTagHtml === 'function') {
-            return FN.roleTagHtml(sheet, lines.extract, lines.exam);
+        if (FN && typeof FN.roleTagsHtml === 'function') {
+            return FN.roleTagsHtml(items);
         }
-        return '<span style="display:block;">' + esc(sheet) + '</span>'
-            + '<span style="display:block;">擷取範本' + (lines.extract ? ' ' + esc(lines.extract) : '') + '</span>'
-            + '<span style="display:block;">試卷範本' + (lines.exam ? ' ' + esc(lines.exam) : '') + '</span>';
+        if (FN && typeof FN.groupRoleTagItems === 'function' && typeof FN.roleTagHtmlFromGroup === 'function') {
+            return FN.groupRoleTagItems(items).map(function (g) {
+                return FN.roleTagHtmlFromGroup(g);
+            }).join('');
+        }
+        return items.map(function (it) {
+            const name = String((it && it.name) || '').trim();
+            if (FN && typeof FN.roleTagHtml === 'function') {
+                return FN.roleTagHtml(name, lines.extract, lines.exam);
+            }
+            return '<span style="display:block;">' + esc(name) + '</span>'
+                + '<span style="display:block;">擷取範本' + (lines.extract ? ' ' + esc(lines.extract) : '') + '</span>'
+                + '<span style="display:block;">試卷範本' + (lines.exam ? ' ' + esc(lines.exam) : '') + '</span>';
+        }).join('');
     }
 
     function renameTabButtonHtml(row, sheetName, i, on, files) {
         return (
-            '<button type="button" class="mz-rf-tab" data-pane="' + i + '" style="padding:6px 12px; border-radius:8px; font-weight:800; font-size:0.74rem; line-height:1.4; text-align:left; cursor:pointer; border:1px solid '
+            '<button type="button" class="mz-rf-tab" data-pane="' + i + '" style="display:flex; flex-wrap:wrap; gap:6px; padding:6px 12px; border-radius:8px; font-weight:800; font-size:0.74rem; line-height:1.4; text-align:left; cursor:pointer; border:1px solid '
             + (on ? '#0F766E' : '#99F6E4') + '; background:' + (on ? '#0F766E' : '#F0FDFA') + '; color:' + (on ? 'white' : '#115E59') + ';">'
             + renameRoleTagInnerHtml(row, sheetName, files)
             + '</button>'
@@ -1925,12 +2075,9 @@ window.FeatureClassMaterialCombinations = (function () {
     function splitRenamePanesByGroup(cardPanes) {
         const out = [];
         (cardPanes || []).forEach(function (card) {
-            const grouped = [];
-            const singles = [];
-            (card.files || []).forEach(function (f) {
-                if (f && f.is_group === true) grouped.push(f);
-                else singles.push(f);
-            });
+            const files = card.files || [];
+            const grouped = files.filter(function (f) { return f && f.is_group === true; });
+            const singles = files.filter(function (f) { return !f || f.is_group !== true; });
             if (grouped.length) out.push({ row: card.row, files: grouped });
             singles.forEach(function (f) {
                 out.push({ row: card.row, files: [f] });
@@ -2074,44 +2221,46 @@ window.FeatureClassMaterialCombinations = (function () {
         });
     }
 
+    function mzSourceRowHtml(value) {
+        return (
+            '<div class="mz-source-row">'
+            + '<label>來源　檔案（Excel 檔名，可手填）</label>'
+            + '<input type="text" class="mz-source-file" value="' + esc(value || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名">'
+            + '</div>'
+        );
+    }
+
     function renderMaterialZoneChildHtml(row) {
         const examIds = examIdsForChildRender(row);
-        const folderLineHtml = '<div class="mz-folder-line" style="font-size:0.8rem; color:#0F766E; font-weight:700; margin-top:8px;">教材　資料夾　' + esc(row.folderName || '（未知名資料夾）') + '</div>';
         const cardFiles = (row.sheetFiles || []);
-        const cardGrouped = cardFiles.length > 0 && cardFiles.every(function (f) { return f && f.is_group === true; });
-        const roleLineHtml = '<div style="font-size:0.78rem; color:#0F766E; font-weight:800; margin-top:8px;">'
-            + renameRoleTagInnerHtml(row, '', cardGrouped ? cardFiles : null)
+        const roleLineHtml = '<div class="mz-role-tags-wrap" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; font-weight:800; color:#92400E;">'
+            + renameRoleTagInnerHtml(row, '', cardFiles)
             + '</div>';
         const examHtml = examTemplateCheckboxesHtml('mz', examIds);
         const classHtml = classEditorCheckboxesHtml(row.classIds || []);
         const displayName = comboNameForRow(row);
-        const sourceOnCard = !!row.showSourceOnCard;
-        const sourceHtml = sourceOnCard
-            ? ('<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin:8px 0 2px;">來源　檔案（Excel 檔名，可手填）</label>'
-                + '<input type="text" class="mz-source-file" value="' + esc(row.sourceFile || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名" style="font-size:0.82rem; font-weight:700; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px;">'
-                + folderLineHtml)
-            : '';
+        const sourceHtml = row.showSourceOnCard ? mzSourceRowHtml(row.sourceFile) : '';
         return (
-            '<div class="mz-card" data-key="' + esc(row.key) + '" style="border:1px dashed #99F6E4; border-radius:8px; padding:12px; margin-top:10px; background:white;">'
-            + '<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">套餐名稱（出作業下拉會顯示這個）</label>'
-            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="套餐名稱" style="font-size:1rem; font-weight:900; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px; margin-bottom:8px;">'
+            '<div class="mz-card" data-key="' + esc(row.key) + '">'
+            + '<label style="display:block; font-weight:800; color:#92400E; margin-bottom:2px;">套餐名稱（出作業下拉會顯示這個）</label>'
+            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="套餐名稱" style="font-weight:800; color:#78350F; margin-bottom:8px;">'
             + sourceHtml
             + roleLineHtml
-            + '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #99F6E4;">'
+            + '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #F59E0B;">'
             + '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">'
-            + '<div style="font-size:0.76rem; font-weight:800; color:#6D28D9;">試卷範本（至少勾一個，這是官方配對）</div>'
-            + '<button type="button" class="mz-new-exam-tpl btn" style="padding:2px 8px; font-size:0.72rem; background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px; cursor:pointer;">🧾 新增試卷範本</button>'
+            + '<div style="font-weight:800; color:#6D28D9;">試卷範本（至少勾一個，這是官方配對）</div>'
+            + '<button type="button" class="mz-new-exam-tpl btn" style="background:#F5F3FF; color:#6D28D9; border:1px solid #DDD6FE; border-radius:5px; cursor:pointer;">🧾 新增試卷範本</button>'
             + '</div>'
             + '<div class="mz-exam-box">' + examHtml + '</div>'
             + '</div>'
             + '<div style="margin-top:10px;">'
-            + '<div style="font-size:0.76rem; font-weight:800; color:#15803D; margin-bottom:4px;">採用班級</div>'
+            + '<div style="font-weight:800; color:#15803D; margin-bottom:4px;">採用班級</div>'
             + '<div class="mz-class-box">' + classHtml + '</div>'
             + '</div>'
             + '<div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">'
-            + '<button type="button" class="mz-save btn btn-primary" data-key="' + esc(row.key) + '" style="padding:6px 14px; border-radius:6px; font-weight:800; font-size:0.82rem; cursor:pointer;">儲存設定</button>'
-            + '<button type="button" class="mz-rename-files btn" data-key="' + esc(row.key) + '" style="padding:6px 10px; border-radius:6px; border:1px solid #5EEAD4; background:#CCFBF1; color:#115E59; font-weight:800; font-size:0.78rem; cursor:pointer;">改活頁／檔名</button>'
-            + '<span class="mz-msg" style="font-size:0.76rem; font-weight:700;"></span>'
+            + '<button type="button" class="mz-save btn btn-primary" data-key="' + esc(row.key) + '" style="border-radius:6px; font-weight:800; cursor:pointer;">儲存設定</button>'
+            + '<button type="button" class="mz-rename-files btn" data-key="' + esc(row.key) + '" style="border-radius:6px; border:1px solid #B45309; background:#FFFBEB; color:#92400E; font-weight:800; cursor:pointer;">改活頁／檔名</button>'
+            + '<span class="mz-msg" style="font-weight:700;"></span>'
             + '</div>'
             + '</div>'
         );
@@ -2125,49 +2274,19 @@ window.FeatureClassMaterialCombinations = (function () {
         }) || (rows && rows[0]) || {};
     }
 
-    function groupRowsByBlockType(rows) {
-        const by = {};
-        const order = [];
-        (rows || []).forEach(function (row) {
-            const label = String((row && row.templateName) || '').trim() || '（尚未套用擷取範本）';
-            if (!by[label]) {
-                by[label] = [];
-                order.push(label);
-            }
-            by[label].push(row);
-        });
-        return order.map(function (label) {
-            return { label: label, rows: by[label] };
-        });
-    }
-
     function renderMaterialZoneGroupHtml(group) {
         if (group.unused) {
             return renderMaterialZoneUnusedHtml(group.rows[0] || { folderName: group.folderName });
         }
-        const folderLineHtml = '<div class="mz-folder-line" style="font-size:0.8rem; color:#0F766E; font-weight:700; margin-top:8px;">教材　資料夾　' + esc(group.folderName || '（未知名資料夾）') + '</div>';
+        const folderLineHtml = '<div class="mz-folder-line" style="font-weight:800; color:#0E7490;">教材　資料夾　' + esc(group.folderName || '（未知名資料夾）') + '</div>';
         const sourceOnParent = group.showSourceOnParent !== false && !group.rows.some(function (r) { return r.showSourceOnCard; });
-        const parentSourceHtml = sourceOnParent
-            ? ('<label style="display:block; font-size:0.72rem; font-weight:800; color:#0F766E; margin-bottom:2px;">來源　檔案（Excel 檔名，可手填）</label>'
-                + '<input type="text" class="mz-source-file" value="' + esc(group.sourceFile || '') + '" placeholder="例如 10_GEPT-2.xlsx" title="來源 Excel 檔名" style="font-size:0.82rem; font-weight:700; color:#134E4A; border:1px solid #99F6E4; background:white; width:100%; max-width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px;">'
-                + folderLineHtml)
-            : folderLineHtml;
-        const blocks = groupRowsByBlockType(group.rows || []);
-        const blockHtml = blocks.map(function (block) {
-            return (
-                '<div class="mz-block-type" style="margin-top:14px;">'
-                + '<div style="font-size:0.8rem; font-weight:900; color:#0F766E; margin-bottom:6px;">區塊類別　' + esc(block.label) + '</div>'
-                + block.rows.map(renderMaterialZoneChildHtml).join('')
-                + '</div>'
-            );
-        }).join('');
+        const parentSourceHtml = sourceOnParent ? mzSourceRowHtml(group.sourceFile) : '';
+        const cardHtml = (group.rows || []).map(renderMaterialZoneChildHtml).join('');
         return (
-            '<div class="mz-group" data-group-key="' + esc(group.key) + '" style="border:1px solid #99F6E4; border-radius:10px; padding:14px; margin-bottom:12px; background:#F0FDFA;">'
+            '<div class="mz-group" data-group-key="' + esc(group.key) + '">'
+            + folderLineHtml
             + parentSourceHtml
-            + studentPdfBlockHtml(groupPdfFromRows(group.rows))
-            + '<div style="margin-top:8px;"><button type="button" class="mz-save-pdf btn" style="padding:4px 10px; background:#FFF7ED; color:#9A3412; border:1px solid #FDBA74; font-weight:800; font-size:0.76rem; cursor:pointer;">儲存這本 PDF 對照</button>'
-            + '<span class="mz-pdf-msg" style="margin-left:8px; font-size:0.74rem; font-weight:700;"></span></div>'
-            + blockHtml
+            + cardHtml
             + '</div>'
         );
     }
@@ -2940,7 +3059,7 @@ window.FeatureClassMaterialCombinations = (function () {
         wrap.innerHTML = (
             '<div style="background:white; padding:20px; border-radius:12px; border:2px solid #99F6E4; margin-bottom:16px;">'
             + '<h3 style="margin:0 0 4px 0; color:#0F766E;">📁 教材區</h3>'
-            + '<p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">套餐只在這裡編輯並存進資料庫：名稱、試卷範本、採用班級。來源檔與資料夾是套用紀錄，不能在這裡改。文稿以這裡為收集基準；班級是採用者，不是文稿主檔。</p>'
+            + '<p style="color:#64748B; margin:0 0 12px 0;">套餐只在這裡編輯並存進資料庫：名稱、試卷範本、採用班級。來源檔與資料夾是套用紀錄，不能在這裡改。文稿以這裡為收集基準；班級是採用者，不是文稿主檔。</p>'
             + list
             + '</div>'
         );

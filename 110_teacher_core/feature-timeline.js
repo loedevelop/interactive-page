@@ -432,12 +432,12 @@ window.FeatureTimeline = (() => {
                     if ((kindFailed || kindErr) && !options.length) {
                         // 初次開啟常因 GAS 冷啟動失敗，勿用刺眼粉紅；提示可重試
                         statusEl.textContent = 'ℹ️ meta 清單暫時連不上（' + (kindErr || 'GAS 忙碌')
-                            + '）。列已保留；稍候會自動再試，或按「重新整理清單」。';
+                            + '）。列已保留；稍候會自動再試，或按「更新內容」。';
                         statusEl.style.color = '#64748B';
                     } else if (!options.length) {
                         statusEl.textContent = 'ℹ️ 目前 0 個 meta。請確認 Drive 有 '
                             + (kind === 'teacher' ? '01_My_Materials' : '00_Class_Materials')
-                            + '，或按「重新整理清單」';
+                            + '，或按「更新內容」';
                         statusEl.style.color = '#64748B';
                     } else {
                         statusEl.textContent = '✅ meta 清單已自動載入｜目前根目錄 '
@@ -455,6 +455,10 @@ window.FeatureTimeline = (() => {
                     renderMaterialMetaRows(n.pathStr, [], [{ value: '', range_spec: 'pp. 1~2' }]);
                 }
             }
+        });
+
+        nodes.forEach(function (n) {
+            if (pickersFromRangePackHost(n.pathStr)) scheduleEnterAutoSnapshot(n.pathStr);
         });
 
         return prefetch;
@@ -520,13 +524,11 @@ window.FeatureTimeline = (() => {
         if (fileEl) {
             fileEl.addEventListener('change', function () {
                 refreshMaterialRangeLabel(pathStr);
-                scheduleAutoSnapshot(pathStr);
             });
         }
         if (rangeEl) {
             rangeEl.addEventListener('input', function () {
                 refreshMaterialRangeLabel(pathStr);
-                scheduleAutoSnapshot(pathStr);
             });
         }
         return wrap;
@@ -537,14 +539,22 @@ window.FeatureTimeline = (() => {
     const _autoSnapshotBusy = {};
     /** busy 期間若又改了 meta／範圍，結束後必須再跑一次（否則第二冊永遠不會進 snapshot） */
     const _autoSnapshotPending = {};
+    /** 進頁只自動套用一次；重繪／autoPrime／改範圍不准再排。之後只走「更新內容」。 */
+    const _enterAutoSnapshotDone = {};
     /** applySnapshotToNode 世代：避免舊的 async 重繪把剛加的第 2 列 meta 蓋掉 */
     const _snapshotApplyGen = {};
+
+    function scheduleEnterAutoSnapshot(pathStr) {
+        if (_enterAutoSnapshotDone[pathStr]) return;
+        _enterAutoSnapshotDone[pathStr] = true;
+        scheduleAutoSnapshot(pathStr);
+    }
 
     function scheduleAutoSnapshot(pathStr) {
         if (_autoSnapshotTimers[pathStr]) clearTimeout(_autoSnapshotTimers[pathStr]);
         const statusEl = document.getElementById('node-material-status-' + pathStr);
         if (statusEl) {
-            statusEl.textContent = '⏳ 範圍已變更，即將自動套用 Snapshot…';
+            statusEl.textContent = '⏳ 進頁套用中…';
             statusEl.style.color = '#3B82F6';
         }
         _autoSnapshotTimers[pathStr] = setTimeout(function () {
@@ -555,6 +565,8 @@ window.FeatureTimeline = (() => {
     }
 
     function metaRowsReadyForSnapshot(pathStr) {
+        const fromPack = pickersFromRangePackHost(pathStr);
+        if (fromPack && fromPack.length) return { ok: true };
         const rowsEl = document.getElementById('node-material-rows-' + pathStr);
         if (!rowsEl) return { ok: false, reason: '找不到 meta 列' };
         const rowEls = rowsEl.querySelectorAll('.material-meta-row');
@@ -571,7 +583,7 @@ window.FeatureTimeline = (() => {
             }
             filled += 1;
         }
-        if (!filled) return { ok: false, reason: '請先選 meta 並填範圍' };
+        if (!filled) return { ok: false, reason: '請先選套餐並填範圍卡的起迄' };
         return { ok: true };
     }
 
@@ -586,7 +598,7 @@ window.FeatureTimeline = (() => {
         const previewEl = document.getElementById('node-material-preview-' + pathStr);
         if (!ready.ok) {
             if (statusEl) {
-                statusEl.textContent = 'ℹ️ ' + ready.reason + '（填妥後會自動套用）';
+                statusEl.textContent = 'ℹ️ ' + ready.reason + '（填妥後請按「更新內容」）';
                 statusEl.style.color = '#64748B';
             }
             return;
@@ -597,7 +609,7 @@ window.FeatureTimeline = (() => {
         _autoSnapshotPending[pathStr] = false;
         try {
             if (statusEl) {
-                statusEl.textContent = '⏳ 自動套用 Snapshot…';
+                statusEl.textContent = '⏳ 進頁套用中…';
                 statusEl.style.color = '#3B82F6';
             }
             const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
@@ -617,18 +629,14 @@ window.FeatureTimeline = (() => {
             } else {
                 applySnapshotToNode(pathStr, snapshot);
                 refreshMaterialRangeLabel(pathStr);
-                if (previewEl) {
-                    previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
-                        + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                        + '</div><strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
-                        + (snapshot.original_script || '').replace(/</g, '&lt;')
-                        + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
-                        + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
-                }
+                if (previewEl) previewEl.innerHTML = snapshotPreviewHtml(snapshot);
                 if (statusEl) {
-                    statusEl.textContent = '✅ 已自動套用 Snapshot｜' + (snapshot.material_range || '')
+                    const notes = Array.isArray(snapshot.import_notes) ? snapshot.import_notes : [];
+                    statusEl.textContent = (notes.length ? '⚠ 已套用，但有欄沒帶入｜' : '✅ 已套用｜')
+                        + (snapshot.material_range || '')
+                        + (notes.length ? ('｜' + notes.join('；')) : '')
                         + '（請記得儲存作業）';
-                    statusEl.style.color = '#059669';
+                    statusEl.style.color = notes.length ? '#9A3412' : '#059669';
                 }
                 // 同層考試可用題跟著刷新
                 if (window.FeatureExamJob && typeof window.FeatureExamJob._refreshAfterAudioSnapshot === 'function') {
@@ -638,7 +646,7 @@ window.FeatureTimeline = (() => {
         } catch (err) {
             if (statusEl) {
                 statusEl.textContent = '⚠️ 自動 Snapshot 失敗：' + (err.message || err)
-                    + '（可再改範圍重試，或按「套用 Snapshot」）';
+                    + '（可再改範圍後按「更新內容」）';
                 statusEl.style.color = '#D97706';
             }
             if (previewEl) previewEl.textContent = '❌ ' + (err.message || err);
@@ -988,10 +996,46 @@ window.FeatureTimeline = (() => {
         return null;
     }
 
+    function parentRangeGroupPathOf(pathStr) {
+        const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+        if (arr.length < 2) return '';
+        const parentPath = arr.slice(0, -1).join('-');
+        return parentRangeGroupOf(pathStr) ? parentPath : '';
+    }
+
     function isPackHostNode(node) {
         if (!node) return false;
         if (node.type === 'group' && node.raw_data && node.raw_data.group_role === 'range') return true;
         return node.type === 'audio_record';
+    }
+
+    /** 套用 Snapshot 只認範圍卡當下的套餐／活頁／起迄。隱藏列不准當第二套來源。 */
+    function pickersFromRangePackHost(audioPathStr) {
+        const parent = parentRangeGroupOf(audioPathStr);
+        const audio = getTaskNodeByPathStr(audioPathStr);
+        const host = parent || (isPackHostNode(audio) ? audio : null);
+        if (!host) return null;
+        const hostPath = parent ? parentRangeGroupPathOf(audioPathStr) : audioPathStr;
+        const pack = buildRangePackForApply(hostPath || audioPathStr);
+        const pickers = [];
+        (pack.rows || []).forEach(function (r) {
+            const combo = r.combo;
+            const metaFile = String((r && r.metaFile) || '').trim();
+            const rangeSpec = (r && r.rangeSpec) || buildPackRangeSpec(r && r.rangeType, r && r.start, r && r.end);
+            if (!combo || !metaFile || !rangeSpec) return;
+            pickers.push({
+                materials_root_kind: combo.rootKind === 'class' ? 'class' : 'teacher',
+                material_folder: combo.folderName || '',
+                published_file: metaFile,
+                metaFile: metaFile,
+                label: String(metaFile).replace(/\.meta\.json$/i, '').replace(/\.meta$/i, ''),
+                range_spec: rangeSpec,
+                select_mode: 'range_spec',
+                combo_id: combo.id || r.comboId || '',
+                extraction_template_id: combo.extractionTemplateId || ''
+            });
+        });
+        return pickers.length ? pickers : null;
     }
 
     /** 依 pathStr 取得該任務節點（只讀，不建立），找不到回傳 null */
@@ -1234,19 +1278,15 @@ window.FeatureTimeline = (() => {
             }
         }
         const lib = window.FeatureTemplateLibrary;
-        let template = null;
-        if (tplId && lib && typeof lib.getTemplatesCachedSync === 'function') {
-            template = (lib.getTemplatesCachedSync() || []).find(function (x) {
-                return String(x.id) === tplId;
-            }) || null;
+        if (lib && typeof lib.extractionContext === 'function') {
+            return lib.extractionContext(tplId);
         }
-        let formula = DEFAULT_FORMULA;
-        if (template && typeof lib.studentScriptOf === 'function') formula = lib.studentScriptOf(template);
-        else if (template && String(template.student_script || '').trim()) formula = String(template.student_script).trim();
-        const colMap = (template && lib && typeof lib.colMapFromTemplate === 'function')
-            ? lib.colMapFromTemplate(template)
-            : {};
-        return { student_script: formula, col_map: colMap };
+        return {
+            student_script: DEFAULT_FORMULA,
+            col_map: {},
+            answer_combine_note: '',
+            extraction_template_id: tplId
+        };
     }
 
     function resolvePackMetaFile(combo, pickedMeta, classId) {
@@ -1425,6 +1465,101 @@ window.FeatureTimeline = (() => {
         }
     }
 
+    function packRowFromRaw(r) {
+        return {
+            comboId: String((r && (r.comboId || r.combo_id)) || '').trim(),
+            comboLabel: String((r && (r.comboLabel || r.combo_label)) || '').trim(),
+            metaFile: String((r && (r.metaFile || r.meta_file)) || '').trim(),
+            rangeType: ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page',
+            start: r && r.start != null ? String(r.start).trim() : '',
+            end: r && r.end != null ? String(r.end).trim() : ''
+        };
+    }
+
+    function packRowHasContent(r) {
+        return !!(String((r && r.comboId) || '').trim()
+            || String((r && r.metaFile) || '').trim()
+            || String((r && r.start) || '').trim());
+    }
+
+    /**
+     * 組合包 → 帶入／Snapshot 同一把鑰匙：畫面有幾套餐、幾區塊就帶幾筆。
+     * 對不到套餐物件仍保留該列 comboId／活頁／起迄，不准默默丟掉套餐二。
+     */
+    function buildRangePackForApply(pathStr, opts) {
+        opts = opts || {};
+        const group = getTaskNodeByPathStr(pathStr);
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const fromDom = readRangePackFromDom(pathStr);
+        const domRows = ((fromDom && fromDom.rows) || []).map(packRowFromRaw);
+        const stateRows = normalizePackRows((group && group.raw_data) || {}).map(packRowFromRaw);
+        const source = (opts.useState || !domRows.some(packRowHasContent)) ? stateRows : domRows;
+        const notes = [];
+        const packRows = source.map(function (r, i) {
+            let rowCombo = resolvePackCombo(classId, r.comboId);
+            let metaFile = resolvePackMetaFile(rowCombo, r.metaFile, classId) || r.metaFile;
+            if (r.comboId && !rowCombo) {
+                notes.push('第 ' + (i + 1) + ' 列套餐對不到已指派清單');
+            }
+            if (!metaFile && (r.start || r.comboId)) {
+                notes.push('第 ' + (i + 1) + ' 列沒有活頁');
+            }
+            return {
+                combo: rowCombo,
+                comboId: r.comboId || (rowCombo && rowCombo.id) || '',
+                comboLabel: (rowCombo && rowCombo.label) || r.comboLabel || '',
+                metaFile: metaFile,
+                rangeType: r.rangeType,
+                start: r.start,
+                end: r.end,
+                rangeSpec: buildPackRangeSpec(r.rangeType, r.start, r.end)
+            };
+        });
+        if (group) {
+            writePackRowsToGroup(group, packRows.map(function (r) {
+                return {
+                    combo_id: r.comboId,
+                    combo_label: r.comboLabel,
+                    meta_file: r.metaFile,
+                    range_type: r.rangeType,
+                    start: r.start,
+                    end: r.end
+                };
+            }));
+        }
+        return {
+            combo: packRows[0] && packRows[0].combo,
+            rows: packRows,
+            notes: notes,
+            metaFile: packRows[0] && packRows[0].metaFile,
+            rangeType: packRows[0] && packRows[0].rangeType,
+            start: packRows[0] && packRows[0].start,
+            end: packRows[0] && packRows[0].end,
+            rangeSpec: packRows[0] && packRows[0].rangeSpec
+        };
+    }
+
+    function scheduleAutoSnapshotForRange(groupPath) {
+        const group = getTaskNodeByPathStr(groupPath);
+        if (!group) return;
+        if (group.type === 'audio_record') {
+            scheduleEnterAutoSnapshot(groupPath);
+            return;
+        }
+        const audioIdx = (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
+        if (audioIdx >= 0) scheduleEnterAutoSnapshot(groupPath + '-' + audioIdx);
+    }
+
+    function applyRangePackToAudioOf(pathStr, pack) {
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!group) return '';
+        const audio = group.type === 'audio_record'
+            ? group
+            : (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
+        return applyRangePackToAudio(audio, pack);
+    }
+
     /**
      * 範圍層開包：選套餐／活頁／起迄後，寫進組 raw_data，並預設同步到底下錄音與考試。
      * rerender=false 用於起迄輸入，避免數字框失焦。
@@ -1440,51 +1575,8 @@ window.FeatureTimeline = (() => {
         if (!group.raw_data) group.raw_data = {};
         if (group.type === 'group') group.raw_data.group_role = 'range';
 
-        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
-        const classId = (bState && bState.classId) || '';
-        const fromDom = opts.skipSync
-            ? {
-                rows: normalizePackRows(group.raw_data).map(function (r) {
-                    return {
-                        comboId: r.combo_id,
-                        comboLabel: r.combo_label,
-                        metaFile: r.meta_file,
-                        rangeType: r.range_type,
-                        start: r.start,
-                        end: r.end
-                    };
-                })
-            }
-            : readRangePackFromDom(pathStr);
-        const rows = (fromDom.rows || []).map(function (r) {
-            let rowCombo = resolvePackCombo(classId, r.comboId);
-            let metaFile = resolvePackMetaFile(rowCombo, r.metaFile, classId);
-            if (rowCombo && metaFile) {
-                const allowed = listPackMetaFiles(classId, rowCombo);
-                const want = metaFile.replace(/\.meta\.json$/i, '').toUpperCase();
-                const ok = allowed.some(function (f) {
-                    return String(f || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
-                });
-                if (!ok) {
-                    const owner = findAssignedComboForMetaFile(classId, metaFile);
-                    if (owner) rowCombo = owner;
-                    else metaFile = '';
-                }
-            } else if (!rowCombo && metaFile) {
-                const owner = findAssignedComboForMetaFile(classId, metaFile);
-                if (owner) rowCombo = owner;
-            }
-            return {
-                combo_id: rowCombo ? rowCombo.id : '',
-                combo_label: rowCombo ? String(rowCombo.label || r.comboLabel || '').trim() : '',
-                meta_file: metaFile,
-                range_type: r.rangeType === 'qnum' ? 'qnum' : 'page',
-                start: String(r.start || '').trim(),
-                end: String(r.end || '').trim()
-            };
-        });
-        if (!rows.length) rows.push({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' });
-        writePackRowsToGroup(group, rows);
+        const pack = buildRangePackForApply(pathStr, { useState: !!opts.skipSync });
+        const packRows = pack.rows || [];
 
         const titleEl = document.getElementById('node-title-' + pathStr);
         const groupAuto = !titleEl || titleEl.getAttribute('data-title-auto') !== '0';
@@ -1505,34 +1597,8 @@ window.FeatureTimeline = (() => {
         const audio = group.type === 'audio_record'
             ? group
             : (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
-        const exam = group.type === 'group'
-            ? (group.subTasks || []).find(function (t) { return t && t.type === 'exam'; })
-            : null;
-        const packRows = rows.map(function (r) {
-            const rowCombo = resolvePackCombo(classId, r.combo_id);
-            return {
-                combo: rowCombo,
-                comboId: r.combo_id,
-                metaFile: r.meta_file,
-                rangeType: r.range_type,
-                start: r.start,
-                end: r.end,
-                rangeSpec: buildPackRangeSpec(r.range_type, r.start, r.end)
-            };
-        });
-        const pack = {
-            combo: packRows[0] && packRows[0].combo,
-            rows: packRows,
-            metaFile: packRows[0] && packRows[0].metaFile,
-            rangeType: packRows[0] && packRows[0].rangeType,
-            start: packRows[0] && packRows[0].start,
-            end: packRows[0] && packRows[0].end,
-            rangeSpec: packRows[0] && packRows[0].rangeSpec
-        };
         const coverage = applyRangePackToAudio(audio, pack);
-        if (exam && window.FeatureExamJob && typeof window.FeatureExamJob.applyRangePackToExam === 'function') {
-            window.FeatureExamJob.applyRangePackToExam(exam, pack);
-        }
+        // 試卷只由老師按「帶入」寫入。起迄 oninput 若順便改試卷，稍後 Snapshot sync 會用舊試卷 DOM 蓋掉套餐二。
         const hasCompleteRow = packRows.some(function (r) { return !!(r.combo && r.metaFile && r.rangeSpec); });
 
         if (rerender) {
@@ -1543,9 +1609,9 @@ window.FeatureTimeline = (() => {
                 ? -2
                 : (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
             if (group.type === 'audio_record' && hasCompleteRow) {
-                scheduleAutoSnapshot(pathStr);
+                scheduleEnterAutoSnapshot(pathStr);
             } else if (audioIdx >= 0 && hasCompleteRow) {
-                scheduleAutoSnapshot(pathStr + '-' + audioIdx);
+                scheduleEnterAutoSnapshot(pathStr + '-' + audioIdx);
             }
             return;
         }
@@ -1554,9 +1620,9 @@ window.FeatureTimeline = (() => {
             ? -2
             : (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
         if (group.type === 'audio_record' && hasCompleteRow) {
-            scheduleAutoSnapshot(pathStr);
+            scheduleEnterAutoSnapshot(pathStr);
         } else if (audioIdx >= 0 && hasCompleteRow) {
-            scheduleAutoSnapshot(pathStr + '-' + audioIdx);
+            scheduleEnterAutoSnapshot(pathStr + '-' + audioIdx);
         }
     }
 
@@ -1586,6 +1652,23 @@ window.FeatureTimeline = (() => {
         addRangePackCombo(pathStr);
     }
 
+    /** 增加區塊／帶入：同一本活頁、同一基準；起＝上一列迄＋1。迄留空給老師填這段。 */
+    function nextRangeFromPrevRow(prev) {
+        const last = prev || {};
+        const endRaw = String(last.end || '').trim();
+        const startRaw = String(last.start || '').trim();
+        const endN = Number(endRaw);
+        const startN = Number(startRaw);
+        let nextStart = '';
+        if (endRaw !== '' && !isNaN(endN)) nextStart = String(endN + 1);
+        else if (startRaw !== '' && !isNaN(startN)) nextStart = startRaw;
+        return {
+            range_type: last.range_type === 'qnum' ? 'qnum' : 'page',
+            start: nextStart,
+            end: ''
+        };
+    }
+
     function addRangePackSheet(pathStr, blockIdx) {
         if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
             window.BuilderStore.sync();
@@ -1593,8 +1676,6 @@ window.FeatureTimeline = (() => {
         const group = getTaskNodeByPathStr(pathStr);
         if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
-        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
-        const classId = (bState && bState.classId) || '';
         const rows = normalizePackRows(group.raw_data);
         const blocks = [];
         rows.forEach(function (r) {
@@ -1609,33 +1690,51 @@ window.FeatureTimeline = (() => {
         const bi = Number(blockIdx);
         const block = blocks[bi];
         if (!block) return;
-        const combo = resolvePackCombo(classId, block.combo_id);
-        const files = combo ? listPackMetaFiles(classId, combo) : [];
-        const have = {};
-        block.rows.forEach(function (r) {
-            const k = String(r.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
-            if (k) have[k] = true;
-        });
-        const missing = files.find(function (f) {
-            return !have[String(f || '').replace(/\.meta\.json$/i, '').toUpperCase()];
-        });
         const last = block.rows[block.rows.length - 1] || {};
-        const metaFile = missing || last.meta_file || (files[0] || '');
+        const inherited = nextRangeFromPrevRow(last);
         let insertAt = 0;
         for (let i = 0; i < bi; i++) insertAt += blocks[i].rows.length;
         insertAt += block.rows.length;
         rows.splice(insertAt, 0, {
             combo_id: block.combo_id || '',
             combo_label: block.combo_label || last.combo_label || '',
-            meta_file: metaFile,
-            range_type: last.range_type === 'qnum' ? 'qnum' : 'page',
-            start: '',
-            end: ''
+            meta_file: last.meta_file || '',
+            range_type: inherited.range_type,
+            start: inherited.start,
+            end: inherited.end
         });
         writePackRowsToGroup(group, rows);
         if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
             window.FeatureTimeline.refreshBuilder({ skipSync: true });
         }
+        onRangePackChange(pathStr, { rerender: false, skipSync: true });
+    }
+
+    function inheritRangePackRowFromAbove(pathStr, idx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group)) return;
+        if (!group.raw_data) group.raw_data = {};
+        const rows = normalizePackRows(group.raw_data);
+        const i = Number(idx);
+        const cur = rows[i];
+        const prev = rows[i - 1];
+        if (!cur || !prev) return;
+        if (String(cur.combo_id || '') !== String(prev.combo_id || '')) return;
+        const inherited = nextRangeFromPrevRow(prev);
+        rows[i] = Object.assign({}, cur, {
+            meta_file: cur.meta_file || prev.meta_file,
+            range_type: inherited.range_type,
+            start: inherited.start,
+            end: inherited.end
+        });
+        writePackRowsToGroup(group, rows);
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+        onRangePackChange(pathStr, { rerender: false, skipSync: true });
     }
 
     function onRangePackComboChange(pathStr, blockIdx) {
@@ -1813,7 +1912,8 @@ window.FeatureTimeline = (() => {
         // 明確告知哪裡沒選好，而不是悄悄丟掉那一列。
         const rowsEl = document.getElementById('node-material-rows-' + pathStr);
         const actualRowCount = rowsEl ? rowsEl.querySelectorAll('.material-meta-row').length : 0;
-        const selected = readMaterialMetaRows(pathStr);
+        const fromPack = pickersFromRangePackHost(pathStr);
+        const selected = (fromPack && fromPack.length) ? fromPack : readMaterialMetaRows(pathStr);
         const snapNode = getTaskNodeByPathStr(pathStr);
         const savedRefs = snapNode && snapNode.raw_data && Array.isArray(snapNode.raw_data.material_refs)
             ? snapNode.raw_data.material_refs : [];
@@ -1828,8 +1928,8 @@ window.FeatureTimeline = (() => {
             }
             if (!picker.combo_id && hit.combo_id) picker.combo_id = hit.combo_id;
         });
-        if (!selected.length) throw new Error('請至少新增一列 meta');
-        if (selected.length < actualRowCount) {
+        if (!selected.length) throw new Error('請先在範圍卡選套餐並填起迄');
+        if (!fromPack && selected.length < actualRowCount) {
             throw new Error(
                 '有 ' + (actualRowCount - selected.length) + ' 列尚未選擇 meta 檔案（下拉選單是空的），'
                 + '請補選檔案後再套用 Snapshot；否則該列會被整段忽略，造成 base 範圍與批改稿數量對不上。'
@@ -1842,12 +1942,23 @@ window.FeatureTimeline = (() => {
         }
         const rootKind = readMaterialsRootKind(pathStr);
         const folderId = await resolveMaterialsRootFolderId(classId, rootKind);
+        if (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.fetchTemplates === 'function') {
+            try { await window.FeatureTemplateLibrary.fetchTemplates(false); } catch (_tplErr) {}
+        }
+        let catalogPacks = [];
+        if (classId && window.FeatureReviewCatalog && typeof window.FeatureReviewCatalog.loadCatalogPacksForClass === 'function') {
+            try { catalogPacks = await window.FeatureReviewCatalog.loadCatalogPacksForClass(classId); } catch (_catErr) {
+                catalogPacks = [];
+            }
+        }
         const scriptParts = [];
+        const writtenParts = [];
         const displayParts = [];
         const gradingUnits = [];
         const metaItems = [];
         const refs = [];
         const metaRowsByStem = {};
+        const importNotes = [];
 
         // 一批讀完（含 fileId），避免 N 次 GAS 冷啟動
         const batchItems = selected.map(function (picker) {
@@ -1916,25 +2027,44 @@ window.FeatureTimeline = (() => {
 
         for (let i = 0; i < selected.length; i++) {
             const picker = selected[i];
+            const scriptCtx = studentScriptContextForPicker(picker, classId, pathStr);
+            const tplId = String((scriptCtx && scriptCtx.extraction_template_id) || (picker && picker.extraction_template_id) || '').trim();
+            const lib = window.FeatureTemplateLibrary;
+            if (tplId && lib && typeof lib.findTemplateByAnyId === 'function' && !lib.findTemplateByAnyId(tplId)) {
+                throw new Error('找不到擷取範本，無法套用書寫／學生文稿公式。請確認套餐已套擷取範本。');
+            }
+            const catalogPack = (window.FeatureReviewCatalog && typeof window.FeatureReviewCatalog.findCatalogPack === 'function')
+                ? window.FeatureReviewCatalog.findCatalogPack(catalogPacks, picker.material_folder, picker.published_file)
+                : null;
+            let rows = [];
+            let scriptText = '';
             let fileResult = null;
+            let driveErr = null;
             if (batchFiles && batchFiles[i] && batchFiles[i].ok) {
                 fileResult = batchFiles[i];
             } else {
-                // batch 沒回這筆、或這筆 ok:false（例如速率限制／逾時）：改走單檔＋重試，
-                // 而不是讓「一冊失敗」拖累其他已成功的冊一起被丟棄。
                 try {
                     fileResult = await readOneWithRetry(picker);
                 } catch (singleErr) {
-                    const batchMsg = (batchFiles && batchFiles[i] && batchFiles[i].message) || '';
-                    throw new Error(
-                        '讀取「' + (picker.material_folder || '') + '/' + (picker.published_file || '') + '」失敗：'
-                        + (singleErr.message || batchMsg || '未知錯誤')
-                        + '（已自動重試 1 次仍失敗；請稍候再改動任一列範圍以重新觸發，或按「套用 Snapshot」）'
-                    );
+                    driveErr = singleErr;
+                    fileResult = null;
                 }
             }
-            let rows = window.MaterialSnapshot.parseMetaContent(fileResult.content);
-            let scriptText = '';
+            if (fileResult && fileResult.content && window.MaterialSnapshot && typeof window.MaterialSnapshot.parseMetaContent === 'function') {
+                rows = window.MaterialSnapshot.parseMetaContent(fileResult.content) || [];
+            }
+            if (!rows.length && window.FeatureReviewCatalog && typeof window.FeatureReviewCatalog.rawMetaRowsFromPack === 'function') {
+                rows = window.FeatureReviewCatalog.rawMetaRowsFromPack(catalogPack) || [];
+            }
+            if (!rows.length) {
+                const batchMsg = (batchFiles && batchFiles[i] && batchFiles[i].message) || '';
+                throw new Error(
+                    '讀不到「' + (picker.material_folder || '') + '/' + (picker.published_file || '')
+                    + '」的完整 meta 列，不能用統計表舊稿代替。'
+                    + (driveErr || batchMsg ? ' 雲端：' + ((driveErr && driveErr.message) || batchMsg) : '')
+                    + '（請稍候再套用 Snapshot）'
+                );
+            }
             if (batchScripts && batchScripts[i] && batchScripts[i].ok) {
                 scriptText = batchScripts[i].content || '';
             } else if (scriptBatchItems[i] && (scriptBatchItems[i].fileName || scriptBatchItems[i].fileId)) {
@@ -1955,24 +2085,34 @@ window.FeatureTimeline = (() => {
                 rows = window.MaterialSnapshot.attachSpokenAnswersFromScript(rows, scriptText);
             }
             const sliceOpts = { range_spec: picker.range_spec, select_mode: 'range_spec' };
-            const scriptCtx = studentScriptContextForPicker(picker, classId, pathStr);
             const ctx = Object.assign({}, picker, sliceOpts, {
                 materials_root_kind: rootKind,
                 label: picker.label,
                 range_spec: picker.range_spec,
                 student_script: scriptCtx.student_script,
-                col_map: scriptCtx.col_map
+                col_map: scriptCtx.col_map || {},
+                answer_combine_note: scriptCtx.answer_combine_note || '',
+                script_text: scriptText || ''
             });
             const snapshot = window.MaterialSnapshot.sliceAndBuild(rows, sliceOpts, ctx);
             const stem = picker.label || metaStemFromFileName(picker.published_file);
-            // 完整 meta 列快取：考試「產生線上卷」可離線抽題，不必再打 GAS
-            metaRowsByStem[String(stem || '').toUpperCase()] = rows;
+            const fileStem = String(picker.published_file || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+            // 完整 meta 列快取：考試「產生線上卷」可離線抽題。key 必須是完整 stem，不准只存 pic／word 短名。
+            metaRowsByStem[String(fileStem || stem || '').toUpperCase()] = rows;
             if (snapshot.original_script) {
                 scriptParts.push('【' + stem + '】\n' + snapshot.original_script);
+            }
+            if (snapshot.written_display) {
+                writtenParts.push(snapshot.written_display);
             }
             if (snapshot.student_display) {
                 // student_display 已含 【A】[1] 頁首，勿再包一層
                 displayParts.push(snapshot.student_display);
+            }
+            if (Array.isArray(snapshot.import_notes)) {
+                snapshot.import_notes.forEach(function (note) {
+                    if (note) importNotes.push((stem || '') + '：' + note);
+                });
             }
             if (Array.isArray(snapshot.grading_units) && snapshot.grading_units.length) {
                 snapshot.grading_units.forEach(function (u) {
@@ -1987,7 +2127,7 @@ window.FeatureTimeline = (() => {
             refs.push(Object.assign({}, snapshot.material_ref, {
                 range_spec: picker.range_spec,
                 label: stem,
-                fileId: fileResult.fileId || lookupMetaFileId(pathStr, picker.material_folder, picker.published_file) || '',
+                fileId: (fileResult && fileResult.fileId) || lookupMetaFileId(pathStr, picker.material_folder, picker.published_file) || '',
                 combo_id: picker.combo_id || '',
                 extraction_template_id: picker.extraction_template_id || '',
                 student_script: scriptCtx.student_script
@@ -2003,6 +2143,7 @@ window.FeatureTimeline = (() => {
             material_ref: refs[0] || null,
             material_range: rangeLabel,
             original_script: scriptParts.join('\n\n'),
+            written_display: writtenParts.join('\n\n'),
             student_display: displayParts.join('\n\n'),
             student_display_text: displayParts.join('\n\n'),
             grading_units: gradingUnits,
@@ -2010,7 +2151,8 @@ window.FeatureTimeline = (() => {
             meta_rows_by_stem: metaRowsByStem,
             recording_unit: 'page',
             recording_unit_hint: hint,
-            snapshot_at: new Date().toISOString()
+            snapshot_at: new Date().toISOString(),
+            import_notes: importNotes
         };
     }
 
@@ -2086,8 +2228,27 @@ window.FeatureTimeline = (() => {
         });
     }
 
+    function snapshotPreviewHtml(snapshot) {
+        const notes = (snapshot && Array.isArray(snapshot.import_notes)) ? snapshot.import_notes : [];
+        const noteHtml = notes.length
+            ? ('<div style="margin-bottom:8px; color:#9A3412; font-weight:800;">⚠ '
+                + notes.map(function (n) { return String(n || '').replace(/</g, '&lt;'); }).join('<br>')
+                + '</div>')
+            : '';
+        return '<div style="font-weight:900;margin-bottom:6px;">📍 '
+            + String((snapshot && snapshot.material_range) || '').replace(/</g, '&lt;')
+            + '</div>' + noteHtml
+            + '<strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+            + ((snapshot && snapshot.original_script) || '').replace(/</g, '&lt;')
+            + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
+            + ((snapshot && snapshot.written_display) || '').replace(/</g, '&lt;')
+            + '</pre><strong>學生文稿預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
+            + ((snapshot && snapshot.student_display) || '').replace(/</g, '&lt;') + '</pre>';
+    }
+
     function applySnapshotToNode(pathStr, snapshot) {
         const scriptEl = document.getElementById('node-script-' + pathStr);
+        const writtenEl = document.getElementById('node-written-text-' + pathStr);
         const studentTextEl = document.getElementById('node-student-text-' + pathStr);
         const scriptPasteEl = document.getElementById('node-script-paste-' + pathStr);
         const studentPasteEl = document.getElementById('node-student-text-paste-' + pathStr);
@@ -2097,7 +2258,9 @@ window.FeatureTimeline = (() => {
         const materialRangeEl = document.getElementById('node-material-range-' + pathStr);
 
         const displayText = snapshot.student_display || snapshot.student_display_text || '';
+        const writtenText = snapshot.written_display || '';
         if (scriptEl) scriptEl.value = snapshot.original_script || '';
+        if (writtenEl) writtenEl.value = writtenText;
         if (studentTextEl) studentTextEl.value = displayText;
         if (scriptPasteEl) scriptPasteEl.value = snapshot.original_script || '';
         if (studentPasteEl) studentPasteEl.value = displayText;
@@ -2176,14 +2339,7 @@ window.FeatureTimeline = (() => {
         }
 
         if (previewEl) {
-            const refCount = (snapshot.material_refs && snapshot.material_refs.length) || (snapshot.material_ref ? 1 : 0);
-            const unitCount = Array.isArray(snapshot.grading_units) ? snapshot.grading_units.length : 0;
-            previewEl.textContent = '已合併 ' + refCount + ' 個 meta｜批改單位 '
-                + unitCount + ' 頁（一頁一檔）｜口說答案 '
-                + (snapshot.original_script || '').length + ' 字；書寫答案 '
-                + displayText.length + ' 字；凍結於 ' + (snapshot.snapshot_at || '')
-                + (snapshot.material_range ? ('｜' + snapshot.material_range) : '')
-                + (snapshot.recording_unit_hint ? ('｜' + snapshot.recording_unit_hint) : '');
+            previewEl.innerHTML = snapshotPreviewHtml(snapshot);
         }
         if (snapshotJsonEl) snapshotJsonEl.value = JSON.stringify(snapshot);
 
@@ -2567,7 +2723,7 @@ window.FeatureTimeline = (() => {
                 try { seedMaterialMetaRowsForAllAudioNodes(); } catch (_e2) {}
                 if (window.showFlash) {
                     window.showFlash('自動載入 meta 清單失敗：' + (err && err.message ? err.message : err)
-                        + '（列應仍在，可按重新整理清單）', 'error');
+                        + '（列應仍在，可按「更新內容」）', 'error');
                 }
             });
         }, 0);
@@ -3285,7 +3441,7 @@ window.FeatureTimeline = (() => {
                 }
             }
             if (!options.length) {
-                return window.showFlash('此根目錄尚無 meta 檔。請先發布教材，或按「重新整理清單」。', 'error');
+                return window.showFlash('此根目錄尚無 meta 檔。請先發布教材，或按「更新內容」。', 'error');
             }
             container.appendChild(createMaterialMetaRowEl(pathStr, options, { value: '', range_spec: '' }));
             refreshMaterialRangeLabel(pathStr);
@@ -3333,14 +3489,7 @@ window.FeatureTimeline = (() => {
             try {
                 const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
                 refreshMaterialRangeLabel(pathStr);
-                if (previewEl) {
-                    previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
-                        + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                        + '</div><strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
-                        + (snapshot.original_script || '').replace(/</g, '&lt;')
-                        + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
-                        + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
-                }
+                if (previewEl) previewEl.innerHTML = snapshotPreviewHtml(snapshot);
             } catch (err) {
                 if (previewEl) previewEl.textContent = '❌ ' + err.message;
                 window.showFlash('預覽失敗：' + err.message, 'error');
@@ -3355,20 +3504,20 @@ window.FeatureTimeline = (() => {
                 const snapshot = await buildMergedMaterialSnapshot(pathStr, bState.classId);
                 applySnapshotToNode(pathStr, snapshot);
                 const previewEl = document.getElementById('node-material-preview-' + pathStr);
-                if (previewEl) {
-                    previewEl.innerHTML = '<div style="font-weight:900;margin-bottom:6px;">📍 '
-                        + String(snapshot.material_range || '').replace(/</g, '&lt;')
-                        + '</div><strong>口說答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 10px;">'
-                        + (snapshot.original_script || '').replace(/</g, '&lt;')
-                        + '</pre><strong>書寫答案預覽</strong><pre style="white-space:pre-wrap;margin:6px 0 0;">'
-                        + (snapshot.student_display || '').replace(/</g, '&lt;') + '</pre>';
-                }
-                window.showFlash('已寫入 Snapshot：' + (snapshot.material_range || '') + '（請記得儲存作業）');
+                if (previewEl) previewEl.innerHTML = snapshotPreviewHtml(snapshot);
+                const notes = Array.isArray(snapshot.import_notes) ? snapshot.import_notes : [];
+                window.showFlash(
+                    (notes.length ? '已更新，但有欄沒帶入：' : '已更新內容：')
+                    + (snapshot.material_range || '')
+                    + (notes.length ? ('｜' + notes.join('；')) : '')
+                    + '（請記得儲存作業）',
+                    notes.length ? 'warning' : 'success'
+                );
                 if (window.FeatureExamJob && typeof window.FeatureExamJob._refreshAfterAudioSnapshot === 'function') {
                     try { window.FeatureExamJob._refreshAfterAudioSnapshot(pathStr); } catch (_e) {}
                 }
             } catch (err) {
-                window.showFlash('套用 Snapshot 失敗：' + err.message, 'error');
+                window.showFlash('更新內容失敗：' + err.message, 'error');
             }
         },
 
@@ -3431,8 +3580,12 @@ window.FeatureTimeline = (() => {
         onNodeTitleInput: onNodeTitleInput,
         onGroupTitleInput: onGroupTitleInput,
         parentRangeGroupOf: parentRangeGroupOf,
+        parentRangeGroupPathOf: parentRangeGroupPathOf,
         onRangePackChange: onRangePackChange,
         onRangePackComboChange: onRangePackComboChange,
+        buildRangePackForApply: buildRangePackForApply,
+        scheduleAutoSnapshotForRange: scheduleAutoSnapshotForRange,
+        applyRangePackToAudioOf: applyRangePackToAudioOf,
         expandPackRowsForCombo: expandPackRowsForCombo,
         listPackMetaFiles: listPackMetaFiles,
         findAssignedComboForMetaFile: findAssignedComboForMetaFile,
@@ -3440,6 +3593,7 @@ window.FeatureTimeline = (() => {
         addRangePackRow: addRangePackRow,
         addRangePackCombo: addRangePackCombo,
         addRangePackSheet: addRangePackSheet,
+        inheritRangePackRowFromAbove: inheritRangePackRowFromAbove,
         removeRangePackCombo: removeRangePackCombo,
         removeRangePackRow: removeRangePackRow,
 

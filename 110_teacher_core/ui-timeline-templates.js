@@ -181,43 +181,39 @@ window.TimelineTemplates = (() => {
                     : '';
                 const sheetCell = row.meta_file
                     ? ('<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(row.meta_file) + '">'
-                        + '<div style="font-weight:800; color:#0F172A; padding:6px 0;">' + escapeHtml(sheetName) + '</div>')
+                        + '<div>' + escapeHtml(sheetName) + '</div>')
                     : ('<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                        + '<div style="font-size:0.78rem; color:#94A3B8; font-weight:700; padding:6px 0;">選套餐後會自動列出區塊</div>');
-                return '<div class="range-pack-row" data-row-idx="' + idx + '" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-top:8px;">'
-                    + '<div style="flex:1 1 160px; min-width:140px;">'
-                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">區塊</label>'
-                    + sheetCell + '</div>'
-                    + '<div style="display:flex; flex-direction:column;">'
-                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">基準</label>'
-                    + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control" style="padding:6px; min-width:80px;"'
+                        + '<div style="color:#94A3B8;">選套餐後會自動列出區塊</div>');
+                return '<div class="range-pack-row" data-row-idx="' + idx + '">'
+                    + '<div>' + sheetCell + '</div>'
+                    + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control asg-field-input"'
                     + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true })">'
                     + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
                     + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
-                    + '</select></div>'
-                    + '<div style="display:flex; flex-direction:column;">'
-                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">起</label>'
-                    + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.start) + '" style="width:72px; padding:6px;"'
+                    + '</select>'
+                    + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.start) + '"'
                     + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                    + '</div>'
-                    + '<div style="display:flex; flex-direction:column;">'
-                    + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">迄</label>'
-                    + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control" value="' + escapeHtml(row.end) + '" style="width:72px; padding:6px;"'
+                    + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.end) + '"'
                     + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                    + '</div>'
-                    + delSheet
+                    + '<div>' + delSheet + '</div>'
                     + '</div>';
             }).join('');
+            const sheetTable = (block.rows || []).length
+                ? ('<div class="range-pack-table">'
+                    + '<div class="range-pack-head"><div>區塊</div><div>基準</div><div>起</div><div>迄</div><div></div></div>'
+                    + sheetRows
+                    + '</div>')
+                : '';
             return '<div class="range-pack-block" data-block-idx="' + bi + '" style="margin-top:10px; padding:10px; border:1px dashed #93C5FD; border-radius:8px; background:#F8FAFC;">'
                 + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
                 + '<div style="flex:1 1 240px; min-width:200px;">'
-                + '<label style="display:block; font-size:0.78rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐</label>'
-                + '<select id="range-pack-combo-' + pathStr + '-' + bi + '" class="form-control range-pack-combo" style="width:100%; padding:6px;"'
+                + '<label class="asg-field-label">套餐</label>'
+                + '<select id="range-pack-combo-' + pathStr + '-' + bi + '" class="form-control range-pack-combo"'
                 + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackComboChange && window.FeatureTimeline.onRangePackComboChange(\'' + pathStr + '\', ' + bi + ')">'
                 + comboOpts + '</select></div>'
                 + delBlock
                 + '</div>'
-                + sheetRows
+                + sheetTable
                 + '<div style="margin-top:8px;">'
                 + (function () {
                     const hasRow = !!(block.combo_id && (block.rows || []).some(function (r) {
@@ -234,13 +230,13 @@ window.TimelineTemplates = (() => {
         }).join('');
 
         return `
-            <div class="range-pack-panel" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
-                <div style="font-size:0.82rem; font-weight:900; color:#1E3A8A; margin-bottom:8px;">範圍（選套餐後區塊自動列出）</div>
+            <div class="range-pack-panel asg-unify" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
+                <div style="font-weight:900; color:#1E3A8A; margin-bottom:8px;">範圍（選套餐後區塊自動列出）</div>
                 ${blockHtml}
                 <div style="margin-top:10px;">
                     <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
                         onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackCombo && window.FeatureTimeline.addRangePackCombo('${pathStr}')">＋ 增加套餐</button>
-                    <span style="margin-left:8px; font-size:0.75rem; color:#64748B; font-weight:700;">選了套餐，區塊會自動列出。同一套餐要另一段範圍就按「增加區塊」。不同擷取請另加一套餐。</span>
+                    <span style="margin-left:8px; color:#64748B; font-weight:700;">選了套餐，區塊會自動列出。同一套餐要另一段範圍就按「增加區塊」。不同擷取請另加一套餐。</span>
                 </div>
             </div>
         `;
@@ -275,6 +271,61 @@ window.TimelineTemplates = (() => {
                 .tl-rail-date--current .tl-rail-date__month { background: #10B981; color: #FFFFFF; }
                 .tl-rail-date--current .tl-rail-date__day { color: #065F46; }
                 .tl-rail-date--deletable { cursor: pointer; }
+                .asg-unify, .asg-unify * { font-size: 16px !important; line-height: 1.4; }
+                .asg-field-label { display:block; font-weight:800; color:#334155; margin-bottom:4px; }
+                .asg-unify select,
+                .asg-unify input.form-control,
+                .asg-unify input.asg-num,
+                .asg-unify input[type="number"],
+                .asg-unify input[type="text"] {
+                    height: 36px !important;
+                    min-height: 36px !important;
+                    max-height: 36px;
+                    padding: 4px 8px !important;
+                    box-sizing: border-box !important;
+                    font-size: 16px !important;
+                    line-height: 1.2;
+                }
+                .asg-unify textarea,
+                .asg-unify textarea.form-control {
+                    height: auto !important;
+                    max-height: none !important;
+                    min-height: 88px;
+                    font-size: 16px !important;
+                }
+                .asg-unify .btn,
+                .asg-unify .btn-action {
+                    height: 36px;
+                    min-height: 36px;
+                    padding: 4px 10px;
+                    font-size: 16px !important;
+                    line-height: 1.2;
+                    box-sizing: border-box;
+                }
+                .asg-unify .range-pack-combo { width: 100%; }
+                .asg-unify .range-pack-row select { width: 100%; }
+                .asg-num { width:88px; }
+                .asg-unify input[type="number"]::-webkit-inner-spin-button,
+                .asg-unify input[type="number"]::-webkit-outer-spin-button {
+                    opacity: 1;
+                    display: block;
+                    height: 24px;
+                    margin-left: 2px;
+                }
+                .exam-seg-table, .range-pack-table { margin-top:8px; }
+                .exam-seg-head, .exam-inline-row, .range-pack-head, .range-pack-row {
+                    display:grid;
+                    gap:8px;
+                    align-items:center;
+                }
+                .exam-seg-head, .exam-inline-row {
+                    grid-template-columns: minmax(140px, 1.6fr) 112px 88px 88px 88px 72px 80px 80px 72px 64px 64px auto;
+                }
+                .range-pack-head, .range-pack-row {
+                    grid-template-columns: minmax(160px, 1.4fr) 112px 88px 88px auto;
+                }
+                .exam-seg-head, .range-pack-head { font-weight:800; color:#334155; margin-bottom:2px; }
+                .exam-inline-row, .range-pack-row { margin-top:4px; }
                 .tl-rail-date--deletable:hover { border-color: #FCA5A5; background: #FEF2F2; }
                 .tl-rail-date--deletable:hover .tl-rail-date__month { background: #EF4444; color: #FFFFFF; }
                 .tl-rail-date--deletable:hover .tl-rail-date__day { color: #B91C1C; }
@@ -763,6 +814,7 @@ window.TimelineTemplates = (() => {
                     }
 
                     const safeScript = (raw.original_script || '').replace(/"/g, '&quot;');
+                    const safeWrittenText = (raw.written_display || '').replace(/"/g, '&quot;');
                     const safeStudentText = (raw.student_display_text || raw.student_display || raw.student_text || '').replace(/"/g, '&quot;');
                     // C. 自行貼上：可拆成多個視窗（每頁／每個 exercise 各一個），存成 raw_data.paste_windows；
                     // 只有 1 個視窗、且沒標籤時，跟舊資料格式完全相同（單一 original_script／student_display）。
@@ -964,10 +1016,10 @@ window.TimelineTemplates = (() => {
                                 ${showSkeleton ? `<div style="flex:0 0 100%; font-size:0.75rem; color:#92400E; margin-top:2px;">💡 書名（如 Azar-2）請寫在最上面的「✏️ 標題」欄，不要寫在這裡。這裡預設依下方單元路徑自動整理；老師直接手動編輯過（且未清空）就不會再被路徑異動覆寫，除非按「🔄 依路徑重算」或把欄位清空恢復自動。</div>` : ''}
                             </div>
 
-                            <div id="script-source-panel-meta-${pathStr}" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">
+                            <div id="script-source-panel-meta-${pathStr}" class="asg-unify" style="display:${showMeta ? 'block' : 'none'}; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; padding:12px; margin-bottom:14px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
                                     <div style="font-weight:900; color:#5B21B6;">📦 文稿結果（跟上面範圍走）</div>
-                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.loadMaterialMetaSelect('${pathStr}')" title="清單會在開啟編輯器時自動載入；此鈕僅供失敗時重抓">🔄 重新整理清單</button>
+                                    <button type="button" class="btn-action" style="padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')" title="進頁已套用一次；改範圍或公式後按這裡更新口說／書寫／學生文稿">🔄 更新內容</button>
                                 </div>
                                 <div style="display:none;">
                                     <select id="node-material-root-${pathStr}" class="form-control" style="width:auto; padding:6px; font-size:0.85rem; font-weight:800;" onchange="window.FeatureTimeline.onMaterialRootChange('${pathStr}')">
@@ -983,26 +1035,30 @@ window.TimelineTemplates = (() => {
                                 <div style="display:none;">
                                     <input type="text" id="node-material-range-${pathStr}" class="form-control" value="${safeMaterialRange}">
                                 </div>
-                                <div style="margin-bottom:8px; padding:10px 12px; background:#EEF2FF; border:1px solid #C7D2FE; border-radius:6px; font-size:0.82rem; color:#3730A3; font-weight:700; line-height:1.45;">
+                                <div style="margin-bottom:8px; padding:10px 12px; background:#EEF2FF; border:1px solid #C7D2FE; border-radius:6px; color:#3730A3; font-weight:700; line-height:1.45;">
                                     🎙 錄音單位提示：以「一頁」為唯一錄音單位。學生同一作業可複選多檔上傳；Snapshot 會依頁準備 AI 批改稿（一頁一份）。
                                 </div>
                                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
-                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')" title="可選手動預覽；改範圍後也會自動套用並更新預覽">👁 預覽</button>
-                                    <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#059669; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')" title="可選手動套用；選好 meta 並填範圍後會自動套用">📌 套用 Snapshot</button>
-                                    <span style="font-size:0.75rem; color:#6D28D9; font-weight:700;">選好 meta＋範圍後約 1 秒會自動套用（不必每次手動按）</span>
+                                    <button type="button" class="btn-action" style="padding:6px 12px; background:#6366F1; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.previewMaterialSnapshot('${pathStr}')" title="可選手動預覽；改範圍後也會自動套用並更新預覽">👁 預覽</button>
+                                    <button type="button" class="btn-action" style="padding:6px 12px; background:#059669; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.applyMaterialSnapshot('${pathStr}')" title="改範圍或公式後按這裡更新口說／書寫／學生文稿">📌 更新內容</button>
+                                    <span style="color:#6D28D9; font-weight:700;">進頁會套用一次；之後改範圍請按「更新內容」</span>
                                 </div>
-                                <div id="node-material-status-${pathStr}" style="font-size:0.8rem; color:#64748B; margin-bottom:6px;"></div>
-                                <div id="node-material-preview-${pathStr}" style="font-size:0.8rem; color:#475569; background:white; border:1px dashed #CBD5E1; border-radius:6px; padding:8px; max-height:160px; overflow:auto;">${snapshotPreview}</div>
+                                <div id="node-material-status-${pathStr}" style="color:#64748B; margin-bottom:6px;"></div>
+                                <div id="node-material-preview-${pathStr}" style="color:#475569; background:white; border:1px dashed #CBD5E1; border-radius:6px; padding:8px; max-height:160px; overflow:auto;">${snapshotPreview}</div>
                                 <input type="hidden" id="node-material-snapshot-json-${pathStr}" value="${snapshotJsonAttr}">
                                 <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
                                     <div>
-                                        <div id="node-script-label-${pathStr}" style="font-weight:800; font-size:0.85rem; color:#4338CA; margin-bottom:4px;">🎯 口說答案${gradingUnits.length > 1 ? '（合併預覽，唯讀）' : '（可微調）'}</div>
-                                        <textarea id="node-script-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1; ${gradingUnits.length > 1 ? 'background:#F1F5F9; color:#64748B;' : ''}" placeholder="套用 Snapshot 後會填入口說答案；可再微調" ${gradingUnits.length > 1 ? 'readonly' : ''}>${safeScript}</textarea>
+                                        <div id="node-script-label-${pathStr}" class="asg-field-label" style="color:#4338CA; margin-bottom:4px;">🎯 口說答案${gradingUnits.length > 1 ? '（合併預覽，唯讀）' : '（可微調）'}</div>
+                                        <textarea id="node-script-${pathStr}" class="form-control asg-field-input" style="width:100%; min-height:88px; padding:10px; border-radius:6px; border:1px solid #CBD5E1; ${gradingUnits.length > 1 ? 'background:#F1F5F9; color:#64748B;' : ''}" placeholder="進頁或按更新內容後會從 .script.txt 填入口說答案；可再微調" ${gradingUnits.length > 1 ? 'readonly' : ''}>${safeScript}</textarea>
                                         ${gradingUnitsHtml}
                                     </div>
                                     <div>
-                                        <div style="font-weight:800; font-size:0.85rem; color:#065F46; margin-bottom:4px;">👀 書寫答案（有 meta 必有；學生端可收起）</div>
-                                        <textarea id="node-student-text-${pathStr}" class="form-control" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="套用 Snapshot 後會填入書寫答案">${safeStudentText}</textarea>
+                                        <div class="asg-field-label" style="color:#065F46; margin-bottom:4px;">👀 書寫答案（有 meta 必有）</div>
+                                        <textarea id="node-written-text-${pathStr}" class="form-control asg-field-input" style="width:100%; min-height:88px; padding:10px; border-radius:6px; border:1px solid #CBD5E1;" placeholder="進頁或按更新內容後會填入書寫答案">${safeWrittenText}</textarea>
+                                    </div>
+                                    <div>
+                                        <div class="asg-field-label" style="color:#9A3412; margin-bottom:4px;">📄 學生文稿（擷取範本公式；學生端可收起）</div>
+                                        <textarea id="node-student-text-${pathStr}" class="form-control asg-field-input" style="width:100%; min-height:88px; padding:10px; border-radius:6px; border:1px solid #CBD5E1;" placeholder="進頁或按更新內容後會依該擷取範本的學生文稿公式填入">${safeStudentText}</textarea>
                                     </div>
                                 </div>
                             </div>

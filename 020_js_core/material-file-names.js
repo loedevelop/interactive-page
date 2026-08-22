@@ -259,6 +259,31 @@ window.MaterialFileNames = (function () {
         return roleTagHtml(formatSheetNames(g.names), g.extract, g.exam);
     }
 
+    /** 沒勾＝一本一顆；勾了才共一顆。不准把未勾的名字用頓號接成一顆。 */
+    function roleTagsHtml(items) {
+        return groupRoleTagItems(items).map(roleTagHtmlFromGroup).join('');
+    }
+
+    /**
+     * 一顆標籤＝一份套餐。三行固定：活頁名／擷取範本／試卷範本。
+     * 勾了群組才把連續單字母收成 A～Z；沒勾＝一本一顆，不准 join。
+     */
+    function packageTagHtml(opts) {
+        opts = opts || {};
+        var names = sortSheetNames(opts.names || []);
+        var extract = opts.extract;
+        var exam = opts.exam;
+        if (!names.length) return roleTagHtml('', extract, exam);
+        return roleTagsHtml(names.map(function (n) {
+            return {
+                name: n,
+                extract: extract,
+                exam: exam,
+                isGroup: opts.allGrouped === true
+            };
+        }));
+    }
+
     function introHtml() {
         return (
             '<p style="margin:0 0 10px 0; color:#64748B; font-size:0.8rem; line-height:1.6;">'
@@ -398,6 +423,8 @@ window.MaterialFileNames = (function () {
         groupRoleTagItems: groupRoleTagItems,
         roleTagHtml: roleTagHtml,
         roleTagHtmlFromGroup: roleTagHtmlFromGroup,
+        roleTagsHtml: roleTagsHtml,
+        packageTagHtml: packageTagHtml,
         introHtml: introHtml,
         headerHtml: headerHtml,
         readRow: readRow,

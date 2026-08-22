@@ -25,6 +25,7 @@ window.FeatureReviewCatalog = (function () {
                 material_combinations (
                     id,
                     label,
+                    extraction_template_id,
                     material_folders ( folder_name, root_kind, class_id ),
                     material_combination_sheets ( material_sheets ( id, sheet_stem, meta_file_name, meta_file_id, extraction_template_id ) ),
                     material_combination_exam_templates ( exam_template_id, is_default )
@@ -48,21 +49,145 @@ window.FeatureReviewCatalog = (function () {
                 const sh = cs.material_sheets || {};
                 const stem = String(sh.sheet_stem || '').trim();
                 if (!stem) return;
-                const key = folderName.toUpperCase() + '|' + stem.toUpperCase();
+                const metaFileName = sh.meta_file_name || (stem + '.meta.json');
+                const metaStem = String(metaFileName).replace(/\.meta\.json$/i, '').trim() || stem;
+                const key = folderName.toUpperCase() + '|' + metaStem.toUpperCase();
                 if (seen[key]) return;
                 seen[key] = true;
                 out.push({
                     folderName: folderName,
                     rootKind: folder.root_kind === 'class' ? 'class' : 'teacher',
-                    sheetStem: stem,
-                    metaFileName: sh.meta_file_name || (stem + '.meta.json'),
+                    sheetStem: metaStem,
+                    liveSheetStem: stem,
+                    metaFileName: metaFileName,
                     metaFileId: sh.meta_file_id || '',
-                    extractionTemplateId: sh.extraction_template_id || '',
+                    extractionTemplateId: combo.extraction_template_id || sh.extraction_template_id || '',
                     examTemplateId: examTemplateId
                 });
             });
         });
         return out;
+    }
+
+    function catalogStemKey(s) {
+        return String(s || '').replace(/\.meta\.json$/i, '').trim().toUpperCase();
+    }
+
+    function findCatalogPack(packs, folderName, publishedFile) {
+        const folderU = String(folderName || '').trim().toUpperCase();
+        const full = catalogStemKey(publishedFile);
+        if (!folderU || !full) return null;
+        let best = null;
+        let bestLen = -1;
+        (packs || []).forEach(function (p) {
+            if (String((p && p.folder_name) || '').trim().toUpperCase() !== folderU) return;
+            const stem = catalogStemKey(p.sheet_stem);
+            if (!stem) return;
+            const ok = stem === full || full.indexOf(stem + '.') === 0 || stem.indexOf(full + '.') === 0;
+            if (!ok) return;
+            if (stem.length > bestLen) {
+                best = p;
+                bestLen = stem.length;
+            }
+        });
+        return best;
+    }
+
+    function isFullMetaRow(row) {
+        if (!row || typeof row !== 'object') return false;
+        const baked = {
+            page: true, item_no: true, itemNo: true,
+            _answer_combined_text: true, _answer_keys: true, _answer_mode: true,
+            _accepted_answers: true, script: true, display_zh: true,
+            answer_en: true, 書寫答案: true
+        };
+        return Object.keys(row).some(function (k) { return !baked[k]; });
+    }
+
+    /** 出作業只用完整 meta 列。items 烘焙稿不准當列。 */
+    function rawMetaRowsFromPack(pack) {
+        if (!pack) return [];
+        const layoutRows = pack.layout && Array.isArray(pack.layout.meta_rows) ? pack.layout.meta_rows : [];
+        if (!layoutRows.length || !layoutRows.some(isFullMetaRow)) return [];
+        return layoutRows.slice();
+    }
+
+    function metaRowsFromPack(pack) {
+        if (!pack) return [];
+        const full = rawMetaRowsFromPack(pack);
+        if (full.length) return full;
+        const items = Array.isArray(pack.items) ? pack.items : [];
+        const fromItems = items.map(function (it) {
+            if (it && it.meta_row && typeof it.meta_row === 'object') return Object.assign({}, it.meta_row);
+            if (!it || (!it.written_text && !it.student_text && !it.spoken_text)) return null;
+            const src = it.source || {};
+            return {
+                page: itemPage(it),
+                item_no: src.item_no != null ? src.item_no : it.item_no,
+                _answer_combined_text: it.written_text || '',
+                script: it.spoken_text || '',
+                display_zh: it.prompt_zh || '',
+                answer_en: it.answer_en || ''
+            };
+        }).filter(Boolean);
+        return fromItems;
+    }
+
+    async function loadCatalogPacksForClass(classId) {
+        if (!classId || !window.supabaseClient) return [];
+        const { data, error } = await window.supabaseClient
+            .from('class_review_catalog')
+            .select('folder_name, sheet_stem, extraction_template_id, class_review_catalog_meta ( items, layout )')
+            .eq('class_id', classId);
+        if (error) throw error;
+        return (data || []).map(function (row) {
+            const meta = row.class_review_catalog_meta;
+            const pack = Array.isArray(meta) ? meta[0] : meta;
+            return {
+                folder_name: row.folder_name,
+                sheet_stem: row.sheet_stem,
+                extraction_template_id: row.extraction_template_id,
+                items: pack && Array.isArray(pack.items) ? pack.items : [],
+                layout: pack && pack.layout ? pack.layout : {}
+            };
+        });
+    }
+
+    function extractionContext(templateId) {
+        const lib = window.FeatureTemplateLibrary;
+        if (lib && typeof lib.extractionContext === 'function') return lib.extractionContext(templateId);
+        return { extraction_template_id: String(templateId || ''), student_script: '_answer_combined_text', col_map: {}, answer_combine_note: '' };
+    }
+
+    function decorateMetaRows(rows, extractCtx) {
+        if (!window.MaterialSnapshot || typeof window.MaterialSnapshot.applyExtractionFormulasToRows !== 'function') {
+            return rows || [];
+        }
+        return window.MaterialSnapshot.applyExtractionFormulasToRows(rows || [], extractCtx);
+    }
+
+    function attachExtractionFields(items, metaRows, extractCtx) {
+        const snap = window.MaterialSnapshot || {};
+        const byKey = {};
+        (metaRows || []).forEach(function (row, idx) {
+            const page = itemPage(row);
+            const itemNo = Number(row && row.item_no);
+            const k = String(page == null ? 'p' : page) + '|' + (isNaN(itemNo) ? idx : itemNo);
+            byKey[k] = row;
+        });
+        return (items || []).map(function (it, idx) {
+            const page = itemPage(it);
+            const itemNo = Number(it && it.source && it.source.item_no);
+            const k = String(page == null ? 'p' : page) + '|' + (isNaN(itemNo) ? idx : itemNo);
+            const row = byKey[k] || metaRows[idx] || null;
+            if (!row) return it;
+            return Object.assign({}, it, {
+                written_text: typeof snap.writtenAnswerFromRow === 'function' ? snap.writtenAnswerFromRow(row) : '',
+                student_text: typeof snap.studentLineFromRow === 'function' ? snap.studentLineFromRow(row, extractCtx) : '',
+                spoken_text: typeof snap.spokenAnswerFromRow === 'function' ? snap.spokenAnswerFromRow(row) : '',
+                meta_row: row
+            });
+        });
     }
 
     function resolveProfile(templateId) {
@@ -202,8 +327,8 @@ window.FeatureReviewCatalog = (function () {
             return { count: 0, ready: 0 };
         }
 
-        if (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.getExamTemplates === 'function') {
-            try { window.FeatureTemplateLibrary.getExamTemplates(); } catch (_e) {}
+        if (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.fetchTemplates === 'function') {
+            try { await window.FeatureTemplateLibrary.fetchTemplates(false); } catch (_e) {}
         }
 
         const rows = [];
@@ -212,11 +337,18 @@ window.FeatureReviewCatalog = (function () {
             const spec = specs[i];
             status('⏳ 快照 ' + spec.folderName + ' / ' + spec.sheetStem + '（' + (i + 1) + '/' + specs.length + '）');
             const layout = buildLayout(spec.folderName, spec.examTemplateId);
+            const extractCtx = extractionContext(spec.extractionTemplateId);
+            layout.extraction_template_id = spec.extractionTemplateId || '';
+            layout.student_script = extractCtx.student_script || '';
+            layout.answer_combine_note = extractCtx.answer_combine_note || '';
+            layout.col_map = extractCtx.col_map || {};
             let metaRows = [];
             try { metaRows = await readMetaRows(classId, spec); } catch (err) {
                 console.warn('[FeatureReviewCatalog] 讀 meta 失敗', spec, err);
             }
-            const items = await buildItems(spec, metaRows, layout);
+            metaRows = decorateMetaRows(metaRows, extractCtx);
+            layout.meta_rows = metaRows;
+            const items = attachExtractionFields(await buildItems(spec, metaRows, layout), metaRows, extractCtx);
             const pages = items.map(function (it) { return itemPage(it); }).filter(function (n) { return n != null; });
             if (items.length) ready += 1;
             rows.push({
@@ -244,6 +376,10 @@ window.FeatureReviewCatalog = (function () {
     }
 
     return {
-        refreshForClass: refreshForClass
+        refreshForClass: refreshForClass,
+        loadCatalogPacksForClass: loadCatalogPacksForClass,
+        findCatalogPack: findCatalogPack,
+        rawMetaRowsFromPack: rawMetaRowsFromPack,
+        metaRowsFromPack: metaRowsFromPack
     };
 })();

@@ -173,7 +173,7 @@ window.BuilderStore = (() => {
         });
     }
 
-    function syncTasksState(tasks, parentPathArray = []) {
+    function syncTasksState(tasks, parentPathArray = [], opts) {
         tasks.forEach((t, idx) => {
             const pathArray = [...parentPathArray, idx];
             const pathStr = pathArray.join('-');
@@ -208,7 +208,7 @@ window.BuilderStore = (() => {
             
             if (t.type === 'group') {
                 syncRangePackFieldsFromDom(t, pathStr);
-                if (t.subTasks) syncTasksState(t.subTasks, pathArray);
+                if (t.subTasks) syncTasksState(t.subTasks, pathArray, opts);
                 // 範圍層標題：空白，或仍標記為「自動繼承中」→ 用套餐名（舊作業則用錄音範圍）重算
                 // （不能只看「標題是否為空」，否則存過一次非空標題後就再也追不到新來源）
                 if (t.raw_data && t.raw_data.group_role === 'range') {
@@ -303,6 +303,7 @@ window.BuilderStore = (() => {
 
                     // A: meta 文稿以 snapshot / meta 面板為準；C: 以 paste 面板為準
                     const scriptEl = document.getElementById(`node-script-${pathStr}`);
+                    const writtenEl = document.getElementById(`node-written-text-${pathStr}`);
                     const studentTextEl = document.getElementById(`node-student-text-${pathStr}`);
                     const scriptPasteEl = document.getElementById(`node-script-paste-${pathStr}`);
                     const studentPasteEl = document.getElementById(`node-student-text-paste-${pathStr}`);
@@ -375,6 +376,7 @@ window.BuilderStore = (() => {
                         t.raw_data.student_text = '';
                     } else {
                         if (scriptEl) t.raw_data.original_script = sanitizeScript(scriptEl.value);
+                        if (writtenEl) t.raw_data.written_display = writtenEl.value;
                         if (studentTextEl) {
                             t.raw_data.student_text = studentTextEl.value;
                             t.raw_data.student_display = studentTextEl.value;
@@ -390,6 +392,9 @@ window.BuilderStore = (() => {
                             const snap = JSON.parse(snapshotJsonEl.value);
                             if (scriptSource === 'meta') {
                                 if (snap.original_script) t.raw_data.original_script = sanitizeScript(scriptEl && scriptEl.value ? scriptEl.value : snap.original_script);
+                                if (snap.written_display || (writtenEl && writtenEl.value)) {
+                                    t.raw_data.written_display = (writtenEl && writtenEl.value) || snap.written_display || '';
+                                }
                                 if (snap.student_display || snap.student_display_text) {
                                     const fromUi = studentTextEl ? studentTextEl.value : '';
                                     const displayText = fromUi || snap.student_display || snap.student_display_text;
@@ -557,7 +562,7 @@ window.BuilderStore = (() => {
                     if (!t.raw_data.student_source_type) t.raw_data.student_source_type = 'text';
                 }
 
-                if (t.type === 'exam') {
+                if (t.type === 'exam' && !(opts && opts.skipExam)) {
                     // 考試標題：只有空白才繼承同層錄音標題。有字＝手改，存檔不得用細節覆寫。
                     if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         const examRange = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
@@ -592,7 +597,7 @@ window.BuilderStore = (() => {
         });
     }
 
-    function syncState() {
+    function syncState(opts) {
         if (!bState) return;
         const nid = bState.containerId;
         const titleEl = document.getElementById(`builder-title-${nid}`);
@@ -620,7 +625,7 @@ window.BuilderStore = (() => {
 
         if (bState.late_mode === 'no_late') { bState.late_grace = 0; bState.late_penalty = 0; }
         if (bState.late_mode === 'infinite') { bState.late_grace = 0; }
-        if (bState.tasks) syncTasksState(bState.tasks);
+        if (bState.tasks) syncTasksState(bState.tasks, [], opts);
         fillBlankRangeGroupTitles(bState.tasks);
     }
 
@@ -662,7 +667,7 @@ window.BuilderStore = (() => {
         },
         getState: () => bState,
         clear: () => { bState = null; },
-        sync: () => syncState(),
+        sync: (opts) => syncState(opts),
         deriveRangeTitleFromGroup: deriveRangeTitleFromGroup,
         fillBlankRangeGroupTitles: fillBlankRangeGroupTitles,
         
@@ -894,7 +899,9 @@ window.BuilderStore = (() => {
          * 寫回 state，讓重繪後 hydrate 也能還原一樣的內容。
          */
         updateNodeMaterialSnapshot: (pathStr, snapshot) => {
-            syncState();
+            // Snapshot 寫回錄音欄。不准順便 sync 試卷 DOM：帶入剛寫進 state 的套餐／區塊
+            // 若畫面還沒重繪完，會被舊試卷（常只剩套餐二第一塊）蓋掉。
+            syncState({ skipExam: true });
             const arr = pathStr.split('-').map(Number);
             const task = getTaskParentArray(arr)[arr[arr.length - 1]];
             if (!task || !snapshot) return;
@@ -908,13 +915,13 @@ window.BuilderStore = (() => {
                 rd.material_refs = [snapshot.material_ref];
             }
             if (snapshot.material_range) rd.material_range = snapshot.material_range;
-            if (snapshot.original_script) rd.original_script = snapshot.original_script;
-            const displayText = snapshot.student_display || snapshot.student_display_text;
-            if (displayText) {
-                rd.student_display = displayText;
-                rd.student_display_text = displayText;
-                rd.student_text = displayText;
-            }
+            // 有套用就寫回，空的也要寫：不准把舊的三行中文／空口說留在 state 裡裝成已帶入
+            rd.original_script = snapshot.original_script || '';
+            rd.written_display = snapshot.written_display || '';
+            const displayText = snapshot.student_display || snapshot.student_display_text || '';
+            rd.student_display = displayText;
+            rd.student_display_text = displayText;
+            rd.student_text = displayText;
             if (snapshot.snapshot_at) rd.snapshot_at = snapshot.snapshot_at;
             if (Array.isArray(snapshot.grading_units)) rd.grading_units = snapshot.grading_units;
             if (Array.isArray(snapshot.meta_items)) rd.meta_items = snapshot.meta_items;

@@ -117,7 +117,7 @@ window.LayoutFieldsEval = (function () {
     }
 
     function lookupColumn(row, name, colMap) {
-        const raw = String(name || '').trim();
+        const raw = String(name || '').trim().replace(/-/g, '_');
         if (!raw) return '';
         const upper = raw.toUpperCase();
         // ① 優先當作語意欄位鍵（semantic_key，大小寫不拘）：跨 schema 皆可共用，建議寫法
@@ -168,7 +168,12 @@ window.LayoutFieldsEval = (function () {
                 i = j + 1;
                 continue;
             }
-            if (ch === '(' || ch === ')' || ch === ',' || ch === '&') {
+            if (ch === '&' || ch === '＆') {
+                tokens.push({ type: '&' });
+                i += 1;
+                continue;
+            }
+            if (ch === '(' || ch === ')' || ch === ',') {
                 tokens.push({ type: ch });
                 i += 1;
                 continue;
@@ -184,9 +189,14 @@ window.LayoutFieldsEval = (function () {
                     continue;
                 }
             }
+            if (ch === '=') {
+                tokens.push({ type: '=' });
+                i += 1;
+                continue;
+            }
             if (/[A-Za-z_]/.test(ch)) {
                 let j = i + 1;
-                while (j < s.length && /[A-Za-z0-9_]/.test(s[j])) j += 1;
+                while (j < s.length && /[A-Za-z0-9_-]/.test(s[j])) j += 1;
                 const word = s.slice(i, j);
                 tokens.push({ type: 'ident', value: word });
                 i = j;
@@ -231,10 +241,10 @@ window.LayoutFieldsEval = (function () {
                     pos += 1; // (
                     const args = [];
                     if (peek() && peek().type !== ')') {
-                        args.push(parseConcat());
+                        args.push(parseComparison());
                         while (peek() && peek().type === ',') {
                             pos += 1;
-                            args.push(parseConcat());
+                            args.push(parseComparison());
                         }
                     }
                     if (!consume(')')) throw new Error('函式 ' + name + ' 缺少 )');
@@ -244,7 +254,7 @@ window.LayoutFieldsEval = (function () {
             }
             if (t.type === '(') {
                 pos += 1;
-                const inner = parseConcat();
+                const inner = parseComparison();
                 if (!consume(')')) throw new Error('缺少 )');
                 return inner;
             }
@@ -255,13 +265,26 @@ window.LayoutFieldsEval = (function () {
             let left = parsePrimary();
             while (peek() && peek().type === '&') {
                 pos += 1;
+                // 連續 &&：中間沒有欄，跳過，不准整段失敗
+                if (peek() && peek().type === '&') continue;
+                if (!peek() || peek().type === ',' || peek().type === ')' || peek().type === '=') break;
                 const right = parsePrimary();
                 left = { kind: 'concat', left: left, right: right };
             }
             return left;
         }
 
-        const ast = parseConcat();
+        function parseComparison() {
+            let left = parseConcat();
+            if (peek() && peek().type === '=') {
+                pos += 1;
+                const right = parseConcat();
+                return { kind: 'eq', left: left, right: right };
+            }
+            return left;
+        }
+
+        const ast = parseComparison();
         if (pos < tokens.length) {
             throw new Error('運算式尾端多餘：' + tokens.slice(pos).map(function (t) {
                 return t.value != null ? t.value : t.type;
@@ -270,17 +293,34 @@ window.LayoutFieldsEval = (function () {
         return ast;
     }
 
-    function evalAst(ast, row, colMap) {
+    function evalAst(ast, row, colMap, opts) {
+        opts = opts || {};
         if (!ast) return asRich('');
         if (ast.kind === 'str') return asRich(ast.value);
         if (ast.kind === 'num') return asRich(String(ast.value));
         if (ast.kind === 'col') return asRich(lookupColumn(row, ast.name, colMap));
+        if (ast.kind === 'eq') {
+            const a = evalAst(ast.left, row, colMap, opts);
+            const b = evalAst(ast.right, row, colMap, opts);
+            const same = String(cellText(a) || '').trim() === String(cellText(b) || '').trim();
+            return asRich(same ? 'TRUE' : '');
+        }
         if (ast.kind === 'concat') {
-            const a = evalAst(ast.left, row, colMap);
-            const b = evalAst(ast.right, row, colMap);
-            // 防呆：中間某個「非字面」結果為空 → 整段空
+            const a = evalAst(ast.left, row, colMap, opts);
+            const b = evalAst(ast.right, row, colMap, opts);
             const leftWasLiteral = ast.left && ast.left.kind === 'str';
             const rightWasLiteral = ast.right && ast.right.kind === 'str';
+            // 學生文稿：某一欄空（常見是 pre）只跳過該段，不准把整行吃掉，否則三行公式只剩標題。
+            // 書寫結合仍走下面防呆（沒填＝沒有）。
+            if (opts.skipBlankConcat) {
+                const leftEmpty = !leftWasLiteral && isBlank(a);
+                const rightEmpty = !rightWasLiteral && isBlank(b);
+                if (leftEmpty && rightEmpty) return asRich('');
+                if (leftEmpty) return b;
+                if (rightEmpty) return a;
+                return asRich(cellText(a) + cellText(b));
+            }
+            // 防呆：中間某個「非字面」結果為空 → 整段空
             if (!leftWasLiteral && isBlank(a)) return asRich('');
             if (!rightWasLiteral && isBlank(b)) return asRich('');
             return asRich(cellText(a) + cellText(b));
@@ -288,7 +328,7 @@ window.LayoutFieldsEval = (function () {
         if (ast.kind === 'call') {
             const fn = ast.name;
             const args = (ast.args || []).map(function (a) {
-                return evalAst(a, row, colMap);
+                return evalAst(a, row, colMap, opts);
             });
             if (fn === 'STACK') {
                 const lines = args.map(cellText).map(function (t) {
@@ -310,6 +350,12 @@ window.LayoutFieldsEval = (function () {
                 // 全取代（類似 Excel SUBSTITUTE 未指定 instance）
                 return asRich(text.split(oldS).join(newS));
             }
+            if (fn === 'IF') {
+                const cond = args[0];
+                const whenTrue = args[1] || asRich('');
+                const whenFalse = args[2] || asRich('');
+                return isBlank(cond) ? whenFalse : whenTrue;
+            }
             if (fn === 'TEXTJOIN') {
                 // 用法同 Excel TEXTJOIN(分隔符, 欄位1, 欄位2, ...)：自動跳過空值，
                 // 避免 pre 沒填（如名詞不需要 a/an）時整段答案被 & 的防呆規則吃成空字串。
@@ -324,22 +370,23 @@ window.LayoutFieldsEval = (function () {
         throw new Error('未知 AST：' + ast.kind);
     }
 
-    function evalSegment(segment, row, colMap) {
+    function evalSegment(segment, row, colMap, opts) {
         const tokens = tokenize(segment);
         if (!tokens.length) return asRich('');
         const ast = parseExpression(tokens);
-        return evalAst(ast, row, colMap);
+        return evalAst(ast, row, colMap, opts);
     }
 
     /**
      * @param {string} fieldsFormula 例如 STACK(D,E,C), FONTSIZE(Y,-1), X
      * @param {object} row meta 列（semantic keys）
      * @param {object} colMap { D: 'sheet_id', Y: 'display_zh', ... }
+     * @param {object} [opts] skipBlankConcat：學生文稿用，空欄跳過不整段清空
      * @returns {{ text: string, fontDelta: number }[]}
      */
-    function evaluateFields(fieldsFormula, row, colMap) {
+    function evaluateFields(fieldsFormula, row, colMap, opts) {
         return splitTopLevel(fieldsFormula).map(function (seg) {
-            return evalSegment(seg, row || {}, colMap || {});
+            return evalSegment(seg, row || {}, colMap || {}, opts || {});
         });
     }
 

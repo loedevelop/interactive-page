@@ -27,6 +27,7 @@ alwaysApply: true
 | `pdf-quiz-section-page-detection-invariant.mdc` | PDF 考卷大題顯示成前一個大題的頁面內容（標題 OCR 壞掉／letter-spacing／候選清單被污染） | `020_js_core/pdf-exam-paper.js` |
 | `template-usage-card-invariant.mdc` | 實際使用卡擷取／試卷列出的名字混用（活頁名 vs 範本名 vs meta 檔名） | `feature-class-material-combinations.js`, `feature-material-layout-pairing.js`, `feature-exam-template-editor.js` |
 | `template-formula-strict-invariant.mdc` | 一份卷多範本被亂套／WORD 公式套到 PIC | 全站（alwaysApply）；出卷／範本庫 |
+| `extraction-formula-live-apply-invariant.mdc` | 出作業書寫答案／學生文稿不套公式、一直吃統計表舊稿 | `feature-timeline.js`, `material-snapshot.js`, `feature-review-catalog.js`, `feature-template-library.js` |
 | `no-invented-fallback-invariant.mdc` | 退路未提出／未同意就黑箱施作 | 全站（alwaysApply） |
 | `uniform-apply-invariant.mdc` | 規則要全面套用／禁止只修例子、同類列走第二套邏輯／每個 popup 處理方式不一樣 | 全站（alwaysApply）；`material-file-names.js`；`material-pdf-page-map.js` |
 

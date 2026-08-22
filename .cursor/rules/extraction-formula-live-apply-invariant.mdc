@@ -1,0 +1,70 @@
+---
+description: 出作業書寫答案／學生文稿不套擷取公式、一直吃統計表舊稿
+globs: 110_teacher_core/feature-timeline.js,020_js_core/material-snapshot.js,110_teacher_core/feature-review-catalog.js,110_teacher_core/feature-template-library.js
+alwaysApply: false
+---
+
+# 擷取公式現算鐵律（雷區）
+
+> 2026-08-22：公式寫了就是要套。出作業卻先吃統計表烘焙的 `written_text`／`student_text`，新公式永遠進不去。
+
+## 症狀
+
+- 擷取範本已改 `answer_combine_note`／`student_script`，出作業書寫答案、學生文稿仍是舊字
+- 畫面像「沒帶入公式」，其實是統計表快照當了正文
+
+## 根因
+
+`feature-timeline.js` 的 `buildMergedMaterialSnapshot` 曾：統計表（`class_review_catalog`）有列就 `usedCatalog`，改走 `metaRowsFromPack`。該函式在 `feature-review-catalog.js` 用 `items.written_text`／`student_text` 拼出列，只剩烘焙欄、沒有 Excel 原欄。`applyExtractionFormulasToRows`（`material-snapshot.js`）對不到欄 → 舊 `_answer_combined_text` 留下。統計表只在「更新複習目錄」才整班重算，出作業不會重跑。
+
+## 不變量
+
+```
+寫了公式＝套用。出作業／Snapshot 只換 template id，對完整 meta 列現算。
+書寫＝這一筆 answer_combine_note（單行結合）。
+學生文稿＝這一筆 student_script 的每一行都要套：<page title>／<blank> 每頁一次，<data> 每列一次。
+不准把三行公式整份當一個運算式（只算出第一行，或尾端多餘整段空）。
+沒填才是 _answer_combined_text。
+統計表只負責有沒有這本、頁碼／題數。不准用 items 烘焙稿當列。
+書寫：有公式卻算不出＝沒有，不准留舊烘焙。
+學生文稿資料列：某一欄空（如 pre）只跳過該段，不准把整行吃掉只剩標題。
+找不到範本＝停並報，不准改套統計表 layout。
+```
+
+## 禁止
+
+```javascript
+// ❌ 統計表有列就當正文、略過公式現算
+usedCatalog = !!(rows && rows.length);
+if (!usedCatalog) { /* 才讀 Drive、才套公式 */ }
+
+// ❌ 用烘焙稿冒充 meta 列
+_answer_combined_text: it.written_text
+student_script: scriptCtx.student_script || catalogLayout.student_script
+
+// ❌ 三行學生文稿整份當一個運算式（只算出第一行）
+evalLayoutFormulaToText(student_script) // 內含 <page title>／<blank>／<data>
+studentLineFromRow // 只出 <data>，拿去當整份學生文稿
+```
+
+## 正確
+
+```javascript
+// ✅ 完整 meta（Drive，其次 layout.meta_rows）＋ extractionContext(templateId)
+ctx.student_script = scriptCtx.student_script;
+ctx.answer_combine_note = scriptCtx.answer_combine_note;
+MaterialSnapshot.sliceAndBuild(rows, sliceOpts, ctx);
+// 學生文稿走 parseStudentScriptTemplate → formatStudentDisplayBlock
+// 每一行各自 evalStudentScriptFormulaToText（skipBlankConcat）
+```
+
+## 實測
+
+1. 改擷取範本學生文稿／書寫結合公式 → 出作業套用 Snapshot → 兩欄是新公式，不是舊統計表字
+2. 學生文稿三行（`<page title>`／`<blank>`／`<data>`）套用後每頁都有標題、空行、資料列，不是只剩一行
+3. 統計表有舊 items、雲端有完整 meta → 仍現算，不吃 items
+4. 範本 id 對不到 → 明確報錯，不默默用舊稿
+
+## 改動前自問
+
+動 Snapshot／統計表／extractionContext 時：出作業是否仍只換 template id、對完整列現算？若改吃烘焙稿 → 停。

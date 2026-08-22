@@ -90,8 +90,8 @@ window.FeatureMaterialLayoutPairing = (function () {
      */
     const SEMANTIC_KEY_SEED = ['vBK_name', 'page', 'item_no', 'display_zh', 'pos', 'pre', 'answer_en', 'article', 'sheet_id', 'blank_1', 'blank_2', 'blank_1_zh', 'blank_2_zh', 'image_url'];
     /** 全站公式同一把鑰匙：資料項名稱或該範本欄位代號皆可。禁止只對某一格另寫一套。 */
-    const FORMULA_BOTH_HINT = '資料項名稱或該範本欄位代號皆可，例如 pre&amp;" "&amp;answer_en 或 AO&amp;" "&amp;AP';
-    const FORMULA_BOTH_PLACEHOLDER = 'pre&" "&answer_en 或 AO&" "&AP';
+    const FORMULA_BOTH_HINT = '資料項名稱或該範本欄位代號皆可，例如 if(pre="",answer_en,pre&amp;" "&amp;answer_en) 或 AO&amp;" "&amp;AP';
+    const FORMULA_BOTH_PLACEHOLDER = 'if(pre="",answer_en,pre&" "&answer_en)';
     const STUDENT_SCRIPT_TAG_HINT = '標記（可選）：&lt;page title&gt; 每頁一次　&lt;blank&gt; 空行（在 title 與 data 中間＝每頁一次；在 data 後＝每題一次）　&lt;data&gt; 每列一次。沒標記＝整份當資料列（仍加系統頁首）。有標記＝只套公式。';
     const STUDENT_SCRIPT_TAG_PLACEHOLDER = '<page title>vBK_name&" - "&page\n<blank>\n<data>item_no&". "&pos&"  "&pre&" "&answer_en&"    "&display_zh';
     let _sessionSemanticKeys = [];
@@ -3434,7 +3434,11 @@ window.FeatureMaterialLayoutPairing = (function () {
         const quizPromptEl = document.getElementById('mlp-tpl-quiz-prompt');
         if (quizPromptEl) quizPromptEl.addEventListener('change', function () { _templateEditorState.quizPrompt = this.value; });
         const studentScriptEl = document.getElementById('mlp-tpl-student-script');
-        if (studentScriptEl) studentScriptEl.addEventListener('change', function () { _templateEditorState.studentScript = this.value; });
+        if (studentScriptEl) {
+            const syncStudent = function () { _templateEditorState.studentScript = studentScriptEl.value; };
+            studentScriptEl.addEventListener('input', syncStudent);
+            studentScriptEl.addEventListener('change', syncStudent);
+        }
         const addColBtn = document.getElementById('mlp-tpl-add-col');
         if (addColBtn) addColBtn.addEventListener('click', function () {
             _templateEditorState.columns.push({ letter: '', semantic_key: '', is_question: false, is_answer: false, is_info: false, is_ai_ref: false });
@@ -3555,6 +3559,14 @@ window.FeatureMaterialLayoutPairing = (function () {
         const msgEl = document.getElementById('mlp-tpl-msg');
         const st = _templateEditorState;
         if (!st) return;
+        const nameEl = document.getElementById('mlp-tpl-name');
+        if (nameEl) st.name = nameEl.value.trim();
+        const studentScriptEl = document.getElementById('mlp-tpl-student-script');
+        if (studentScriptEl) st.studentScript = studentScriptEl.value;
+        const fieldsEl = document.getElementById('mlp-tpl-fields');
+        if (fieldsEl) st.fields = fieldsEl.value;
+        const quizPromptEl = document.getElementById('mlp-tpl-quiz-prompt');
+        if (quizPromptEl) st.quizPrompt = quizPromptEl.value;
         const name = String(st.name || '').trim();
         if (!name) { if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ 請幫這份 Template 取個名字'; } return; }
         const cols = st.columns.filter(function (c) { return c && String(c.letter || '').trim(); });
@@ -3716,7 +3728,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const examOn = !!t.is_exam_role;
                 const announceColor = examOn ? '#334155' : '#94A3B8';
                 const announceLine = function (label, value) {
-                    return '<div style="font-size:0.8rem; color:' + announceColor + '; margin-top:2px;">' + label + '：' + esc(value) + '</div>';
+                    return '<div style="font-size:0.8rem; color:' + announceColor + '; margin-top:2px; white-space:pre-wrap;">' + label + '：\n' + esc(value) + '</div>';
                 };
                 const rowStudent = announceLine('學生文稿 特殊排版', t.student_script || '_answer_combined_text');
                 const rowFields = announceLine('訊息 特殊排版', t.fields || '尚無');
@@ -4974,29 +4986,34 @@ window.FeatureMaterialLayoutPairing = (function () {
             : 'extraction';
         const showExtract = applyRole === 'extraction' || applyRole === 'both';
         const showExam = applyRole === 'exam' || applyRole === 'both';
-        const roleItems = sheetNames.map(function (n) {
-            return {
-                name: n,
-                extract: showExtract ? tplName : '',
-                exam: showExam ? tplName : '',
-                isGroup: state.isGroup === true
-            };
-        });
-        const roleGroups = (FN && typeof FN.groupRoleTagItems === 'function')
-            ? FN.groupRoleTagItems(roleItems)
-            : [{ names: sheetNames.length === 1 ? [sheetNames[0]] : [], extract: showExtract ? tplName : '', exam: showExam ? tplName : '' }];
-        const roleTags = (FN && typeof FN.roleTagHtmlFromGroup === 'function')
-            ? ('<div style="margin:0 0 10px 0; display:flex; flex-wrap:wrap; gap:6px;">'
-                + roleGroups.map(function (g, i) {
-                    return '<div style="padding:6px 12px; border-radius:8px; border:1px solid '
-                        + (i === 0 ? '#0F766E' : '#99F6E4') + '; background:'
-                        + (i === 0 ? '#0F766E' : '#F0FDFA') + '; color:'
-                        + (i === 0 ? 'white' : '#115E59') + ';">'
+        let roleTags = '';
+        if (FN && typeof FN.groupRoleTagItems === 'function' && typeof FN.roleTagHtmlFromGroup === 'function') {
+            const tagItems = (sheetNames || []).map(function (n) {
+                return {
+                    name: n,
+                    extract: showExtract ? tplName : '',
+                    exam: showExam ? tplName : '',
+                    isGroup: state.isGroup === true
+                };
+            });
+            roleTags = '<div style="margin:0 0 10px 0; display:flex; flex-wrap:wrap; gap:6px;">'
+                + FN.groupRoleTagItems(tagItems).map(function (g) {
+                    return '<div style="display:inline-block; padding:6px 12px; border-radius:8px; border:1px solid #0F766E; background:#0F766E; color:white;">'
                         + FN.roleTagHtmlFromGroup(g)
                         + '</div>';
                 }).join('')
-                + '</div>')
-            : '';
+                + '</div>';
+        } else if (FN && typeof FN.packageTagHtml === 'function') {
+            roleTags = '<div style="margin:0 0 10px 0;">'
+                + '<div style="display:inline-block; padding:6px 12px; border-radius:8px; border:1px solid #0F766E; background:#0F766E; color:white;">'
+                + FN.packageTagHtml({
+                    names: sheetNames,
+                    extract: showExtract ? tplName : '',
+                    exam: showExam ? tplName : '',
+                    allGrouped: state.isGroup === true
+                })
+                + '</div></div>';
+        }
 
         return '<div>'
             + roleTags
