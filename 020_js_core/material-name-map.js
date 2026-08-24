@@ -302,6 +302,39 @@ window.MaterialNameMap = (function () {
         await one('script_file', opts.oldScript, opts.newScript);
     }
 
+    /**
+     * 別稱／現用標籤若只是「活頁名.這份擷取範本」，改回活頁名。
+     * 老師自己寫的別稱（不是這份範本後綴）不動。
+     */
+    async function unpoisonSheetLabels(opts) {
+        const sheetId = norm(opts && opts.sheetId);
+        const live = norm(opts && opts.live);
+        const templateName = norm(opts && opts.templateName);
+        if (!sheetId || !live) return;
+        const FN = window.MaterialFileNames;
+        function poisoned(s) {
+            if (FN && typeof FN.isPoisonedLiveAlias === 'function') {
+                return FN.isPoisonedLiveAlias(s, live, templateName);
+            }
+            const tpl = String(templateName || '').trim().replace(/[\\/]/g, '-');
+            return !!(tpl && upper(s) === upper(live + '.' + tpl));
+        }
+        await ensureLoaded(false);
+        const mine = rowsSync().filter(function (r) {
+            return r.kind === 'sheet_stem' && String(r.material_sheet_id || '') === sheetId;
+        });
+        for (let i = 0; i < mine.length; i++) {
+            const r = mine[i];
+            if (!poisoned(r.current_label)) continue;
+            const { error } = await window.supabaseClient
+                .from('material_name_maps')
+                .update({ current_label: live })
+                .eq('id', r.id);
+            if (error) throw error;
+            r.current_label = live;
+        }
+    }
+
     async function applySheetCurrentNames(opts) {
         const sheetId = opts && opts.sheetId;
         const folderId = opts && opts.folderId;
@@ -368,6 +401,7 @@ window.MaterialNameMap = (function () {
         recordFolderRename: recordFolderRename,
         recordTemplateRename: recordTemplateRename,
         recordSheetRename: recordSheetRename,
+        unpoisonSheetLabels: unpoisonSheetLabels,
         applySheetCurrentNames: applySheetCurrentNames,
         rewriteCacheKey: rewriteCacheKey
     };

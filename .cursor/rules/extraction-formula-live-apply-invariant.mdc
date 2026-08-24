@@ -1,70 +1,98 @@
 ---
-description: 出作業書寫答案／學生文稿不套擷取公式、一直吃統計表舊稿
-globs: 110_teacher_core/feature-timeline.js,020_js_core/material-snapshot.js,110_teacher_core/feature-review-catalog.js,110_teacher_core/feature-template-library.js
+description: 出作業書寫／學生文稿不套公式、只剩標題、一直自動套用、畫面是舊凍結 snapshot
+globs: 110_teacher_core/feature-timeline.js,020_js_core/material-snapshot.js,020_js_core/layout-fields-eval.js,110_teacher_core/feature-review-catalog.js,110_teacher_core/feature-template-library.js,110_teacher_core/ui-timeline-templates.js
 alwaysApply: false
 ---
 
-# 擷取公式現算鐵律（雷區）
+# 擷取公式現算鐵律（雷區｜2026-08-22 試很久才對）
 
-> 2026-08-22：公式寫了就是要套。出作業卻先吃統計表烘焙的 `written_text`／`student_text`，新公式永遠進不去。
+> 公式寫了就是要套。出作業曾先吃統計表舊稿；修了書寫單行，學生文稿三行仍只出標題；自動套用又把舊凍結 snapshot 蓋回畫面。同一題疊三層，少查一層就會空轉。
 
 ## 症狀
 
-- 擷取範本已改 `answer_combine_note`／`student_script`，出作業書寫答案、學生文稿仍是舊字
-- 畫面像「沒帶入公式」，其實是統計表快照當了正文
+- 擷取範本已改 `answer_combine_note`／`student_script`，出作業書寫、學生文稿仍是舊字
+- 學生文稿只有 `vBK-2 - Page 21`（標題＋空行），沒有 `<data>` 列
+- 狀態一直「自動套用 Snapshot…」；凍結時間停在舊的 `snapshot_at`（例：`2026-08-22T05:54:15`）
+- 程式改了、硬重整了，格子裡還是舊內容
+- 書寫題號變成 `401..`（原始 `item_no` 已有句點又加一個）
 
-## 根因
+## 根因（三層，修一層不夠）
 
-`feature-timeline.js` 的 `buildMergedMaterialSnapshot` 曾：統計表（`class_review_catalog`）有列就 `usedCatalog`，改走 `metaRowsFromPack`。該函式在 `feature-review-catalog.js` 用 `items.written_text`／`student_text` 拼出列，只剩烘焙欄、沒有 Excel 原欄。`applyExtractionFormulasToRows`（`material-snapshot.js`）對不到欄 → 舊 `_answer_combined_text` 留下。統計表只在「更新複習目錄」才整班重算，出作業不會重跑。
+1. **統計表當正文**（`feature-timeline.js` `buildMergedMaterialSnapshot`）  
+   曾：`class_review_catalog` 有列就 `usedCatalog`，走 `metaRowsFromPack`。`feature-review-catalog.js` 用 `items.written_text`／`student_text` 拼列，只剩烘焙欄、沒有 Excel 原欄。公式對不到 → 舊 `_answer_combined_text` 留下。統計表只在「更新複習目錄」才重算。
+
+2. **學生文稿當一行**（`material-snapshot.js`）  
+   `student_script` 是三行標記：`<page title>`／`<blank>`／`<data>`。整份丟進一個運算式＝只算出第一行，或尾端多餘整段空。`<data>` 對不到、`&&`、`answer-en`、`pre` 空被 `&` 整行吃掉 → **只留標題，不報錯**。書寫結合是單行 `answer_combine_note`，修書寫≠學生文稿已套。
+
+3. **舊凍結蓋新程式**（`feature-timeline.js` `autoPrime`／`scheduleAutoSnapshot`）  
+   套完重繪 → 再排自動套用 → 停在進頁那份舊 snapshot。JS cache 換了，textarea 仍是舊字。進頁只准套一次；之後改範圍／公式只走「更新內容」。
 
 ## 不變量
 
 ```
 寫了公式＝套用。出作業／Snapshot 只換 template id，對完整 meta 列現算。
-書寫＝這一筆 answer_combine_note（單行結合）。
-學生文稿＝這一筆 student_script 的每一行都要套：<page title>／<blank> 每頁一次，<data> 每列一次。
-不准把三行公式整份當一個運算式（只算出第一行，或尾端多餘整段空）。
-沒填才是 _answer_combined_text。
+書寫＝這一筆 answer_combine_note（單行；可 IF(pre="",answer_en,pre&" "&answer_en)）。
+學生文稿＝這一筆 student_script 每一行：<page title>／<blank> 每頁一次，<data> 每列一次。
+不准把三行整份當一個運算式。沒填才是 _answer_combined_text。
 統計表只負責有沒有這本、頁碼／題數。不准用 items 烘焙稿當列。
 書寫：有公式卻算不出＝沒有，不准留舊烘焙。
-學生文稿資料列：某一欄空（如 pre）只跳過該段，不准把整行吃掉只剩標題。
-找不到範本＝停並報，不准改套統計表 layout。
+學生文稿 <data>：某一欄空只跳過該段；整行算不出＝狀態列要報公式／錯誤，不准只留標題裝成功。
+找不到範本＝停並報。
+進頁只自動套用一次。重繪／autoPrime／改範圍不准再排。之後只按「更新內容」。
+題號原始資料已有句點＝不再加第二個。
+改完必查這三句，少一句＝還沒做完：
+  1. 公式每一行都有套到嗎？（書寫一行＋學生文稿三行標記，不是只修看得到的那欄）
+  2. 算不出有沒有報？（只剩標題＝失敗，不是成功）
+  3. 畫面上的字是這次現算，還是舊凍結 snapshot_at？
 ```
 
 ## 禁止
 
 ```javascript
-// ❌ 統計表有列就當正文、略過公式現算
+// ❌ 統計表有列就當正文
 usedCatalog = !!(rows && rows.length);
-if (!usedCatalog) { /* 才讀 Drive、才套公式 */ }
 
-// ❌ 用烘焙稿冒充 meta 列
+// ❌ 烘焙稿冒充 meta 列
 _answer_combined_text: it.written_text
-student_script: scriptCtx.student_script || catalogLayout.student_script
 
-// ❌ 三行學生文稿整份當一個運算式（只算出第一行）
-evalLayoutFormulaToText(student_script) // 內含 <page title>／<blank>／<data>
-studentLineFromRow // 只出 <data>，拿去當整份學生文稿
+// ❌ 三行整份當一個運算式；或只用 studentLineFromRow 當整份文稿
+evalLayoutFormulaToText(student_script)
+studentLineFromRow // 只出 <data>，拿去填出作業學生文稿
+
+// ❌ <data> 算不出就略過，畫面只留標題
+if (!text) return; // 整頁都沒 data 卻不寫 import_notes
+
+// ❌ 重繪／改範圍再排自動套用（舊凍結永遠蓋新結果）
+autoPrime → scheduleAutoSnapshot
+onRangePackChange → scheduleAutoSnapshot
 ```
 
 ## 正確
 
 ```javascript
-// ✅ 完整 meta（Drive，其次 layout.meta_rows）＋ extractionContext(templateId)
+// ✅ 完整 meta ＋ extractionContext(templateId)
 ctx.student_script = scriptCtx.student_script;
 ctx.answer_combine_note = scriptCtx.answer_combine_note;
 MaterialSnapshot.sliceAndBuild(rows, sliceOpts, ctx);
-// 學生文稿走 parseStudentScriptTemplate → formatStudentDisplayBlock
-// 每一行各自 evalStudentScriptFormulaToText（skipBlankConcat）
+// parseStudentScriptTemplate → formatStudentDisplayBlock
+// 每一行 evalStudentScriptFormulaToText（skipBlankConcat）
+// <data> 全頁 0 列 → import_notes 寫「只有標題」或公式錯誤
+
+// ✅ 進頁一次
+scheduleEnterAutoSnapshot(pathStr) // _enterAutoSnapshotDone 後不再排
+// 之後：FeatureTimeline.applyMaterialSnapshot（按鈕「更新內容」）
 ```
 
 ## 實測
 
-1. 改擷取範本學生文稿／書寫結合公式 → 出作業套用 Snapshot → 兩欄是新公式，不是舊統計表字
-2. 學生文稿三行（`<page title>`／`<blank>`／`<data>`）套用後每頁都有標題、空行、資料列，不是只剩一行
-3. 統計表有舊 items、雲端有完整 meta → 仍現算，不吃 items
-4. 範本 id 對不到 → 明確報錯，不默默用舊稿
+1. 改擷取範本書寫結合／學生文稿三行 → 硬重整 → 出作業按「更新內容」→ 兩欄是新公式，凍結時間是這一刻
+2. 學生文稿每頁＝標題、空行、該頁每一題，不是只剩 `vBK-2 - Page 21`
+3. `<data>` 故意寫錯 → 狀態列報公式／錯誤，不是默默只留標題
+4. 統計表有舊 items、雲端有完整 meta → 仍現算
+5. 進頁套一次後改範圍 → 不會自己再套；按「更新內容」才換
+6. `item_no` 已是 `401.` → 書寫／題目不是 `401..`
 
 ## 改動前自問
 
-動 Snapshot／統計表／extractionContext 時：出作業是否仍只換 template id、對完整列現算？若改吃烘焙稿 → 停。
+動 Snapshot／統計表／`student_script`／`extractionContext`／自動套用時，上面三句是否都還成立？  
+只修書寫、或只看標題出來、或沒對 `snapshot_at` → 停。

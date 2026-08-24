@@ -33,6 +33,8 @@ SheetRangeBounds.countAvailable
 
 每頁行數必須帶入這一列考卷範本的 `lines_per_page`，不可用預設 10 蓋過範本。  
 產生線上卷仍讀 `.meta.json` 抽題。綠字不再為了數字去打 Drive。
+多套餐＝每一段只認該段 `combination_id` 的 meta／擷取範本／試卷範本。
+不准拿第一份套餐（例：PIC）的檔、公式、總題數去套第二份（例：WORD）。
 
 ## 禁止
 

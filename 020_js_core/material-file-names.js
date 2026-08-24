@@ -82,6 +82,11 @@ window.MaterialFileNames = (function () {
         return next || b;
     }
 
+    /** 活頁名＝去掉附檔名與 .{這份擷取範本}。A.sentence-translation → A。不准把檔名後綴當活頁名。 */
+    function liveSheetName(stem, templateName) {
+        return stripTemplateSuffix(stripExt(String(stem || '').trim(), META_EXT), templateName);
+    }
+
     /** 長名尾巴剛好是短名，且前面用 -／_ 接＝帶班級的同一本（AvaLiu-vBK-2 ⊃ vBK-2）。 */
     function isClassPrefixed(longName, shortName) {
         var a = String(longName || '');
@@ -98,7 +103,7 @@ window.MaterialFileNames = (function () {
      * 對不上＝不猜，才退回資料庫短名。
      */
     function resolveLiveSheet(poisonStem, meta, script, templateName) {
-        var poison = String(poisonStem || '').trim();
+        var poison = liveSheetName(poisonStem, templateName) || String(poisonStem || '').trim();
         var metaBody = stripTemplateSuffix(stripExt(meta, META_EXT), templateName);
         var scriptBody = stripTemplateSuffix(stripExt(script, SCRIPT_EXT), templateName);
         if (metaBody && scriptBody) {
@@ -113,13 +118,27 @@ window.MaterialFileNames = (function () {
         return one || poison;
     }
 
-    function currentAlias(stem, sheetId) {
+    /** 別稱只是「活頁名.這份擷取範本」＝程式把範本黏進活頁名的遺毒，不是老師寫的。 */
+    function isPoisonedLiveAlias(label, live, templateName) {
+        var body = stripExt(stripExt(String(label || '').trim(), META_EXT), SCRIPT_EXT);
+        var L = String(live || '').trim();
+        var tpl = templateToken(templateName);
+        if (!body || !L || !tpl) return false;
+        return body.toUpperCase() === (L + '.' + tpl).toUpperCase();
+    }
+
+    function currentAlias(stem, sheetId, templateName) {
         var raw = String(stem || '').trim();
+        var live = liveSheetName(raw, templateName) || raw;
+        var lab = '';
         if (sheetId && window.MaterialNameMap && typeof window.MaterialNameMap.currentLabelForSheet === 'function') {
-            var lab = String(window.MaterialNameMap.currentLabelForSheet('sheet_stem', raw, sheetId) || '').trim();
-            if (lab) return lab;
+            lab = String(window.MaterialNameMap.currentLabelForSheet('sheet_stem', live, sheetId) || '').trim();
+            if (!lab && raw && raw.toUpperCase() !== live.toUpperCase()) {
+                lab = String(window.MaterialNameMap.currentLabelForSheet('sheet_stem', raw, sheetId) || '').trim();
+            }
         }
-        return raw;
+        if (isPoisonedLiveAlias(lab, live, templateName)) lab = '';
+        return lab || live;
     }
 
     function applyFormula(pattern, liveSheet, alias, templateName) {
@@ -162,6 +181,14 @@ window.MaterialFileNames = (function () {
         return list;
     }
 
+    /** 統整用活頁字母／數字：A.sentence-translation → A。收不收看群組勾，不准要求整個名字是單字母。 */
+    function sheetRangeHead(name) {
+        var s = String(name || '').trim().replace(/\.meta\.json$/i, '');
+        if (!s) return '';
+        var dot = s.indexOf('.');
+        return dot > 0 ? s.slice(0, dot) : s;
+    }
+
     function consecutiveRangeLabel(list) {
         if (!list || list.length < 2) return '';
         var i;
@@ -170,7 +197,7 @@ window.MaterialFileNames = (function () {
         var codes = [];
         var values = [];
         for (i = 0; i < list.length; i++) {
-            var s = String(list[i] || '');
+            var s = sheetRangeHead(list[i]);
             if (!/^[A-Za-z]$/.test(s)) letters = false;
             if (!/^(0|[1-9]\d*)$/.test(s)) nums = false;
             if (letters) codes.push(s.toUpperCase().charCodeAt(0));
@@ -193,7 +220,7 @@ window.MaterialFileNames = (function () {
         return '';
     }
 
-    /** 勾了群組才統整：連續單字母／連續數字用 A～J；其他用、接。沒勾不准收成一筆。 */
+    /** 勾了群組才進這裡收成一串。連續活頁字母／數字用 A～Z。沒勾不准叫這函式去收。 */
     function formatSheetNames(names) {
         var list = sortSheetNames(names);
         if (!list.length) return '';
@@ -266,7 +293,7 @@ window.MaterialFileNames = (function () {
 
     /**
      * 一顆標籤＝一份套餐。三行固定：活頁名／擷取範本／試卷範本。
-     * 勾了群組才把連續單字母收成 A～Z；沒勾＝一本一顆，不准 join。
+     * 勾了群組才共一顆、活頁名統整；沒勾＝一本一顆。收不收看勾。
      */
     function packageTagHtml(opts) {
         opts = opts || {};
@@ -415,6 +442,8 @@ window.MaterialFileNames = (function () {
         fileFormula: fileFormula,
         inferFileFormula: inferFileFormula,
         stripTemplateSuffix: stripTemplateSuffix,
+        liveSheetName: liveSheetName,
+        isPoisonedLiveAlias: isPoisonedLiveAlias,
         resolveLiveSheet: resolveLiveSheet,
         currentAlias: currentAlias,
         applyFormula: applyFormula,

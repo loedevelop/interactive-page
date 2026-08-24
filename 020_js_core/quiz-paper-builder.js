@@ -34,11 +34,53 @@ window.QuizPaperBuilder = (function () {
 
     function normalizeAnswer(s) {
         return String(s || '')
-            .toLowerCase()
             .replace(/[’‘]/g, "'")
             .replace(/\s+/g, ' ')
             .replace(/[.,!?;:]+$/g, '')
             .trim();
+    }
+
+    /**
+     * 學生作答轉成可顯示／可比對的字串。分開比對存的是 {空格: 字}，
+     * 直接 String(obj) 會變成 [object Object]。對不到物件欄就當沒有，不准猜。
+     */
+    function plainQuizAnswer(got, item) {
+        if (got == null) return '';
+        if (typeof got === 'string' || typeof got === 'number') return String(got);
+        if (typeof got !== 'object') return '';
+        if (Array.isArray(item && item.sub_answers) && item.sub_answers.length) {
+            return item.sub_answers.map(function (sa) {
+                const v = got[sa.key];
+                if (v == null || typeof v === 'object') return '';
+                return String(v);
+            }).join(' ').replace(/\s+/g, ' ').trim();
+        }
+        if (got.answer != null && (typeof got.answer === 'string' || typeof got.answer === 'number')) {
+            return String(got.answer);
+        }
+        const parts = [];
+        Object.keys(got).forEach(function (k) {
+            const v = got[k];
+            if (v == null || typeof v === 'object') return;
+            const s = String(v).trim();
+            if (s) parts.push(s);
+        });
+        return parts.join(' ');
+    }
+
+    /** 縮寫替換時跟原字大小寫走：You'd → You would；you'll → you will。不是改成全小寫。 */
+    function casedSwap(match, replacement) {
+        const src = String(match || '');
+        const dest = String(replacement || '');
+        if (!src || !dest) return dest;
+        if (src.length > 1 && src === src.toUpperCase() && src !== src.toLowerCase()) {
+            return dest.toUpperCase();
+        }
+        const first = src.charAt(0);
+        if (first !== first.toLowerCase()) {
+            return dest.charAt(0).toUpperCase() + dest.slice(1);
+        }
+        return dest.toLowerCase();
     }
 
     function fieldAlias(row, key) {
@@ -98,6 +140,22 @@ window.QuizPaperBuilder = (function () {
         return '';
     }
 
+    function metaCacheStem(key) {
+        const raw = String(key || '');
+        const pipe = raw.lastIndexOf('|');
+        return (pipe >= 0 ? raw.slice(pipe + 1) : raw).replace(/\.meta\.json$/i, '').toUpperCase();
+    }
+
+    function metaLoadKey(secOrId) {
+        if (secOrId && typeof secOrId === 'object') {
+            const combo = String(secOrId.combination_id || '').trim();
+            const stem = String(secOrId.meta_file_name || secOrId.sheet_id || '')
+                .replace(/\.meta\.json$/i, '').toUpperCase();
+            return combo + '|' + stem;
+        }
+        return '|' + String(secOrId || '').replace(/\.meta\.json$/i, '').toUpperCase();
+    }
+
     function findPairedMetaRow(metaCache, sheetId, row) {
         const want = pairedSheetId(sheetId);
         if (!want || !metaCache) return null;
@@ -106,7 +164,7 @@ window.QuizPaperBuilder = (function () {
         if (isNaN(page) || isNaN(itemNo)) return null;
         const keys = Object.keys(metaCache);
         for (let i = 0; i < keys.length; i++) {
-            if (String(keys[i]).toUpperCase() !== want.toUpperCase()) continue;
+            if (metaCacheStem(keys[i]) !== want.toUpperCase()) continue;
             const rows = rowsFromMetaPack(metaCache[keys[i]]);
             const hit = rows.find(function (r) {
                 return toNum(r && r.page) === page && toNum(r && r.item_no) === itemNo;
@@ -166,7 +224,8 @@ window.QuizPaperBuilder = (function () {
      * 中央可接受答案白名單（2026-08-11 新增，見「錯題申訴」規劃）：常見英文縮寫等價形式，
      * 雙向都算對——寫 "I am" 或 "I'm" 都不該被判錯，不需要老師/助教一個個手動加
      * accepted_answers 或等學生申訴才補。每組 [完整形式, 縮寫形式]，皆為已 normalizeAnswer
-     * 過的小寫字串。之後如需擴充，直接在這個陣列加一組即可（尚未開放老師自行增補）。
+     * 過的字串（大小寫要跟學生／標準答案一致才算對；縮寫替換時跟原字大小寫走）。
+     * 之後如需擴充，直接在這個陣列加一組即可（尚未開放老師自行增補）。
      */
     const EQUIVALENCE_PAIRS = [
         ['i am', "i'm"], ['i will', "i'll"], ['i have', "i've"], ['i had', "i'd"], ['i would', "i'd"],
@@ -187,9 +246,9 @@ window.QuizPaperBuilder = (function () {
 
     /**
      * 對一個（已 normalizeAnswer 過的）字串，套用中央白名單雙向整詞替換，回傳所有算出來
-     * 的等價變體（不含輸入本身、去重）。用整字邊界 \b 避免誤傷（例如 "isn't" 不該影響
-     * "wasn't"），且只針對每組配對各替換一次、不做多組疊加排列組合——答案通常很短，
-     * 這樣已經夠涵蓋常見情境，也避免變體數量爆炸。
+     * 的等價變體（不含輸入本身、去重）。比對大小寫要一致；縮寫替換跟原字大小寫走。
+     * 用整字邊界 \b 避免誤傷（例如 "isn't" 不該影響 "wasn't"），且只針對每組配對各替換一次、
+     * 不做多組疊加排列組合——答案通常很短，這樣已經夠涵蓋常見情境，也避免變體數量爆炸。
      */
     function expandWithEquivalents(normalized) {
         const src = String(normalized || '');
@@ -198,16 +257,13 @@ window.QuizPaperBuilder = (function () {
         EQUIVALENCE_PAIRS.forEach(function (pair) {
             const full = pair[0];
             const short = pair[1];
-            const fullRe = new RegExp('\\b' + full.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
-            const shortRe = new RegExp('\\b' + short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['’]") + '\\b', 'g');
-            if (fullRe.test(src)) {
-                const v = src.replace(fullRe, short);
-                if (v !== src) variants[v] = true;
-            }
-            if (shortRe.test(src)) {
-                const v = src.replace(shortRe, full);
-                if (v !== src) variants[v] = true;
-            }
+            const esc = function (s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+            const fullRe = new RegExp('\\b' + esc(full) + '\\b', 'gi');
+            const shortRe = new RegExp('\\b' + esc(short).replace(/'/g, "['’]") + '\\b', 'gi');
+            const fromFull = src.replace(fullRe, function (m) { return casedSwap(m, short); });
+            if (fromFull !== src) variants[fromFull] = true;
+            const fromShort = src.replace(shortRe, function (m) { return casedSwap(m, full); });
+            if (fromShort !== src) variants[fromShort] = true;
         });
         delete variants[src];
         return Object.keys(variants);
@@ -219,7 +275,7 @@ window.QuizPaperBuilder = (function () {
      * 不影響對錯判定本身（判定是 normalizeAnswer 整串比對，不拆字）。以前用
      * `[^a-z0-9']+` 排除法分詞，會把 `/`、`-`、`(`、`)` 這些答案裡常見的合法符號也當成
      * 斷詞邊界切開，重組顯示時符號就消失了，讓老師誤以為系統連對錯都判斷錯了。
-     * 改成只依「空白」分詞，符號留在單字裡（跟 normalizeAnswer 一致，只做小寫／壓空白）。
+     * 改成只依「空白」分詞，符號留在單字裡（跟 normalizeAnswer 一致：壓空白、保留大小寫）。
      */
     function tokenizeWords(s) {
         const n = normalizeAnswer(s);
@@ -229,8 +285,8 @@ window.QuizPaperBuilder = (function () {
 
     /**
      * 💣 雷區（2026-08-13 老師回報「學生明明有打句號／大寫字，程式完全沒有如實記錄」）：
-     * 對錯判定／逐字對齊（alignTokens）本來就該用 normalizeAnswer 過的版本比對（小寫、
-     * 去掉句尾標點），不然大小寫或句尾標點不同就會誤判成拼錯；但顯示給師生看的「你的
+     * 對錯判定／逐字對齊（alignTokens）本來就該用 normalizeAnswer 過的版本比對（壓空白、
+     * 去掉句尾標點；大小寫要一致才算對），不然句尾標點不同就會誤判成拼錯；但顯示給師生看的「你的
      * 答案」必須「如實記錄」學生打的每一個字元——包括大小寫、句尾標點（. , ! ? 等）、
      * 學生自己打的引號樣式，一個都不能因為「拿去比對用」的正規化而被畫面上跟著吃掉。
      * 之前這裡誤把 normalizeAnswer 那套「去尾標點／轉直式引號」的正規化也複製過來，
@@ -511,12 +567,18 @@ window.QuizPaperBuilder = (function () {
         // 不連續頁／題（來自 range_spec pp. 1~2, 5）時優先用明確集合
         let pageSet = null;
         let itemSet = null;
-        if (rtype === 'page' && Array.isArray(section.pages) && section.pages.length) {
+            if (rtype === 'page' && Array.isArray(section.pages) && section.pages.length) {
             pageSet = {};
             section.pages.forEach(function (p) {
                 const n = Number(p);
                 if (!isNaN(n)) pageSet[n] = true;
             });
+            const overlap = Object.keys(pageSet).some(function (p) {
+                const n = Number(p);
+                return !isNaN(n) && n >= lo && n <= hi;
+            });
+            // 舊 pages 跟這一列起迄對不上＝另一套餐留下的，不准拿來篩
+            if (!overlap) pageSet = null;
         }
         if (rtype === 'qnum' && Array.isArray(section.items) && section.items.length) {
             itemSet = {};
@@ -581,17 +643,12 @@ window.QuizPaperBuilder = (function () {
      * 中央白名單 bake-in：產生線上卷當下，把「完整形式／縮寫」等價變體直接寫進
      * accepted_answers（而不是每次批改都動態展開），老師在「考試批改」畫面本來就能
      * 看到這些是白名單自動加入的（跟老師自己按「+ 新增可接受答案」加的長一樣，沒有
-     * 特殊標記——這是刻意的，維持既有 UI 不用另外分辨來源）。answerEn 開頭若是大寫，
-     * 變體也跟著首字大寫，避免全部變成小寫看起來不像正常英文。
+     * 特殊標記——這是刻意的，維持既有 UI 不用另外分辨來源）。縮寫變體跟原句大小寫走。
      */
     function equivalentAcceptedSeed(answerEn) {
         const norm = normalizeAnswer(answerEn);
         if (!norm) return [];
-        const variants = expandWithEquivalents(norm);
-        const wasCapitalized = /^[A-Z]/.test(String(answerEn || '').trim());
-        return variants.map(function (v) {
-            return (wasCapitalized && v) ? (v.charAt(0).toUpperCase() + v.slice(1)) : v;
-        });
+        return expandWithEquivalents(norm);
     }
 
     /**
@@ -744,6 +801,8 @@ window.QuizPaperBuilder = (function () {
             cells_answer: cellsAnswer,
             source: {
                 material_folder: folder,
+                combination_id: opts.combinationId || '',
+                meta_file_name: opts.metaFileName || '',
                 sheet_id: sheet,
                 vbk_name: vbkNameOf(row, sheet),
                 page: isNaN(page) ? null : page,
@@ -760,7 +819,7 @@ window.QuizPaperBuilder = (function () {
      * @param {object} args
      * @param {object} args.examJob
      * @param {object} args.layout  _layout.json 物件
-     * @param {function(sheetId):Promise<{rows:array, schemaId?:string, materialFolder?:string}>} args.loadSheetMeta
+     * @param {function(section):Promise<{rows:array, schemaId?:string, materialFolder?:string}>} args.loadSheetMeta
      * @returns {Promise<object>} quiz_paper
      */
     async function buildQuizPaper(args) {
@@ -782,12 +841,15 @@ window.QuizPaperBuilder = (function () {
 
         const jobSections = normalizeJobSections(examJob);
         if (!jobSections.length) throw new Error('exam_job 沒有段落');
+        // 段落洗牌＝整份卷全部打散。抽題仍照老師排的套餐／區塊順序；勾了才在抽完後整池打散。
+        // 不准只洗套餐卡片順序、也不准區塊成塊再對調（那樣鄰座仍看到同一串）。
         const shuffleSections = !!(examJob.options && examJob.options.shuffle_sections);
-        const orderedSections = shuffleSections ? shuffleInPlace(jobSections.slice()) : jobSections.slice();
+        const orderedSections = jobSections.slice();
         const sections = [];
         orderedSections.forEach(function (sec) {
             (sec && sec.segments ? sec.segments : []).forEach(function (seg) {
                 sections.push(Object.assign({}, seg, {
+                    combination_id: seg.combination_id || sec.combination_id || '',
                     _section_id: sec.id || '',
                     _section_shuffle: sec.shuffle !== false,
                     _section_appeal: sec.allow_answer_appeal !== false
@@ -801,8 +863,8 @@ window.QuizPaperBuilder = (function () {
         const notices = [];
 
         for (let pIdx = 0; pIdx < sections.length; pIdx++) {
-            const preloadId = String((sections[pIdx] || {}).sheet_id || '').trim().toUpperCase();
-            if (preloadId && !metaCache[preloadId]) metaCache[preloadId] = await loadSheetMeta(preloadId);
+            const preloadKey = metaLoadKey(sections[pIdx]);
+            if (preloadKey !== '|' && !metaCache[preloadKey]) metaCache[preloadKey] = await loadSheetMeta(sections[pIdx]);
         }
 
         for (let sIdx = 0; sIdx < sections.length; sIdx++) {
@@ -810,10 +872,11 @@ window.QuizPaperBuilder = (function () {
             const sheetId = String(sec.sheet_id || '').trim().toUpperCase();
             if (!sheetId) throw new Error('區段 ' + (sIdx + 1) + ' 缺少 sheet_id');
 
-            if (!metaCache[sheetId]) {
-                metaCache[sheetId] = await loadSheetMeta(sheetId);
+            const loadKey = metaLoadKey(sec);
+            if (!metaCache[loadKey]) {
+                metaCache[loadKey] = await loadSheetMeta(sec);
             }
-            const pack = metaCache[sheetId] || {};
+            const pack = metaCache[loadKey] || {};
             const rows = Array.isArray(pack.rows) ? pack.rows : [];
             const schemaId = pack.schemaId || '';
             const materialFolder = pack.materialFolder || layout.material_folder || '';
@@ -845,8 +908,12 @@ window.QuizPaperBuilder = (function () {
 
             let pool = filterRowsForSection(rows, sec);
             if (!pool.length) {
+                const pages = (window.MaterialSnapshot && typeof window.MaterialSnapshot.summarizeMetaPages === 'function')
+                    ? window.MaterialSnapshot.summarizeMetaPages(rows)
+                    : '';
                 throw new Error('活頁 ' + sheetId + ' 在範圍內沒有可用題（' +
-                    (sec.range_type || 'page') + ' ' + sec.start + '~' + sec.end + '）');
+                    (sec.range_type || 'page') + ' ' + sec.start + '~' + sec.end + '）'
+                    + (pages ? '。這份檔內頁碼是 ' + pages : '。這份檔有 ' + rows.length + ' 列但對不到這個範圍'));
             }
 
             // 必考題（include_nums）：從 pool 內挑出保證入選，其餘題數才隨機補。
@@ -894,6 +961,8 @@ window.QuizPaperBuilder = (function () {
                 const row2 = rowWithPairedWord(Object.assign({}, row, row.sheet_id ? {} : { sheet_id: sheetId }), findPairedMetaRow(metaCache, sheetId, row));
                 const item = buildItemFromRow(row2, {
                     sheetId: sheetId,
+                    combinationId: sec.combination_id || '',
+                    metaFileName: sec.meta_file_name || '',
                     materialFolder: materialFolder,
                     schemaId: schemaId,
                     fields: fields,
@@ -922,11 +991,15 @@ window.QuizPaperBuilder = (function () {
             }
             groupBy[sid].items.push(it);
         });
-        const orderedItems = [];
-        grouped.forEach(function (g) {
-            const part = g.shuffle ? shuffleInPlace(g.items.slice()) : g.items;
-            part.forEach(function (it) { orderedItems.push(it); });
-        });
+        let orderedItems = [];
+        if (shuffleSections) {
+            orderedItems = shuffleInPlace(picked.slice());
+        } else {
+            grouped.forEach(function (g) {
+                const part = g.shuffle ? shuffleInPlace(g.items.slice()) : g.items;
+                part.forEach(function (it) { orderedItems.push(it); });
+            });
+        }
         orderedItems.forEach(function (it, idx) {
             it.seq = idx + 1;
         });
@@ -937,6 +1010,9 @@ window.QuizPaperBuilder = (function () {
             spec_ref: {
                 job_id: examJob.job_id || '',
                 bank_id: examJob.bank_id || ''
+            },
+            options: {
+                shuffle_sections: shuffleSections
             },
             layout: {
                 section_templates: sections.map(function (sec) {
@@ -1091,6 +1167,48 @@ window.QuizPaperBuilder = (function () {
         return '<span style="display:inline-flex; flex-wrap:wrap; gap:8px; align-items:flex-start;">' + cells.join('') + '</span>';
     }
 
+    /**
+     * 老師批改用：同一組欄位上下對齊。
+     * 上排學生答案＝黑、錯處深藍；下排對照句＝黑、差異用 expectedDiffColor（正解紅／其他寫法藍）。
+     * 對得上的字上下都顯示（都黑），方便一眼掃完整句。學生端仍走 renderAnswerDiffHtml。
+     */
+    function renderAlignedPairHtml(ops, opts) {
+        opts = opts || {};
+        const gotOk = '#1E293B';
+        const gotBad = '#1E3A8A';
+        const expOk = '#1E293B';
+        const expBad = opts.expectedDiffColor || '#DC2626';
+        if (!ops || !ops.length || ops.every(function (op) { return op.type === 'del'; })) {
+            return '';
+        }
+        function wordHtml(text, color) {
+            if (text == null || String(text) === '') {
+                return '<span style="display:inline-block; min-width:1.2em; border-bottom:2px solid #CBD5E1;">&nbsp;</span>';
+            }
+            return '<span style="color:' + color + '; font-weight:800; white-space:nowrap;">' + escHtml(text) + '</span>';
+        }
+        const cols = ops.map(function (op) {
+            let top;
+            let bot;
+            if (op.type === 'match') {
+                top = wordHtml(op.got, gotOk);
+                bot = wordHtml(op.expected, expOk);
+            } else if (op.type === 'sub') {
+                top = wordHtml(op.got, gotBad);
+                bot = wordHtml(op.expected, expBad);
+            } else if (op.type === 'ins') {
+                top = wordHtml(op.got, gotBad);
+                bot = wordHtml('', expOk);
+            } else {
+                top = wordHtml('', gotOk);
+                bot = wordHtml(op.expected, expBad);
+            }
+            return '<span style="display:inline-flex; flex-direction:column; align-items:center; gap:3px; min-width:1.2em;">'
+                + top + bot + '</span>';
+        });
+        return '<span style="display:inline-flex; flex-wrap:wrap; gap:8px 12px; align-items:flex-start;">' + cols.join('') + '</span>';
+    }
+
     function renderSpellingPairsHtml(pairs) {
         if (!pairs || !pairs.length) return '';
         return '<div style="margin-top:6px; font-size:0.78rem; color:#9A3412; font-weight:700; line-height:1.5;">拼錯紀錄：'
@@ -1190,7 +1308,21 @@ window.QuizPaperBuilder = (function () {
     }
 
     function findMetaRowForItem(metaCache, sheetId, item) {
-        const pack = metaCache[sheetId] || {};
+        const want = String(sheetId || '').replace(/\.meta\.json$/i, '').toUpperCase();
+        const src = (item && item.source) || {};
+        const prefer = metaLoadKey({
+            combination_id: src.combination_id || '',
+            meta_file_name: src.meta_file_name || '',
+            sheet_id: sheetId
+        });
+        let pack = metaCache[prefer];
+        if (!pack) {
+            const keys = Object.keys(metaCache || {});
+            for (let i = 0; i < keys.length; i++) {
+                if (metaCacheStem(keys[i]) === want) { pack = metaCache[keys[i]]; break; }
+            }
+        }
+        pack = pack || {};
         const rows = Array.isArray(pack.rows) ? pack.rows : [];
         const hit = rows.find(function (r) { return rowMatchesItem(r, item); });
         if (!hit) return null;
@@ -1211,18 +1343,27 @@ window.QuizPaperBuilder = (function () {
         const metaCache = {};
         let updated = 0;
         let missing = 0;
-        const sheetIdsToLoad = [];
+        const secsToLoad = [];
+        const seenLoad = {};
         items.forEach(function (it) {
-            const sid = String((it.source && it.source.sheet_id) || '').trim().toUpperCase();
-            if (sid && sheetIdsToLoad.indexOf(sid) === -1) sheetIdsToLoad.push(sid);
-            const pair = pairedSheetId(sid);
-            if (pair && sheetIdsToLoad.indexOf(pair.toUpperCase()) === -1) sheetIdsToLoad.push(pair.toUpperCase());
+            const src = (it && it.source) || {};
+            const sec = {
+                combination_id: src.combination_id || '',
+                meta_file_name: src.meta_file_name || '',
+                sheet_id: String(src.sheet_id || '').trim()
+            };
+            const key = metaLoadKey(sec);
+            if (sec.sheet_id && !seenLoad[key]) {
+                seenLoad[key] = true;
+                secsToLoad.push(sec);
+            }
         });
-        for (let p = 0; p < sheetIdsToLoad.length; p++) {
+        for (let p = 0; p < secsToLoad.length; p++) {
             if (typeof loadSheetMeta !== 'function') break;
-            if (!metaCache[sheetIdsToLoad[p]]) {
-                try { metaCache[sheetIdsToLoad[p]] = await loadSheetMeta(sheetIdsToLoad[p]); }
-                catch (_preloadErr) { metaCache[sheetIdsToLoad[p]] = { rows: [] }; }
+            const key = metaLoadKey(secsToLoad[p]);
+            if (!metaCache[key]) {
+                try { metaCache[key] = await loadSheetMeta(secsToLoad[p]); }
+                catch (_preloadErr) { metaCache[key] = { rows: [] }; }
             }
         }
         for (let i = 0; i < items.length; i++) {
@@ -1230,7 +1371,16 @@ window.QuizPaperBuilder = (function () {
             const src = it.source || {};
             const sheetId = String(src.sheet_id || '').trim().toUpperCase();
             if (!sheetId || typeof loadSheetMeta !== 'function') { missing += 1; continue; }
-            if (!metaCache[sheetId]) metaCache[sheetId] = await loadSheetMeta(sheetId);
+            const loadKey = metaLoadKey({
+                combination_id: src.combination_id || '',
+                meta_file_name: src.meta_file_name || '',
+                sheet_id: sheetId
+            });
+            if (!metaCache[loadKey]) metaCache[loadKey] = await loadSheetMeta({
+                combination_id: src.combination_id || '',
+                meta_file_name: src.meta_file_name || '',
+                sheet_id: sheetId
+            });
             const found = findMetaRowForItem(metaCache, sheetId, it);
             if (!found) { missing += 1; continue; }
             const pack = found.pack || {};
@@ -1463,6 +1613,7 @@ window.QuizPaperBuilder = (function () {
         filterRowsForSection: filterRowsForSection,
         gradeAnswers: gradeAnswers,
         normalizeAnswer: normalizeAnswer,
+        plainQuizAnswer: plainQuizAnswer,
         tokenizeWords: tokenizeWords,
         alignTokens: alignTokens,
         analyzeAnswerDiff: analyzeAnswerDiff,
@@ -1471,6 +1622,7 @@ window.QuizPaperBuilder = (function () {
         FALLBACK_COL_MAP: FALLBACK_COL_MAP,
         escHtml: escHtml,
         renderAnswerDiffHtml: renderAnswerDiffHtml,
+        renderAlignedPairHtml: renderAlignedPairHtml,
         renderSpellingPairsHtml: renderSpellingPairsHtml,
         bestDiffForAnswer: bestDiffForAnswer,
         addAcceptedAnswer: addAcceptedAnswer,

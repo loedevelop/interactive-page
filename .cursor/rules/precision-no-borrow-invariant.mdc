@@ -1,0 +1,52 @@
+---
+description: 精準是第一條；對不到＝沒有；絕對禁止借用、推測
+alwaysApply: true
+---
+
+# 精準是第一條（precision）
+
+**Rule number one：精準。** 對得到才用。對不到＝沒有。絕對禁止借用。絕對禁止推測。
+
+這條高於「比較不會失敗」「剛好一筆也能用」「短檔當退路」「先讓畫面看起來有東西」。其他雷區都服從這條。
+
+## 症狀
+
+- 雲端只有 `A.meta.json`，tag 2／tag 3 該對 `A.sentence-….meta.json`，舊程式把唯一那份當成現檔再改名
+- 這顆 tag 沒有試卷範本，去隔壁套餐借名字
+- 找不到這筆就改套第一筆、預設、另一欄、另一檔
+
+## 不變量
+
+```
+要什麼就對什麼。完整檔名／完整 id／這一筆自己的欄。差一個字＝對不到。
+對不到＝沒有。看情況：出題／抽這份套餐自己的檔／套用公式要的那個名字。對不到＝沒有。
+改檔名下面列＝雲端實況。這本活頁在 Drive 上現在叫什麼就顯示什麼。不是拿 {活頁}.{範本} 去對拍、對不到就空白。
+禁止借用：隔壁套餐、隔壁活頁、隔壁欄、唯一那份檔、短檔、第一筆、預設。
+禁止推測：剛好一筆、看起來像、前綴相同、活頁字母相同、來源是 Excel 所以短檔也算出題。
+老師已配好的＝只執行該筆。沒配＝不管。
+```
+
+## 禁止
+
+```javascript
+// ❌ 對不到就抓別的檔
+if (hits.length === 1) return hits[0];
+if (!allowShort) return '';
+return pickUniqueBySheetKey(...); // 剛好一筆
+return profiles[0];
+quizAnswer || answer_combine_note;
+```
+
+## 正確
+
+```javascript
+// ✅ 只認這一筆該有的那個名字。對不到回空。
+const want = stem + '.' + thisTemplate + '.meta.json';
+return driveNames.find((n) => n.toUpperCase() === want.toUpperCase()) || '';
+```
+
+## 改動前自問
+
+1. 對不到時，程式會不會去抓別的檔／欄／套餐／第一筆？
+2. 有沒有「剛好一筆」「短檔也算」「看起來像」？
+任一有 → 停。精準是第一條。

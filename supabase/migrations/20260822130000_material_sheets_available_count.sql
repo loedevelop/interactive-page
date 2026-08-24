@@ -5,4 +5,4 @@ ALTER TABLE public.material_sheets
   ADD COLUMN IF NOT EXISTS available_count integer;
 
 COMMENT ON COLUMN public.material_sheets.available_count IS
-  '這本 meta 整本列數（產生上傳時寫入）。沒再上傳過的舊列可為空。';
+  '這本 meta 整本列數。產生上傳時寫入；舊列進老師頁讀現有 .meta.json 最後 item_no 補齊。';

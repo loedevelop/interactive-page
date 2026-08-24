@@ -563,25 +563,35 @@ window.BuilderStore = (() => {
                 }
 
                 if (t.type === 'exam' && !(opts && opts.skipExam)) {
-                    // 考試標題：只有空白才繼承同層錄音標題。有字＝手改，存檔不得用細節覆寫。
-                    if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
-                        const examRange = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
-                        const titlePlain = titleEl
-                            ? String(titleEl.textContent || '').trim()
-                            : String(t.title || '').replace(/<[^>]*>/g, '').trim();
-                        if (!t.raw_data) t.raw_data = {};
-                        if (!titlePlain && examRange) {
-                            t.title = examRange;
-                            t.raw_data.title_auto_from_range = true;
-                            if (titleEl) {
-                                titleEl.textContent = examRange;
-                                titleEl.setAttribute('data-title-auto', '1');
-                                titleEl.setAttribute('data-title-from-range', examRange);
-                            }
-                        } else if (titlePlain) {
-                            t.raw_data.title_auto_from_range = false;
-                            if (titleEl) titleEl.setAttribute('data-title-auto', '0');
+                    // 考試標題：這份考試自己的區塊＋起迄（沒有才退回同層錄音）。自動旗標跟錄音同一把。
+                    const examRange = (window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function')
+                        ? (window.FeatureExamJob.getExamRangeLabel(pathStr, t) || '')
+                        : ((window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function')
+                            ? (window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '')
+                            : '');
+                    const titlePlain = titleEl
+                        ? String(titleEl.textContent || '').trim()
+                        : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                    if (!t.raw_data) t.raw_data = {};
+                    const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
+                    const prevFrom = titleEl
+                        ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
+                        : '';
+                    const wasAuto = t.raw_data.title_auto_from_range === true;
+                    const shouldAuto = !titlePlain || autoFlag === '1' || wasAuto
+                        || (prevFrom && titlePlain === prevFrom);
+                    if (shouldAuto && examRange) {
+                        t.title = examRange;
+                        t.raw_data.title_auto_from_range = true;
+                        t.raw_data.exam_title = examRange;
+                        if (titleEl) {
+                            titleEl.textContent = examRange;
+                            titleEl.setAttribute('data-title-auto', '1');
+                            titleEl.setAttribute('data-title-from-range', examRange);
                         }
+                    } else if (titlePlain) {
+                        t.raw_data.title_auto_from_range = false;
+                        if (titleEl) titleEl.setAttribute('data-title-auto', '0');
                     }
                     if (window.FeatureExamJob && typeof window.FeatureExamJob.syncInlineEditor === 'function') {
                         window.FeatureExamJob.syncInlineEditor(pathStr, t);

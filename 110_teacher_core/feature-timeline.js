@@ -971,16 +971,10 @@ window.FeatureTimeline = (() => {
         const titleEl = document.getElementById('node-title-' + pathStr);
         if (!titleEl || !rangeText) return;
         const current = String(titleEl.textContent || '').trim();
-        const node = getTaskNodeByPathStr(pathStr);
-        // 考試標題：只有空白才能繼承。有字＝老師手改，禁止用下面細節／範圍覆寫。
-        if (node && node.type === 'exam') {
-            if (current) return;
-        } else {
-            const autoFlag = titleEl.getAttribute('data-title-auto');
-            const prevFrom = String(titleEl.getAttribute('data-title-from-range') || '').trim();
-            const shouldAuto = !current || autoFlag === '1' || (prevFrom && current === prevFrom);
-            if (!shouldAuto) return;
-        }
+        const autoFlag = titleEl.getAttribute('data-title-auto');
+        const prevFrom = String(titleEl.getAttribute('data-title-from-range') || '').trim();
+        const shouldAuto = !current || autoFlag === '1' || (prevFrom && current === prevFrom);
+        if (!shouldAuto) return;
         titleEl.textContent = rangeText;
         titleEl.setAttribute('data-title-auto', '1');
         titleEl.setAttribute('data-title-from-range', rangeText);
@@ -1077,9 +1071,12 @@ window.FeatureTimeline = (() => {
         if (rangeEl) rangeText = String(rangeEl.value || '').trim();
         if (!rangeText) {
             const node = getTaskNodeByPathStr(pathStr);
-            if (node && node.type === 'exam' && window.FeatureExamJob
-                && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
-                rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+            if (node && node.type === 'exam' && window.FeatureExamJob) {
+                if (typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
+                    rangeText = window.FeatureExamJob.getExamRangeLabel(pathStr, node) || '';
+                } else if (typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+                    rangeText = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+                }
             }
         }
         if (rangeText) applyInheritedTitleFromRange(pathStr, rangeText);
@@ -1185,7 +1182,7 @@ window.FeatureTimeline = (() => {
                     || (blockEl && blockEl.querySelector('.range-pack-combo'));
                 const comboId = comboEl ? String(comboEl.value || '').trim() : '';
                 const opt = comboEl && comboEl.options[comboEl.selectedIndex];
-                const comboLabel = (comboId && opt) ? String(opt.text || '').trim() : '';
+                const comboLabel = (comboId && comboId !== '__manual__' && opt) ? String(opt.text || '').trim() : '';
                 const rowEls = blockEl.querySelectorAll('.range-pack-row');
                 if (rowEls.length) {
                     Array.prototype.forEach.call(rowEls, function (rowEl) {
@@ -1196,9 +1193,14 @@ window.FeatureTimeline = (() => {
                             || (rowEl && rowEl.querySelector('select'));
                         const startEl = idx != null ? document.getElementById('range-pack-start-' + pathStr + '-' + idx) : null;
                         const endEl = idx != null ? document.getElementById('range-pack-end-' + pathStr + '-' + idx) : null;
+                        const manualEl = (idx != null ? document.getElementById('range-pack-manual-' + pathStr + '-' + idx) : null)
+                            || (rowEl && rowEl.querySelector('.range-pack-manual'));
+                        const rowLabel = (comboId === '__manual__' && manualEl)
+                            ? String(manualEl.value || '').trim()
+                            : comboLabel;
                         rows.push({
                             comboId: comboId,
-                            comboLabel: comboLabel,
+                            comboLabel: rowLabel,
                             metaFile: sheetEl ? String(sheetEl.value || '').trim() : '',
                             rangeType: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
                             start: startEl ? String(startEl.value || '').trim() : '',
@@ -1295,11 +1297,22 @@ window.FeatureTimeline = (() => {
         return asMetaFileName(want);
     }
 
+    function comboIsGrouped(combo) {
+        return !!(combo && combo.isGroup === true);
+    }
+
     function expandPackRowsForCombo(classId, combo, prevRows) {
         if (!combo) {
             return [{ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }];
         }
-        const files = listPackMetaFiles(classId, combo);
+        const ownSheets = Array.isArray(combo.ownSheets) ? combo.ownSheets : [];
+        const files = ownSheets.map(function (s) {
+            const meta = String((s && s.meta) || '').trim();
+            if (meta) return /\.meta\.json$/i.test(meta) ? meta : (meta + '.meta.json');
+            const stem = String((s && s.stem) || '').trim();
+            if (!stem) return '';
+            return /\.meta\.json$/i.test(stem) ? stem : (stem + '.meta.json');
+        }).filter(Boolean);
         const prev = Array.isArray(prevRows) ? prevRows : [];
         function prevFor(file) {
             const want = String(file || '').replace(/\.meta\.json$/i, '').toUpperCase();
@@ -1307,27 +1320,54 @@ window.FeatureTimeline = (() => {
                 return String((r && (r.meta_file || r.metaFile)) || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
             }) || null;
         }
-        if (!files.length) {
-            return [{
-                combo_id: combo.id,
-                combo_label: String(combo.label || '').trim(),
-                meta_file: '',
-                range_type: 'page',
-                start: '',
-                end: ''
-            }];
-        }
-        return files.map(function (file) {
-            const hit = prevFor(file);
+        function emptyPackRow(metaFile) {
             return {
                 combo_id: combo.id,
                 combo_label: String(combo.label || '').trim(),
-                meta_file: file,
+                meta_file: metaFile || '',
+                range_type: 'page',
+                start: '',
+                end: ''
+            };
+        }
+        if (comboIsGrouped(combo)) {
+            const ownU = {};
+            files.forEach(function (f) {
+                ownU[String(f || '').replace(/\.meta\.json$/i, '').toUpperCase()] = true;
+            });
+            const kept = prev.filter(function (r) {
+                const k = String((r && (r.meta_file || r.metaFile)) || '').replace(/\.meta\.json$/i, '').toUpperCase();
+                if (!k) return true;
+                return !!ownU[k];
+            }).map(function (r) {
+                return {
+                    combo_id: combo.id,
+                    combo_label: String(combo.label || '').trim(),
+                    meta_file: String((r && (r.meta_file || r.metaFile)) || '').trim(),
+                    range_type: (r && (r.range_type || r.rangeType) === 'qnum') ? 'qnum' : 'page',
+                    start: r ? String(r.start || '').trim() : '',
+                    end: r ? String(r.end || '').trim() : ''
+                };
+            });
+            if (kept.length === files.length && files.length > 1
+                && kept.every(function (r) { return !!String(r.meta_file || '').trim(); })) {
+                return [emptyPackRow('')];
+            }
+            if (kept.length) return kept;
+            return [emptyPackRow(files.length === 1 ? files[0] : '')];
+        }
+        if (files.length === 1) {
+            const hit = prevFor(files[0]) || prev[0] || null;
+            return [{
+                combo_id: combo.id,
+                combo_label: String(combo.label || '').trim(),
+                meta_file: files[0],
                 range_type: (hit && (hit.range_type || hit.rangeType) === 'qnum') ? 'qnum' : 'page',
                 start: hit ? String(hit.start || '').trim() : '',
                 end: hit ? String(hit.end || '').trim() : ''
-            };
-        });
+            }];
+        }
+        return [emptyPackRow('')];
     }
 
     function applyRangePackToAudio(audioTask, pack) {
@@ -1815,9 +1855,22 @@ window.FeatureTimeline = (() => {
         const bi = Number(blockIdx);
         const block = blocks[bi];
         if (!block) return;
-        const combo = resolvePackCombo(classId, block.comboId);
-        const prev = normalizePackRows(group.raw_data);
-        const expanded = expandPackRowsForCombo(classId, combo, prev);
+        const comboId = String(block.comboId || '').trim();
+        let expanded;
+        if (comboId === '__manual__') {
+            const keep = (block.rows && block.rows[0]) || {};
+            expanded = [{
+                combo_id: '__manual__',
+                combo_label: String(keep.comboLabel || keep.combo_label || '').trim(),
+                meta_file: '',
+                range_type: (keep.rangeType || keep.range_type) === 'qnum' ? 'qnum' : 'page',
+                start: String(keep.start || '').trim(),
+                end: String(keep.end || '').trim()
+            }];
+        } else {
+            const combo = resolvePackCombo(classId, comboId);
+            expanded = expandPackRowsForCombo(classId, combo, block.rows || []);
+        }
         const next = [];
         blocks.forEach(function (b, i) {
             if (i === bi) {
@@ -1953,7 +2006,11 @@ window.FeatureTimeline = (() => {
         for (let i = 0; i < (list || []).length; i++) {
             const t = list[i];
             if (!t || t.type !== 'exam') continue;
-            applyInheritedTitleFromRange(base.concat([i]).join('-'), rangeText);
+            const examPath = base.concat([i]).join('-');
+            const own = (window.FeatureExamJob && typeof window.FeatureExamJob.buildExamRangeLabelFromTask === 'function')
+                ? window.FeatureExamJob.buildExamRangeLabelFromTask(t)
+                : '';
+            applyInheritedTitleFromRange(examPath, own || rangeText);
         }
     }
 
@@ -3636,6 +3693,7 @@ window.FeatureTimeline = (() => {
         },
 
         onNodeTitleInput: onNodeTitleInput,
+        applyInheritedTitleFromRange: applyInheritedTitleFromRange,
         onGroupTitleInput: onGroupTitleInput,
         parentRangeGroupOf: parentRangeGroupOf,
         parentRangeGroupPathOf: parentRangeGroupPathOf,

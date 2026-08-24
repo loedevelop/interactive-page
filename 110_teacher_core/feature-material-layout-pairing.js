@@ -52,7 +52,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     let _excelRawData = null;
     let _excelFileName = '';
     let _excelMaterialFolder = '';
-    /** 雲端來源時：空＝整個資料夾；__pick__＝自選活頁複選；其餘＝點名的 .meta.json */
+    /** 雲端來源時：空＝整個資料夾；__pick__＝自選活頁（下面勾選複選）。下拉不准再列單一 .meta.json。 */
     let _excelDriveFileName = '';
     const DRIVE_PICK_SHEETS = '__pick__';
     /** local＝本機 Excel（圖一：選檔＋目的資料夾）；drive＝雲端教材資料夾／檔案下拉 */
@@ -353,6 +353,24 @@ window.FeatureMaterialLayoutPairing = (function () {
         const parsed = parseDriveFolderFileValue(raw);
         _excelMaterialFolder = parsed.folder;
         _excelDriveFileName = parsed.fileName;
+        coerceNamedDriveFileToPick();
+    }
+
+    /**
+     * 舊下拉曾把每個 .meta.json 當單選項。現在複選只走「自選活頁」＋勾選格。
+     * 若狀態還停在某一檔，改成自選活頁並勾那本，不准再當單選檔。
+     */
+    function coerceNamedDriveFileToPick() {
+        if (!_excelDriveFileName || _excelDriveFileName === DRIVE_PICK_SHEETS) return;
+        const leftover = _excelDriveFileName;
+        _excelDriveFileName = DRIVE_PICK_SHEETS;
+        const stem = stemFromMetaFileName(leftover);
+        if (!stem) return;
+        ensureExcelSegments().forEach(function (seg) {
+            if (!seg.checkedSheets) seg.checkedSheets = {};
+            const already = Object.keys(seg.checkedSheets).some(function (k) { return seg.checkedSheets[k]; });
+            if (!already) seg.checkedSheets[stem] = true;
+        });
     }
 
     function isDriveWholeFolder() {
@@ -410,8 +428,12 @@ window.FeatureMaterialLayoutPairing = (function () {
                 order.push(f);
             }
         });
+        const parsedCur = parseDriveFolderFileValue(cur);
+        if (parsedCur.folder && parsedCur.fileName && parsedCur.fileName !== DRIVE_PICK_SHEETS) {
+            cur = parsedCur.folder + '::' + DRIVE_PICK_SHEETS;
+        }
         let matched = !cur;
-        let html = '<option value="">— 選雲端教材資料夾／檔案 —</option>';
+        let html = '<option value="">— 選雲端教材資料夾 —</option>';
         order.forEach(function (folder) {
             const seen = {};
             const files = (byFolder[folder] || []).filter(function (n) {
@@ -427,12 +449,6 @@ window.FeatureMaterialLayoutPairing = (function () {
             html += '<option value="' + esc(folder) + '"' + (folderSelected ? ' selected' : '') + '>整個資料夾（'
                 + (files.length ? (files.length + ' 個 meta') : '尚無 .meta.json') + '）</option>';
             html += '<option value="' + esc(pickVal) + '"' + (pickSelected ? ' selected' : '') + '>自選活頁（可複選）</option>';
-            files.forEach(function (fn) {
-                const val = folder + '::' + fn;
-                const isCur = cur === val;
-                if (isCur) matched = true;
-                html += '<option value="' + esc(val) + '"' + (isCur ? ' selected' : '') + '>📄 ' + esc(fn) + '</option>';
-            });
             html += '</optgroup>';
         });
         if (cur && cur !== '__manual__' && !matched) {
@@ -863,18 +879,19 @@ window.FeatureMaterialLayoutPairing = (function () {
                     return hit.materialSheetId;
                 }
             }
-            const folderIdS = String(folderId || '');
-            const stemU = String(stem || '').trim().toUpperCase();
-            const sameStem = beforeSheets.filter(function (s) {
-                return String(s.material_folder_id || '') === folderIdS
-                    && String(s.sheet_stem || '').trim().toUpperCase() === stemU;
-            });
-            if (sameStem.length === 1) return sameStem[0].id;
             return null;
         }
 
         const templates = await fetchFieldTemplates(false);
         const touchedSheetIds = {};
+
+        function liveStemForWrite(stem, templateName) {
+            const FN = window.MaterialFileNames;
+            if (FN && typeof FN.liveSheetName === 'function') {
+                return FN.liveSheetName(stem, templateName) || String(stem || '').trim();
+            }
+            return String(stem || '').trim();
+        }
 
         for (const d of desired) {
             const rootKind = d.root_kind === 'class' ? 'class' : 'teacher';
@@ -898,15 +915,19 @@ window.FeatureMaterialLayoutPairing = (function () {
                 if (byName) extractionTemplateId = byName.id;
             }
             const legacyTemplateName = extractionTemplateId ? null : (String(d.template_name || '').trim() || null);
+            const tplName = (templates.find(function (t) { return String(t.id) === String(extractionTemplateId || ''); }) || {}).name
+                || String(d.template_name || '').trim();
 
             for (const stem of sheetStems) {
-                const upperStem = stem.toUpperCase();
-                const existingId = existingSheetIdForStem(materialFolderId, stem, extractionTemplateId);
+                const liveStem = liveStemForWrite(stem, tplName) || stem;
+                const upperStem = liveStem.toUpperCase();
+                const existingId = existingSheetIdForStem(materialFolderId, liveStem, extractionTemplateId)
+                    || existingSheetIdForStem(materialFolderId, stem, extractionTemplateId);
                 const payload = {
                     material_folder_id: materialFolderId,
                     extraction_template_id: extractionTemplateId,
                     legacy_template_name: legacyTemplateName,
-                    sheet_stem: stem,
+                    sheet_stem: liveStem,
                     source_kind: d.source_kind || null,
                     source_file_name: d.source_file_name || null,
                     row_start: d.row_start || null,
@@ -919,21 +940,41 @@ window.FeatureMaterialLayoutPairing = (function () {
                     const { error } = await window.supabaseClient.from('material_sheets').update(payload).eq('id', existingId);
                     if (error) throw error;
                     if (before && String(before.sheet_stem || '').trim().toUpperCase() !== upperStem
-                        && window.MaterialNameMap && typeof window.MaterialNameMap.recordSheetRename === 'function') {
-                        await window.MaterialNameMap.recordSheetRename({
-                            folderId: materialFolderId,
-                            sheetId: existingId,
-                            oldStem: before.sheet_stem,
-                            newStem: stem
-                        });
+                        && window.MaterialNameMap) {
+                        const FN = window.MaterialFileNames;
+                        const onlyPoison = FN && typeof FN.isPoisonedLiveAlias === 'function'
+                            && FN.isPoisonedLiveAlias(before.sheet_stem, liveStem, tplName);
+                        if (onlyPoison && typeof window.MaterialNameMap.recordAlias === 'function') {
+                            await window.MaterialNameMap.recordAlias({
+                                kind: 'sheet_stem',
+                                alias: before.sheet_stem,
+                                currentLabel: liveStem,
+                                materialFolderId: materialFolderId,
+                                materialSheetId: existingId
+                            });
+                            if (typeof window.MaterialNameMap.unpoisonSheetLabels === 'function') {
+                                await window.MaterialNameMap.unpoisonSheetLabels({
+                                    sheetId: existingId,
+                                    live: liveStem,
+                                    templateName: tplName
+                                });
+                            }
+                        } else if (typeof window.MaterialNameMap.recordSheetRename === 'function') {
+                            await window.MaterialNameMap.recordSheetRename({
+                                folderId: materialFolderId,
+                                sheetId: existingId,
+                                oldStem: before.sheet_stem,
+                                newStem: liveStem
+                            });
+                        }
                     }
-                    existingSheetsByFolder[materialFolderId][sheetLookupKey(stem, extractionTemplateId)] = existingId;
+                    existingSheetsByFolder[materialFolderId][sheetLookupKey(liveStem, extractionTemplateId)] = existingId;
                     touchedSheetIds[String(existingId)] = true;
                 } else {
                     const { data: inserted, error } = await window.supabaseClient
                         .from('material_sheets').insert(payload).select('id').single();
                     if (error) throw error;
-                    existingSheetsByFolder[materialFolderId][sheetLookupKey(stem, extractionTemplateId)] = inserted.id;
+                    existingSheetsByFolder[materialFolderId][sheetLookupKey(liveStem, extractionTemplateId)] = inserted.id;
                     touchedSheetIds[String(inserted.id)] = true;
                 }
             }
@@ -1715,9 +1756,10 @@ window.FeatureMaterialLayoutPairing = (function () {
         const body = document.getElementById('mlp-excel-source-body');
         if (!body) return;
         if (isDriveSource()) {
+            coerceNamedDriveFileToPick();
             body.innerHTML = `
                 <div style="background:#FAFAFA; border:2px solid #E2E8F0; border-radius:10px; padding:14px; box-sizing:border-box;">
-                    <label style="font-size:0.78rem; font-weight:800; color:#475569; display:block;">☁️ 選擇雲端教材資料夾／檔案
+                    <label style="font-size:0.78rem; font-weight:800; color:#475569; display:block;">☁️ 選擇雲端教材資料夾
                         <select id="mlp-excel-folder-select" class="form-control" style="width:100%; padding:6px; margin-top:2px;">${buildDriveFolderFileOptionsHtml(currentDriveFolderFileValue())}</select>
                         <input type="text" id="mlp-excel-folder-manual" class="form-control" value="${esc(_excelMaterialFolder)}" placeholder="手動輸入資料夾名稱" style="width:100%; padding:6px; margin-top:2px; display:none;">
                         <div id="mlp-excel-folder-status" style="font-size:0.72rem; color:#94A3B8; min-height:1.1em; margin-top:2px;"></div>
@@ -2553,7 +2595,8 @@ window.FeatureMaterialLayoutPairing = (function () {
                 templateId: matchedTpl.id,
                 includeExam: includeExam,
                 sheetStems: (appRecord && appRecord.sheet_ids) || [],
-                isGroup: !!(appRecord && appRecord.is_group)
+                isGroup: !!(appRecord && appRecord.is_group),
+                sourceFile: (appRecord && appRecord.source_file_name) || ''
             });
         }
         if (seg) seg.quickApplyRole = defaultApplyRole(matchedTpl);
@@ -2647,8 +2690,12 @@ window.FeatureMaterialLayoutPairing = (function () {
                     bindQuickApplyResultRowEvents(seg, newRow);
                     highlightNewRow(newRow);
                     handleGeneratePreview(newRow, newApp.id);
-                    if (msgEl) { msgEl.style.color = '#0F766E'; msgEl.textContent = '✅ 已從現有 json 產生預覽。確認後上傳（新檔名含這次擷取範本，不會蓋掉舊擷取檔）'; }
-                    window.showFlash && window.showFlash('已從現有 json 套用「' + templateName + '」，請確認下方預覽後上傳', 'success');
+                    if (msgEl) {
+                        msgEl.style.color = '#0F766E';
+                        msgEl.textContent = '✅ 已從現有 json 算出預覽。新檔名＝活頁名.' + templateName
+                            + '.meta.json（跟舊擷取檔不同名，不會蓋掉）。請到下方按「☁️ 確認上傳到 Drive」才會寫進資料夾。';
+                    }
+                    window.showFlash && window.showFlash('已從現有 json 套用「' + templateName + '」。請到下方預覽後按「確認上傳到 Drive」', 'success');
                 }).catch(function (readErr) {
                     console.error('[FeatureMaterialLayoutPairing] 從現有 json 產檔失敗', readErr);
                     if (msgEl) { msgEl.style.color = '#EF4444'; msgEl.textContent = '❌ ' + (readErr.message || readErr); }
@@ -3900,6 +3947,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         return _appRowState[appId];
     }
 
+    /** 雲端現有 meta.json 就是內容。從現有 json 產檔＝讀這些列，不是只有檔名清單。 */
+    function isDriveJsonGenerate(state) {
+        return !!(state && (state.fromDriveMeta
+            || (state.existingMetaBySheet && Object.keys(state.existingMetaBySheet).length)));
+    }
+
     /** 活頁複選格線（歸屬 Drive 資料夾／本機 Excel 通用），跟 Excel 設計小工具的活頁勾選同一套視覺語言 */
     function renderSheetCheckboxGridHtml(names, checkedMap) {
         if (!names.length) return '';
@@ -4470,10 +4523,10 @@ window.FeatureMaterialLayoutPairing = (function () {
      * （檔名雖然還是不會記錄原始 Excel 檔案名稱，但至少能看出活頁＋擷取範本的組合）。
      * templateName 留空（例如還沒選擷取範本時）就退回舊行為，只用活頁名，不留多餘的句點。
      */
-    function currentSheetAlias(stem, sheetId) {
+    function currentSheetAlias(stem, sheetId, templateName) {
         const FN = window.MaterialFileNames;
         return FN && typeof FN.currentAlias === 'function'
-            ? FN.currentAlias(stem, sheetId)
+            ? FN.currentAlias(stem, sheetId, templateName)
             : String(stem || '').trim();
     }
 
@@ -4493,7 +4546,14 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     /** 老師手改過的檔名／別稱保留；沒改過才用同一套公式重算。 */
     function resolveOutputNames(sheetName, templateName, existing) {
-        const alias = (existing && existing.alias) || currentSheetAlias(sheetName, existing && (existing.id || existing.sheetId || existing.sheet_id));
+        const FN = window.MaterialFileNames;
+        const live = (FN && typeof FN.liveSheetName === 'function')
+            ? (FN.liveSheetName(sheetName, templateName) || String(sheetName || '').trim())
+            : String(sheetName || '').trim();
+        let alias = (existing && existing.alias) || currentSheetAlias(live, existing && (existing.id || existing.sheetId || existing.sheet_id), templateName);
+        if (FN && typeof FN.isPoisonedLiveAlias === 'function' && FN.isPoisonedLiveAlias(alias, live, templateName)) {
+            alias = live;
+        }
         const next = defaultOutputNames(sheetName, templateName, alias);
         const sheetDefault = defaultOutputNames(sheetName, templateName, sheetName);
         const existingMeta = existing && existing.outputMeta;
@@ -4949,10 +5009,10 @@ window.FeatureMaterialLayoutPairing = (function () {
 
     function renderAppGenAreaHtml(appId, templateName) {
         const state = ensureAppRowState(appId);
-        if (state.sourceKind !== 'local') {
-            return '<div style="color:#78716C; font-size:0.78rem;">目前只支援對「🖥️ 改用本機 Excel 掃描活頁名稱」模式產生檔案——瀏覽器需要讀到真正的表格內容才能算出 meta/script，上面「☁️ 用歸屬資料夾的活頁」只是 Drive 上既有檔名清單，沒有原始儲存格資料可讀。</div>';
+        if (state.sourceKind !== 'local' && !isDriveJsonGenerate(state)) {
+            return '<div style="color:#334155; font-size:0.78rem; font-weight:700;">雲端 meta.json 就是內容。請按上面「🚀 產生 meta/script」從現有 json 產檔。只有要從 Excel 重算欄位，才改用本機 Excel。</div>';
         }
-        if (!state.localRawData) {
+        if (state.sourceKind === 'local' && !state.localRawData) {
             return '<div style="color:#78716C; font-size:0.78rem;">請先在上面「📄 活頁來源」選擇本機 Excel 檔案。</div>';
         }
         const sheetNames = checkedSheetNames(state);
@@ -5011,7 +5071,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         if (FN && typeof FN.groupRoleTagItems === 'function' && typeof FN.roleTagHtmlFromGroup === 'function') {
             const tagItems = (sheetNames || []).map(function (n) {
                 return {
-                    name: n,
+                    name: (FN && typeof FN.liveSheetName === 'function') ? (FN.liveSheetName(n, tplName) || n) : n,
                     extract: showExtract ? tplName : '',
                     exam: showExam ? tplName : '',
                     isGroup: state.isGroup === true
@@ -5085,7 +5145,7 @@ window.FeatureMaterialLayoutPairing = (function () {
      */
     function autoGeneratePreviewIfReady(rowEl, appId) {
         const state = ensureAppRowState(appId);
-        if (state.sourceKind !== 'local' || !state.localRawData) return;
+        if (!isDriveJsonGenerate(state) && (state.sourceKind !== 'local' || !state.localRawData)) return;
         const sheetNames = checkedSheetNames(state);
         if (!sheetNames.length) return;
         const template = getCurrentAppTemplate(rowEl);
@@ -5756,7 +5816,11 @@ window.FeatureMaterialLayoutPairing = (function () {
 
                 <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:10px;">
                     <div style="font-size:0.76rem; font-weight:800; color:#15803D; margin-bottom:4px;">🚀 產生 meta / script 並上傳到 Drive</div>
-                    <div style="font-size:0.72rem; color:#4D7C0F; margin-bottom:6px;">直接讀本機 Excel 勾選的活頁，依上面的擷取範本（欄位對應＋角色）＋行數起迄算出 meta.json／script.txt，確認無誤後上傳到「📁 歸屬檔案」的教材資料夾——取代舊的終端機 publish_local。</div>
+                    <div style="font-size:0.72rem; color:#4D7C0F; margin-bottom:6px;">${
+                        (isDriveJsonGenerate(ensureAppRowState(app.id, app)) || app.source_kind === 'drive')
+                            ? '來源是雲端現有 meta.json（這就是內容）。依這次擷取範本重算後，新檔名＝活頁名.這次擷取範本.meta.json，跟舊擷取檔不同名、不會蓋掉。確認無誤後按「☁️ 確認上傳到 Drive」才會寫進資料夾。'
+                            : '直接讀本機 Excel 勾選的活頁，依擷取範本＋行數起迄算出 meta.json／script.txt，確認無誤後上傳到「📁 歸屬檔案」的教材資料夾。'
+                    }</div>
                     <div class="mlp-app-gen-area">${renderAppGenAreaHtml(app.id, app.template_name || '')}</div>
                 </div>
             </div>
@@ -6528,8 +6592,8 @@ window.FeatureMaterialLayoutPairing = (function () {
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
                 <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">🧾 套用／設計範本</h3>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0;">
-                    <b>本機檔案</b>＝擷取 Excel 欄位、產生 meta/script。<b>雲端教材</b>＝套用或新設計<b>試卷範本</b>（不是擷取）。
-                    雲端選「整個資料夾」就全部 meta 納入、不用再勾；選單一檔案會自動勾該檔，其餘可複選。
+                    <b>本機檔案</b>＝從 Excel 儲存格擷取、產生 meta/script。<b>雲端教材</b>＝現有 meta.json 就是內容：只套試卷不產檔；當擷取／雙用就從現有 json 產檔。
+                    雲端選「整個資料夾」就全部 meta 納入、不用再勾；要只套其中幾本，選「自選活頁」再勾（可複選）。
                 </p>
                 <div id="mlp-excel-source-wrap"></div>
                 <div id="mlp-excel-block" style="margin-top:10px;"></div>

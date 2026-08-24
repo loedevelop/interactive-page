@@ -103,15 +103,20 @@ window.LayoutFieldsEval = (function () {
         ARTICLE: ['pre']
     };
 
+    /** 資料項名比對：大小寫不拘；- 與 _ 同一名字（fill-in-the-blank-question = fill_in_the_blank_question）。不是換欄。 */
+    function foldKey(s) {
+        return String(s || '').trim().replace(/-/g, '_').toUpperCase();
+    }
+
     function lookupDirect(row, name) {
         if (!row || !name) return '';
-        const upper = String(name).toUpperCase();
+        const want = foldKey(name);
+        if (!want) return '';
         const rowKeys = Object.keys(row);
         for (let i = 0; i < rowKeys.length; i++) {
-            if (rowKeys[i].toUpperCase() === upper) {
-                const v = row[rowKeys[i]];
-                if (v != null && String(v).trim() !== '') return v;
-            }
+            if (foldKey(rowKeys[i]) !== want) continue;
+            const v = row[rowKeys[i]];
+            if (v != null && String(v).trim() !== '') return v;
         }
         return '';
     }
@@ -120,21 +125,30 @@ window.LayoutFieldsEval = (function () {
         const raw = String(name || '').trim().replace(/-/g, '_');
         if (!raw) return '';
         const upper = raw.toUpperCase();
-        // ① 優先當作語意欄位鍵（semantic_key，大小寫不拘）：跨 schema 皆可共用，建議寫法
-        let v = lookupDirect(row, upper);
-        if (v !== '') return v;
-        // ② 相容：把「Excel 欄字母」透過 colMap 轉成語意欄位再查（僅單一 schema 教材安全）
         const map = resolveColMap(colMap);
         const semantic = map[upper];
+        let v;
+        // ① 公式寫的是該筆範本 col_map 裡的欄代號（AO／AP）→ 先對到這一筆的 semantic_key
+        //    再讀這份 meta。禁止先拿列上的 Excel 字母（PIC 的 AO ≠ WORD 的 AO）。
         if (semantic) {
             v = lookupDirect(row, semantic);
             if (v !== '') return v;
+            const aliasFrom = String(semantic).toUpperCase();
+            const mappedAliases = FIELD_ALIASES[aliasFrom] || [];
+            for (let i = 0; i < mappedAliases.length; i++) {
+                v = lookupDirect(row, mappedAliases[i]);
+                if (v !== '') return v;
+            }
+            v = lookupDirect(row, upper);
+            if (v !== '') return v;
+            return '';
         }
-        // ③ 舊鍵相容：answer_en↔script、pre↔article
-        const aliasFrom = semantic ? String(semantic).toUpperCase() : upper;
-        const aliases = FIELD_ALIASES[aliasFrom] || FIELD_ALIASES[upper] || [];
-        for (let i = 0; i < aliases.length; i++) {
-            v = lookupDirect(row, aliases[i]);
+        // ② 公式寫的是語意欄（pre、answer_en）：直接讀這份 meta
+        v = lookupDirect(row, upper);
+        if (v !== '') return v;
+        const aliases = FIELD_ALIASES[upper] || [];
+        for (let j = 0; j < aliases.length; j++) {
+            v = lookupDirect(row, aliases[j]);
             if (v !== '') return v;
         }
         return '';

@@ -220,6 +220,20 @@ window.SheetRangeBounds = (function () {
         });
     }
 
+    function totalFromMetaRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return null;
+        let maxNo = 0;
+        let hasNo = false;
+        rows.forEach(function (row) {
+            if (!row) return;
+            const n = Number(row.item_no != null ? row.item_no : row.itemNo);
+            if (isNaN(n) || n <= 0) return;
+            hasNo = true;
+            if (n > maxNo) maxNo = n;
+        });
+        return hasNo ? maxNo : rows.length;
+    }
+
     function examLppForCombo(combo) {
         const id = combo && combo.examTemplateId;
         if (!id || !window.FeatureTemplateLibrary || typeof window.FeatureTemplateLibrary.resolveTemplateProfile !== 'function') {
@@ -235,6 +249,7 @@ window.SheetRangeBounds = (function () {
         countAvailable: countAvailable,
         clampRange: clampRange,
         notifyOverflow: notifyOverflow,
+        totalFromMetaRows: totalFromMetaRows,
         examLppForCombo: examLppForCombo
     };
 })();

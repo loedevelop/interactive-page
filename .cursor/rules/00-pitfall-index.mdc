@@ -9,6 +9,7 @@ alwaysApply: true
 
 | 規則檔 | 症狀關鍵字 | 對應檔案／glob |
 |---|---|---|
+| `precision-no-borrow-invariant.mdc` | **第一條**精準／對不到就抓別的檔／剛好一筆／短檔退路／借用隔壁 | 全站（alwaysApply） |
 | `modal-overlay-tiers.mdc` | 自製全螢幕遮罩當 popup／按儲存視窗還在／取消卻問尚未儲存 | 全站（alwaysApply） |
 | `traditional-chinese.mdc` | 溝通語言 | 全站（alwaysApply） |
 | `ai-grading-pipeline-invariants.mdc` | AI 批改拖垮登入／延遲重試風暴／雙 webhook／沒勾AI批改卻照樣送 | `process-audio-ai/**`, `feature-ai-backfill.js`, `task-script-resolver.js`, `store-assignment-builder.js` |

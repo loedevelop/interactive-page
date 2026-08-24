@@ -68,18 +68,54 @@ window.TimelineTemplates = (() => {
             html += '<option value="' + escapeHtml(c.id) + '"' + (selected ? ' selected' : '') + '>'
                 + escapeHtml(c.label) + '</option>';
         });
+        const manualSelected = String(currentId) === '__manual__';
+        if (manualSelected) matched = true;
+        html += '<option value="__manual__"' + (manualSelected ? ' selected' : '') + '>✏️ 其他（手動輸入教材）</option>';
         if (!matched && currentId) {
             html += '<option value="' + escapeHtml(currentId) + '" selected>'
                 + escapeHtml(currentLabel || currentId) + '</option>';
         }
         if (!(combos || []).length) {
-            html += '<option value="" disabled>（這個班還沒有已指派且搭配試卷範本的套餐）</option>';
+            html += '<option value="" disabled>（這個班還沒有已指派的套餐）</option>';
         }
         return html;
     }
 
-    function packSheetDisplayName(file) {
-        return String(file || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+    function packSheetAliasLabel(sheet, templateName) {
+        if (!sheet) return '沒有別名';
+        const Map = window.MaterialNameMap;
+        if (sheet.id && Map && typeof Map.currentLabelForSheet === 'function') {
+            const live = (window.MaterialFileNames && typeof window.MaterialFileNames.liveSheetName === 'function')
+                ? window.MaterialFileNames.liveSheetName(sheet.stem, templateName)
+                : '';
+            const a = String(Map.currentLabelForSheet('sheet_stem', live || sheet.stem, sheet.id) || '').trim();
+            const b = (!a && sheet.stem && live && String(sheet.stem).toUpperCase() !== String(live).toUpperCase())
+                ? String(Map.currentLabelForSheet('sheet_stem', sheet.stem, sheet.id) || '').trim()
+                : '';
+            if (a) return a;
+            if (b) return b;
+        }
+        return '沒有別名';
+    }
+
+    function packOwnSheets(combo) {
+        return (combo && Array.isArray(combo.ownSheets)) ? combo.ownSheets : [];
+    }
+
+    function packSheetMetaValue(sheet) {
+        const meta = String((sheet && sheet.meta) || '').trim();
+        if (meta) return /\.meta\.json$/i.test(meta) ? meta : (meta + '.meta.json');
+        const stem = String((sheet && sheet.stem) || '').trim();
+        if (!stem) return '';
+        return /\.meta\.json$/i.test(stem) ? stem : (stem + '.meta.json');
+    }
+
+    function packSheetDisplayName(file, templateName) {
+        const raw = String(file || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+        if (window.MaterialFileNames && typeof window.MaterialFileNames.liveSheetName === 'function') {
+            return window.MaterialFileNames.liveSheetName(raw, templateName) || raw;
+        }
+        return raw;
     }
 
     function packBlocksFromRows(rows) {
@@ -151,9 +187,11 @@ window.TimelineTemplates = (() => {
         const classId = (bState && bState.classId) || '';
         const fcmc = window.FeatureClassMaterialCombinations;
         const cacheReady = !!(fcmc && typeof fcmc.isOfficialPairingCacheReady === 'function' && fcmc.isOfficialPairingCacheReady());
-        const combos = (cacheReady && fcmc && typeof fcmc.listAssignedCombosForClass === 'function')
-            ? fcmc.listAssignedCombosForClass(classId)
-            : [];
+        const combos = (cacheReady && fcmc && typeof fcmc.listAssignedCombosForHomework === 'function')
+            ? fcmc.listAssignedCombosForHomework(classId)
+            : (cacheReady && fcmc && typeof fcmc.listAssignedCombosForClass === 'function'
+                ? fcmc.listAssignedCombosForClass(classId)
+                : []);
         const rows = normalizePackRowsForRender(raw);
         const blocks = packBlocksFromRows(rows);
         let globalIdx = 0;
@@ -163,8 +201,8 @@ window.TimelineTemplates = (() => {
             if (block.combo_id && fcmc && typeof fcmc.getAssignedComboById === 'function') {
                 blockCombo = fcmc.getAssignedComboById(classId, block.combo_id);
             }
-            if (blockCombo && window.FeatureTimeline && typeof window.FeatureTimeline.expandPackRowsForCombo === 'function'
-                && (block.rows || []).every(function (r) { return !String((r && r.meta_file) || '').trim(); })) {
+            if (block.combo_id !== '__manual__' && blockCombo
+                && window.FeatureTimeline && typeof window.FeatureTimeline.expandPackRowsForCombo === 'function') {
                 block.rows = window.FeatureTimeline.expandPackRowsForCombo(classId, blockCombo, block.rows);
             }
             const comboOpts = renderPackComboOptions(combos, block.combo_id, block.combo_label, cacheReady);
@@ -172,18 +210,49 @@ window.TimelineTemplates = (() => {
                 ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這份套餐"'
                     + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')">刪套餐</button>')
                 : '';
+            const ownSheets = packOwnSheets(blockCombo);
+            const isManual = String(block.combo_id) === '__manual__';
+            const isGroup = !!(blockCombo && blockCombo.isGroup === true);
             const sheetRows = (block.rows || []).map(function (row) {
                 const idx = globalIdx++;
-                const sheetName = packSheetDisplayName(row.meta_file);
                 const delSheet = (block.rows.length > 1)
-                    ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="這次作業不用這本活頁"'
+                    ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="刪這段範圍"'
                         + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>')
                     : '';
-                const sheetCell = row.meta_file
-                    ? ('<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(row.meta_file) + '">'
-                        + '<div>' + escapeHtml(sheetName) + '</div>')
-                    : ('<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                        + '<div style="color:#94A3B8;">選套餐後會自動列出區塊</div>');
+                let sheetCell;
+                if (isManual) {
+                    sheetCell = '<input type="text" id="range-pack-manual-' + pathStr + '-' + idx + '" class="form-control range-pack-manual"'
+                        + ' value="' + escapeHtml(row.combo_label || '') + '" placeholder="手動輸入教材"'
+                        + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                        + '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">';
+                } else if (isGroup) {
+                    const cur = String(row.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+                    sheetCell = '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet"'
+                        + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
+                        + '<option value="">— 選活頁別名 —</option>'
+                        + ownSheets.map(function (sheet) {
+                            const file = packSheetMetaValue(sheet);
+                            const key = String(file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+                            return '<option value="' + escapeHtml(file) + '"'
+                                + (key && key === cur ? ' selected' : '') + '>'
+                                + escapeHtml(packSheetAliasLabel(sheet, blockCombo && blockCombo.extractionTemplateName)) + '</option>';
+                        }).join('')
+                        + '</select>';
+                } else if (ownSheets.length === 1) {
+                    const only = ownSheets[0];
+                    const file = packSheetMetaValue(only);
+                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(file) + '">'
+                        + '<div>' + escapeHtml(packSheetAliasLabel(only, blockCombo && blockCombo.extractionTemplateName)) + '</div>';
+                } else if (blockCombo && ownSheets.length === 0) {
+                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                        + '<div style="color:#B91C1C; font-weight:800;">這份套餐沒有活頁</div>';
+                } else if (blockCombo && ownSheets.length > 1) {
+                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                        + '<div style="color:#B91C1C; font-weight:800;">這份套餐不是群組，卻有不只一本活頁</div>';
+                } else {
+                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                        + '<div style="color:#94A3B8;">選套餐或手動輸入教材</div>';
+                }
                 return '<div class="range-pack-row" data-row-idx="' + idx + '">'
                     + '<div>' + sheetCell + '</div>'
                     + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control asg-field-input"'
@@ -202,7 +271,7 @@ window.TimelineTemplates = (() => {
             }).join('');
             const sheetTable = (block.rows || []).length
                 ? ('<div class="range-pack-table">'
-                    + '<div class="range-pack-head"><div>區塊</div><div>基準</div><div>起</div><div>迄</div><div></div></div>'
+                    + '<div class="range-pack-head"><div>' + (isManual ? '教材' : '活頁別名') + '</div><div>基準</div><div>起</div><div>迄</div><div></div></div>'
                     + sheetRows
                     + '</div>')
                 : '';
@@ -218,14 +287,11 @@ window.TimelineTemplates = (() => {
                 + sheetTable
                 + '<div style="margin-top:8px;">'
                 + (function () {
-                    const hasRow = !!(block.combo_id && (block.rows || []).some(function (r) {
-                        return !!String((r && r.meta_file) || '').trim();
-                    }));
-                    if (hasRow) {
+                    if (block.combo_id) {
                         return '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
                             + ' onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackSheet && window.FeatureTimeline.addRangePackSheet(\'' + pathStr + '\', ' + bi + ')">＋ 增加區塊</button>';
                     }
-                    return '<button type="button" class="btn" disabled style="padding:4px 10px; background:#E2E8F0; color:#64748B; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="請先選套餐">＋ 增加區塊</button>';
+                    return '<button type="button" class="btn" disabled style="padding:4px 10px; background:#E2E8F0; color:#64748B; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="請先選套餐或手動輸入教材">＋ 增加區塊</button>';
                 }())
                 + '</div>'
                 + '</div>';
@@ -233,12 +299,12 @@ window.TimelineTemplates = (() => {
 
         return `
             <div class="range-pack-panel asg-unify" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
-                <div style="font-weight:900; color:#1E3A8A; margin-bottom:8px;">範圍（選套餐後區塊自動列出）</div>
+                <div style="font-weight:900; color:#1E3A8A; margin-bottom:8px;">範圍（選套餐或手動輸入教材）</div>
                 ${blockHtml}
                 <div style="margin-top:10px;">
                     <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
                         onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackCombo && window.FeatureTimeline.addRangePackCombo('${pathStr}')">＋ 增加套餐</button>
-                    <span style="margin-left:8px; color:#64748B; font-weight:700;">選了套餐，區塊會自動列出。同一套餐要另一段範圍就按「增加區塊」。不同擷取請另加一套餐。</span>
+                    <span style="margin-left:8px; color:#64748B; font-weight:700;">第一層選套餐，或手動輸入教材。同一套餐要另一段範圍就按「增加區塊」。</span>
                 </div>
             </div>
         `;
@@ -1153,14 +1219,17 @@ window.TimelineTemplates = (() => {
                     leafTitleAuto = audioTitleIsAuto ? '1' : '0';
                     leafTitleFromRange = audioTitleFromRangeAttr;
                 } else if (t.type === 'exam') {
+                    const examRaw = t.raw_data || {};
                     const plainExamTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                     let examRangeHint = '';
-                    if (window.BuilderStore && typeof window.BuilderStore.getState === 'function'
-                        && window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+                    if (window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
+                        examRangeHint = window.FeatureExamJob.getExamRangeLabel(pathStr, t) || '';
+                    } else if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
                     }
-                    // 考試標題只在空白時繼承。有字就顯示原文，禁止用 flag／下面細節覆寫。
-                    if (!plainExamTitle && examRangeHint) {
+                    const wasExamTitleAuto = examRaw.title_auto_from_range === true;
+                    const examTitleIsAuto = (wasExamTitleAuto || !plainExamTitle) && !!examRangeHint;
+                    if (examTitleIsAuto) {
                         leafTitleHtml = examRangeHint.replace(/</g, '&lt;');
                         leafTitleAuto = '1';
                         leafTitleFromRange = examRangeHint.replace(/"/g, '&quot;');

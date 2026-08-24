@@ -846,8 +846,13 @@ window.FeatureStudentQuiz = (function () {
         const items = (paper && paper.items) || [];
         const job = task && task.raw_data && task.raw_data.exam_job;
         const opts = job && job.options;
-        const hasSection = items.some(function (it) { return it && it.section_id; });
+        const paperShuffleAll = !!(paper && paper.options && paper.options.shuffle_sections);
+        const shuffleAll = !!(opts && opts.shuffle_sections) || paperShuffleAll;
         const canShuffle = window.QuizPaperBuilder && typeof window.QuizPaperBuilder.shuffleInPlace === 'function';
+        if (shuffleAll && canShuffle) {
+            return window.QuizPaperBuilder.shuffleInPlace(items.slice());
+        }
+        const hasSection = items.some(function (it) { return it && it.section_id; });
         if (!hasSection) {
             const shuffleOn = !(opts && opts.shuffle === false);
             if (!shuffleOn || !canShuffle) return items;
@@ -868,11 +873,8 @@ window.FeatureStudentQuiz = (function () {
                 if (g.shuffle) g.items = window.QuizPaperBuilder.shuffleInPlace(g.items.slice());
             });
         }
-        const orderedGroups = (opts && opts.shuffle_sections && canShuffle)
-            ? window.QuizPaperBuilder.shuffleInPlace(groups.slice())
-            : groups;
         const out = [];
-        orderedGroups.forEach(function (g) {
+        groups.forEach(function (g) {
             g.items.forEach(function (it) { out.push(it); });
         });
         return out;

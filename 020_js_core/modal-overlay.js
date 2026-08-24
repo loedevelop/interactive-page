@@ -65,13 +65,20 @@ window.ModalOverlay = (function () {
 
     /**
      * 使用者要離開：沒改過／只是提示 → 直接關；有未存變更才問一次。
+     * 儲存中（busy）不准問尚未儲存，取消＝離開，不准卡死。
      */
     function requestClose(id) {
         var targetId = id || activeId;
         if (!targetId) return Promise.resolve(false);
         var meta = registry[targetId];
         var el = document.getElementById(targetId);
-        if (el && el.getAttribute('data-mo-busy') === '1') return Promise.resolve(false);
+        if (el && el.getAttribute('data-mo-busy') === '1') {
+            if (meta && typeof meta.onCancel === 'function') {
+                try { meta.onCancel(); } catch (_e) { /* ignore */ }
+            }
+            close(targetId);
+            return Promise.resolve(true);
+        }
         if (!shouldConfirmClose(targetId)) {
             if (meta && typeof meta.onCancel === 'function') {
                 try { meta.onCancel(); } catch (_e) { /* ignore */ }

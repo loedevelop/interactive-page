@@ -5,7 +5,7 @@ alwaysApply: true
 
 # 範本不可共用（雷區｜老師禁止自以為是）
 
-老師花時間寫不同範本，就是因為**不能共用**。AI 不得自行發明「找不到就改套」「合成一份給全卷」「A 沒填用 B」。
+老師花時間寫不同範本，就是因為**不能共用**。精準是第一條：對不到＝沒有。禁止借用、禁止推測。AI 不得自行發明「找不到就改套」「合成一份給全卷」「A 沒填用 B」。
 
 ## 不變量
 
@@ -18,6 +18,8 @@ alwaysApply: true
 目前資料都有這三個（標準化）；以後才開放老師自設。
 新卷與重批的差異只有：選題（亂數 vs 指定）＋卷 id（新 vs 舊）。資料撈法相同。
 該筆的 fields、col_map、結合公式只屬於該筆。
+公式裡的欄代號（AO／AP）先走該筆 col_map 對到 semantic_key，再讀這份 meta。
+禁止先拿列上的 Excel 字母當答案（PIC 的 AO ≠ WORD 的 AO）。
 沒填＝沒有。禁止拿別筆、別欄、別區段來補。
 有欄位就用；沒有就不用。禁止用 GEPT 寫死欄位去補 PIC 或其他教材。必要但找不到→停並報缺哪個欄。
 PIC 與 WORD 的欄字母語意不同，禁止互套。
@@ -44,6 +46,7 @@ quiz_answer || answer_combine_note
 // 擷取／雙用：只讀這一筆 answer_combine_note
 // 僅試卷：只讀這一筆 quiz_answer
 // 區段：只讀 sec.layout_profile_id 對到的那一筆（範本庫 uuid／名稱）
+// 公式 AO → 該筆 col_map[AO]=pre → 讀這份 meta 的 pre，不是列上的 Excel AO
 ```
 
 PIC：`AN=pos`、`AO=pre`、`AP=answer_en`，公式 `AO&" "&AP`。  

@@ -26,6 +26,28 @@ window.FeatureExamReview = (function () {
         return esc(s).replace(/'/g, '&#39;');
     }
 
+    function gotPlainOf(item) {
+        const raw = state && state.answers ? state.answers[item.item_id] : '';
+        return window.QuizPaperBuilder.plainQuizAnswer
+            ? window.QuizPaperBuilder.plainQuizAnswer(raw, item)
+            : (typeof raw === 'string' ? raw : '');
+    }
+
+    function alignedPairHtml(expected, gotPlain, expectedDiffColor) {
+        if (!gotPlain) return '';
+        const diff = window.QuizPaperBuilder.analyzeAnswerDiff(expected || '', gotPlain);
+        if (typeof window.QuizPaperBuilder.renderAlignedPairHtml === 'function') {
+            return window.QuizPaperBuilder.renderAlignedPairHtml((diff && diff.ops) || [], {
+                expectedDiffColor: expectedDiffColor || '#DC2626'
+            });
+        }
+        return window.QuizPaperBuilder.renderAnswerDiffHtml((diff && diff.ops) || []);
+    }
+
+    function wasHiddenOnOpen(item) {
+        return !!(state && state.hideWhenWrongOnly && state.hideWhenWrongOnly[String(item.item_id)]);
+    }
+
     function itemHeadline(item, displayNo) {
         if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.formatItemHeadline === 'function') {
             return window.QuizPaperBuilder.formatItemHeadline(item, displayNo != null ? displayNo : (item && item.seq));
@@ -121,11 +143,15 @@ window.FeatureExamReview = (function () {
 
             // 沿用這裡已經抓好的 completions 算待審申訴數，不額外查詢（見 page-refresh-perf-invariant 精神）
             const pendingAppealCount = countPendingAppeals(completions);
-            const appealBtnHtml = pendingAppealCount > 0
-                ? '<button type="button" onclick="window.FeatureExamReview._openAppealReview(\'' + safeClassId + '\', \'' + safeAssignId + '\', \'' + safeTaskId + '\')" '
-                    + 'style="width:100%; text-align:left; padding:10px 14px; margin-bottom:10px; border:1px solid #FDBA74; border-radius:10px; background:#FFF7ED; color:#B45309; font-weight:900; cursor:pointer;">'
-                    + '🚩 ' + pendingAppealCount + ' 筆待審申訴</button>'
-                : '';
+            const appealBtnHtml = '<button type="button" onclick="window.FeatureExamReview._openAppealReview(\'' + safeClassId + '\', \'' + safeAssignId + '\', \'' + safeTaskId + '\')" '
+                + 'style="width:100%; text-align:left; padding:10px 14px; margin-bottom:10px; border:1px solid '
+                + (pendingAppealCount > 0 ? '#FDBA74' : '#E2E8F0') + '; border-radius:10px; background:'
+                + (pendingAppealCount > 0 ? '#FFF7ED' : '#F8FAFC') + '; color:'
+                + (pendingAppealCount > 0 ? '#B45309' : '#64748B') + '; font-weight:900; cursor:pointer;">'
+                + (pendingAppealCount > 0
+                    ? ('🚩 申訴題　' + pendingAppealCount + ' 筆待審')
+                    : '🚩 申訴題　目前沒有待審')
+                + '</button>';
 
             const rows = students.map(function (s) {
                 const c = byStudent.get(String(s.id));
@@ -269,8 +295,12 @@ window.FeatureExamReview = (function () {
                 completion: completion,
                 answers: (completion && completion.raw_data && completion.raw_data.quiz_answers) || {},
                 showWrongOnly: true,
-                editingPrimaryIdx: null
+                editingPrimaryIdx: null,
+                hideWhenWrongOnly: {}
             };
+            (state.paper.items || []).forEach(function (it) {
+                if (itemIsCorrectOrEmpty(it)) state.hideWhenWrongOnly[String(it.item_id)] = true;
+            });
             renderModal();
         } catch (err) {
             console.error('[FeatureExamReview] openReview', err);
@@ -294,10 +324,10 @@ window.FeatureExamReview = (function () {
         let correct = 0;
         let attempted = 0;
         items.forEach(function (it) {
-            const got = state.answers[it.item_id];
-            if (got == null || String(got).trim() === '') return;
+            const gotPlain = gotPlainOf(it);
+            if (!String(gotPlain).trim()) return;
             attempted += 1;
-            const n = window.QuizPaperBuilder.normalizeAnswer(got);
+            const n = window.QuizPaperBuilder.normalizeAnswer(gotPlain);
             const list = [it.answer_en].concat(it.accepted_answers || []).map(window.QuizPaperBuilder.normalizeAnswer);
             if (window.QuizPaperBuilder.isAcceptableAnswer(n, list)) correct += 1;
         });
@@ -347,9 +377,20 @@ window.FeatureExamReview = (function () {
             + '</div>'
             + '</div>';
 
-        const toggleHtml = '<label style="display:inline-flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:700; color:#475569; margin-bottom:12px; cursor:pointer;">'
+        const pendingHere = countPendingAppeals(state.completion ? [state.completion] : []);
+        const appealEntryHtml = '<button type="button" onclick="window.FeatureExamReview._openAppealsFromStudentPaper()" '
+            + 'style="padding:6px 12px; border:1px solid ' + (pendingHere > 0 ? '#FDBA74' : '#E2E8F0')
+            + '; border-radius:6px; background:' + (pendingHere > 0 ? '#FFF7ED' : '#F8FAFC')
+            + '; color:' + (pendingHere > 0 ? '#B45309' : '#64748B')
+            + '; font-weight:800; cursor:pointer;">🚩 申訴題'
+            + (pendingHere > 0 ? ('　' + pendingHere + ' 筆待審') : '')
+            + '</button>';
+        const toggleHtml = '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">'
+            + '<label style="display:inline-flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:700; color:#475569; cursor:pointer;">'
             + '<input type="checkbox" ' + (state.showWrongOnly ? 'checked' : '') + ' onchange="window.FeatureExamReview._toggleShowWrongOnly(this.checked)"> 只顯示錯題／未作答'
-            + '</label>';
+            + '</label>'
+            + appealEntryHtml
+            + '</div>';
 
         const emptyMsg = state.showWrongOnly && !hasAnyVisibleRow(items)
             ? '<div style="padding:16px; text-align:center; color:#047857; font-weight:800; background:#ECFDF5; border-radius:10px;">本次全對，沒有錯題／缺答。</div>'
@@ -386,81 +427,106 @@ window.FeatureExamReview = (function () {
     }
 
     function itemIsCorrectOrEmpty(it) {
-        const got = state.answers[it.item_id];
-        if (got == null || String(got).trim() === '') return false; // 未作答仍算「要看」
-        const n = window.QuizPaperBuilder.normalizeAnswer(got);
+        const gotPlain = gotPlainOf(it);
+        if (!String(gotPlain).trim()) return false; // 未作答仍算「要看」
+        const n = window.QuizPaperBuilder.normalizeAnswer(gotPlain);
         const list = [it.answer_en].concat(it.accepted_answers || []).map(window.QuizPaperBuilder.normalizeAnswer);
         return window.QuizPaperBuilder.isAcceptableAnswer(n, list);
     }
 
     function renderItemRow(idx) {
         const item = state.paper.items[idx];
-        const got = state.answers[item.item_id];
-        const hasAnswer = got != null && String(got).trim() !== '';
-        const normGot = hasAnswer ? window.QuizPaperBuilder.normalizeAnswer(got) : '';
+        const gotPlain = gotPlainOf(item);
+        const hasAnswer = !!String(gotPlain).trim();
+        const normGot = hasAnswer ? window.QuizPaperBuilder.normalizeAnswer(gotPlain) : '';
         const acceptedNorm = [item.answer_en].concat(item.accepted_answers || []).map(window.QuizPaperBuilder.normalizeAnswer);
         const isCorrect = hasAnswer && window.QuizPaperBuilder.isAcceptableAnswer(normGot, acceptedNorm);
 
-        if (state.showWrongOnly && hasAnswer && isCorrect) {
+        if (state.showWrongOnly && wasHiddenOnOpen(item)) {
             return '<div id="qr-row-' + idx + '" style="display:none;"></div>';
         }
 
-        let studentAnsHtml;
-        if (!hasAnswer) {
-            studentAnsHtml = '<span style="color:#94A3B8; font-weight:700;">（尚未作答）</span>';
-        } else if (isCorrect) {
-            studentAnsHtml = '<span style="color:#047857; font-weight:800;">' + esc(got) + '</span>';
-        } else {
-            const best = window.QuizPaperBuilder.bestDiffForAnswer(item, got);
-            // 2026-08-13 老師要求先關掉「拼錯紀錄」：目前逐字對齊機制抓出來的拼錯配對還不夠
-            // 準確、對老師來說沒有參考意義，先不顯示（renderAnswerDiffHtml 本身的上下對齊已經
-            // 夠用），之後演算法夠準了再考慮恢復 renderSpellingPairsHtml。
-            studentAnsHtml = window.QuizPaperBuilder.renderAnswerDiffHtml(best.diff.ops);
-        }
-
+        const primaryPair = hasAnswer
+            ? alignedPairHtml(item.answer_en, gotPlain, '#DC2626')
+            : '';
         const primaryEditing = state.editingPrimaryIdx === idx;
-        const primaryHtml = primaryEditing
-            ? '<input id="qr-primary-input-' + idx + '" type="text" value="' + escAttr(item.answer_en) + '" '
-                + 'style="flex:1; min-width:160px; padding:5px 8px; border:1px solid #A78BFA; border-radius:6px; font-size:0.85rem;">'
-                + ' <button type="button" onclick="window.FeatureExamReview._confirmEditPrimary(' + idx + ')" style="padding:4px 8px; border:none; border-radius:6px; background:#7C3AED; color:white; font-weight:800; cursor:pointer;">✓</button>'
-                + ' <button type="button" onclick="window.FeatureExamReview._cancelEditPrimary(' + idx + ')" style="padding:4px 8px; border:1px solid #CBD5E1; border-radius:6px; background:white; cursor:pointer;">✕</button>'
-            : '<span style="display:inline-block; padding:3px 10px; border-radius:6px; background:#EEF2FF; color:#3730A3; font-weight:800; font-size:0.85rem;">★ ' + esc(item.answer_en) + '</span>'
-                + ' <button type="button" onclick="window.FeatureExamReview._startEditPrimary(' + idx + ')" title="修改主要標準答案" style="border:none; background:none; cursor:pointer; font-size:0.85rem;">✏️</button>';
+        const expectedEditHtml = primaryEditing
+            ? '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:6px 0 10px;">'
+                + '<input id="qr-primary-input-' + idx + '" type="text" value="' + escAttr(item.answer_en) + '" '
+                + 'style="flex:1; min-width:160px; padding:5px 8px; border:1px solid #A78BFA; border-radius:6px; font-size:0.95rem; font-weight:800; color:#1E293B;">'
+                + '<button type="button" onclick="window.FeatureExamReview._confirmEditPrimary(' + idx + ')" style="padding:4px 8px; border:none; border-radius:6px; background:#7C3AED; color:white; font-weight:800; cursor:pointer;">✓</button>'
+                + '<button type="button" onclick="window.FeatureExamReview._cancelEditPrimary(' + idx + ')" style="padding:4px 8px; border:1px solid #CBD5E1; border-radius:6px; background:white; cursor:pointer;">✕</button>'
+                + '</div>'
+            : '';
 
-        const acceptedChips = (item.accepted_answers || []).map(function (a, ai) {
-            return '<span style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:6px; background:#F0FDF4; color:#166534; font-weight:800; font-size:0.85rem; margin-right:4px;">'
-                + esc(a)
-                + ' <a href="javascript:void(0)" onclick="window.FeatureExamReview._removeAccepted(' + idx + ',' + ai + ')" style="color:#B91C1C; font-weight:900; text-decoration:none;" title="移除這個可接受答案">×</a>'
-                + '</span>';
+        const acceptedBlocks = (item.accepted_answers || []).map(function (a, ai) {
+            const otherPair = hasAnswer ? alignedPairHtml(a, gotPlain, '#2563EB') : '';
+            return '<div style="margin-top:10px; padding-top:8px; border-top:1px dashed #E2E8F0;">'
+                + '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:4px;">'
+                + '<div style="font-size:0.75rem; font-weight:800; color:#1E293B;">其他可接受寫法'
+                + '<span style="font-weight:700; color:#64748B;">（上排學生＝黑／錯深藍　下排這筆＝黑／差異藍）</span></div>'
+                + '<a href="javascript:void(0)" onclick="window.FeatureExamReview._removeAccepted(' + idx + ',' + ai + ')" style="color:#B91C1C; font-weight:900; text-decoration:none; font-size:0.8rem;" title="移除這個可接受寫法">× 移除</a>'
+                + '</div>'
+                + (otherPair
+                    ? ('<div style="font-size:1rem; line-height:1.7;">' + otherPair + '</div>')
+                    : ('<div style="font-size:1rem; font-weight:800; color:#1E293B; line-height:1.7; white-space:pre-wrap;">' + esc(a) + '</div>'))
+                + '</div>';
         }).join('');
 
-        const alsoCorrectHtml = (hasAnswer && !isCorrect)
+        const alsoChecked = hasAnswer && isCorrect && !wasHiddenOnOpen(item);
+        const alsoCorrectHtml = (hasAnswer && !wasHiddenOnOpen(item))
             ? '<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:0.85rem; font-weight:700; color:#475569; cursor:pointer;">'
-                + '<input type="checkbox" onchange="window.FeatureExamReview._toggleAlsoCorrect(' + idx + ', this.checked)"> '
-                + '✅ 學生這個答案也算對（加入標準答案，全班同任務會自動重新批改）'
+                + '<input type="checkbox" ' + (alsoChecked ? 'checked' : '') + ' onchange="window.FeatureExamReview._toggleAlsoCorrect(' + idx + ', this.checked)"> '
+                + '✅ 這個答案也算對（確認後按儲存才生效，全班同任務會重新批改）'
                 + '</label>'
             : '';
 
         const addAnswerHtml = '<div style="display:flex; gap:6px; margin-top:8px;">'
-            + '<input id="qr-new-ans-' + idx + '" type="text" placeholder="輸入另一個可接受答案…" style="flex:1; min-width:160px; padding:5px 8px; border:1px solid #CBD5E1; border-radius:6px; font-size:0.85rem;">'
-            + '<button type="button" onclick="window.FeatureExamReview._addAccepted(' + idx + ')" style="padding:5px 12px; border:none; border-radius:6px; background:#0EA5E9; color:white; font-weight:800; cursor:pointer; white-space:nowrap;">+ 新增可接受答案</button>'
+            + '<input id="qr-new-ans-' + idx + '" type="text" placeholder="輸入另一個可接受寫法…" style="flex:1; min-width:160px; padding:5px 8px; border:1px solid #CBD5E1; border-radius:6px; font-size:0.85rem;">'
+            + '<button type="button" onclick="window.FeatureExamReview._addAccepted(' + idx + ')" style="padding:5px 12px; border:none; border-radius:6px; background:#0EA5E9; color:white; font-weight:800; cursor:pointer; white-space:nowrap;">+ 新增可接受寫法</button>'
             + '</div>';
 
+        const pendingAccept = hasAnswer && isCorrect && !wasHiddenOnOpen(item);
         const statusBadge = !hasAnswer
             ? '<span style="color:#94A3B8;">⚠ 未作答</span>'
-            : (isCorrect ? '<span style="color:#047857;">✅ 正確</span>' : '<span style="color:#DC2626;">❌ 錯誤</span>');
+            : (pendingAccept
+                ? '<span style="color:#B45309;">待確認算對（未儲存）</span>'
+                : (isCorrect ? '<span style="color:#047857;">✅ 正確</span>' : '<span style="color:#DC2626;">❌ 錯誤</span>'));
 
-        return '<div id="qr-row-' + idx + '" style="border:1px solid ' + (isCorrect ? '#D1FAE5' : '#FECACA') + '; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:' + (isCorrect ? '#F0FDF4' : '#FFF7F7') + ';">'
+        const appeal = appealForItem(item.item_id);
+        const appealHtml = appeal
+            ? (appeal.status === 'accepted'
+                ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#047857;">✅ 申訴已被接受</div>'
+                : (appeal.status === 'rejected'
+                    ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#DC2626;">❌ 申訴未通過</div>'
+                    : '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B45309;">🚩 申訴審核中</div>'))
+            : '';
+
+        const cardBorder = pendingAccept ? '#FDBA74' : (isCorrect && wasHiddenOnOpen(item) ? '#D1FAE5' : '#FECACA');
+        const cardBg = pendingAccept ? '#FFFBEB' : (isCorrect && wasHiddenOnOpen(item) ? '#F0FDF4' : '#FFF7F7');
+        return '<div id="qr-row-' + idx + '" style="border:1px solid ' + cardBorder + '; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:' + cardBg + ';">'
             + '<div style="display:flex; justify-content:space-between; font-size:0.78rem; font-weight:900; color:#64748B; margin-bottom:4px;">'
                 + '<span>' + esc(itemHeadline(item, item.seq)) + '</span>' + statusBadge
             + '</div>'
-            + '<div style="font-weight:800; color:#1E293B; margin-bottom:8px; white-space:pre-wrap;">' + esc(item.prompt_zh || '') + '</div>'
-            + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">學生答案</div>'
-            + '<div style="font-size:1rem; line-height:1.6; margin-bottom:8px;">' + studentAnsHtml + '</div>'
-            + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:4px;">標準答案（可多個）</div>'
-            + '<div>' + primaryHtml + ' ' + acceptedChips + '</div>'
+            + '<div style="font-size:0.92rem; font-weight:800; color:#1E293B; margin-bottom:8px; white-space:pre-wrap;">' + esc(item.prompt_zh || '') + '</div>'
+            + '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:2px;">'
+            + '<div style="font-size:0.75rem; font-weight:800; color:#1E293B;">學生答案／正確答案'
+            + '<span style="font-weight:700; color:#64748B;">（上排學生＝黑／錯深藍　下排解答＝黑／差異紅）</span></div>'
+            + (primaryEditing ? '' : '<button type="button" onclick="window.FeatureExamReview._startEditPrimary(' + idx + ')" title="修改正確答案" style="border:none; background:none; cursor:pointer; font-size:0.85rem;">✏️</button>')
+            + '</div>'
+            + (hasAnswer
+                ? ('<div style="font-size:1rem; line-height:1.7; margin-bottom:6px;">' + (primaryPair || '<span style="color:#94A3B8; font-weight:700;">（尚未作答）</span>') + '</div>')
+                : ('<div style="margin-bottom:6px;"><div style="color:#94A3B8; font-weight:700; margin-bottom:4px;">（尚未作答）</div>'
+                    + '<div style="font-size:1rem; font-weight:800; color:#1E293B; line-height:1.7; white-space:pre-wrap;">' + esc(item.answer_en || '') + '</div></div>'))
+            + expectedEditHtml
+            + appealHtml
+            + (acceptedBlocks
+                ? ('<div style="margin-top:8px;">' + acceptedBlocks + '</div>')
+                : '<div style="margin-top:8px; font-size:0.8rem; color:#94A3B8; font-weight:700;">（沒有其他可接受寫法）</div>')
+            + '<div style="margin-top:8px; padding-top:10px; border-top:1px dashed #E2E8F0;">'
             + alsoCorrectHtml
             + addAnswerHtml
+            + '</div>'
             + '</div>';
     }
 
@@ -526,10 +592,10 @@ window.FeatureExamReview = (function () {
     function _toggleAlsoCorrect(idx, checked) {
         if (!state) return;
         const item = state.paper.items[idx];
-        const got = state.answers[item.item_id];
-        if (got == null) return;
-        if (checked) window.QuizPaperBuilder.addAcceptedAnswer(item, got);
-        else window.QuizPaperBuilder.removeAcceptedAnswer(item, got);
+        const gotPlain = gotPlainOf(item);
+        if (!gotPlain) return;
+        if (checked) window.QuizPaperBuilder.addAcceptedAnswer(item, gotPlain);
+        else window.QuizPaperBuilder.removeAcceptedAnswer(item, gotPlain);
         rerenderAll();
     }
 
@@ -656,6 +722,20 @@ window.FeatureExamReview = (function () {
     /** @type {any} 目前開著的申訴審核畫面狀態；跟單生檢視的 state 是分開的，互不影響 */
     let appealState = null;
 
+    function appealForItem(itemId) {
+        const list = (state && state.completion && state.completion.raw_data && state.completion.raw_data.quiz_appeals) || [];
+        return list.find(function (a) { return a && String(a.item_id) === String(itemId); }) || null;
+    }
+
+    function _openAppealsFromStudentPaper() {
+        if (!state) return;
+        const classId = state.classId;
+        const assignmentId = state.assignmentId;
+        const taskId = state.taskId;
+        window.ModalOverlay.close(MODAL_ID);
+        openAppealReview(classId, assignmentId, taskId);
+    }
+
     function countPendingAppeals(completions) {
         let n = 0;
         (completions || []).forEach(function (c) {
@@ -748,9 +828,6 @@ window.FeatureExamReview = (function () {
     function renderAppealGroupHtml(group, idx) {
         const item = group.item;
         const promptHtml = item ? esc(item.prompt_zh || '') : '（找不到這一題，可能考卷已改版）';
-        const primaryHtml = item
-            ? '<span style="display:inline-block; padding:2px 8px; border-radius:6px; background:#EEF2FF; color:#3730A3; font-weight:800; font-size:0.82rem; margin-right:4px;">★ ' + esc(item.answer_en) + '</span>'
-            : '';
         const acceptedHtml = item
             ? (item.accepted_answers || []).map(function (a) {
                 return '<span style="display:inline-block; padding:2px 8px; border-radius:6px; background:#F0FDF4; color:#166534; font-weight:800; font-size:0.82rem; margin-right:4px;">' + esc(a) + '</span>';
@@ -761,10 +838,11 @@ window.FeatureExamReview = (function () {
         return '<div id="appeal-group-' + idx + '" style="border:1px solid #DDD6FE; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:#FAF5FF;">'
             + '<div style="font-size:0.76rem; color:#7C3AED; font-weight:900; margin-bottom:4px;">' + esc(itemHeadline(item, item ? item.seq : '?')) + '　🚩 ' + group.students.length + ' 人申訴</div>'
             + '<div style="font-weight:800; color:#1E293B; margin-bottom:6px; white-space:pre-wrap;">' + promptHtml + '</div>'
-            + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">申訴內容</div>'
+            + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案（申訴內容）</div>'
             + '<div style="font-size:1rem; font-weight:900; color:#B45309; margin-bottom:6px;">' + esc(group.answerText) + ' ' + hint + '</div>'
-            + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">目前標準答案</div>'
-            + '<div style="margin-bottom:6px;">' + primaryHtml + acceptedHtml + '</div>'
+            + '<div style="font-size:0.75rem; color:#DC2626; font-weight:800; margin-bottom:2px;">正確答案</div>'
+            + '<div style="font-size:1rem; font-weight:800; color:#DC2626; line-height:1.7; white-space:pre-wrap; margin-bottom:6px;">' + (item ? esc(item.answer_en || '') : '') + '</div>'
+            + (acceptedHtml ? ('<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">其他可接受寫法</div><div style="margin-bottom:6px;">' + acceptedHtml + '</div>') : '')
             + '<div style="font-size:0.75rem; color:#94A3B8; margin-bottom:8px;">申訴學生：' + studentNames + '</div>'
             + '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
                 + '<button type="button" onclick="window.FeatureExamReview._decideAppeal(' + idx + ', \'accepted\')" style="padding:6px 12px; border:none; border-radius:6px; background:#059669; color:white; font-weight:800; cursor:pointer;">✅ 可接受</button>'
@@ -928,6 +1006,7 @@ window.FeatureExamReview = (function () {
         _save: _save,
         _regradeThisStudent: _regradeThisStudent,
         _openAppealReview: openAppealReview,
+        _openAppealsFromStudentPaper: _openAppealsFromStudentPaper,
         _decideAppeal: _decideAppeal,
         _addOtherAcceptedForGroup: _addOtherAcceptedForGroup,
         _regradeWholeTaskFromAppealReview: _regradeWholeTaskFromAppealReview
