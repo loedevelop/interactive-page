@@ -244,12 +244,68 @@ window.SheetRangeBounds = (function () {
         return (n > 0) ? n : 0;
     }
 
+    /** 出作業頁碼＝這本第 N 頁。每頁行數跟這份擷取範本走。沒填＝0，不准改套預設。 */
+    function extractionLpp(templateId) {
+        const lib = window.FeatureTemplateLibrary;
+        if (!lib || typeof lib.findTemplateByAnyId !== 'function') return 0;
+        const t = lib.findTemplateByAnyId(templateId);
+        const n = t && Number(t.lines_per_page);
+        return n > 0 ? n : 0;
+    }
+
+    function lppForHomeworkCombo(combo) {
+        return extractionLpp(combo && combo.extractionTemplateId);
+    }
+
+    /** 這本第 N 頁 → 題號（除最後一頁外每頁滿行）。 */
+    function itemsForPages(total, lpp, pages) {
+        const b = bounds(total, lpp);
+        if (!b) return [];
+        const out = [];
+        const seen = {};
+        (pages || []).forEach(function (p) {
+            const n = Number(p);
+            if (isNaN(n) || n < 1 || n > b.lastPage) return;
+            const lo = (n - 1) * b.lpp + 1;
+            const hi = lo + countOnPage(b, n) - 1;
+            for (let i = lo; i <= hi; i++) {
+                if (seen[i]) continue;
+                seen[i] = true;
+                out.push(i);
+            }
+        });
+        return out;
+    }
+
+    function formatItemRangeSpec(items) {
+        if (!items || !items.length) return '';
+        const sorted = items.slice().sort(function (a, b) { return a - b; });
+        const parts = [];
+        let runStart = sorted[0];
+        let runEnd = sorted[0];
+        for (let i = 1; i < sorted.length; i++) {
+            if (sorted[i] === runEnd + 1) {
+                runEnd = sorted[i];
+            } else {
+                parts.push(runStart === runEnd ? String(runStart) : (runStart + '~' + runEnd));
+                runStart = sorted[i];
+                runEnd = sorted[i];
+            }
+        }
+        parts.push(runStart === runEnd ? String(runStart) : (runStart + '~' + runEnd));
+        return '#' + parts.join(', ');
+    }
+
     return {
         bounds: bounds,
         countAvailable: countAvailable,
         clampRange: clampRange,
         notifyOverflow: notifyOverflow,
         totalFromMetaRows: totalFromMetaRows,
-        examLppForCombo: examLppForCombo
+        examLppForCombo: examLppForCombo,
+        extractionLpp: extractionLpp,
+        lppForHomeworkCombo: lppForHomeworkCombo,
+        itemsForPages: itemsForPages,
+        formatItemRangeSpec: formatItemRangeSpec
     };
 })();

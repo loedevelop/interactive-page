@@ -131,10 +131,16 @@ window.MaterialFileNames = (function () {
         var raw = String(stem || '').trim();
         var live = liveSheetName(raw, templateName) || raw;
         var lab = '';
-        if (sheetId && window.MaterialNameMap && typeof window.MaterialNameMap.currentLabelForSheet === 'function') {
-            lab = String(window.MaterialNameMap.currentLabelForSheet('sheet_stem', live, sheetId) || '').trim();
-            if (!lab && raw && raw.toUpperCase() !== live.toUpperCase()) {
-                lab = String(window.MaterialNameMap.currentLabelForSheet('sheet_stem', raw, sheetId) || '').trim();
+        var Map = window.MaterialNameMap;
+        if (sheetId && Map) {
+            if (typeof Map.currentLabelForSheet === 'function') {
+                lab = String(Map.currentLabelForSheet('sheet_stem', live, sheetId) || '').trim();
+                if (!lab && raw && raw.toUpperCase() !== live.toUpperCase()) {
+                    lab = String(Map.currentLabelForSheet('sheet_stem', raw, sheetId) || '').trim();
+                }
+            }
+            if (!lab && typeof Map.currentLabelBySheetId === 'function') {
+                lab = String(Map.currentLabelBySheetId(sheetId) || '').trim();
             }
         }
         if (isPoisonedLiveAlias(lab, live, templateName)) lab = '';

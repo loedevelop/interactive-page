@@ -21,7 +21,17 @@ window.TimelineTemplates = (() => {
         return m ? m[1] : stem;
     }
 
-    /** 範圍層開包：選套餐 → 該套餐活頁自動列出，各列只填頁碼。 */
+    function copyPackExamFieldsForRender(r) {
+        return {
+            lines_per_page: r && r.lines_per_page != null && r.lines_per_page !== '' ? String(r.lines_per_page) : '',
+            difficulty: r && r.difficulty != null ? String(r.difficulty) : '',
+            include_nums: r && r.include_nums != null ? String(r.include_nums) : '',
+            exclude_nums: r && r.exclude_nums != null ? String(r.exclude_nums) : '',
+            count: r && r.count != null && r.count !== '' ? String(r.count) : ''
+        };
+    }
+
+    /** 組合層開包：選套餐 → 區塊＋範圍＋選題。考試／錄音只讀這份。 */
     function normalizePackRowsForRender(raw) {
         const fallbackComboId = String((raw && raw.pack_combo_id) || '').trim();
         const fallbackComboLabel = String((raw && raw.pack_combo_label) || '').trim();
@@ -30,24 +40,24 @@ window.TimelineTemplates = (() => {
                 const ownId = String((r && r.combo_id) || '').trim();
                 const metaFile = String((r && r.meta_file) || '').trim();
                 const comboId = ownId || (metaFile ? fallbackComboId : '');
-                return {
+                return Object.assign({
                     combo_id: comboId,
                     combo_label: String((r && r.combo_label) || (comboId ? fallbackComboLabel : '')).trim(),
                     meta_file: metaFile,
                     range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
                     start: r && r.start != null ? String(r.start) : '',
                     end: r && r.end != null ? String(r.end) : ''
-                };
+                }, copyPackExamFieldsForRender(r));
             });
         }
-        return [{
+        return [Object.assign({
             combo_id: fallbackComboId,
             combo_label: fallbackComboLabel,
             meta_file: String((raw && raw.pack_meta_file) || '').trim(),
             range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
             start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
             end: raw && raw.pack_end != null ? String(raw.pack_end) : ''
-        }];
+        }, copyPackExamFieldsForRender(null))];
     }
 
     function renderPackComboOptions(combos, currentId, currentLabel, cacheReady) {
@@ -81,23 +91,6 @@ window.TimelineTemplates = (() => {
         return html;
     }
 
-    function packSheetAliasLabel(sheet, templateName) {
-        if (!sheet) return '沒有別名';
-        const Map = window.MaterialNameMap;
-        if (sheet.id && Map && typeof Map.currentLabelForSheet === 'function') {
-            const live = (window.MaterialFileNames && typeof window.MaterialFileNames.liveSheetName === 'function')
-                ? window.MaterialFileNames.liveSheetName(sheet.stem, templateName)
-                : '';
-            const a = String(Map.currentLabelForSheet('sheet_stem', live || sheet.stem, sheet.id) || '').trim();
-            const b = (!a && sheet.stem && live && String(sheet.stem).toUpperCase() !== String(live).toUpperCase())
-                ? String(Map.currentLabelForSheet('sheet_stem', sheet.stem, sheet.id) || '').trim()
-                : '';
-            if (a) return a;
-            if (b) return b;
-        }
-        return '沒有別名';
-    }
-
     function packOwnSheets(combo) {
         return (combo && Array.isArray(combo.ownSheets)) ? combo.ownSheets : [];
     }
@@ -118,6 +111,121 @@ window.TimelineTemplates = (() => {
         return raw;
     }
 
+    /** 區塊格子：查這一本活頁列的活頁別稱。對不到才秀活頁名。不准寫「沒有別名」。 */
+    function packSheetBlockLabel(sheet, templateName) {
+        if (!sheet) return '';
+        const stem = String(sheet.stem || '').trim()
+            || String(sheet.meta || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
+        if (window.MaterialFileNames && typeof window.MaterialFileNames.currentAlias === 'function') {
+            return window.MaterialFileNames.currentAlias(stem, sheet.id, templateName);
+        }
+        return packSheetDisplayName(stem || sheet.meta, templateName);
+    }
+
+    function packDefaultLpp(combo, row) {
+        if (row && Number(row.lines_per_page) > 0) return String(Number(row.lines_per_page));
+        const SR = window.SheetRangeBounds;
+        if (combo && SR && typeof SR.lppForHomeworkCombo === 'function') {
+            const n = SR.lppForHomeworkCombo(combo);
+            if (n > 0) return String(n);
+        }
+        return '';
+    }
+
+    function packRowAvailLabel(classId, combo, row) {
+        if (!row || String(row.start || '').trim() === '' || String(row.end || '').trim() === '') return '—';
+        const fcmc = window.FeatureClassMaterialCombinations;
+        const SR = window.SheetRangeBounds;
+        if (!combo || !SR || typeof SR.countAvailable !== 'function') return '需讀取';
+        const total = (fcmc && typeof fcmc.lookupSheetAvailableCount === 'function')
+            ? fcmc.lookupSheetAvailableCount(classId, combo, row.meta_file)
+            : null;
+        if (total == null) return '需讀取';
+        const typedLpp = Number(row.lines_per_page);
+        const lpp = typedLpp > 0
+            ? typedLpp
+            : (typeof SR.lppForHomeworkCombo === 'function' ? SR.lppForHomeworkCombo(combo) : 0);
+        const avail = SR.countAvailable({
+            total: total,
+            lpp: lpp,
+            rangeType: row.range_type,
+            start: row.start,
+            end: row.end,
+            excludeNums: row.exclude_nums
+        });
+        if (avail == null) return '需讀取';
+        return String(avail);
+    }
+
+    function packDisplayPercent(count, availStr) {
+        const raw = String(count == null ? '' : count).trim();
+        if (raw === '') return '—';
+        const c = Number(raw);
+        const a = Number(availStr);
+        if (isNaN(c) || isNaN(a) || a <= 0) return '—';
+        return Math.round((c / a) * 100) + '%';
+    }
+
+    function collectExpandedPackItems(groupNode) {
+        const raw = (groupNode && groupNode.raw_data) || {};
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        const classId = (bState && bState.classId) || '';
+        const fcmc = window.FeatureClassMaterialCombinations;
+        const rows = normalizePackRowsForRender(raw);
+        const blocks = packBlocksFromRows(rows);
+        const items = [];
+        blocks.forEach(function (block) {
+            let blockCombo = null;
+            if (block.combo_id && fcmc && typeof fcmc.getAssignedComboById === 'function') {
+                blockCombo = fcmc.getAssignedComboById(classId, block.combo_id);
+            }
+            let blockRows = block.rows || [];
+            if (block.combo_id !== '__manual__' && blockCombo
+                && window.FeatureTimeline && typeof window.FeatureTimeline.expandPackRowsForCombo === 'function') {
+                blockRows = window.FeatureTimeline.expandPackRowsForCombo(classId, blockCombo, blockRows);
+            }
+            blockRows.forEach(function (row) {
+                items.push({ combo: blockCombo, row: row });
+            });
+        });
+        return { classId: classId, items: items };
+    }
+
+    function computePackStats(groupNode) {
+        const collected = collectExpandedPackItems(groupNode);
+        let availSum = 0;
+        let availKnown = false;
+        let availPending = false;
+        collected.items.forEach(function (it) {
+            const availStr = packRowAvailLabel(collected.classId, it.combo, it.row);
+            if (availStr === '需讀取') availPending = true;
+            const a = Number(availStr);
+            if (!isNaN(a) && availStr !== '—' && availStr !== '需讀取') {
+                availSum += a;
+                availKnown = true;
+            }
+        });
+        const availLabel = availPending && !availKnown ? '需讀取' : (availKnown ? String(availSum) : '—');
+        return { avail: availLabel };
+    }
+
+    function packStatsLineHtml(stats, extraClass, pathStr) {
+        const avail = (stats && stats.avail) || '—';
+        return '<div class="range-pack-stats' + (extraClass ? (' ' + extraClass) : '') + '"'
+            + (pathStr ? (' data-range-pack="' + escapeHtml(pathStr) + '"') : '')
+            + ' style="margin-top:8px; font-weight:800; color:#1E3A8A;">'
+            + '加總題數 ' + escapeHtml(avail)
+            + '</div>';
+    }
+
+    function packRowDeleteBtn(pathStr, idx, canDelete) {
+        if (canDelete) {
+            return '<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這段範圍"'
+                + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>';
+        }
+        return '<button type="button" class="btn" disabled style="padding:4px 8px; background:#E2E8F0; color:#94A3B8; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="唯一區塊不能刪">刪</button>';
+    }
+
     function packBlocksFromRows(rows) {
         const blocks = [];
         (rows || []).forEach(function (r) {
@@ -133,7 +241,7 @@ window.TimelineTemplates = (() => {
             }
             last.rows.push(r);
         });
-        return blocks.length ? blocks : [{ combo_id: '', combo_label: '', rows: [{ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }] }];
+        return blocks.length ? blocks : [{ combo_id: '', combo_label: '', rows: [Object.assign({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }, copyPackExamFieldsForRender(null))] }];
     }
 
     function audioPdfStatusHtml(pathStr, audioNode) {
@@ -177,7 +285,7 @@ window.TimelineTemplates = (() => {
             }
             bits.push((sheet || combo.label || '套餐') + '（' + fileName + '）檔案頁 ' + resolved.pages.join('、'));
         });
-        if (!anyCombo) return '請先在上面的範圍選套餐。PDF 在教材範本管理上傳與對照，這裡不另傳。';
+        if (!anyCombo) return '請先在上面的組合選套餐。PDF 在教材範本管理上傳與對照，這裡不另傳。';
         return bits.join('；');
     }
 
@@ -186,12 +294,13 @@ window.TimelineTemplates = (() => {
         const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
         const classId = (bState && bState.classId) || '';
         const fcmc = window.FeatureClassMaterialCombinations;
-        const cacheReady = !!(fcmc && typeof fcmc.isOfficialPairingCacheReady === 'function' && fcmc.isOfficialPairingCacheReady());
-        const combos = (cacheReady && fcmc && typeof fcmc.listAssignedCombosForHomework === 'function')
+        const cacheReady = !!(fcmc && typeof fcmc.isComboStatsReady === 'function' && fcmc.isComboStatsReady(classId));
+        if (fcmc && typeof fcmc.listAssignedCombosForHomework === 'function') {
+            fcmc.listAssignedCombosForHomework(classId);
+        }
+        const combos = cacheReady && fcmc && typeof fcmc.listAssignedCombosForHomework === 'function'
             ? fcmc.listAssignedCombosForHomework(classId)
-            : (cacheReady && fcmc && typeof fcmc.listAssignedCombosForClass === 'function'
-                ? fcmc.listAssignedCombosForClass(classId)
-                : []);
+            : [];
         const rows = normalizePackRowsForRender(raw);
         const blocks = packBlocksFromRows(rows);
         let globalIdx = 0;
@@ -215,10 +324,7 @@ window.TimelineTemplates = (() => {
             const isGroup = !!(blockCombo && blockCombo.isGroup === true);
             const sheetRows = (block.rows || []).map(function (row) {
                 const idx = globalIdx++;
-                const delSheet = (block.rows.length > 1)
-                    ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="刪這段範圍"'
-                        + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>')
-                    : '';
+                const delSheet = packRowDeleteBtn(pathStr, idx, (block.rows || []).length > 1);
                 let sheetCell;
                 if (isManual) {
                     sheetCell = '<input type="text" id="range-pack-manual-' + pathStr + '-' + idx + '" class="form-control range-pack-manual"'
@@ -229,20 +335,20 @@ window.TimelineTemplates = (() => {
                     const cur = String(row.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
                     sheetCell = '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet"'
                         + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
-                        + '<option value="">— 選活頁別名 —</option>'
+                        + '<option value="">— 選區塊 —</option>'
                         + ownSheets.map(function (sheet) {
                             const file = packSheetMetaValue(sheet);
                             const key = String(file || '').replace(/\.meta\.json$/i, '').toUpperCase();
                             return '<option value="' + escapeHtml(file) + '"'
                                 + (key && key === cur ? ' selected' : '') + '>'
-                                + escapeHtml(packSheetAliasLabel(sheet, blockCombo && blockCombo.extractionTemplateName)) + '</option>';
+                                + escapeHtml(packSheetBlockLabel(sheet, blockCombo && blockCombo.extractionTemplateName)) + '</option>';
                         }).join('')
                         + '</select>';
                 } else if (ownSheets.length === 1) {
                     const only = ownSheets[0];
                     const file = packSheetMetaValue(only);
                     sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(file) + '">'
-                        + '<div>' + escapeHtml(packSheetAliasLabel(only, blockCombo && blockCombo.extractionTemplateName)) + '</div>';
+                        + '<div>' + escapeHtml(packSheetBlockLabel(only, blockCombo && blockCombo.extractionTemplateName)) + '</div>';
                 } else if (blockCombo && ownSheets.length === 0) {
                     sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
                         + '<div style="color:#B91C1C; font-weight:800;">這份套餐沒有活頁</div>';
@@ -266,14 +372,33 @@ window.TimelineTemplates = (() => {
                     + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.end) + '"'
                     + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
                     + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
+                    + '<input id="range-pack-lpp-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(packDefaultLpp(blockCombo, row)) + '" title="每頁行數"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '<input id="range-pack-diff-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.difficulty || '') + '" placeholder="—" title="難度"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '<input id="range-pack-inc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.include_nums || '') + '" placeholder="—" title="必考題號"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '<input id="range-pack-exc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.exclude_nums || '') + '" placeholder="—" title="排除題號"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '<input id="range-pack-count-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.count != null && row.count !== '' ? String(row.count) : '') + '" placeholder="—" title="題數"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                    + ' onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); this.blur(); }">'
+                    + (function () {
+                        const availStr = packRowAvailLabel(classId, blockCombo, row);
+                        const pct = packDisplayPercent(row.count, availStr);
+                        return '<div id="range-pack-avail-' + pathStr + '-' + idx + '" class="range-pack-avail">' + escapeHtml(availStr) + '</div>'
+                            + '<div id="range-pack-pct-' + pathStr + '-' + idx + '" class="range-pack-pct">' + escapeHtml(pct) + '</div>';
+                    }())
                     + '<div>' + delSheet + '</div>'
                     + '</div>';
             }).join('');
             const sheetTable = (block.rows || []).length
                 ? ('<div class="range-pack-table">'
-                    + '<div class="range-pack-head"><div>' + (isManual ? '教材' : '活頁別名') + '</div><div>基準</div><div>起</div><div>迄</div><div></div></div>'
+                    + '<div class="range-pack-table-inner">'
+                    + '<div class="range-pack-head"><div>' + (isManual ? '教材' : '區塊') + '</div><div>基準</div><div>起</div><div>迄</div><div>每頁行數</div><div>難度</div><div>必考#</div><div>排除#</div><div>題數</div><div>可用題</div><div>顯示%</div><div>刪</div></div>'
                     + sheetRows
-                    + '</div>')
+                    + '</div></div>')
                 : '';
             return '<div class="range-pack-block" data-block-idx="' + bi + '" style="margin-top:10px; padding:10px; border:1px dashed #93C5FD; border-radius:8px; background:#F8FAFC;">'
                 + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
@@ -286,7 +411,7 @@ window.TimelineTemplates = (() => {
                 + '</div>'
                 + sheetTable
                 + '<div style="margin-top:8px;">'
-                + (function () {
+                    + (function () {
                     if (block.combo_id) {
                         return '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
                             + ' onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackSheet && window.FeatureTimeline.addRangePackSheet(\'' + pathStr + '\', ' + bi + ')">＋ 增加區塊</button>';
@@ -294,12 +419,29 @@ window.TimelineTemplates = (() => {
                     return '<button type="button" class="btn" disabled style="padding:4px 10px; background:#E2E8F0; color:#64748B; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="請先選套餐或手動輸入教材">＋ 增加區塊</button>';
                 }())
                 + '</div>'
+                + packStatsLineHtml((function () {
+                    let availSum = 0;
+                    let availKnown = false;
+                    let availPending = false;
+                    (block.rows || []).forEach(function (row) {
+                        const availStr = packRowAvailLabel(classId, blockCombo, row);
+                        if (availStr === '需讀取') availPending = true;
+                        const a = Number(availStr);
+                        if (!isNaN(a) && availStr !== '—' && availStr !== '需讀取') {
+                            availSum += a;
+                            availKnown = true;
+                        }
+                    });
+                    return {
+                        avail: availPending && !availKnown ? '需讀取' : (availKnown ? String(availSum) : '—')
+                    };
+                }()))
                 + '</div>';
         }).join('');
 
         return `
             <div class="range-pack-panel asg-unify" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
-                <div style="font-weight:900; color:#1E3A8A; margin-bottom:8px;">範圍（選套餐或手動輸入教材）</div>
+                <div style="font-weight:900; color:#1E3A8A; margin-bottom:8px;">組合（套餐、範圍、選題）</div>
                 ${blockHtml}
                 <div style="margin-top:10px;">
                     <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
@@ -371,8 +513,11 @@ window.TimelineTemplates = (() => {
                     box-sizing: border-box;
                 }
                 .asg-unify .range-pack-combo { width: 100%; }
-                .asg-unify .range-pack-row select { width: 100%; }
+                .asg-unify .range-pack-row select,
+                .asg-unify .exam-inline-row select { width: 100%; }
                 .asg-num { width:88px; }
+                .asg-unify .range-pack-row .asg-num,
+                .asg-unify .exam-inline-row .asg-num { width:100%; min-width:0; }
                 .asg-unify input[type="number"]::-webkit-inner-spin-button,
                 .asg-unify input[type="number"]::-webkit-outer-spin-button {
                     opacity: 1;
@@ -380,18 +525,30 @@ window.TimelineTemplates = (() => {
                     height: 24px;
                     margin-left: 2px;
                 }
-                .exam-seg-table, .range-pack-table { margin-top:8px; }
+                .exam-seg-table, .range-pack-table { margin-top:8px; overflow-x:auto; max-width:100% !important; }
+                .range-pack-table-inner { min-width: 1180px; max-width:none !important; }
+                .asg-unify .range-pack-head,
+                .asg-unify .range-pack-row { max-width:none !important; }
                 .exam-seg-head, .exam-inline-row, .range-pack-head, .range-pack-row {
                     display:grid;
                     gap:8px;
                     align-items:center;
                 }
-                .exam-seg-head, .exam-inline-row {
-                    grid-template-columns: minmax(140px, 1.6fr) 112px 88px 88px 88px 72px 80px 80px 72px 64px 64px auto;
-                }
+                .exam-seg-head, .exam-inline-row,
                 .range-pack-head, .range-pack-row {
-                    grid-template-columns: minmax(160px, 1.4fr) 112px 88px 88px auto;
+                    grid-template-columns: minmax(132px, 1.2fr) 88px 72px 72px 88px 72px 80px 80px 72px 72px 72px 52px;
                 }
+                .exam-seg-head > div, .range-pack-head > div {
+                    min-width:0;
+                    max-width:100% !important;
+                    white-space:nowrap;
+                }
+                .exam-inline-row > *, .range-pack-row > * {
+                    min-width:0;
+                    max-width:100% !important;
+                }
+                .range-pack-avail { color:#0F766E; font-weight:800; }
+                .range-pack-pct { color:#64748B; font-weight:800; }
                 .exam-seg-head, .range-pack-head { font-weight:800; color:#334155; margin-bottom:2px; }
                 .exam-inline-row, .range-pack-row { margin-top:4px; }
                 .tl-rail-date--deletable:hover { border-color: #FCA5A5; background: #FEF2F2; }
@@ -746,10 +903,11 @@ window.TimelineTemplates = (() => {
                 const titleColor = isRangeGroup ? '#1E3A8A' : '#581C87';
                 const titleBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
                 const rangeBadge = isRangeGroup
-                    ? '<span style="font-size:0.75rem; background:#DBEAFE; color:#1D4ED8; padding:3px 8px; border-radius:999px; font-weight:800; white-space:nowrap;">範圍層</span>'
+                    ? '<span style="font-size:0.75rem; background:#DBEAFE; color:#1D4ED8; padding:3px 8px; border-radius:999px; font-weight:800; white-space:nowrap;">組合層</span>'
                     : '';
                 const rangeHint = isRangeGroup
-                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">組標題空白時帶入套餐名稱；錄音／考試小標題用活頁＋頁碼起迄。沒選套餐或本班尚未指派套餐時，組標題維持空白。</div>'
+                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">組標題＝套餐名（空白才帶入）。小標題＝表名＋範圍（起迄都填才進；表名＝活頁別名）。沒選套餐或本班尚未指派套餐時，組標題維持空白。</div>'
+                        + '<div style="margin:-2px 0 10px 42px;">' + packStatsLineHtml(computePackStats(t), 'range-pack-title-stats', pathStr) + '</div>'
                     : '';
                 const rangePackHtml = isRangeGroup ? renderRangePackHtml(pathStr, t) : '';
 
@@ -819,7 +977,7 @@ window.TimelineTemplates = (() => {
                                 </div>
 
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
-                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle('${pathStr}')" title="建立範圍層，底下自動帶錄音＋考試">+ 📐 範圍（錄音＋考試）</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle('${pathStr}')" title="建立組合作業：同一範圍，搭配錄音＋考試">+ 📐 組合（錄音＋考試）</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 ${addResourceHtml}
@@ -909,7 +1067,13 @@ window.TimelineTemplates = (() => {
                             materialRefs[0] || raw.material_ref || {}
                         );
                     }
-                    let resolvedMaterialRange = raw.material_range || raw.student_drive_desc || '';
+                    let resolvedMaterialRange = '';
+                    if (window.FeatureTimeline && typeof window.FeatureTimeline.packRangeLabelForAudio === 'function') {
+                        resolvedMaterialRange = window.FeatureTimeline.packRangeLabelForAudio(pathStr) || '';
+                    }
+                    if (!resolvedMaterialRange) {
+                        resolvedMaterialRange = raw.material_range || raw.student_drive_desc || '';
+                    }
                     if (!resolvedMaterialRange && window.FeatureTimeline && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
                         resolvedMaterialRange = window.FeatureTimeline.buildMaterialRangeLabelFromRows(materialRefs) || '';
                     }
@@ -1398,7 +1562,7 @@ window.TimelineTemplates = (() => {
                         <button type="button" class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                     </div>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
-                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle(null)" title="建立範圍層，底下自動帶錄音＋考試">+ 📐 範圍（錄音＋考試）</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle(null)" title="建立組合作業：同一範圍，搭配錄音＋考試">+ 📐 組合（錄音＋考試）</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     ${addResourceHtml}

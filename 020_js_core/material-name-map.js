@@ -104,6 +104,48 @@ window.MaterialNameMap = (function () {
         return hit && hit.current_label ? String(hit.current_label).trim() : '';
     }
 
+    /**
+     * 這一本活頁列的現用別稱：只認 sheet_stem 且 material_sheet_id＝這本。
+     * 同一本可能有多筆舊活頁名當 alias；current_label 才是現用標籤。
+     * 終點＝current_label 不再是另一筆 alias。對不到＝沒有，不准猜第一筆。
+     */
+    function currentLabelBySheetId(sheetId) {
+        const sid = String(sheetId || '').trim();
+        if (!sid) return '';
+        const mine = rowsSync().filter(function (r) {
+            return r.kind === 'sheet_stem' && String(r.material_sheet_id || '') === sid;
+        });
+        if (!mine.length) return '';
+        const aliasU = {};
+        mine.forEach(function (r) {
+            const a = upper(r.alias);
+            if (a) aliasU[a] = true;
+        });
+        const terminals = [];
+        const seenT = {};
+        mine.forEach(function (r) {
+            const lab = String(r.current_label || '').trim();
+            if (!lab) return;
+            const u = upper(lab);
+            if (aliasU[u] || seenT[u]) return;
+            seenT[u] = true;
+            terminals.push(lab);
+        });
+        if (terminals.length === 1) return terminals[0];
+        if (terminals.length > 1) return '';
+        const labels = [];
+        const seenL = {};
+        mine.forEach(function (r) {
+            const lab = String(r.current_label || '').trim();
+            if (!lab) return;
+            const u = upper(lab);
+            if (seenL[u]) return;
+            seenL[u] = true;
+            labels.push(lab);
+        });
+        return labels.length === 1 ? labels[0] : '';
+    }
+
     /** 資料夾現用名：舊名對到別名就回現用標籤，否則原字。未套用的雲端夾清單不要用這個去合併。 */
     function resolveFolderName(name) {
         const n = norm(name);
@@ -393,6 +435,7 @@ window.MaterialNameMap = (function () {
         resolve: resolve,
         currentLabel: currentLabel,
         currentLabelForSheet: currentLabelForSheet,
+        currentLabelBySheetId: currentLabelBySheetId,
         resolveFolderName: resolveFolderName,
         lookupKeys: lookupKeys,
         namesMatch: namesMatch,

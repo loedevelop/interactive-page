@@ -32,5 +32,6 @@ alwaysApply: true
 | `extraction-formula-live-apply-invariant.mdc` | 出作業書寫／學生文稿不套公式、只剩頁標題、一直自動套用、畫面是舊凍結 snapshot | `feature-timeline.js`, `material-snapshot.js`, `layout-fields-eval.js`, `feature-review-catalog.js`, `feature-template-library.js`, `ui-timeline-templates.js` |
 | `no-invented-fallback-invariant.mdc` | 退路未提出／未同意就黑箱施作 | 全站（alwaysApply） |
 | `uniform-apply-invariant.mdc` | 規則要全面套用／禁止只修例子、同類列走第二套邏輯／每個 popup 處理方式不一樣 | 全站（alwaysApply）；`material-file-names.js`；`material-pdf-page-map.js` |
+| `title-range-label-invariant.mdc` | 小標題消去法／pp. 1~2 ; p. 3／中括號包範圍／獨立考試另組字串 | `feature-timeline.js`, `feature-exam-job.js`, `ui-timeline-templates.js`, `store-assignment-builder.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

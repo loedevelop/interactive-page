@@ -24,29 +24,13 @@ window.BuilderStore = (() => {
         return m ? m[1] : stem;
     }
 
-    function packLabelWithSheets(base, gRaw) {
-        const label = String(base || '').trim();
-        const rows = (gRaw && Array.isArray(gRaw.pack_rows) && gRaw.pack_rows.length)
-            ? gRaw.pack_rows
-            : [{ meta_file: gRaw && gRaw.pack_meta_file }];
-        const extra = [];
-        const seen = {};
-        rows.forEach(function (r) {
-            const stem = displayStemFromMetaFile((r && r.meta_file) || '');
-            const u = stem.toUpperCase();
-            if (!stem || seen[u]) return;
-            seen[u] = true;
-            if (label && label.toUpperCase().indexOf(u) !== -1) return;
-            extra.push(stem);
-        });
-        if (!extra.length) return label;
-        return (label ? (label + ' ') : '') + extra.join(' ');
+    function packLabelWithSheets(base) {
+        return String(base || '').trim();
     }
 
     /**
-     * 範圍層組標題：
-     * - 已選套餐 → 套餐名稱（pack_combo_label），活頁名再加上
-     * - 舊作業沒有 pack_combo_id → 才退回錄音 material_range（相容舊資料）
+     * 範圍層組標題＝套餐名稱。空白才帶入。不准把活頁名黏上去。
+     * 舊作業沒有 pack_combo_id → 才退回錄音 material_range（相容舊資料）
      * 沒選套餐、或本班尚未指派套餐 → 空白，不拿別班／別套餐補。
      */
     function deriveRangeTitleFromGroup(groupNode) {
@@ -124,13 +108,23 @@ window.BuilderStore = (() => {
                     const rtypeEl = idx != null ? document.getElementById('range-pack-rtype-' + pathStr + '-' + idx) : null;
                     const startEl = idx != null ? document.getElementById('range-pack-start-' + pathStr + '-' + idx) : null;
                     const endEl = idx != null ? document.getElementById('range-pack-end-' + pathStr + '-' + idx) : null;
+                    const lppEl = idx != null ? document.getElementById('range-pack-lpp-' + pathStr + '-' + idx) : null;
+                    const diffEl = idx != null ? document.getElementById('range-pack-diff-' + pathStr + '-' + idx) : null;
+                    const incEl = idx != null ? document.getElementById('range-pack-inc-' + pathStr + '-' + idx) : null;
+                    const excEl = idx != null ? document.getElementById('range-pack-exc-' + pathStr + '-' + idx) : null;
+                    const countEl = idx != null ? document.getElementById('range-pack-count-' + pathStr + '-' + idx) : null;
                     rows.push({
                         combo_id: comboId,
                         combo_label: comboLabel,
                         meta_file: sheetEl ? String(sheetEl.value || '').trim() : '',
                         range_type: (rtypeEl && rtypeEl.value === 'qnum') ? 'qnum' : 'page',
                         start: startEl ? String(startEl.value || '').trim() : '',
-                        end: endEl ? String(endEl.value || '').trim() : ''
+                        end: endEl ? String(endEl.value || '').trim() : '',
+                        lines_per_page: lppEl ? String(lppEl.value || '').trim() : '',
+                        difficulty: diffEl ? String(diffEl.value || '').trim() : '',
+                        include_nums: incEl ? String(incEl.value || '').trim() : '',
+                        exclude_nums: excEl ? String(excEl.value || '').trim() : '',
+                        count: countEl ? String(countEl.value || '').trim() : ''
                     });
                 });
             });
@@ -772,7 +766,7 @@ window.BuilderStore = (() => {
 
         /**
          * 一鍵建立「範圍群組 → 錄音＋考試」（僅影響新建節點，不改舊作業）
-         * 開包後先選本班已指派套餐；組標題＝套餐名，錄音／考試小標題＝活頁＋起迄。
+         * 開包後先選本班已指派套餐；組標題＝套餐名，錄音／考試小標題＝表名＋範圍。
          */
         addRangeBundle: (pathStr) => {
             syncState();

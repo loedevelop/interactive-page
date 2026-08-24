@@ -1,0 +1,76 @@
+---
+description: 小標題消去法／pp. 1~2 分號 p. 3／中括號包範圍／獨立考試另組字串
+globs: 110_teacher_core/feature-timeline.js,110_teacher_core/feature-exam-job.js,110_teacher_core/ui-timeline-templates.js,110_teacher_core/store-assignment-builder.js
+alwaysApply: false
+---
+
+# 標題範圍小標題鐵律（挑選目標｜2026-08-24）
+
+長篇規格：`docs/標題範圍處理規則.md`
+
+## 症狀
+
+- 同一本填 1～2 與 3，小標題變成「表名 pp. 1~2 ; 表名 p. 3」或先黏再削
+- 斷層被收成一段，或被中括號包成兩塊
+- 獨立考試標題走另一套 join，跟組合層不一樣
+- 沒填迄也被當成單頁帶進標題
+- 組標題黏了活頁名；小標題只剩 pp. 沒有表名
+
+## 根因
+
+組合層已走 FeatureTimeline.combinePackRangeLabel（挑選、分匣、排序融合、表名收納）。
+獨立考試 buildExamRangeLabelFromTask、錄音 refs 的 buildMaterialRangeLabelFromRows 曾各自 join 分號，沒填迄還當單頁。同類列第二套邏輯。
+
+## 不變量
+
+```
+大標題＝套餐名。空白才帶入。不准黏活頁名。
+小標題＝表名＋範圍。表名＝活頁別名（沒改＝活頁名）。
+只准 combinePackRangeLabel 組字串。獨立考試、錄音 Snapshot、material_refs 摘要同一把。
+挑選：起、迄、表名都有才進。沒填迄＝這段沒有。不准當單頁。
+只認頁碼／題號。其他（含 row）不進匣。
+匣＝活頁 × 模式。匣內排序後，相連或重疊才融；斷層維持兩筆，一個 pp. 或一個 # 加逗號。
+範圍字串完全一樣且表名連續才收：C~D pp. 2~4 ／ Unit 1-8 ~1-9 pp. 2~4
+FeatureTimeline 不在＝回空。不准退回舊 join。
+學生頁只讀已存 title／material_range，不准再算。
+```
+
+## 禁止
+
+```javascript
+// 各檔自己組小標題
+return parts.join('；');
+return MS.formatRangeLabel(stem, m.range_spec || '');
+
+// 沒填迄當單頁
+const hi = end || start;
+
+// FeatureTimeline 不在就走舊路
+if (!FT) return oldJoin(segs);
+```
+
+## 正確
+
+```javascript
+// 區段／refs 先轉成 pack 列（起迄都填；只認 page／qnum），再同一把組字
+return FeatureTimeline.combinePackRangeLabel(rows, classId);
+
+// 獨立考試：函式不在＝沒有
+if (!FT || typeof FT.combinePackRangeLabel !== 'function') return '';
+```
+
+## 實測
+
+1. 同一本 1～2 與 3 → 表名 pp. 1~3
+2. 同一本 1～5 與 8～10 → 表名 pp. 1~5, 8~10
+3. C、D 都是 pp. 2~4 → C~D pp. 2~4
+4. Unit 1-8、Unit 1-9 範圍一樣 → Unit 1-8 ~1-9 pp. 2~4
+5. 獨立考試兩個區塊同一本相連起迄 → 與組合層同一串，不是兩段分號
+6. 沒填迄的列不進標題
+
+## 改動前自問
+
+1. 小標題是不是只走 combinePackRangeLabel？有沒有第二套 join？
+2. 對不到／沒填迄／函式不在時，會不會去抓別的列或退回舊字串？
+3. 獨立考試與組合層同一本、同一組起迄，字串是否相同？
+任一否 → 停。

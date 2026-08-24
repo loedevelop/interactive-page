@@ -550,6 +550,32 @@ window.FeatureExamJob = (function () {
         return Object.keys(seen).length === own.length;
     }
 
+    function matchOwnSheetForFile(combo, fileName) {
+        const want = fullMetaStem(fileName).toUpperCase();
+        if (!want) return null;
+        const own = (combo && Array.isArray(combo.ownSheets)) ? combo.ownSheets : [];
+        for (let i = 0; i < own.length; i++) {
+            const s = own[i];
+            if (!s) continue;
+            const meta = String(s.meta || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '').toUpperCase();
+            const stem = String(s.stem || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '').toUpperCase();
+            if (meta === want || stem === want) return s;
+        }
+        return null;
+    }
+
+    /** 區塊格子：查這一本活頁列的活頁別稱。對不到才秀活頁名。不准寫「沒有別名」。 */
+    function examBlockLabel(combo, fileName) {
+        const sheet = matchOwnSheetForFile(combo, fileName);
+        const stem = (sheet && sheet.stem)
+            || displayStemFromMetaFile(fileName)
+            || fullMetaStem(fileName);
+        if (window.MaterialFileNames && typeof window.MaterialFileNames.currentAlias === 'function') {
+            return window.MaterialFileNames.currentAlias(stem, sheet && sheet.id, combo && combo.extractionTemplateName);
+        }
+        return displayStemFromMetaFile(fileName) || stem;
+    }
+
     function examBlockCellHtml(pathStr, idx, secIdx, segIdx, segment, combo) {
         const ownFile = String((segment && segment.meta_file_name) || '').trim()
             || asMetaFileName(segment && segment.sheet_id);
@@ -561,14 +587,14 @@ window.FeatureExamJob = (function () {
                 + '<option value="">— 選區塊 —</option>';
             files.forEach(function (file) {
                 const fn = asMetaFileName(file);
-                const label = displayStemFromMetaFile(fn) || fn;
+                const label = examBlockLabel(combo, fn) || fn;
                 const sel = fullMetaStem(fn).toUpperCase() === cur ? ' selected' : '';
                 html += '<option value="' + esc(fn) + '"' + sel + '>' + esc(label) + '</option>';
             });
             html += '</select>';
             return html;
         }
-        const blockName = displayStemFromMetaFile(ownFile || (segment && segment.sheet_id) || '');
+        const blockName = examBlockLabel(combo, ownFile || (segment && segment.sheet_id) || '');
         return '<input type="hidden" id="exam-inline-sheet-' + pathStr + '-' + idx + '" value="'
             + esc(ownFile) + '">'
             + (blockName
@@ -737,7 +763,9 @@ window.FeatureExamJob = (function () {
             const comboId = String((rowCombo && rowCombo.id) || (row && row.comboId) || '').trim();
             const metaFile = String((row && row.metaFile) || '').trim();
             const start = row && row.start != null ? String(row.start).trim() : '';
+            const end = row && row.end != null ? String(row.end).trim() : '';
             if (!comboId && !metaFile && !start) return;
+            if (!start || !end) return;
             if (!comboId) notes.push('第 ' + (ri + 1) + ' 列沒有套餐');
             if (!metaFile) notes.push('第 ' + (ri + 1) + ' 列沒有活頁');
             const last = groups[groups.length - 1];
@@ -766,8 +794,7 @@ window.FeatureExamJob = (function () {
                 const startN = (row && row.start !== '' && row.start != null && !isNaN(Number(row.start)))
                     ? Number(row.start) : '';
                 const endN = (row && row.end !== '' && row.end != null && !isNaN(Number(row.end)))
-                    ? Number(row.end)
-                    : (startN !== '' ? startN : '');
+                    ? Number(row.end) : '';
                 const prevSeg = (prev.segments || []).find(function (s) {
                     return fullMetaStem(s && (s.meta_file_name || s.sheet_id)) === fullMetaStem(metaFile)
                         && Number(s && s.start) === Number(startN)
@@ -784,11 +811,15 @@ window.FeatureExamJob = (function () {
                 }
                 if (startN !== '') seg.start = startN;
                 if (endN !== '') seg.end = endN;
-                if (prevSeg && prevSeg.count != null) seg.count = prevSeg.count;
-                if (prevSeg && prevSeg.lines_per_page) seg.lines_per_page = prevSeg.lines_per_page;
-                if (prevSeg && prevSeg.difficulty) seg.difficulty = prevSeg.difficulty;
-                if (prevSeg && prevSeg.include_nums) seg.include_nums = prevSeg.include_nums;
-                if (prevSeg && prevSeg.exclude_nums) seg.exclude_nums = prevSeg.exclude_nums;
+                if (row.count !== '' && row.count != null && !isNaN(Number(row.count))) {
+                    seg.count = Number(row.count);
+                }
+                if (row.lines_per_page !== '' && row.lines_per_page != null && Number(row.lines_per_page) > 0) {
+                    seg.lines_per_page = Number(row.lines_per_page);
+                }
+                seg.difficulty = String(row.difficulty || '').trim();
+                seg.include_nums = String(row.include_nums || row.includeNums || '').trim();
+                seg.exclude_nums = String(row.exclude_nums || row.excludeNums || '').trim();
                 return seg;
             });
             if (!sec.segments.length) sec.segments = [emptySegment()];
@@ -814,6 +845,36 @@ window.FeatureExamJob = (function () {
         examTask.raw_data.exam_job = job;
         clampExamJobRanges(examTask, { notify: false });
         return notes;
+    }
+
+    function examHasOwnCombo(sections) {
+        return (sections || []).some(function (sec) {
+            return !!String((sec && sec.combination_id) || '').trim();
+        });
+    }
+
+    function isExamUnderComboPack(pathStr, task) {
+        if (task && task.raw_data && task.raw_data.exam_force_standalone) return false;
+        const FT = window.FeatureTimeline;
+        return !!(FT && typeof FT.parentRangeGroupPathOf === 'function' && FT.parentRangeGroupPathOf(pathStr));
+    }
+
+    /**
+     * 組合層是範圍＋選題的唯一來源。考試只讀這份。獨立考試＝不動。
+     */
+    function syncExamFromParentPack(pathStr, task) {
+        if (!task || !isExamUnderComboPack(pathStr, task)) return false;
+        const FT = window.FeatureTimeline;
+        if (!FT || typeof FT.buildRangePackForApply !== 'function') return false;
+        const parentPath = FT.parentRangeGroupPathOf(pathStr);
+        if (!parentPath) return false;
+        const pack = FT.buildRangePackForApply(parentPath, { clamp: false, notify: false, useState: true });
+        applyRangePackToExam(task, pack);
+        return true;
+    }
+
+    function inheritRangePackIntoExamIfEmpty(pathStr, task) {
+        return syncExamFromParentPack(pathStr, task);
     }
 
     function metaOptionsForCombo(classId, combo) {
@@ -1518,7 +1579,7 @@ window.FeatureExamJob = (function () {
             if (combo) folder = combo.folderName || '';
         }
         const hint = fullMetaStem((section && (section.meta_file_name || section.sheet_id)) || '');
-        return fcmc.lookupSheetStats(classId, folder, hint);
+        return fcmc.lookupSheetStats(classId, folder, hint, section && section.combination_id);
     }
 
     function pageCountsFromMetaRows(rows) {
@@ -2829,6 +2890,7 @@ window.FeatureExamJob = (function () {
      */
     function renderInlineEditorHtml(pathStr, task) {
         if (task) {
+            inheritRangePackIntoExamIfEmpty(pathStr, task);
             const overflow = clampExamJobRanges(task, { notify: false });
             if (overflow.length && !_rangeClampNotified[pathStr]) {
                 _rangeClampNotified[pathStr] = true;
@@ -2909,7 +2971,8 @@ window.FeatureExamJob = (function () {
         // 都會被抓來當 combo。這種情況光憑程式自動判斷分不出「老師是真的要配這個錄音」還是
         // 「這份考試其實跟它無關」，所以加一個老師自己可切換的旗標，讓老師能明確覆蓋判斷。
         const forcedStandalone = !!(task && task.raw_data && task.raw_data.exam_force_standalone);
-        const isStandaloneExam = !siblingAudio || forcedStandalone;
+        const underComboPack = isExamUnderComboPack(pathStr, task);
+        const isStandaloneExam = !underComboPack && (!siblingAudio || forcedStandalone);
 
         // 試卷範本下拉只列該 meta 的官方認證組合（material_combination_exam_templates）。
         const layoutMaterialFolder = isStandaloneExam
@@ -2964,13 +3027,7 @@ window.FeatureExamJob = (function () {
             const resolvedCombo = resolveSectionCombo(currentClassId, sec);
             if (resolvedCombo) {
                 applyComboToSection(sec, resolvedCombo);
-                syncSectionSegmentsToOwnFiles(sec, resolvedCombo);
-            } else if (!sec.combination_id && !sec.material_folder && effectiveMaterialFolder) {
-                const guessed = resolveSectionCombo(currentClassId, {
-                    material_folder: effectiveMaterialFolder,
-                    segments: []
-                });
-                if (guessed) applyComboToSection(sec, guessed);
+                if (!underComboPack) syncSectionSegmentsToOwnFiles(sec, resolvedCombo);
             }
             const secCombo = resolveSectionCombo(currentClassId, sec);
             const secFolder = String((secCombo && secCombo.folderName) || sec.material_folder || '').trim();
@@ -2979,7 +3036,7 @@ window.FeatureExamJob = (function () {
                 : (sec.material_root_kind === 'class' ? 'class' : 'teacher');
             const secMetaOpts = secCombo ? metaOptionsForCombo(currentClassId, secCombo) : [];
             const secFolderReady = !!secFolder;
-            if (secFolderReady) {
+            if (secFolderReady && !underComboPack) {
                 sec.segments = seedSectionsAfterFolderReady(
                     sec.segments,
                     _forcedStandaloneForFill ? null : siblingAudio,
@@ -2989,15 +3046,17 @@ window.FeatureExamJob = (function () {
             }
             (sec.segments || []).forEach(function (s) {
                 if (sec.combination_id && !s.combination_id) s.combination_id = sec.combination_id;
-                healExamSectionSheet(s, secMetaOpts);
-                if (!_forcedStandaloneForFill) healSegmentMetaFromAudio(s, siblingAudio);
+                if (!underComboPack) healExamSectionSheet(s, secMetaOpts);
+                if (!_forcedStandaloneForFill && !underComboPack) healSegmentMetaFromAudio(s, siblingAudio);
                 attachCatalogMetaToSection(currentClassId, secKind, secFolder, s);
                 if (s && (s.sheet_id || s.meta_file_name) && officialPairingCacheReady()) {
                     const nextTpl = examTemplateIdForCombo(secCombo, s.layout_profile_id);
                     s.layout_profile_id = nextTpl;
                     const pairProfile = nextTpl ? resolveExamTemplateProfile(nextTpl) : null;
                     if (pairProfile && Number(pairProfile.lines_per_page) > 0) {
-                        s.lines_per_page = Number(pairProfile.lines_per_page);
+                        if (!underComboPack || !(Number(s.lines_per_page) > 0)) {
+                            s.lines_per_page = Number(pairProfile.lines_per_page);
+                        }
                     }
                 }
             });
@@ -3117,15 +3176,25 @@ window.FeatureExamJob = (function () {
                 + '<div>' + delSeg + '</div>'
                 + '</div>';
             }).join('');
+            const comboName = (secCombo && secCombo.label)
+                || String((sec && sec.combination_id) || '').trim()
+                || '（上方組合尚未選套餐）';
+            const comboPickerHtml = underComboPack
+                ? ('<div style="flex:1 1 240px; min-width:200px;">'
+                    + '<label style="display:block; font-size:0.85rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐</label>'
+                    + '<div style="font-weight:800; color:#1E3A8A; padding:6px 0;">' + esc(comboName) + '</div></div>')
+                : ('<div style="flex:1 1 240px; min-width:200px;">'
+                    + '<label style="display:block; font-size:0.85rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐'
+                    + (secIdx === 0 && isStandaloneExam ? '（獨立考試）' : '') + '</label>'
+                    + '<select id="exam-inline-materialfolder-' + pathStr + '-' + secIdx + '" class="form-control" style="width:100%; padding:6px;"'
+                    + ' onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange(\'' + pathStr + '\', ' + secIdx + ')">'
+                    + secComboOptsHtml + '</select></div>');
             return `
                 <div class="exam-section-card" data-exam-section="${secIdx}" style="margin-top:10px; padding:10px; border:1px dashed #93C5FD; border-radius:8px; background:#F8FAFC;">
                     <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
-                        <div style="flex:1 1 240px; min-width:200px;">
-                            <label style="display:block; font-size:0.85rem; font-weight:800; color:#334155; margin-bottom:4px;">套餐${secIdx === 0 && isStandaloneExam ? '（獨立考試）' : ''}</label>
-                            <select id="exam-inline-materialfolder-${pathStr}-${secIdx}" class="form-control" style="width:100%; padding:6px;"
-                                onchange="window.FeatureExamJob._inlineOnExamMaterialFolderSelectChange('${pathStr}', ${secIdx})">${secComboOptsHtml}</select>
-                        </div>
+                        ${comboPickerHtml}
                         <span style="font-weight:800; color:#134E4A; padding-bottom:6px;">考題 ${secCountSum}</span>
+                        ${underComboPack ? '' : `
                         <button type="button" class="btn" style="padding:4px 8px; font-size:0.72rem; background:#EFF6FF; border:1px solid #93C5FD; border-radius:4px; color:#1D4ED8; font-weight:800;"
                             onclick="window.FeatureExamJob._inlineReloadMaterialFolders('${pathStr}')"
                             title="剛建立的套餐沒看到就按這個重新整理">🔄 重新整理清單</button>
@@ -3133,6 +3202,7 @@ window.FeatureExamJob = (function () {
                         <button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;"
                             title="刪這份套餐" onclick="window.FeatureExamJob._inlineRemoveExamSection('${pathStr}', ${secIdx})">刪套餐</button>
                         ` : ''}
+                        `}
                     </div>
                     ${(siblingAudio && forcedStandalone && secIdx === 0) ? `
                     <div style="margin-top:8px; font-size:0.72rem; color:#9A3412;">
@@ -3149,7 +3219,9 @@ window.FeatureExamJob = (function () {
                             🚩 允許申訴答案
                         </label>
                     </div>
-                    ${!secFolderReady ? `
+                    ${underComboPack ? `
+                    <div style="margin-top:8px; color:#64748B; font-weight:700;">範圍與選題在上方組合。這裡只做考試自己的事。</div>
+                    ` : (!secFolderReady ? `
                     <div style="margin-top:8px; color:#9A3412; font-weight:700;">選套餐後會自動列出區塊</div>
                     ` : ('<div class="exam-seg-table">'
                     + '<div class="exam-seg-head">'
@@ -3161,7 +3233,7 @@ window.FeatureExamJob = (function () {
                     + '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
                     + ' onclick="window.FeatureExamJob._inlineAddSegment(\'' + pathStr + '\', ' + secIdx + ')"'
                     + ' title="同一套餐要另一段範圍就按這個">＋ 增加區塊</button>'
-                    + '</div>')}
+                    + '</div>'))}
                 </div>
             `;
         }).join('');
@@ -3170,7 +3242,7 @@ window.FeatureExamJob = (function () {
             <div id="exam-inline-wrap-${pathStr}" class="exam-inline-wrap asg-unify" style="margin-top:8px; padding:12px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; color:#0F766E;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
                     <strong>📝 考試出題</strong>
-                    ${!isStandaloneExam ? `
+                    ${(!isStandaloneExam && !underComboPack) ? `
                     <button type="button" class="btn" style="padding:4px 12px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
                         title="把上面組合包的套餐、區塊、基準、起迄帶到這份試卷"
                         onclick="window.FeatureExamJob._inlineImportFromRangePack('${pathStr}')">帶入</button>
@@ -3219,6 +3291,7 @@ window.FeatureExamJob = (function () {
                 </div>
                 ${sectionCardsHtml}
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center;">
+                    ${underComboPack ? '' : `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#A7F3D0; color:#065F46; border:1px solid #6EE7B7;"
                         onclick="window.FeatureExamJob._inlineAddExamSection('${pathStr}')"
                         title="不同擷取請另加一套餐">＋ 增加套餐</button>
@@ -3227,6 +3300,7 @@ window.FeatureExamJob = (function () {
                         onclick="window.FeatureExamJob._inlineApplyLastConfig('${pathStr}')"
                         title="只帶入上次的套餐／範圍／範本。這是新卷，不會沿用舊卷號；確認後請按「產生試卷」。">📋 套用上次設定（本班）</button>
                     ` : ''}
+                    `}
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
@@ -3368,6 +3442,23 @@ window.FeatureExamJob = (function () {
         });
         const cards = document.querySelectorAll('#exam-inline-wrap-' + pathStr + ' .exam-section-card');
         if (!cards.length) return prevSecs;
+        if (isExamUnderComboPack(pathStr, task)) {
+            syncExamFromParentPack(pathStr, task);
+            const synced = normalizeExamSections((task.raw_data && task.raw_data.exam_job && task.raw_data.exam_job.sections) || prevSecs, {
+                material_folder: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+                material_root_kind: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+            });
+            cards.forEach(function (card) {
+                const secIdx = Number(card.getAttribute('data-exam-section'));
+                const sec = synced[secIdx];
+                if (!sec) return;
+                const shuffleEl = document.getElementById('exam-inline-shuffle-' + pathStr + '-' + secIdx);
+                const appealEl = document.getElementById('exam-inline-allow-appeal-' + pathStr + '-' + secIdx);
+                if (shuffleEl) sec.shuffle = !!shuffleEl.checked;
+                if (appealEl) sec.allow_answer_appeal = !!appealEl.checked;
+            });
+            return synced;
+        }
         const sections = [];
         const bStateRead = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
         const classIdRead = (bStateRead && bStateRead.classId) || '';
@@ -3488,41 +3579,64 @@ window.FeatureExamJob = (function () {
         return node;
     }
 
-    function formatExamSegRangeSpec(seg) {
+    function packRowsFromExamRange(seg, sec) {
         const start = String(seg && seg.start != null ? seg.start : '').trim();
         const end = String(seg && seg.end != null ? seg.end : '').trim();
-        if (!start) return '';
+        if (!start || !end) return null;
         const rtype = (seg && seg.range_type) || 'page';
-        const hi = end || start;
-        if (rtype === 'qnum' || rtype === 'row') {
-            return start === hi ? ('#' + start) : ('#' + start + '~' + hi);
-        }
-        return start === hi ? ('p. ' + start) : ('pp. ' + start + '~' + hi);
+        if (rtype !== 'page' && rtype !== 'qnum') return null;
+        const metaFile = String((seg && (seg.meta_file_name || '')) || '').trim()
+            || asMetaFileName((seg && seg.sheet_id) || '');
+        if (!metaFile) return null;
+        const comboId = String((seg && (seg.combination_id || seg.combo_id))
+            || (sec && (sec.combination_id || sec.combo_id)) || '').trim();
+        return {
+            start: start,
+            end: end,
+            rangeType: rtype,
+            range_type: rtype,
+            metaFile: metaFile,
+            meta_file: metaFile,
+            comboId: comboId,
+            combo_id: comboId,
+            comboLabel: '',
+            combo_label: ''
+        };
     }
 
-    /** 這份考試自己的範圍文字：區塊＋起迄（例：B pp. 1~5；Z p. 1）。沒選區塊或沒填起＝沒有。 */
+    /** 小標題＝表名＋範圍。只准 combinePackRangeLabel。函式不在＝沒有。 */
     function buildExamRangeLabelFromTask(task) {
+        const FT = window.FeatureTimeline;
+        if (!FT || typeof FT.combinePackRangeLabel !== 'function') return '';
         if (!task || !task.raw_data) return '';
         const job = task.raw_data.exam_job || {};
         const sections = Array.isArray(job.sections) ? job.sections : [];
-        const parts = [];
-        const seen = {};
+        const rows = [];
         sections.forEach(function (sec) {
-            ((sec && sec.segments) || []).forEach(function (seg) {
-                const sheet = displayStemFromMetaFile((seg && (seg.meta_file_name || seg.sheet_id)) || '');
-                const spec = formatExamSegRangeSpec(seg);
-                if (!sheet || !spec) return;
-                const bit = sheet + ' ' + spec;
-                if (seen[bit]) return;
-                seen[bit] = true;
-                parts.push(bit);
+            const segs = (sec && Array.isArray(sec.segments) && sec.segments.length)
+                ? sec.segments
+                : (sec ? [sec] : []);
+            segs.forEach(function (seg) {
+                const row = packRowsFromExamRange(seg, sec);
+                if (row) rows.push(row);
             });
         });
-        return parts.join('；');
+        const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+        return FT.combinePackRangeLabel(rows, (bState && bState.classId) || '');
     }
 
     function getExamRangeLabel(examPathStr, task) {
         const node = task || getBuilderTaskByPath(examPathStr);
+        if (isExamUnderComboPack(examPathStr, node)) {
+            const FT = window.FeatureTimeline;
+            const parentPath = (FT && typeof FT.parentRangeGroupPathOf === 'function')
+                ? FT.parentRangeGroupPathOf(examPathStr)
+                : '';
+            const packLabel = (parentPath && FT && typeof FT.packRangeLabelForAudio === 'function')
+                ? FT.packRangeLabelForAudio(parentPath)
+                : '';
+            if (packLabel) return packLabel;
+        }
         const own = buildExamRangeLabelFromTask(node);
         if (own) return own;
         return getSiblingAudioRangeLabel(examPathStr) || '';

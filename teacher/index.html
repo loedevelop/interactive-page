@@ -366,15 +366,15 @@
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/profile-form.js?v=1"></script>
     <script src="../020_js_core/task-script-resolver.js?v=5"></script> <!-- v5：TASK_TYPE_ICON 補 pdf_exam: 📄 -->
-    <script src="../020_js_core/material-snapshot.js?v=27"></script> <!-- v27：題號已有句點不再加第二個。 -->
-    <script src="../020_js_core/material-name-map.js?v=4"></script> <!-- v4：別稱只是活頁.擷取範本＝遺毒，改回活頁名。 -->
-    <script src="../020_js_core/material-file-names.js?v=20"></script> <!-- v20：別稱遺毒（活頁.擷取範本）顯示／存檔都改回活頁名。 -->
+    <script src="../020_js_core/material-snapshot.js?v=29"></script> <!-- v29：範圍反寫 pp. 1~2, 5, 10／#11~16, 26。 -->
+    <script src="../020_js_core/material-name-map.js?v=5"></script> <!-- v5：活頁別稱跟活頁列走，按 sheet id 查 current_label。 -->
+    <script src="../020_js_core/material-file-names.js?v=21"></script> <!-- v21：currentAlias 先對活頁名，對不到再按 sheet id 查別稱。 -->
     <script src="../020_js_core/material-pdf-page-map.js?v=1"></script> <!-- v1：課本頁／題號對 PDF 檔案頁；對不到不准猜。 -->
     <script src="../020_js_core/layout-fields-eval.js?v=10"></script> <!-- v10：資料項名 - 與 _ 當同一名字，fill-in-the-blank-question 才對得到。 -->
     <script src="../020_js_core/quiz-paper-builder.js?v=49"></script> <!-- v49：老師批改雙列對齊（學生黑／錯深藍，解答黑／差紅，其他寫法差藍）。 -->
     <script src="../020_js_core/pdf-exam-paper.js?v=15"></script> <!-- v15：同一頁上下兩大題一併記下標題列 yPct。 --> <!-- v14：可行答案只認解答裡的 OR；沒有 OR 的換行／問句／小題不准進 accepted_answers。 --> <!-- v13：Quiz 3 問句＋答句是同一題號底下的小題（2-A／2-B），禁止把問句塞進「其他可接受答案」。 --> <!-- v12：A/B 不一定是練習分組——1 下面的 A/B 當該題小題；A. Directions／A. 1. 才當分組。 --> <!-- v11：同一大題 A 練習 1~ 再 B 練習 1~，排序先依 A/B 分組再依題號，不再只看數字。 --> <!-- v10：逗號拆格改「句首語氣詞不拆＋空格線只做交叉檢查紅字提醒」，不再用空格線 hint 偷偷改拆或不拆。新增 detectBlankReviewStats／buildSplitReview。v9：新增 repairStaleCommaSplits——舊版曾把「haven't, have never done」收成單列＋替代答案，打開編輯器／重新批改時對照原始文字自動補拆成 1-B-1／1-B-2，避免後面作答框整批錯位。v8：新增用解答文字「Quiz N, p. NN」課本印刷頁碼輔助定位大題頁碼——跟掃 PDF 標題文字是獨立第二來源，任何一個被 OCR 讀壞都還有另一個可用（掃 PDF 頁尾印刷頁碼算出跟 PDF 頁碼的固定落差，換算 p.NN → PDF 頁碼；候選頁碼須落在前一個／下一個已確定大題頁碼之間才採信，避免抄錄錯誤的 p.NN 把後面大題順序推亂）。parseAnswerText 回傳陣列新增 sectionPageHints 附掛屬性，job.section_page_hints 是實際存進資料庫的欄位。已用真實 PDF 驗證兩側邊界檢查有效（Quiz 7 的錯誤 hint 正確被拒絕，改退回既有候選機制）。v7：修 detectSectionPageRanges 兩個新雷：①掃描 PDF 文字層偶爾把標題數字 OCR 壞掉（例如「QUIZ 7」變成「QUIZ?」，中間連空格都不見），完全配不到 Quiz\s*\d+，新增「關鍵字＋壞掉短符號」「行首只有關鍵字」兩層候選 + 依大題一定依序出現的順序補位；②候選收集規則本身寫太寬，連正常已比對成功的「QUIZ 5」也會混進候選清單，補位時反而搶走真正缺的大題該用的候選（實測 Quiz 7 被 Quiz 5 那筆候選頂替、補到錯的頁）——改成只在精確比對失敗時才收集候選。已用真實 PDF（pdfjs-dist 直接呼叫 production 程式碼）驗證 Quiz 1~18 對應頁碼全部正確才提交。v6：修正 detectSectionPageRanges 抓大題標題所在頁碼失敗的兩個根因：①之前自己另外兜一份「依 y 分行」，只照 PDF 內部文字流順序 join 字串，沒有像 _groupLines 一樣依 x 座標排序，改成共用 _pageItemsPct/_groupLines；②實測發現印刷標題常有 letter-spacing，PDF 文字圖層會把「QUIZ 16」存成 "Q U I Z"、"1 6" 這種字母/數字間各自帶空白的字串，join 完變成 "Q U I Z 1 6"，Quiz\s*\d+ 規則完全配不到，新增 _collapseLetterSpacedTokens 在比對前先復原黏合。這兩個根因合起來就是老師回報「大題8顯示大題5內容、大題14顯示大題12內容」的成因（找不到標題就 fallback 沿用前一個大題頁碼）。v5：解答文字逗號分隔沒寫OR時的拆格判斷改成混合式——預設當依序多格拆開，若上傳PDF且該題偵測到剛好1個空格線才改當替代答案；新增 detectBlankCountsByLabel（數空格線，不畫框）、buildSectionAnswersFromBoxes／buildAnswersFromBoxesBySection（學生作答框跟答案清單即時配對，重新批改一律靠這個、不吃繳交當時存的舊 key→文字表，答案清單改版也救得回學生原始作答）。v4：新增 computeSectionStats（依大題算對錯格數＋百分比，學生繳交／老師重新批改共用同一份邏輯，避免兩邊算法兜不起來）。v3：改版——空格位置不再用電腦視覺自動偵測（掃描稿常誤判標題/色塊當底線），改成 buildGradingPaper 讀 parsed_bank、新增 detectSectionPageRanges 自動掃大題標題找頁碼（供學生端知道該顯示哪頁）；舊的 CV 偵測函式保留但不再被呼叫。完全獨立於 quiz-paper-builder.js 的 meta 出題管線，只借用其 gradeAnswers 做字串比對 -->
     <script src="../020_js_core/modal-overlay.js?v=8"></script> <!-- v8：儲存中按取消＝離開，不准問尚未儲存，不准卡死。 -->
-    <script src="../020_js_core/sheet-range-bounds.js?v=2"></script> <!-- v2：totalFromMetaRows 給補齊／綠字共用。 -->
+    <script src="../020_js_core/sheet-range-bounds.js?v=3"></script> <!-- v3：頁碼起迄換成這本第 N 頁的題號。 -->
     <script src="../020_js_core/assignment-clone.js?v=4"></script> <!-- v4：複製歷史作業只繼承輸入，舊卷／卷號／可用題／meta 快取不准跟走。 -->
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
     <script src="../020_js_core/teacher-prefs.js?v=1"></script> <!-- 老師個人跨班預設值（含快取），供建班/建任務初始值使用 -->
@@ -385,8 +385,8 @@
     <script src="../110_teacher_core/ui-core.js?v=55"></script> <!-- v55 重整當下第一版側欄改用上次真正渲染的完整快取（含正確圖示，不再是預設 📘）畫，簽章對得起來就不會整個重繪，消除「先變沒選取樣子才跳到正確班級」的閃爍 -->
     <script src="../020_js_core/review-zone.js?v=4"></script> <!-- v4：資料夾鍵走對照中心。v3：教材以 folder|sheet meta 為鍵 -->
     <script src="../110_teacher_core/ui-class-templates.js?v=50"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=115"></script> <!-- v115：出作業第一層指派套餐或手動教材；A 別名下拉／B 別名顯示。 -->
-    <script src="../110_teacher_core/store-assignment-builder.js?v=85"></script> <!-- v85：補回考試 if 括號，作業編輯器才能載入。 -->
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=124"></script> <!-- v124：灰字＝組標題套餐名、小標題表名＋範圍。 -->
+    <script src="../110_teacher_core/store-assignment-builder.js?v=87"></script> <!-- v87：小標題用語改表名＋範圍。 -->
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
@@ -402,16 +402,16 @@
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=9"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=31"></script>
     <script src="../110_teacher_core/feature-template-library.js?v=16"></script> <!-- v16：findTemplateByAnyId 給出作業現算用。 -->
-    <script src="../110_teacher_core/feature-exam-job.js?v=141"></script> <!-- v141：考試標題從這份考試自己的區塊＋起迄產生。 -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=147"></script> <!-- v147：獨立考試小標題改走 combinePackRangeLabel。 -->
     <script src="../110_teacher_core/feature-pdf-exam-job.js?v=13"></script> <!-- v13：查看學生作答改讀原始作答框，不再因舊 key 顯示成未填。 --> <!-- v9：解析後跟空格線交叉檢查，對不上的大題／答案紅字提醒老師人工核對。v8：打開編輯器／重新批改時自動呼叫 repairStaleCommaSplits，把舊的「1-B 單列＋替代答案」補拆成 1-B-1／1-B-2 並標記 needs_regrade。v7：defaultJob/ensureJob 新增 job.section_page_hints（解析答案文字時把 parseAnswerText 附掛的 sectionPageHints 存進來，供學生端 detectSectionPageRanges 用課本印刷頁碼輔助定位大題，見 pdf-exam-paper.js v8）。v6：解析答案清單時，若已上傳 PDF 會先比對考卷上的空格線數量（混合式拆格判斷，見 pdf-exam-paper.js），失敗一律退回純文字判斷不擋操作；答案清單標籤加上拆格序號；「儲存並重新批改全班」改用學生原始作答框（pdf_quiz_boxes_by_section）+ 目前答案清單即時重新配對，不再吃繳交當時的舊 key→文字表，答案清單改版（拆格/合併/增刪）也不會讓學生已填的內容救不回來。v5：答案清單有任何變動（改字/加題/刪題/重新解析，含複核頁直接改）都會標記 needs_regrade，狀態列／收合列／複核 modal 都會顯示「⚠ 答案有更新，待重新批改」提醒，按「儲存並重新批改全班」後才清除，避免改完答案忘了重批、學生分數跟新答案脫鉤。v4：學生端改成每大題各自提交批改，考卷可能只寫一半——複核清單區分「作答中：已批改 X/Y 大題」跟整份完成，「重新批改」也會跳過還在作答中的學生，避免把沒寫的大題誤判成全錯。v3：重新批改時同步重算 section_stats（各大題分數），避免學生結果頁「各大題結果」在老師調整標準答案重批後停留在舊資料。v2：移除自動定位／畫框整套（改由學生作答時自己依答案清單順序點出作答位置，見 feature-student-pdf-quiz.js），老師端只剩上傳 PDF＋貼解答文字寬鬆解析＋人工確認＋複核學生作答調整標準答案重批。完全獨立於 feature-exam-job.js（meta 出題），互不影響 -->
 
     <script src="../110_teacher_core/feature-material-layout-pairing.js?v=155"></script> <!-- v155：套用範本寫入套餐時帶來源檔，不准不同原始檔併成一筆。 -->
     <script src="../110_teacher_core/feature-exam-template-editor.js?v=14"></script> <!-- v14：試卷側學生文稿同一套標記說明。 -->
-    <script src="../110_teacher_core/feature-class-material-combinations.js?v=135"></script> <!-- v135：全部套餐都畫自己的試卷，不准再畫成空白。 -->
+    <script src="../110_teacher_core/feature-class-material-combinations.js?v=138"></script> <!-- v138：載範圍統計前先載活頁別稱對照。 -->
     <script src="../110_teacher_core/feature-script-collector.js?v=2"></script> <!-- v2：收集欄位正名口說答案／書寫答案。 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=2"></script> <!-- v2：移除不存在的 task_completions.score 欄位查詢/寫入，改回全靠 raw_data.quiz_result.score（修「無法讀取學生作答紀錄」錯誤） -->
-    <script src="../110_teacher_core/feature-exam-review.js?v=14"></script> <!-- v14：勾也算對先留在原位，儲存才生效；批改用雙列對齊配色。 -->
-    <script src="../110_teacher_core/feature-timeline.js?v=157"></script> <!-- v157：出作業 A／B 第二層活頁別名；手動教材。 -->
+    <script src="../110_teacher_core/feature-exam-review.js?v=15"></script> <!-- v15：申訴審查完一次儲存提交；標題去 HTML；答案差異性。 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=166"></script> <!-- v166：refs／考試同一把 combinePackRangeLabel。 -->
     <script src="../110_teacher_core/feature-resource.js?v=45"></script>
     <script src="../110_teacher_core/feature-profile.js?v=42"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=41"></script>

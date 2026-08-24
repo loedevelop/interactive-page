@@ -511,6 +511,53 @@ window.MaterialSnapshot = (function () {
         };
     }
 
+    /**
+     * parseRangeSpec 的反寫。同一種範圍、同一串數字：
+     *   頁碼 → p. 1 ／ pp. 1~2, 5, 10
+     *   題號 → #1 ／ #11~16, 26
+     * 連續數字收成一段，不連續用逗號。不准各段再各自加前綴再用分號黏。
+     */
+    function compactNumberRuns(nums) {
+        var seen = {};
+        var sorted = [];
+        (nums || []).forEach(function (n) {
+            var v = Number(n);
+            if (isNaN(v) || seen[v]) return;
+            seen[v] = true;
+            sorted.push(v);
+        });
+        sorted.sort(function (a, b) { return a - b; });
+        var parts = [];
+        var runStart = null;
+        var runEnd = null;
+        sorted.forEach(function (v) {
+            if (runStart == null) {
+                runStart = v;
+                runEnd = v;
+                return;
+            }
+            if (v === runEnd + 1) {
+                runEnd = v;
+                return;
+            }
+            parts.push(runStart === runEnd ? String(runStart) : (runStart + '~' + runEnd));
+            runStart = v;
+            runEnd = v;
+        });
+        if (runStart != null) {
+            parts.push(runStart === runEnd ? String(runStart) : (runStart + '~' + runEnd));
+        }
+        return parts;
+    }
+
+    function formatRangeSpecFromNums(kind, nums) {
+        var parts = compactNumberRuns(nums);
+        if (!parts.length) return '';
+        if (kind === 'item' || kind === 'qnum') return '#' + parts.join(', ');
+        if (parts.length === 1 && parts[0].indexOf('~') === -1) return 'p. ' + parts[0];
+        return 'pp. ' + parts.join(', ');
+    }
+
     function formatRangeLabel(stem, rangeSpecOrRaw) {
         var stemStr = String(stem || '').trim() || '?';
         if (typeof rangeSpecOrRaw === 'string') {
@@ -691,6 +738,29 @@ window.MaterialSnapshot = (function () {
         return lines.join('\n');
     }
 
+    /** 有 stamp 的 sheet_page＝這本第 N 頁；沒有才看 Excel page。 */
+    function rowGroupPageKey(row) {
+        if (row && row.sheet_page != null && String(row.sheet_page).trim() !== '') {
+            return String(row.sheet_page);
+        }
+        if (row && row.page != null && String(row.page).trim() !== '') return String(row.page);
+        if (row && row.Page != null && String(row.Page).trim() !== '') return String(row.Page);
+        return '_';
+    }
+
+    function stampSheetPage(rows, lpp) {
+        var lines = Number(lpp);
+        if (!(lines > 0)) return rows;
+        return (rows || []).map(function (row) {
+            if (!row) return row;
+            var n = toNumber(row.item_no != null ? row.item_no : row.itemNo);
+            if (isNaN(n) || n < 1) return row;
+            var out = Object.assign({}, row);
+            out.sheet_page = Math.ceil(n / lines);
+            return out;
+        });
+    }
+
     /**
      * 學生文稿＝該擷取範本「學生文稿 特殊排版」。
      * 有 <page title>／<data>／<blank>＝只套公式（不再加【檔名】[頁] 與題號.）。
@@ -709,7 +779,7 @@ window.MaterialSnapshot = (function () {
         var byPage = {};
         var pageOrder = [];
         (rows || []).forEach(function (row) {
-            var pageKey = row.page != null && String(row.page).trim() !== '' ? String(row.page) : '_';
+            var pageKey = rowGroupPageKey(row);
             if (!byPage[pageKey]) {
                 byPage[pageKey] = [];
                 pageOrder.push(pageKey);
@@ -811,7 +881,7 @@ window.MaterialSnapshot = (function () {
         var byPage = {};
         var pageOrder = [];
         (rows || []).forEach(function (row) {
-            var pageKey = row.page != null && String(row.page).trim() !== '' ? String(row.page) : '_';
+            var pageKey = rowGroupPageKey(row);
             if (!byPage[pageKey]) {
                 byPage[pageKey] = [];
                 pageOrder.push(pageKey);
@@ -873,7 +943,7 @@ window.MaterialSnapshot = (function () {
         var byPage = {};
         var pageOrder = [];
         (rows || []).forEach(function (row) {
-            var pageKey = String(row.page != null ? row.page : (row.Page != null ? row.Page : '_'));
+            var pageKey = rowGroupPageKey(row);
             if (!byPage[pageKey]) {
                 byPage[pageKey] = [];
                 pageOrder.push(pageKey);
@@ -995,6 +1065,9 @@ window.MaterialSnapshot = (function () {
             ready = attachSpokenAnswersFromScript(ready, scriptText);
         }
         var filtered = filterRows(ready, sliceOptions);
+        if (context.sheet_lpp > 0) {
+            filtered = stampSheetPage(filtered, context.sheet_lpp);
+        }
         if (scriptText && !rowsHaveSpoken(filtered)) {
             var sliceLines = scriptLinesFromText(scriptText);
             if (sliceLines.length === filtered.length) {
@@ -1030,6 +1103,7 @@ window.MaterialSnapshot = (function () {
     return {
         parseMetaContent: parseMetaContent,
         parseRangeSpec: parseRangeSpec,
+        formatRangeSpecFromNums: formatRangeSpecFromNums,
         formatRangeLabel: formatRangeLabel,
         filterRows: filterRows,
         filterRowsByRangeSpec: filterRowsByRangeSpec,
