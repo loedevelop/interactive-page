@@ -9,7 +9,7 @@ alwaysApply: true
 
 | 規則檔 | 症狀關鍵字 | 對應檔案／glob |
 |---|---|---|
-| `precision-no-borrow-invariant.mdc` | **第一條**精準／對不到就抓別的檔／剛好一筆／短檔退路／借用隔壁 | 全站（alwaysApply） |
+| `never-discard-data-invariant.mdc` | **死律**永遠不准丟資料／對不到格式就略過／Quiz 1 從畫面消失／不會處理就當沒有 | 全站（alwaysApply） |
 | `modal-overlay-tiers.mdc` | 自製全螢幕遮罩當 popup／按儲存視窗還在／取消卻問尚未儲存 | 全站（alwaysApply） |
 | `traditional-chinese.mdc` | 溝通語言 | 全站（alwaysApply） |
 | `ai-grading-pipeline-invariants.mdc` | AI 批改拖垮登入／延遲重試風暴／雙 webhook／沒勾AI批改卻照樣送 | `process-audio-ai/**`, `feature-ai-backfill.js`, `task-script-resolver.js`, `store-assignment-builder.js` |
@@ -22,7 +22,7 @@ alwaysApply: true
 | `skeleton-unit-invariant.mdc` | 錄音「單元骨架」（E 選項）先建結構後補文稿／AI 依 index 抓稿風險；base 範圍手動覆寫會被路徑異動自動蓋掉的坑 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `process-audio-ai/**` |
 | `assignment-title-auto-inherit-invariant.mdc` | 任務／範圍群組標題卡死在舊值（例：怎麼改 base 範圍標題都還是 Unit 10） | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js` |
 | `material-publish-setup-format.mdc` | 教材發布 `_Setup` 合併格式／同活頁多區塊誤填 LAST／last_row_column 沒對齊實際欄位 | `material_templates/**` |
-| `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
+| `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空／申訴紀錄變 0 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
 | `script-collector-paste-windows-invariant.mdc` | C 貼上多視窗（paste_windows）沒同步進 original_script／collector 誤回寫原始作業 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
 | `exam-wrong-retake-invariant.mdc` | 重考錯題（僅一次）判定範圍漂移／合併正確率分母算錯／重考按鈕找不到入口 | `feature-exam-job.js`, `feature-exam-review.js`, `feature-student-quiz.js`, `ui-student-timeline-templates.js` |
 | `button-opacity-readability-invariant.mdc` | 按鈕看不清楚字：`.btn` 沒設預設背景（白字配透明底）／用 opacity 調暗停用態 | `010_css/style.css`, 全站 `.js`（任何 `class="btn"` 或設 `.style.opacity` 的按鈕） |
@@ -30,8 +30,11 @@ alwaysApply: true
 | `template-usage-card-invariant.mdc` | 實際使用卡擷取／試卷列出的名字混用（活頁名 vs 範本名 vs meta 檔名） | `feature-class-material-combinations.js`, `feature-material-layout-pairing.js`, `feature-exam-template-editor.js` |
 | `template-formula-strict-invariant.mdc` | 一份卷多範本被亂套／WORD 公式套到 PIC | 全站（alwaysApply）；出卷／範本庫 |
 | `extraction-formula-live-apply-invariant.mdc` | 出作業書寫／學生文稿不套公式、只剩頁標題、一直自動套用、畫面是舊凍結 snapshot | `feature-timeline.js`, `material-snapshot.js`, `layout-fields-eval.js`, `feature-review-catalog.js`, `feature-template-library.js`, `ui-timeline-templates.js` |
-| `no-invented-fallback-invariant.mdc` | 退路未提出／未同意就黑箱施作 | 全站（alwaysApply） |
+| `no-invented-fallback-invariant.mdc` | 退路未提出／未同意就黑箱施作／消去法沒A就B | 全站（alwaysApply） |
 | `uniform-apply-invariant.mdc` | 規則要全面套用／禁止只修例子、同類列走第二套邏輯／每個 popup 處理方式不一樣 | 全站（alwaysApply）；`material-file-names.js`；`material-pdf-page-map.js` |
 | `title-range-label-invariant.mdc` | 小標題消去法／pp. 1~2 ; p. 3／中括號包範圍／獨立考試另組字串 | `feature-timeline.js`, `feature-exam-job.js`, `ui-timeline-templates.js`, `store-assignment-builder.js` |
+| `00-material-combo-polymorphism.mdc` | 把三種套餐分主從／Excel 當宿主 concat／把 Excel JSON 拆成兩個兄弟／教材卡或出作業下拉漏 PDF／目錄 | `material-combo-strategies.js`, `feature-class-material-combinations.js`, `feature-material-pdf-exam.js`, `feature-material-book.js`, `feature-timeline.js`, `ui-timeline-templates.js` |
+| `pdf-exam-global-material-invariant.mdc` | PDF 當附件不當套餐來源／又上傳到班級 PDF考卷夾／因為都是 PDF 就同一套餐／拿套餐 student_pdf 當考卷／解析後缺 Quiz 當沒有／消去法跳過 | `feature-pdf-exam-job.js`, `feature-material-pdf-exam.js`, `feature-timeline.js`, `gas/Code.gs`, `api-gas-service.js`, `pdf-exam-paper.js` |
+| `material-book-combo-invariant.mdc` | 目錄套餐沒卡／拿夾裡檔自動產卡／當班級 01／下拉出現沒勾的／範圍另開第二張表／走 Snapshot 假裝有 meta／為了目錄改 Excel 畫卡 | `feature-material-book.js`, `feature-class-material-combinations.js`, `feature-timeline.js`, `ui-timeline-templates.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

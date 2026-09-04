@@ -178,7 +178,8 @@ window.FeatureReminderImage = (() => {
             }).format(value);
         }
         const s = String(value).trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const datePart = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (datePart) return datePart[1];
         const ms = Date.parse(s);
         if (!isNaN(ms)) {
             return new Intl.DateTimeFormat('en-CA', {
@@ -235,7 +236,7 @@ window.FeatureReminderImage = (() => {
 
         const { data, error } = await window.supabaseClient
             .from('assignments')
-            .select('id, title, due_date, target_date, tasks, raw_data, class_id, is_published')
+            .select('id, title, due_date, target_date, open_at, tasks, raw_data, class_id, is_published')
             .in('class_id', classIds)
             .eq('is_published', true)
             .is('deleted_at', null);
@@ -244,6 +245,7 @@ window.FeatureReminderImage = (() => {
         (data || []).forEach(function (a) {
             // 群體提醒需要真正的截止日；缺 due_date 者不納入群體（個人單則仍可開）
             if (!toDateKey(a.due_date)) return;
+            if (window.UtilsDate && typeof window.UtilsDate.isOpenYet === 'function' && !window.UtilsDate.isOpenYet(a.open_at)) return;
             if (countLeafTasks(a.tasks || []) <= 0) return;
             if (!map[a.class_id]) map[a.class_id] = [];
             map[a.class_id].push(a);
@@ -411,7 +413,9 @@ window.FeatureReminderImage = (() => {
         const assignTitle = stripHtml(assignment.title) || '未命名作業';
         const clsName = stripHtml(className) || '未命名班級';
         // 截止日＝due_date；進度日＝target_date（兩者不可互換）
-        const dueText = toDateKey(dueDate) || toDateKey(assignment.due_date) || '未設定';
+        const dueText = (window.UtilsDate && typeof window.UtilsDate.formatStampLabel === 'function' && assignment.due_date)
+            ? (window.UtilsDate.formatStampLabel(assignment.due_date) || '未設定')
+            : (toDateKey(dueDate) || toDateKey(assignment.due_date) || '未設定');
         const progressDay = toDateKey(assignment.target_date) || '未設定';
         const firstName = student.englishFirstName || String(student.name || '同學').split(/\s+/)[0] || '同學';
         const progressHtml = '<span style="font-weight:700;color:#475569;">目前完成進度 ' + done + ' / ' + total + '</span>';
@@ -806,7 +810,7 @@ window.FeatureReminderImage = (() => {
             if (window.supabaseClient) {
                 const { data, error } = await window.supabaseClient
                     .from('assignments')
-                    .select('id, title, due_date, target_date, tasks, raw_data, class_id, is_published')
+                    .select('id, title, due_date, target_date, open_at, tasks, raw_data, class_id, is_published')
                     .eq('id', assignmentId)
                     .maybeSingle();
                 if (error) throw new Error(error.message);

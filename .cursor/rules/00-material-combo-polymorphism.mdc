@@ -1,0 +1,67 @@
+---
+description: 核心業務邏輯：教材套餐 (Material Combos) 的同層多型定義
+globs: *.js, *.mdc
+---
+# Material Combo Polymorphism (教材套餐同層多型原則)
+
+## 核心概念 (Core Concept)
+在系統中，「套餐 (Combo)」是用來給老師出作業、出考題的單位。
+請絕對遵守以下業務邏輯：**所有套餐在系統架構與 UI 呈現上，皆為「同層級、平起平坐 (Parallel Siblings)」，不允許任何巢狀從屬關係。**
+
+## 三種套餐（The 3 Sibling Strategies）
+
+這三種類型在同一個教材資料夾中擁有相同的立場，請將它們視為「多型 (Polymorphism)」的實作，它們對應不同的資料表，但業務位階完全相等。Excel 與 JSON **不是**兩種套餐：來源副檔名不同，同一張表、同一張卡。
+
+1. **Excel/JSON 套餐**（`kind: 'sheet'`）
+   - 判斷/對應：活頁 + 擷取範本 + 試卷範本
+   - 資料庫儲存：`material_combinations` / `combo_statistics`
+   - 產生：教材範本管理「🧾 Excel/JSON 套餐：套用／設計範本」（`feature-material-layout-pairing.js`）
+   - 相關檔案：`feature-class-material-combinations.js`, `combo-homework-pack-invariant.mdc`
+
+2. **PDF 套餐**（`kind: 'pdf'`）
+   - 判斷/對應：PDF 來源檔 + 試卷範本
+   - 資料庫儲存：`material_pdf_exam_items`（獨立模組，不進 Excel 表）
+   - 產生：同一頁獨立區塊「PDF 套餐」（勾夾裡已有的 PDF，套用試卷範本）
+   - 相關檔案：`feature-material-pdf-exam.js`, `pdf-exam-global-material-invariant.mdc`
+
+3. **目錄套餐**（`kind: 'book'`；表名暫留 `material_book_combos`）
+   - 判斷/對應：老師出作業填範圍，系統收集成書
+   - 資料庫儲存：`material_book_combos`（獨立模組，不進 Excel 表）
+   - 產生：同一頁獨立區塊「目錄套餐」（選夾後＋新增；不是從夾裡檔自動產卡）
+   - 相關檔案：`feature-material-book.js`, `material-book-combo-invariant.mdc`
+
+## 產生分三區、教材區只顯示
+
+```
+同一頁 view-material-layout（教材範本管理）：
+  Excel/JSON 產生＝套用擷取／設計範本（既有區塊）
+  PDF 產生＝獨立區塊（不准跟 Excel 套用列共用 UI）
+  目錄產生＝另一獨立區塊（不准跟 PDF 同一顆＋）
+教材區＝一個窗口一個教材資料夾，只列出該夾已有的卡（可編輯名稱／班級）。
+不准在資料夾窗口裡新增／套用。不准合併成一個「新增套餐」區塊或共用 factory。
+```
+
+## AI 思考限制與強制規則 (Strict Constraints for Cursor)
+- **禁止腦補層級**：絕對不要詢問這三者誰是主、誰是從。它們全都是平行的卡片。
+- **禁止把 Excel、JSON 拆成兩個兄弟**。`sourceLooksLikeJson` 只決定短檔 vs `{活頁}.{擷取}.meta.json`，不是套餐類型。
+- **UI 與行為一致性**：當實作「出作業下拉選單」或「教材區資料夾卡片」時，必須無差別地涵蓋並處理這三種類型的資料。
+- **排除例外**：「群組/總套餐 (is_group)」與「手動輸入教材 (__manual__)」是額外的 UI 行為，不是第四種套餐。複習目錄不屬套餐範圍。
+- 當你需要處理與「套餐」有關的邏輯時，必須同時檢查上述對應的資料表或前端 feature 檔案，採用 Strategy Pattern 的思維進行渲染或資料綁定。開口是 `MaterialComboStrategies`（`110_teacher_core/material-combo-strategies.js`）。
+
+## 禁止
+
+```javascript
+const excel = listAssignedSheetCombosForHomework(classId);
+return excel.concat(FeatureMaterialBook.listAssignedForHomework(classId));
+renderMaterialZoneGroupHtml = pdfHtml + bookHtml + excelCards;
+kind: sourceLooksLikeJson(src) ? 'json' : 'excel'
+```
+
+## 正確
+
+```javascript
+MaterialComboStrategies.register({ kind: 'pdf', order: 20, packMode: 'pdf', ... });
+listAssignedCombosForHomework(classId); // 只走 MaterialComboStrategies.listAssignedForHomework
+MaterialComboStrategies.renderFolderHtml(folderName, { zoneRows });
+kind: 'sheet'
+```

@@ -71,6 +71,8 @@ function countAvailableFromMeta(section, examTask) {
 ## UI 行為
 
 ```
+範圍＋選題：獨立考試呼叫 TimelineTemplates.renderRangePackHtml（跟組合層／獨立錄音同一份）。
+考試出題區塊只留洗牌／重考／產生試卷。不准再寫第二張範圍表。
 同層有 audio_record 任務 → 維持原樣（combo，不顯示教材資料夾下拉）
 同層沒有 → 顯示「🗂 教材來源（獨立考試…）」區塊：
   - 教材資料夾：下拉選單（不是文字輸入！30 個班不可能要老師手打資料夾名），

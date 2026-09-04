@@ -322,6 +322,7 @@ window.GasService = (function() {
      * forEach/map/length 等陣列語意）——2026-08-06：老師連續回報「教材資料夾下拉是空的」，
      * 但看不到 GAS 執行環境，前端只能猜。這幾個欄位讓「清單是空的」變成可驗證、可回報的
      * 具體線索：debugVersion 沒出現＝GAS 網頁應用程式還在跑舊部署（要重新部署，不是程式碼問題）；
+     * 2026-08-27 起清單含 pdfFiles（v=lm-2026-08-27-pdffiles）；仍見 lm-2026-08-21-scriptfiles＝還沒重新部署。
      * resolvedRootId 可直接貼進 drive.google.com/drive/folders/<ID> 比對系統到底看到哪個資料夾。
      */
     async listMaterialMasters(targetFolderId, rootKind = 'class') {

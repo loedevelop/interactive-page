@@ -1,0 +1,124 @@
+---
+description: 套餐名亂拼／下拉空或檔名／群組下列 A.sentence／把 PDF 當附件／因為都是 PDF 就收成一顆／把自動偵測大題寫死成套餐／自己選一筆／學生文稿只剩標題或公式被改／組合表被摺疊或撐爆／教材區現場 join 等很久／消去法沒就
+globs: 110_teacher_core/feature-timeline.js,110_teacher_core/ui-timeline-templates.js,110_teacher_core/store-assignment-builder.js,110_teacher_core/feature-class-material-combinations.js,110_teacher_core/feature-exam-job.js,110_teacher_core/feature-pdf-exam-job.js,110_teacher_core/feature-material-layout-pairing.js,110_teacher_core/feature-template-library.js,110_teacher_core/feature-material-book.js,020_js_core/material-snapshot.js
+alwaysApply: false
+---
+
+# 組合作業範圍與套餐鐵律（2026-08-24｜同一坑超過十回）
+
+長篇規格：`docs/組合作業範圍與套餐.md`
+
+寫規格、寫程式只准挑選目標：有這把鑰匙，就做這件事。禁止消去法（沒 A 就 B、先列一堆不可能）。
+
+## 症狀
+
+- 出作業／出題套餐下列出 `A.sentence-translation.sentence-translation`／活頁檔名，不是教材區已改的套餐名
+- 勾了群組卻把 A／B／C 當四份互不相干的套餐出現在下拉
+- 把 PDF 當資料夾附屬檔，不當套餐來源；或因為都是 PDF 考卷就把不同試卷範本收成一顆
+- 把「自動偵測大題」寫死成 PDF 套餐定義（那只是目前唯一一種 PDF 試卷範本）
+- 選一份套餐卻把資料夾裡別本活頁收成一筆
+- 學生文稿只剩 `【I.sentence-translation】[1]`，或公式被改成套餐名，正文沒了
+- 「學生文稿 特殊排版」格子出現 `_answer_combined_text`，老師沒填過
+- 組合表撐出面板、欄寬各寫各的；區段考題數／套餐總題數位置或名字被改回「加總題數」；總計考題跟組合面板對不上
+
+## 根因
+
+AI 把舊句「套餐＝資料夾＋Excel＋擷取」當鑰匙，用 `folder|template|sourceFile` 摺疊下拉。  
+把 PDF 當旁支（班級 PDF考卷夾／只列檔名不當套餐），或因為都是 PDF 就收成一顆（來源類型 ≠ 套餐）。  
+套餐名沒走 `material_combinations.label`，改用 stem／資料夾／自己拼。  
+學生文稿【】或 `<page title>` 被改寫；空格子被代填 `_answer_combined_text`。  
+規格用消去法寫（沒對到就空、不准 A 不准 B），AI 就繼續用消去法做。
+
+## 不變量
+
+```
+三種套餐同層：Excel/JSON 類、PDF、目錄。PDF 不是附件。來源類型相同 ≠ 同一份套餐。Excel 與 JSON 不是兩種套餐。
+Excel/JSON（未改）：套用擷取 → meta → 試卷範本。有活頁＋擷取＋試卷 → 這一份。試卷範本不同＝不同套餐。產生在教材範本管理「套用／設計範本」，不准在教材區窗口＋新增。
+PDF：不走擷取、不產 meta。套餐＝這份來源＋這份試卷範本。試卷範本不同＝不同套餐。產生在同一頁獨立區塊（勾夾裡 PDF＋套用試卷範本），不准跟 Excel 套用合併。
+目錄（表名暫留 material_book_combos）：不走擷取、不產 meta。老師出作業提供範圍（大題／次題／小題），系統收集成書。不准拿夾裡 text／PDF 自動產這張卡。產生在同一頁另一獨立區塊（選夾後＋新增）。獨立模組，不准改 Excel／JSON 畫卡。
+教材區一個窗口＝一個夾，只顯示已有卡。
+PDF 試卷範本兩種：左到右、上到下（預設）；老師定位。不准把其中一種寫死成 PDF 套餐定義。
+解析後對帳解答組數跟題目組數。對不上＝警示；禁止因為沒解析到就當成沒有。解答有大題標頭＝這一組存在；沒有「1.」題號不准把該組整段丟掉。
+能套同一個試卷範本 → 可以勾群組（is_group）。不是新觀念。勾選發生在套用時（Excel／JSON 處理時勾；PDF 套用試卷範本時勾）。沒勾＝false，不准猜。不准跨資料夾成群。
+禁止因為都是 PDF 考卷、或同一資料夾，就自動收成一顆。
+A／B／C：勾群組 → 出現時一顆總套餐（已存套餐名）；選完再走區段。
+列出雲端檔名（配對／上傳）≠ 每個檔各一份套餐。
+有已存套餐名（label／combo_label）→ comboLabelText 讀這顆。一個開口。
+有 combo_statistics → 教材區讀 fetch_teacher_combo_stats。
+下拉只列該班套餐名（死命綁死，註解永遠禁止刪除）：
+  讀 fetch_class_combo_stats（combo_statistics，這個班）
+  文字＝combo_label／comboLabelText
+  寫入後 refresh_combo_statistics，再 fetch
+  開口＝listAssignedCombosForHomework(classId)（MaterialComboStrategies，三種同層）
+  產生 option＝renderPackComboOptions／buildExamComboOptionsHtml
+  不准列別班、未指派、全庫、活頁名、檔名、預設檔名、舊 id
+範圍＋選題只准呼叫 TimelineTemplates.renderRangePackHtml。組合層／獨立錄音／獨立考試／獨立 PDF 考同一份。不准再各寫一張範圍表。
+is_group＝true → 結合顯示成一顆（教材區／出作業／出題同一張群組卡已存套餐名）；沒連活頁的空殼列併進這張。A／B／C 走區段。
+is_group＝false → 一本一份，各列各自己的已存名。
+組合：第一層套餐；同一套餐另一段＝增加區段；另一份＝增加套餐。區段＝這份自己的活頁。
+有起、有迄 → 進標題。區段考題數／套餐總題數／總計考題＝各列題數加總（選用為考題）。「增加區段」同行最右＝區段考題數（左為亂序）；「增加套餐」同行最右＝套餐總題數。表寬＝套餐欄寬。出作業／考試同一把 grid。
+有學生文稿三行標記 → 只套老師那三行公式。格子是空的 → 編輯框空。套用時格子是空的 → _answer_combined_text。
+```
+
+## 禁止
+
+```javascript
+// ❌ 舊鑰匙摺疊／畫面再 join 來源表
+const key = folderId + '|' + tpl + '|' + sourceFile;
+label: named || folder || '（未命名套餐）'
+comboDisplayLabel(label, folderName, tplName)
+loadCombinations(userId) // 畫教材區／出作業
+listHomeworkZoneCards()
+
+// ❌ 文稿用檔名／改公式
+lines.push('【' + stem + '】[' + page + ']');
+if (comboName) { /* 蓋掉 <page title> */ }
+st.studentScript = raw || '_answer_combined_text';
+
+// ❌ 換套餐重寫列只抄起迄，題數跑掉
+next.push({ combo_id, meta_file, start, end });
+```
+
+## 正確
+
+```javascript
+comboLabelText(src); // 有已存套餐名就讀這顆
+loadTeacherComboStatistics(); // 教材區
+listAssignedCombosForHomework(classId); // 這個班有勾的教材區卡
+emitTaggedParts(tpl.pageParts, pageRows[0], lines); // 公式原文
+storedStudentScript(raw); // 格子是空的 → 編輯框空白
+storedPackRowFromAny(r); // 重寫列時題數／選題欄跟著走
+```
+
+老師公式原文（一個字都不准改）：
+
+```
+<page title>vBK_name&" - "&page
+<blank>
+<data>item_no&". "&pos&"  "&pre&" "&answer_en&"     "&display_zh
+```
+
+## 實測
+
+1. 教材區套餐名改成「GEPT-2 整句翻譯」且這個班有勾 → 出作業下拉就是這句；沒勾的班不准出現
+2. 套餐下拉只出現該班套餐名，不准出現別班／檔名／預設檔名
+3. is_group＝true → 結合顯示成一顆；選完後 A／B／C 在區段
+4. 同一 JSON／同一 PDF 套不同試卷範本 → 不同套餐（不是因為來源類型相同就一顆）
+5. GEPT-2 整句翻譯與句子填空是兩顆（兩種模式）
+6. 選這份後 H、I 各一列，不會變成整包資料夾
+7. 更新內容：頁標題是 `vBK_name - page`，下面有每一題
+8. 擷取範本學生文稿格子是空的 → 編輯框空白
+9. 組合表不超出套餐下拉；考試表同一欄寬
+10. 「增加區段」同行最右是區段考題數（左為亂序）；「增加套餐」同行最右是套餐總題數；考試底部總計考題＝套餐總題數；都是「題數」欄加總（選用為考題的數），不是可用題加總、不是 exam_job 舊區段
+
+## 改動前自問
+
+1. Excel／JSON 套餐是不是仍是活頁＋擷取＋試卷？有沒有為了 PDF／目錄去改這條程式？
+2. PDF 套餐是不是來源＋試卷範本？有沒有把「自動偵測大題」寫死成套餐定義、或因為都是 PDF 就收成一顆？
+3. 套餐名是不是只走 comboLabelText？
+4. is_group＝true 時，套餐下拉是不是教材區那一顆已存名字（同一種試卷範本才成群）？
+5. 學生文稿是不是只套老師那三行公式？
+6. 這次改動是「有鑰匙就做」，還是又在寫「沒 A 就 B」？
+7. 範圍是不是只呼叫 renderRangePackHtml？有沒有又在考試／錄音另寫一張表？
+8. 套餐下拉是不是只列該班套餐名？資料是不是 combo_statistics 裡 class_ids 含這個班的卡（目錄另走 class_material_book_combos，同一開口 MaterialComboStrategies，不准 Excel 主檔 concat）？
+第 6 題是消去法 → 停。第 7 題另寫一張 → 停。第 8 題列了別的 → 停。沒先講、沒同意，不准改這份規格。不准刪下拉處的死命註解。不准為了 PDF／目錄去改 Excel／JSON 套餐程式。

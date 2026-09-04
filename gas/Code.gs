@@ -353,7 +353,7 @@ function resolveFolderPath(parentFolder, pathArray) {
  *   我以為的那個資料夹」（例如帳號綁錯、Drive 捷徑 vs 真實資料夾等，肉眼比 ID 最準）。
  * - subFolderCount：GAS 這次真的數到幾個子資料夾（在套用任何 .meta.json 或其他前端過濾之前）。
  */
-var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-21-scriptfiles';
+var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-27-pdffiles';
 
 /**
  * 2026-08-13（老師回報「資料夾內容出不來，很容易出問題」）：舊版對「每一個子資料夾」各打
@@ -365,8 +365,10 @@ var LIST_MATERIAL_MASTERS_DEBUG_VERSION = 'lm-2026-08-21-scriptfiles';
  *
  * 改法：先用 mastersRoot.getFolders() 列出全部子資料夾（本來就是單一 lazy iterator，便宜），
  * 再用 DriveApp.searchFiles 以「這批子資料夾 id 的 OR 條件」批次查一次 .meta.json／
- * _manifest.json，把 N*2 次往返降到 ceil(N/CHUNK_SIZE) 次。CHUNK_SIZE 是為了避免單次查詢
- * 字串太長被 Drive 拒絕，不是效能考量。
+ * .script.txt／_manifest.json／PDF（mimeType application/pdf），把 N*2 次往返降到
+ * ceil(N/CHUNK_SIZE) 次。CHUNK_SIZE 是為了避免單次查詢字串太長被 Drive 拒絕，不是效能考量。
+ * PDF 跟 Excel／meta 同一套教材子資料夾（01_My_Materials／00_Class_Materials），
+ * 不是另開班級「PDF考卷」夾。
  */
 function listMaterialMasters(rootFolderId, rootKind) {
   var rootFolder = DriveApp.getFolderById(rootFolderId);
@@ -388,7 +390,7 @@ function listMaterialMasters(rootFolderId, rootKind) {
   var subFolders = mastersRoot.getFolders();
   while (subFolders.hasNext()) {
     var sub = subFolders.next();
-    var bucket = { folderName: sub.getName(), folderId: sub.getId(), manifest: null, metaFiles: [], scriptFiles: [] };
+    var bucket = { folderName: sub.getName(), folderId: sub.getId(), manifest: null, metaFiles: [], scriptFiles: [], pdfFiles: [] };
     materialsList.push(bucket);
     bucketByFolderId[bucket.folderId] = bucket;
   }
@@ -397,7 +399,7 @@ function listMaterialMasters(rootFolderId, rootKind) {
   for (var start = 0; start < materialsList.length; start += CHUNK_SIZE) {
     var chunk = materialsList.slice(start, start + CHUNK_SIZE);
     var parentClauses = chunk.map(function (f) { return "'" + f.folderId + "' in parents"; }).join(' or ');
-    var query = '(' + parentClauses + ") and trashed = false and (title contains '.meta.json' or title contains '.script.txt' or title = '_manifest.json')";
+    var query = '(' + parentClauses + ") and trashed = false and (title contains '.meta.json' or title contains '.script.txt' or title = '_manifest.json' or mimeType = 'application/pdf')";
     var found = DriveApp.searchFiles(query);
     while (found.hasNext()) {
       var file = found.next();
@@ -405,7 +407,14 @@ function listMaterialMasters(rootFolderId, rootKind) {
       var isManifest = fileName === '_manifest.json';
       var isMeta = fileName.indexOf('.meta.json') !== -1;
       var isScript = fileName.indexOf('.script.txt') !== -1;
-      if (!isManifest && !isMeta && !isScript) continue;
+      var isPdf = false;
+      if (!isManifest && !isMeta && !isScript) {
+        isPdf = /\.pdf$/i.test(fileName);
+        if (!isPdf) {
+          try { isPdf = file.getMimeType() === 'application/pdf'; } catch (pdfMimeErr) { isPdf = false; }
+        }
+      }
+      if (!isManifest && !isMeta && !isScript && !isPdf) continue;
       var parents = file.getParents();
       while (parents.hasNext()) {
         var parentBucket = bucketByFolderId[parents.next().getId()];
@@ -418,8 +427,10 @@ function listMaterialMasters(rootFolderId, rootKind) {
           }
         } else if (isMeta) {
           parentBucket.metaFiles.push({ name: fileName, fileId: file.getId() });
-        } else {
+        } else if (isScript) {
           parentBucket.scriptFiles.push({ name: fileName, fileId: file.getId() });
+        } else {
+          parentBucket.pdfFiles.push({ name: fileName, fileId: file.getId() });
         }
       }
     }

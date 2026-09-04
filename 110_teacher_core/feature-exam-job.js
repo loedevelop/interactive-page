@@ -69,6 +69,14 @@ window.FeatureExamJob = (function () {
         };
     }
 
+    function comboLabelOf(src) {
+        const F = window.FeatureClassMaterialCombinations;
+        if (F && typeof F.comboLabelText === 'function') return String(F.comboLabelText(src) || '').trim();
+        if (src == null) return '';
+        if (typeof src === 'string') return String(src).trim();
+        return String((src.combo_label || src.comboLabel || src.rawLabel || src.label) || '').trim();
+    }
+
     function emptySection(defaults) {
         defaults = defaults || {};
         return {
@@ -76,6 +84,7 @@ window.FeatureExamJob = (function () {
             material_folder: defaults.material_folder || '',
             material_root_kind: defaults.material_root_kind === 'class' ? 'class' : 'teacher',
             combination_id: defaults.combination_id || '',
+            combo_label: String(defaults.combo_label || defaults.comboLabel || '').trim(),
             shuffle: defaults.shuffle !== false,
             allow_answer_appeal: defaults.allow_answer_appeal !== false,
             segments: (Array.isArray(defaults.segments) && defaults.segments.length)
@@ -501,6 +510,29 @@ window.FeatureExamJob = (function () {
         return fcmc.getAssignedComboById(classId, comboId);
     }
 
+    /** 這一段套餐自己的已存名。對不到＝不寫。不准借隔壁、不准自編段落編號。 */
+    function stampComboLabelsOnExamJob(examJob, classId, task) {
+        if (!examJob || !Array.isArray(examJob.sections)) return;
+        const rows = (task && task.raw_data && Array.isArray(task.raw_data.pack_rows))
+            ? task.raw_data.pack_rows : [];
+        examJob.sections.forEach(function (sec) {
+            if (!sec) return;
+            if (String((sec.combo_label || sec.comboLabel) || '').trim()) return;
+            const comboId = String((sec.combination_id || sec.combo_id) || '').trim();
+            if (!comboId) return;
+            const combo = lookupAssignedCombo(classId, comboId);
+            let next = comboLabelOf(combo);
+            if (!next) {
+                for (let i = 0; i < rows.length; i++) {
+                    if (String((rows[i] && (rows[i].combo_id || rows[i].comboId || rows[i].combination_id)) || '') !== comboId) continue;
+                    next = String((rows[i] && (rows[i].combo_label || rows[i].comboLabel)) || '').trim();
+                    if (next) break;
+                }
+            }
+            if (next) sec.combo_label = next;
+        });
+    }
+
     /** 本班套餐裡只有一份 meta 完全同名才認。對不到或兩份都叫這名＝沒有。 */
     function comboByExactPublishedMeta(classId, fileName) {
         const want = fullMetaStem(fileName).toUpperCase();
@@ -564,7 +596,7 @@ window.FeatureExamJob = (function () {
         return null;
     }
 
-    /** 區塊格子：查這一本活頁列的活頁別稱。對不到才秀活頁名。不准寫「沒有別名」。 */
+    /** 區段格子：這一本活頁列的活頁別名。永遠有。沒改過的別名就是活頁名。 */
     function examBlockLabel(combo, fileName) {
         const sheet = matchOwnSheetForFile(combo, fileName);
         const stem = (sheet && sheet.stem)
@@ -573,7 +605,7 @@ window.FeatureExamJob = (function () {
         if (window.MaterialFileNames && typeof window.MaterialFileNames.currentAlias === 'function') {
             return window.MaterialFileNames.currentAlias(stem, sheet && sheet.id, combo && combo.extractionTemplateName);
         }
-        return displayStemFromMetaFile(fileName) || stem;
+        return stem;
     }
 
     function examBlockCellHtml(pathStr, idx, secIdx, segIdx, segment, combo) {
@@ -584,10 +616,10 @@ window.FeatureExamJob = (function () {
             const cur = fullMetaStem(ownFile).toUpperCase();
             let html = '<select id="exam-inline-sheet-' + pathStr + '-' + idx + '" class="form-control"'
                 + ' onchange="window.FeatureExamJob._inlineOnSheetSelectChange(\'' + pathStr + '\', ' + secIdx + ', ' + segIdx + '); window.FeatureExamJob._inlineRefreshAvail(\'' + pathStr + '\')">'
-                + '<option value="">— 選區塊 —</option>';
+                + '<option value="">— 選區段 —</option>';
             files.forEach(function (file) {
                 const fn = asMetaFileName(file);
-                const label = examBlockLabel(combo, fn) || fn;
+                const label = examBlockLabel(combo, fn);
                 const sel = fullMetaStem(fn).toUpperCase() === cur ? ' selected' : '';
                 html += '<option value="' + esc(fn) + '"' + sel + '>' + esc(label) + '</option>';
             });
@@ -605,6 +637,7 @@ window.FeatureExamJob = (function () {
     function applyComboToSection(sec, combo) {
         if (!sec || !combo) return;
         sec.combination_id = combo.id;
+        sec.combo_label = comboLabelOf(combo);
         sec.material_folder = combo.folderName || '';
         sec.material_root_kind = combo.rootKind === 'class' ? 'class' : 'teacher';
         const metas = comboOwnMetaFiles(combo);
@@ -743,8 +776,14 @@ window.FeatureExamJob = (function () {
         });
     }
 
+    function packShuffleOnPackRow(r) {
+        if (!r) return true;
+        if (r.shuffle === false || r.shuffle === 'false' || r.shuffle === 0 || r.shuffle === '0') return false;
+        return true;
+    }
+
     /**
-     * 範圍層開包：一套餐一段落、一區塊一片段。畫面有幾列就寫幾列。
+     * 範圍層開包：一套餐一段落、一區段一片段。畫面有幾列就寫幾列。
      * 對不到套餐物件仍保留該列（comboId／活頁／起迄），不准默默丟掉套餐二。
      */
     function applyRangePackToExam(examTask, pack) {
@@ -779,16 +818,18 @@ window.FeatureExamJob = (function () {
             const prev = prevSecs.find(function (s) {
                 return String((s && s.combination_id) || '') === String(g.comboId || '') && !!g.comboId;
             }) || emptySection({
-                shuffle: (prevSecs[gi] && prevSecs[gi].shuffle) !== false,
+                shuffle: packShuffleOnPackRow(g.rows && g.rows[0]),
                 allow_answer_appeal: (prevSecs[gi] && prevSecs[gi].allow_answer_appeal) !== false
             });
             const sec = emptySection({
-                shuffle: prev.shuffle !== false,
+                shuffle: packShuffleOnPackRow(g.rows && g.rows[0]),
                 allow_answer_appeal: prev.allow_answer_appeal !== false,
                 combination_id: g.comboId || ''
             });
             if (g.combo) applyComboToSection(sec, g.combo);
             else sec.combination_id = g.comboId;
+            const fromRow = String((g.rows[0] && (g.rows[0].combo_label || g.rows[0].comboLabel)) || '').trim();
+            if (fromRow && !String(sec.combo_label || '').trim()) sec.combo_label = fromRow;
             sec.segments = g.rows.map(function (row) {
                 const metaFile = String((row && row.metaFile) || '').trim();
                 const startN = (row && row.start !== '' && row.start != null && !isNaN(Number(row.start)))
@@ -826,7 +867,7 @@ window.FeatureExamJob = (function () {
             return sec;
         });
         if (!sections.length) {
-            notes.push('組合包沒有可帶入的套餐／區塊');
+            notes.push('組合包沒有可帶入的套餐／區段');
             sections.push(emptySection());
         }
         const folderNames = [];
@@ -859,8 +900,69 @@ window.FeatureExamJob = (function () {
         return !!(FT && typeof FT.parentRangeGroupPathOf === 'function' && FT.parentRangeGroupPathOf(pathStr));
     }
 
+    function packHostPathForExam(pathStr, task) {
+        if (isExamUnderComboPack(pathStr, task)) {
+            const FT = window.FeatureTimeline;
+            return (FT && typeof FT.parentRangeGroupPathOf === 'function')
+                ? String(FT.parentRangeGroupPathOf(pathStr) || '')
+                : '';
+        }
+        return pathStr;
+    }
+
+    /** 總計考題＝組合面板各列「題數」加總，跟套餐總題數同一把尺。不准加 exam_job 舊區段。 */
+    function selectedExamCountLabel(pathStr, task) {
+        let rows = [];
+        if (isExamUnderComboPack(pathStr, task)) {
+            const FT = window.FeatureTimeline;
+            const parent = FT && typeof FT.parentRangeGroupOf === 'function'
+                ? FT.parentRangeGroupOf(pathStr)
+                : null;
+            rows = (parent && parent.raw_data && parent.raw_data.pack_rows) || [];
+        } else {
+            rows = (task && task.raw_data && task.raw_data.pack_rows) || [];
+        }
+        const Tpl = window.TimelineTemplates;
+        if (!Tpl || typeof Tpl.packSelectedCountSum !== 'function') return '—';
+        return Tpl.packSelectedCountSum(rows);
+    }
+
+    function seedPackRowsFromExamJob(task) {
+        if (!task) return;
+        if (!task.raw_data) task.raw_data = {};
+        if (Array.isArray(task.raw_data.pack_rows) && task.raw_data.pack_rows.length) return;
+        const job = task.raw_data.exam_job || {};
+        const rows = [];
+        (Array.isArray(job.sections) ? job.sections : []).forEach(function (sec) {
+            (sec && Array.isArray(sec.segments) ? sec.segments : []).forEach(function (seg) {
+                const row = packRowsFromExamRange(seg, sec);
+                if (!row) return;
+                row.combo_label = (window.FeatureClassMaterialCombinations
+                    && typeof window.FeatureClassMaterialCombinations.comboLabelText === 'function')
+                    ? window.FeatureClassMaterialCombinations.comboLabelText(sec)
+                    : String((sec && (sec.combo_label || sec.comboLabel || sec.label)) || '').trim();
+                if (seg.lines_per_page != null) row.lines_per_page = seg.lines_per_page;
+                if (seg.difficulty) row.difficulty = seg.difficulty;
+                if (seg.include_nums) row.include_nums = seg.include_nums;
+                if (seg.exclude_nums) row.exclude_nums = seg.exclude_nums;
+                if (seg.count != null && seg.count !== '') row.count = seg.count;
+                rows.push(row);
+            });
+        });
+        if (rows.length) task.raw_data.pack_rows = rows;
+    }
+
+    function standaloneRangePackHtml(pathStr, task) {
+        const FT = window.FeatureTimeline;
+        if (FT && typeof FT.renderRangePackHtml === 'function') return FT.renderRangePackHtml(pathStr, task);
+        if (window.TimelineTemplates && typeof window.TimelineTemplates.renderRangePackHtml === 'function') {
+            return window.TimelineTemplates.renderRangePackHtml(pathStr, task);
+        }
+        return '';
+    }
+
     /**
-     * 組合層是範圍＋選題的唯一來源。考試只讀這份。獨立考試＝不動。
+     * 範圍＋選題只准組合模組（renderRangePackHtml）。組合層／獨立錄音／獨立考試同一份。
      */
     function syncExamFromParentPack(pathStr, task) {
         if (!task || !isExamUnderComboPack(pathStr, task)) return false;
@@ -904,28 +1006,35 @@ window.FeatureExamJob = (function () {
         });
     }
 
+    // ========================================================================
+    // 【死命註解｜永遠禁止刪除｜2026-08-27 老師命令綁死】
+    // 這裡產生出題套餐下拉。只列出該班的套餐名。其他全都不准出現。
+    // 資料從哪裡讀：
+    //   這個班：fetch_class_combo_stats（combo_statistics）
+    //   出題再只留已搭配試卷的
+    //   文字：combo_label，開口 comboLabelText
+    //   清單開口：listAssignedCombosForClass(這個班 classId)
+    // 不准列：別班、未勾這個班、全庫、活頁名、檔名、預設檔名、自己拼的字、
+    //         不在該班清單裡的舊 id
+    // ========================================================================
     function buildExamComboOptionsHtml(classId, section) {
         const list = officialPairingCacheReady() ? listAssignedCombos(classId) : [];
         const currentId = String((section && section.combination_id) || '').trim();
-        let matched = !currentId;
         let html = '<option value="">— 請選擇套餐 —</option>';
         if (!officialPairingCacheReady()) {
-            if (currentId) {
-                html += '<option value="' + esc(currentId) + '" selected>' + esc((section && section.material_folder) || '目前套餐') + '</option>';
-            }
             html += '<option value="" disabled>⏳ 載入套餐…</option>';
             return html;
         }
         list.forEach(function (c) {
             if (!c || !c.id) return;
-            const selected = String(c.id) === currentId;
-            if (selected) matched = true;
-            html += '<option value="' + esc(c.id) + '"' + (selected ? ' selected' : '') + '>' + esc(c.label) + '</option>';
+            const selected = String(c.id) === currentId
+                || (c.siblingIds || []).some(function (id) { return String(id) === currentId; });
+            const name = (window.FeatureClassMaterialCombinations
+                && typeof window.FeatureClassMaterialCombinations.comboLabelText === 'function')
+                ? window.FeatureClassMaterialCombinations.comboLabelText(c)
+                : String((c && (c.combo_label || c.rawLabel || c.label)) || '').trim();
+            html += '<option value="' + esc(c.id) + '"' + (selected ? ' selected' : '') + '>' + esc(name) + '</option>';
         });
-        if (!matched && currentId) {
-            const orphan = (section && section.material_folder) ? String(section.material_folder) : currentId;
-            html += '<option value="' + esc(currentId) + '" selected>' + esc(orphan) + '</option>';
-        }
         if (!list.length) {
             html += '<option value="" disabled>（這個班還沒有已指派且搭配試卷範本的套餐）</option>';
         }
@@ -2973,6 +3082,8 @@ window.FeatureExamJob = (function () {
         const forcedStandalone = !!(task && task.raw_data && task.raw_data.exam_force_standalone);
         const underComboPack = isExamUnderComboPack(pathStr, task);
         const isStandaloneExam = !underComboPack && (!siblingAudio || forcedStandalone);
+        if (!underComboPack) seedPackRowsFromExamJob(task);
+        const packHtml = underComboPack ? '' : standaloneRangePackHtml(pathStr, task);
 
         // 試卷範本下拉只列該 meta 的官方認證組合（material_combination_exam_templates）。
         const layoutMaterialFolder = isStandaloneExam
@@ -3065,7 +3176,6 @@ window.FeatureExamJob = (function () {
             task.raw_data.exam_job.sections = sections;
         }
 
-        let totalCountSum = 0;
         const sectionCardsHtml = sections.map(function (sec, secIdx) {
             const secCombo = resolveSectionCombo(currentClassId, sec);
             const secFolder = String((secCombo && secCombo.folderName) || sec.material_folder || effectiveMaterialFolder || '').trim();
@@ -3092,7 +3202,6 @@ window.FeatureExamJob = (function () {
             const availIsEstimate = false;
             const countVal = Number(s.count);
             if (!isNaN(countVal)) {
-                totalCountSum += countVal;
                 secCountSum += countVal;
             }
             const cachedRowsEarly = lookupSectionMetaRows((task && task.raw_data && task.raw_data.meta_rows_by_stem) || {}, s);
@@ -3152,7 +3261,7 @@ window.FeatureExamJob = (function () {
             const refreshAttr = ' onchange="window.FeatureExamJob._inlineRefreshAvail(\'' + pathStr + '\')"';
             const sheetCell = examBlockCellHtml(pathStr, idx, secIdx, segIdx, s, secCombo);
             const delSeg = (sec.segments || []).length > 1
-                ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="刪這個區塊"'
+                ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5;" title="刪這個區段"'
                     + ' onclick="window.FeatureExamJob._inlineRemoveSegment(\'' + pathStr + '\', ' + secIdx + ', ' + segIdx + ')">刪</button>')
                 : '';
             return '<div class="exam-inline-row" data-exam-inline-row="' + idx + '">'
@@ -3213,7 +3322,7 @@ window.FeatureExamJob = (function () {
                     ` : ''}
                     <div id="exam-inline-materialfolder-status-${pathStr}-${secIdx}" style="min-height:1.1em; font-size:0.72rem; color:#64748B;">${officialPairingCacheReady() ? '' : '⏳ 載入套餐…'}</div>
                     <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; font-weight:700; align-items:center; color:#334155;">
-                        <label><input id="exam-inline-shuffle-${pathStr}-${secIdx}" type="checkbox" ${sec.shuffle === false ? '' : 'checked'}> 題目洗牌</label>
+                        ${underComboPack ? '' : '<label><input id="exam-inline-shuffle-' + pathStr + '-' + secIdx + '" type="checkbox" ' + (sec.shuffle === false ? '' : 'checked') + '> 題目洗牌</label>'}
                         <label title="學生對錯題可以勾選「申訴答案」。此段可與其他段落不同。">
                             <input id="exam-inline-allow-appeal-${pathStr}-${secIdx}" type="checkbox" ${sec.allow_answer_appeal === false ? '' : 'checked'}>
                             🚩 允許申訴答案
@@ -3222,31 +3331,32 @@ window.FeatureExamJob = (function () {
                     ${underComboPack ? `
                     <div style="margin-top:8px; color:#64748B; font-weight:700;">範圍與選題在上方組合。這裡只做考試自己的事。</div>
                     ` : (!secFolderReady ? `
-                    <div style="margin-top:8px; color:#9A3412; font-weight:700;">選套餐後會自動列出區塊</div>
+                    <div style="margin-top:8px; color:#9A3412; font-weight:700;">選套餐後會自動列出區段</div>
                     ` : ('<div class="exam-seg-table">'
                     + '<div class="exam-seg-head">'
-                    + '<div>區塊</div><div>基準</div><div>起</div><div>迄</div><div>每頁行數</div><div>難度</div><div>必考#</div><div>排除#</div><div>題數</div><div>可用題</div><div>顯示%</div><div></div>'
+                    + '<div>區段</div><div>基準</div><div>起</div><div>迄</div><div>每頁行數</div><div>難度</div><div>必考#</div><div>排除#</div><div>題數</div><div>可用題</div><div>顯示%</div><div></div>'
                     + '</div>'
                     + rows
                     + '</div>'
                     + '<div style="margin-top:8px;">'
                     + '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
                     + ' onclick="window.FeatureExamJob._inlineAddSegment(\'' + pathStr + '\', ' + secIdx + ')"'
-                    + ' title="同一套餐要另一段範圍就按這個">＋ 增加區塊</button>'
+                    + ' title="同一套餐要另一段範圍就按這個">＋ 增加區段</button>'
                     + '</div>'))}
                 </div>
             `;
         }).join('');
 
+        const examRangeBody = underComboPack
+            ? sectionCardsHtml
+            : (packHtml
+                ? ''
+                : '<div style="margin-top:8px; color:#B91C1C; font-weight:800;">組合面板沒載入。請硬重新整理。</div>');
         const html = `
             <div id="exam-inline-wrap-${pathStr}" class="exam-inline-wrap asg-unify" style="margin-top:8px; padding:12px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; color:#0F766E;">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+                ${packHtml}
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px; margin-top:${packHtml ? '12px' : '0'};">
                     <strong>📝 考試出題</strong>
-                    ${(!isStandaloneExam && !underComboPack) ? `
-                    <button type="button" class="btn" style="padding:4px 12px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
-                        title="把上面組合包的套餐、區塊、基準、起迄帶到這份試卷"
-                        onclick="window.FeatureExamJob._inlineImportFromRangePack('${pathStr}')">帶入</button>
-                    ` : ''}
                     <span style="color:#64748B;">job_id：<code id="exam-inline-jobid-${pathStr}">${esc(jobId || '（儲存作業時產生）')}</code></span>
                 </div>
                 ${(siblingAudio && !forcedStandalone) ? `
@@ -3259,53 +3369,46 @@ window.FeatureExamJob = (function () {
                 ` : ''}
                 <input type="hidden" id="exam-inline-layout-${pathStr}" value="${esc(layoutId)}">
                 <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center;">
-                    <label title="整份卷全部打散，PIC／WORD、各區塊都不要成塊。沒勾＝各段仍照你排的順序，段內才看「題目洗牌」。">
+                    <label title="整份卷全部打散，PIC／WORD、各區段都不要成塊。沒勾＝各段仍照你排的順序，段內才看「亂序」。" style="white-space:nowrap;">
                         <input id="exam-inline-shuffle-sections-${pathStr}" type="checkbox" ${(job.options && job.options.shuffle_sections) ? 'checked' : ''}> 整卷洗牌
                     </label>
-                    <label title="學生交卷後，若有錯題，可自己選擇要不要當下或之後重考一次錯的題目（原題原答案，只能重考一次），交卷後會產生合併正確率的整體報告。">
+                    <label title="學生交卷後，若有錯題，可自己選擇要不要當下或之後重考一次錯的題目（原題原答案，只能重考一次），交卷後會產生合併正確率的整體報告。" style="white-space:nowrap;">
                         <input id="exam-inline-allow-retake-${pathStr}" type="checkbox" ${raw.allow_wrong_retake ? 'checked' : ''}>
                         🔁 允許重考錯題（僅一次）
                     </label>
-                </div>
-                <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; font-weight:700; align-items:center; background:#F0FDF4; border:1px solid #BBF7D0; border-radius:8px; padding:8px 10px;">
-                    <label title="整份考卷變成打字練習：答案直接顯示（紅字），學生照打，逐字比對，打錯無法往下一字，需連續打對指定次數才算完成該題（沒有另外的一般作答步驟）。">
+                    <label title="整份考卷變成打字練習：答案直接顯示（紅字），學生照打，逐字比對，打錯無法往下一字，需連續打對指定次數才算完成該題（沒有另外的一般作答步驟）。" style="white-space:nowrap;">
                         <input id="exam-inline-input-practice-${pathStr}" type="checkbox" ${raw.input_practice_enabled ? 'checked' : ''}
                             onchange="window.FeatureExamJob._inlineToggleInputPracticeCount && window.FeatureExamJob._inlineToggleInputPracticeCount('${pathStr}')">
                         ✍️ 輸入練習
                     </label>
-                    <span id="exam-inline-input-practice-count-wrap-${pathStr}" style="${raw.input_practice_enabled ? '' : 'display:none;'}">
+                    <span id="exam-inline-input-practice-count-wrap-${pathStr}" style="${raw.input_practice_enabled ? '' : 'display:none;'} white-space:nowrap;">
                         次數：<input id="exam-inline-input-practice-count-${pathStr}" type="number" min="1" step="1"
                             value="${Number(raw.input_practice_count) > 0 ? Number(raw.input_practice_count) : 1}"
                             style="width:56px; padding:2px 4px;">
                     </span>
-                    <label title="交卷後，針對答錯的題目做打字改正練習：答案顯示（紅字），學生逐字打對指定次數才算完成該題改正（與重考錯題／申訴答案互不影響）。">
+                    <label title="交卷後，針對答錯的題目做打字改正練習：答案顯示（紅字），學生逐字打對指定次數才算完成該題改正（與重考錯題／申訴答案互不影響）。" style="white-space:nowrap;">
                         <input id="exam-inline-input-correction-${pathStr}" type="checkbox" ${raw.input_correction_enabled ? 'checked' : ''}
                             onchange="window.FeatureExamJob._inlineToggleInputPracticeCount && window.FeatureExamJob._inlineToggleInputPracticeCount('${pathStr}')">
                         🔧 輸入改正（錯題）
                     </label>
-                    <span id="exam-inline-input-correction-count-wrap-${pathStr}" style="${raw.input_correction_enabled ? '' : 'display:none;'}">
+                    <span id="exam-inline-input-correction-count-wrap-${pathStr}" style="${raw.input_correction_enabled ? '' : 'display:none;'} white-space:nowrap;">
                         次數：<input id="exam-inline-input-correction-count-${pathStr}" type="number" min="1" step="1"
                             value="${Number(raw.input_correction_count) > 0 ? Number(raw.input_correction_count) : 1}"
                             style="width:56px; padding:2px 4px;">
                     </span>
                 </div>
-                ${sectionCardsHtml}
+                ${examRangeBody}
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center;">
-                    ${underComboPack ? '' : `
-                    <button type="button" class="btn btn-action" style="padding:4px 10px; background:#A7F3D0; color:#065F46; border:1px solid #6EE7B7;"
-                        onclick="window.FeatureExamJob._inlineAddExamSection('${pathStr}')"
-                        title="不同擷取請另加一套餐">＋ 增加套餐</button>
                     ${getCachedLastConfigForClass(currentClassId) ? `
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#EDE9FE; color:#5B21B6; border:1px solid #DDD6FE;"
                         onclick="window.FeatureExamJob._inlineApplyLastConfig('${pathStr}')"
                         title="只帶入上次的套餐／範圍／範本。這是新卷，不會沿用舊卷號；確認後請按「產生試卷」。">📋 套用上次設定（本班）</button>
                     ` : ''}
-                    `}
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A;"
                         onclick="window.FeatureExamJob._inlineRefreshStandaloneMeta('${pathStr}')">🔄 讀取可用題數</button>
                     <button type="button" class="btn btn-action" style="padding:4px 10px; background:#059669; color:white; border:none;"
                         onclick="window.FeatureExamJob._inlineExport('${pathStr}')">⬇ JSON</button>
-                    <span style="margin-left:auto; font-weight:800; color:${paperHintColor}; font-size:0.85rem;">總計考題 ${totalCountSum}${paperCountHint}</span>
+                    <span style="margin-left:auto; font-weight:800; color:${paperHintColor}; font-size:0.85rem;"><span id="exam-inline-total-count-${pathStr}" data-exam-pack-host="${esc(packHostPathForExam(pathStr, task))}">總計考題 ${selectedExamCountLabel(pathStr, task)}</span>${paperCountHint}</span>
                 </div>
                 <div style="display:flex; gap:8px; margin-top:8px;">
                     <button type="button" class="btn btn-action" style="flex:1; box-sizing:border-box; padding:4px 10px; background:#B91C1C; color:white; border:none;"
@@ -3313,7 +3416,7 @@ window.FeatureExamJob = (function () {
                         onclick="window.FeatureExamJob._inlineGeneratePaperNow('${pathStr}')">📝 產生試卷</button>
                     <button type="button" class="btn btn-action" style="flex:1; box-sizing:border-box; padding:4px 10px; background:#0369A1; color:white; border:none;"
                         title="維持現有題目與順序，只依目前試卷範本重算標準答案，再重批已交卷學生。"
-                        onclick="window.FeatureExamJob._inlineRegradeExistingPaper('${pathStr}')">🔄 重新批改</button>
+                        onclick="window.FeatureExamJob._inlineRegradeExistingPaper('${pathStr}')">重新產生答案</button>
                 </div>
                 <div id="exam-inline-gen-status-${pathStr}" style="${generateStatusBoxStyle(savedGenStatus && savedGenStatus.text ? savedGenStatus.tone : '')}">${esc((savedGenStatus && savedGenStatus.text) || '')}</div>
             </div>
@@ -3441,7 +3544,18 @@ window.FeatureExamJob = (function () {
             material_root_kind: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
         });
         const cards = document.querySelectorAll('#exam-inline-wrap-' + pathStr + ' .exam-section-card');
-        if (!cards.length) return prevSecs;
+        if (!cards.length) {
+            const FT = window.FeatureTimeline;
+            if (task && FT && typeof FT.buildRangePackForApply === 'function') {
+                const pack = FT.buildRangePackForApply(pathStr, { clamp: false, notify: false, useState: false });
+                applyRangePackToExam(task, pack);
+                return normalizeExamSections((task.raw_data && task.raw_data.exam_job && task.raw_data.exam_job.sections) || prevSecs, {
+                    material_folder: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+                    material_root_kind: (task && task.raw_data && task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+                });
+            }
+            return prevSecs;
+        }
         if (isExamUnderComboPack(pathStr, task)) {
             syncExamFromParentPack(pathStr, task);
             const synced = normalizeExamSections((task.raw_data && task.raw_data.exam_job && task.raw_data.exam_job.sections) || prevSecs, {
@@ -3474,6 +3588,12 @@ window.FeatureExamJob = (function () {
             const combo = folderInfo.combinationId
                 ? lookupAssignedCombo(classIdRead, folderInfo.combinationId)
                 : null;
+            const comboId = folderInfo.combinationId || prevSec.combination_id || '';
+            let named = '';
+            if (combo) named = comboLabelOf(combo);
+            else if (comboId && String(comboId) === String(prevSec.combination_id || '')) {
+                named = String((prevSec.combo_label || prevSec.comboLabel) || '').trim();
+            }
             const shuffleEl = document.getElementById('exam-inline-shuffle-' + pathStr + '-' + secIdx);
             const appealEl = document.getElementById('exam-inline-allow-appeal-' + pathStr + '-' + secIdx);
             const rows = card.querySelectorAll('[data-exam-inline-row]');
@@ -3489,7 +3609,8 @@ window.FeatureExamJob = (function () {
                 id: prevSec.id || newSectionId(),
                 material_folder: folderInfo.folder,
                 material_root_kind: folderInfo.kind,
-                combination_id: folderInfo.combinationId || prevSec.combination_id || '',
+                combination_id: comboId,
+                combo_label: named,
                 shuffle: shuffleEl ? !!shuffleEl.checked : prevSec.shuffle !== false,
                 allow_answer_appeal: appealEl ? !!appealEl.checked : prevSec.allow_answer_appeal !== false,
                 segments: segments.length ? segments : [emptySegment()]
@@ -3513,13 +3634,27 @@ window.FeatureExamJob = (function () {
             : ['online'];
         if (outputs.indexOf('online') === -1) outputs.unshift('online');
 
+        const underComboPack = isExamUnderComboPack(pathStr, task);
+        const FT = window.FeatureTimeline;
+        if (!underComboPack && FT && typeof FT.buildRangePackForApply === 'function') {
+            applyRangePackToExam(task, FT.buildRangePackForApply(pathStr, {
+                clamp: false,
+                notify: false,
+                useState: true
+            }));
+        }
         const hasCards = !!document.querySelector('#exam-inline-wrap-' + pathStr + ' .exam-section-card');
-        const sections = hasCards
+        const sections = (!underComboPack)
+            ? normalizeExamSections((task.raw_data.exam_job || {}).sections, {
+                material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
+                material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
+            })
+            : (hasCards
             ? readInlineSections(pathStr)
             : normalizeExamSections(prevJob.sections, {
                 material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
                 material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
-            });
+            }));
         const shuffleSectionsEl = document.getElementById('exam-inline-shuffle-sections-' + pathStr);
         const shuffleSections = shuffleSectionsEl
             ? !!shuffleSectionsEl.checked
@@ -3599,8 +3734,9 @@ window.FeatureExamJob = (function () {
             meta_file: metaFile,
             comboId: comboId,
             combo_id: comboId,
-            comboLabel: '',
-            combo_label: ''
+            comboLabel: String((sec && (sec.combo_label || sec.comboLabel)) || '').trim(),
+            combo_label: String((sec && (sec.combo_label || sec.comboLabel)) || '').trim(),
+            shuffle: (sec && sec.shuffle) !== false
         };
     }
 
@@ -4151,7 +4287,7 @@ window.FeatureExamJob = (function () {
             const ok = await window.ModalOverlay.confirm(
                 '「產生試卷」＝這份作業的新卷，會發今天的新卷號，並重新抽題。\n'
                 + '只覆蓋現在正在編輯的這份作業，不會改到其他已出過的作業。\n'
-                + '題目要維持不變、只改標準答案，請改按「重新批改」（舊卷、舊卷號）。\n'
+                + '題目要維持不變、只改標準答案，請改按「重新產生答案」（舊卷、舊卷號）。\n'
                 + '確定要出新卷？'
             );
             if (!ok) return;
@@ -4286,7 +4422,7 @@ window.FeatureExamJob = (function () {
 
     /**
      * 維持現有題目與順序，依目前試卷範本公式重算標準答案（不抽新題）。
-     * 作業編輯「重新批改」與批改畫面「重新批閱」共用。
+     * 作業編輯「重新產生答案」與批改畫面「重新批閱」共用。
      */
     async function refreshTaskPaperFromTemplate(task, classId, opts) {
         opts = opts || {};
@@ -4414,7 +4550,7 @@ window.FeatureExamJob = (function () {
             setGenerateStatus(pathStr, msg, result.missing ? 'warn' : 'success');
         } catch (err) {
             console.error('[FeatureExamJob] regrade existing paper', err);
-            const msg = '重新批改失敗：' + (err.message || err);
+            const msg = '重新產生答案失敗：' + (err.message || err);
             setGenerateStatus(pathStr, '❌ ' + msg, 'error');
         }
     }
@@ -4633,6 +4769,7 @@ window.FeatureExamJob = (function () {
         const name = String((o && o.fileName) || '');
         if (!name) return false;
         if (o.fileKind === 'script') return false;
+        if (o.fileKind === 'pdf') return false;
         if (window.MaterialFileNames && typeof window.MaterialFileNames.isMetaFileName === 'function') {
             return window.MaterialFileNames.isMetaFileName(name);
         }
@@ -5052,11 +5189,6 @@ window.FeatureExamJob = (function () {
             if (full && r.fileId) fileIdByStem[full] = r.fileId;
         });
 
-        let folderIdTeacher = '';
-        let folderIdClass = '';
-        try { folderIdTeacher = await resolveRootFolderId(classId, 'teacher'); } catch (_e) {}
-        try { folderIdClass = await resolveRootFolderId(classId, 'class'); } catch (_e) {}
-
         const needRemote = [];
         const fileNameBySid = {};
         const sectionHint = {};
@@ -5100,6 +5232,13 @@ window.FeatureExamJob = (function () {
             }
         });
 
+        let folderIdTeacher = '';
+        let folderIdClass = '';
+        if (needRemote.length) {
+            try { folderIdTeacher = await resolveRootFolderId(classId, 'teacher'); } catch (_e) {}
+            try { folderIdClass = await resolveRootFolderId(classId, 'class'); } catch (_e) {}
+        }
+
         const remoteByName = {};
         const remoteBySid = {};
         function rememberRemote(it, f) {
@@ -5116,7 +5255,7 @@ window.FeatureExamJob = (function () {
         const order = ctx.rootKind === 'class'
             ? [{ id: folderIdClass, kind: 'class' }, { id: folderIdTeacher, kind: 'teacher' }]
             : [{ id: folderIdTeacher, kind: 'teacher' }, { id: folderIdClass, kind: 'class' }];
-        for (let oi = 0; oi < order.length; oi++) {
+        for (let oi = 0; needRemote.length && oi < order.length; oi++) {
             const root = order[oi];
             if (!root.id) continue;
             try {
@@ -5429,6 +5568,8 @@ window.FeatureExamJob = (function () {
             material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
             material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
         });
+        stampComboLabelsOnExamJob(examJob, (bState && bState.classId) || '', task);
+        task.raw_data.exam_job = examJob;
         const pickRows = flattenExamSegments(examJob.sections);
         if (!pickRows.length) {
             return fail('請至少填一個片段');
@@ -5767,6 +5908,7 @@ window.FeatureExamJob = (function () {
             material_folder: (task.raw_data.exam_material && task.raw_data.exam_material.material_folder) || '',
             material_root_kind: (task.raw_data.exam_material && task.raw_data.exam_material.root_kind) || 'teacher'
         });
+        stampComboLabelsOnExamJob(examJob, (bState && bState.classId) || '', task);
         const sheetIds = [];
         examJob.sections.forEach(function (sec) {
             (sec.segments || []).forEach(function (seg) {
@@ -6007,7 +6149,22 @@ window.FeatureExamJob = (function () {
         getUniqueFolderNames: function (classId, rootKind) {
             const entry = window.FeatureTimeline && typeof window.FeatureTimeline.getMetaCatalogEntry === 'function'
                 ? window.FeatureTimeline.getMetaCatalogEntry(classId, rootKind) : null;
-            return uniqueFolderNamesFromEntry(entry);
+            const out = uniqueFolderNamesFromEntry(entry);
+            const seen = {};
+            out.forEach(function (n) {
+                const u = String(n || '').trim().toUpperCase();
+                if (u) seen[u] = true;
+            });
+            if (window.FeatureTimeline && typeof window.FeatureTimeline.getMaterialPdfOptions === 'function') {
+                (window.FeatureTimeline.getMaterialPdfOptions(classId, rootKind) || []).forEach(function (o) {
+                    const n = String((o && o.folderName) || '').trim();
+                    const u = n.toUpperCase();
+                    if (!n || seen[u]) return;
+                    seen[u] = true;
+                    out.push(n);
+                });
+            }
+            return out;
         },
         /** 給「🧩 教材/Layout 搭配」central 頁用：某資料夾底下不重複的「活頁」stem 清單 */
         getSheetStemsForFolder: function (classId, rootKind, materialFolder) {

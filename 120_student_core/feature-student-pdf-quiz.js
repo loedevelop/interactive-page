@@ -121,6 +121,23 @@ window.FeatureStudentPdfQuiz = (function () {
         return walkFindTask(tasks || [], taskId);
     }
 
+    function findAssignmentById(assignmentId) {
+        var list = (window.FeatureStudentTimeline && typeof window.FeatureStudentTimeline.getAssignments === 'function')
+            ? window.FeatureStudentTimeline.getAssignments()
+            : [];
+        return (list || []).find(function (a) { return String(a.id) === String(assignmentId); }) || null;
+    }
+
+    function assertStudentCanAccess(assignmentId, taskId) {
+        if (!window.UtilsDate || typeof window.UtilsDate.canStudentSeeTask !== 'function') return true;
+        var assign = findAssignmentById(assignmentId);
+        if (!assign || !window.UtilsDate.canStudentSeeTask(assign, taskId)) {
+            window.showFlash && window.showFlash('這份作業尚未開放', 'warning');
+            return false;
+        }
+        return true;
+    }
+
     function findCompletion(assignmentId, taskId) {
         var comps = window._studentTaskCompletions || [];
         return comps.find(function (c) {
@@ -238,21 +255,54 @@ window.FeatureStudentPdfQuiz = (function () {
         return canvas.toDataURL('image/png');
     }
 
+    function _isTeacherLocatedSection(idx) {
+        var st = _quizState;
+        if (!st || !st.sections[idx] || !window.PdfExamPaper) return false;
+        var over = window.PdfExamPaper.sectionOverrideKey(st.job && st.job.split_review, st.sections[idx].section);
+        if (over === window.PdfExamPaper.TPL_TEACHER_LOCATE) return true;
+        return !!(st.job && st.job.exam_template_key === window.PdfExamPaper.TPL_TEACHER_LOCATE);
+    }
+
+    function _seedTeacherBoxes(job, sections) {
+        return sections.map(function (s) {
+            if (!window.PdfExamPaper || typeof window.PdfExamPaper.teacherBoxesForSection !== 'function') return [];
+            var over = window.PdfExamPaper.sectionOverrideKey(job && job.split_review, s.section);
+            var whole = job && job.exam_template_key === window.PdfExamPaper.TPL_TEACHER_LOCATE;
+            if (over !== window.PdfExamPaper.TPL_TEACHER_LOCATE && !whole) return [];
+            var src = window.PdfExamPaper.teacherBoxesForSection(job && job.split_review, s.section) || [];
+            return src.map(function (b, i) {
+                return {
+                    id: b.id || ('tb' + i + '_' + Date.now()),
+                    page: b.page,
+                    xPct: b.xPct,
+                    yPct: b.yPct,
+                    text: '',
+                    _teacherLocated: true
+                };
+            });
+        });
+    }
+
     function _boxHtml(sectionIdx, box, orderIdx, locked, isWrong) {
         var fontPx = (_quizState && _quizState.fontSizePx) || DEFAULT_FONT_PX;
         var initialW = Math.max(MIN_INPUT_WIDTH_PX, _measureTextWidthPx(box.text || '', fontPx) + INPUT_WIDTH_PADDING_PX);
         // 批改鎖定後：錯的格子背景改紅色，讓學生一看就知道錯在哪格（不顯示正確答案，只標位置）
         var accent = locked ? (isWrong ? '#DC2626' : '#94A3B8') : '#0EA5E9';
         var inputBg = locked ? (isWrong ? '#FEE2E2' : '#F1F5F9') : 'rgba(255,255,255,0.95)';
-        var removeBtnHtml = locked ? '' : (
+        var teacherLocated = _isTeacherLocatedSection(sectionIdx);
+        var removeBtnHtml = (locked || teacherLocated) ? '' : (
             '<button type="button" class="pdf-quiz-box-remove" data-box-id="' + esc(box.id) + '" title="刪除這個作答框" ' +
                 'style="border:none; background:#FEE2E2; color:#B91C1C; width:16px; height:16px; border-radius:50%; font-size:0.65rem; line-height:1; cursor:pointer; flex-shrink:0;">×</button>'
         );
+        var handleTitle = locked
+            ? (isWrong ? '這格答錯了（已批改鎖定）' : '這格答對了（已批改鎖定）')
+            : (teacherLocated ? '老師已定位，請在框裡填答案' : '按住拖曳可移動位置');
+        var handleCursor = (locked || teacherLocated) ? 'default' : 'grab';
         return (
             '<div class="pdf-quiz-box" data-box-id="' + esc(box.id) + '" data-section-idx="' + sectionIdx + '" ' +
                 'style="position:absolute; left:' + box.xPct + '%; top:' + box.yPct + '%; transform:translate(-6px,-50%); display:flex; align-items:center; gap:2px;">' +
-                '<span class="pdf-quiz-box-handle" data-box-id="' + esc(box.id) + '" title="' + (locked ? (isWrong ? '這格答錯了（已批改鎖定）' : '這格答對了（已批改鎖定）') : '按住拖曳可移動位置') + '" ' +
-                    'style="font-size:0.65rem; font-weight:900; color:' + accent + '; background:white; border:1px solid ' + accent + '; border-radius:50%; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; cursor:' + (locked ? 'default' : 'grab') + '; touch-action:none; user-select:none;">' + (orderIdx + 1) + '</span>' +
+                '<span class="pdf-quiz-box-handle" data-box-id="' + esc(box.id) + '" title="' + handleTitle + '" ' +
+                    'style="font-size:0.65rem; font-weight:900; color:' + accent + '; background:white; border:1px solid ' + accent + '; border-radius:50%; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; cursor:' + handleCursor + '; touch-action:none; user-select:none;">' + (orderIdx + 1) + '</span>' +
                 '<input type="text" class="pdf-quiz-answer-input" data-box-id="' + esc(box.id) + '" value="' + esc(box.text || '') + '" ' + (locked ? 'disabled' : '') + ' ' +
                     'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-gramm="false" ' +
                     'style="width:' + initialW + 'px; border:2px solid ' + accent + '; background:' + inputBg + '; color:#0F172A; -webkit-text-fill-color:#0F172A; opacity:1; font-size:' + fontPx + 'px; padding:2px 4px; box-sizing:border-box; border-radius:3px; font-family:' + _fontFamilyForMeasure() + ';">' +
@@ -705,13 +755,36 @@ window.FeatureStudentPdfQuiz = (function () {
     /** 開卷時一次把整份 PDF 的頁面區塊（先放占位）建好，捲到附近才實際畫圖。每一頁只建立一次
      * DOM，即使好幾個大題共用同一頁也只會出現一次（取代舊版「一大題一畫面、各自只畫自己的
      * 頁碼範圍」的 _renderSection，那樣共用頁會在兩個大題的畫面裡各出現一次）。 */
+    function pickedPdfPages(job, pdfDoc) {
+        if (!job || job.pack_pdf_inherited !== true) return null;
+        var raw = Array.isArray(job.pack_pdf_pages) ? job.pack_pdf_pages : [];
+        var pages = [];
+        raw.forEach(function (n) {
+            var p = Number(n);
+            if (!isFinite(p) || p < 1) return;
+            if (pdfDoc && p > pdfDoc.numPages) return;
+            if (pages.indexOf(p) === -1) pages.push(p);
+        });
+        pages.sort(function (a, b) { return a - b; });
+        return pages;
+    }
+
     function _renderAllPages() {
         var st = _quizState;
         if (!st || !st.pdfDoc) return;
         var body = document.getElementById(MODAL_ID + '-body');
         if (!body) return;
+        var picked = pickedPdfPages(st.job, st.pdfDoc);
+        if (picked && !picked.length) {
+            body.innerHTML = '<div style="padding:24px; text-align:center; font-weight:900; color:#B91C1C;">無對應資源</div>';
+            return;
+        }
         var htmlParts = [];
-        for (var p = 1; p <= st.pdfDoc.numPages; p++) htmlParts.push(_pagePlaceholderHtml(p));
+        if (picked) {
+            picked.forEach(function (p) { htmlParts.push(_pagePlaceholderHtml(p)); });
+        } else {
+            for (var p = 1; p <= st.pdfDoc.numPages; p++) htmlParts.push(_pagePlaceholderHtml(p));
+        }
         body.innerHTML = htmlParts.join('');
         _setupLazyPageObserver();
         _renderSectionTabs();
@@ -757,9 +830,13 @@ window.FeatureStudentPdfQuiz = (function () {
             ? ('<div style="padding:8px 10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-size:0.82rem; color:#134E4A; font-weight:700;">'
                 + '✅ 目前選中「' + esc(sec.section) + '」，已批改：' + st.sectionResults[idx].correct + ' / ' + st.sectionResults[idx].total + '（' + st.sectionResults[idx].score + '%），不能再修改（只鎖這一大題，其他大題不受影響）。'
                 + '</div>')
-            : ('<div style="padding:8px 10px; background:#F0F9FF; border:1px solid #BAE6FD; border-radius:8px; font-size:0.82rem; color:#0369A1;">'
+            : (_isTeacherLocatedSection(idx)
+                ? ('<div style="padding:8px 10px; background:#F0F9FF; border:1px solid #BAE6FD; border-radius:8px; font-size:0.82rem; color:#0369A1;">'
+                    + '💡 目前選中「' + esc(sec.section) + '」（共 ' + sec.items.length + ' 格）。老師已定位空格，請在框裡填答案，不用自己點位置。填完按下面「提交這一大題並批改」。'
+                    + '</div>')
+                : ('<div style="padding:8px 10px; background:#F0F9FF; border:1px solid #BAE6FD; border-radius:8px; font-size:0.82rem; color:#0369A1;">'
                 + '💡 目前選中「' + esc(sec.section) + '」（共 ' + sec.items.length + ' 格）。在下面 PDF 圖片上找到底線／空格點一下，就會出現作答框（框上數字＝第幾個建立的），不會寫也要點一下留空。填完按下面「提交這一大題並批改」，之後不能再改這一大題。'
-                + '</div>');
+                + '</div>'));
     }
 
     function _updateNavButtons() {
@@ -939,6 +1016,7 @@ window.FeatureStudentPdfQuiz = (function () {
             if (inputEl) inputEl.focus();
             return;
         }
+        if (_isTeacherLocatedSection(st.currentIdx)) return;
 
         var box = { id: 'b' + Date.now() + '_' + Math.floor(Math.random() * 10000), page: pageNum, xPct: xPct, yPct: yPct, text: '' };
         boxes.push(box);
@@ -973,7 +1051,7 @@ window.FeatureStudentPdfQuiz = (function () {
             if (!st) return;
             var boxEl = removeBtn.closest('.pdf-quiz-box');
             var secIdx = boxEl ? Number(boxEl.getAttribute('data-section-idx')) : st.currentIdx;
-            if (_isSectionSubmitted(secIdx)) return;
+            if (_isSectionSubmitted(secIdx) || _isTeacherLocatedSection(secIdx)) return;
             var boxId = removeBtn.getAttribute('data-box-id');
             var boxes = st.boxesBySection[secIdx] || [];
             var idx = boxes.findIndex(function (x) { return x.id === boxId; });
@@ -1008,7 +1086,7 @@ window.FeatureStudentPdfQuiz = (function () {
         // 💣 鎖定狀態一律看這個框自己的 data-section-idx，不是目前選中的大題（st.currentIdx）——
         // 同一頁畫面上可能同時看得到已鎖定大題的框跟還沒鎖定大題的框。
         var secIdx = boxEl ? Number(boxEl.getAttribute('data-section-idx')) : NaN;
-        if (isNaN(secIdx) || _isSectionSubmitted(secIdx)) return; // 已批改鎖定，不能再拖曳
+        if (isNaN(secIdx) || _isSectionSubmitted(secIdx) || _isTeacherLocatedSection(secIdx)) return;
         e.preventDefault();
         e.stopPropagation();
         var pageBlockEl = handle.closest('.pdf-quiz-page-block');
@@ -1135,9 +1213,13 @@ window.FeatureStudentPdfQuiz = (function () {
     // ------------------------------------------------------------------
 
     async function openQuiz(assignmentId, taskId) {
+        if (!assertStudentCanAccess(assignmentId, taskId)) return;
         var task = findTaskInAssignments(assignmentId, taskId);
         if (!task) return window.showFlash('找不到考試任務', 'error');
         var job = task.raw_data && task.raw_data.pdf_exam_job;
+        if (job && job.pack_pdf_inherited === true && !job.pdf_file_id) {
+            return window.showFlash('無對應資源', 'warning');
+        }
         if (!job || !job.pdf_file_id) return window.showFlash('老師尚未設定這份 PDF 考卷', 'warning');
         var bank = (job.parsed_bank || []).filter(function (b) { return b.key; });
         if (!bank.length) return window.showFlash('老師尚未確認這份考卷的答案清單', 'warning');
@@ -1155,7 +1237,7 @@ window.FeatureStudentPdfQuiz = (function () {
             && Array.isArray(prevSectionResultsRaw) && prevSectionResultsRaw.length === sections.length);
         var boxesBySection = canResume
             ? sections.map(function (s, idx) { return Array.isArray(prevBoxesRaw[idx]) ? prevBoxesRaw[idx] : []; })
-            : sections.map(function () { return []; });
+            : _seedTeacherBoxes(job, sections);
         var sectionResults = canResume
             ? sections.map(function (s, idx) { return prevSectionResultsRaw[idx] || null; })
             : sections.map(function () { return null; });
@@ -1328,6 +1410,7 @@ window.FeatureStudentPdfQuiz = (function () {
     }
 
     function openPastResult(assignmentId, taskId) {
+        if (!assertStudentCanAccess(assignmentId, taskId)) return;
         var prev = findCompletion(assignmentId, taskId);
         var raw = (prev && prev.raw_data) || {};
         var result = raw.pdf_quiz_result;

@@ -85,8 +85,18 @@ window.ApiQuizReview = (function () {
      * 裡面了（regradeCompletionRawData 寫入的），不需要也不能再多寫一個 top-level 欄位。
      */
     async function saveCompletionRawData(completionId, rawData, _scoreUnused) {
-        const payload = { raw_data: rawData };
-        const { error } = await db().from('task_completions').update(payload).eq('id', completionId);
+        const incoming = rawData && typeof rawData === 'object' ? rawData : {};
+        const { data: current, error: readErr } = await db()
+            .from('task_completions')
+            .select('raw_data')
+            .eq('id', completionId)
+            .maybeSingle();
+        if (readErr) throw new Error('儲存批改結果失敗：' + readErr.message);
+        const prevRaw = parseJSONB(current && current.raw_data);
+        const merged = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.prepareCompletionRawDataForSave === 'function')
+            ? window.QuizPaperBuilder.prepareCompletionRawDataForSave(prevRaw, incoming)
+            : incoming;
+        const { error } = await db().from('task_completions').update({ raw_data: merged }).eq('id', completionId);
         if (error) throw new Error('儲存批改結果失敗：' + error.message);
         return true;
     }

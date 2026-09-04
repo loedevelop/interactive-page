@@ -76,11 +76,10 @@ t.raw_data.original_script = '【】\n' + script;
      （偵測 Page/Unit/Ex/#題號/【label】等「整行只有標記」的模式；抓不到才 fallback
      用「兩個以上換行」的空行分段）。這是 **best-effort**，切錯／切太細是預期中的事，
      UI 上必須讓老師能手動調整（新增／刪除／改標籤／改內容），不能假裝一定切得準。
-- **完全唯讀**：這個工具不會回寫任何一筆原始作業的 `raw_data`／`tasks`。匯出只是把畫面上
-  目前的分段狀態（含老師手動調整過的）組成 `.txt` 文字下載，交給老師自己去搬進 Excel／
-  「教材／Layout 搭配」。**不可**在這裡新增「直接存回 meta.json」之類的寫入功能──那一步
-  的正確產線仍是既有的「教材／Layout 搭配」頁（見 `feature-material-layout-pairing.js` 開頭
-  的雷區說明），這裡只負責「收集＋整理＋匯出」。
+- **不回寫作業**：這個工具不會改任何一筆原始作業的 `raw_data`／`tasks`。匯出只是把畫面上
+  目前的分段狀態組成 `.txt`。搬入教材區塊是寫 `class_script_blocks`／`class_script_block_items`
+  （複製一份），不是改作業。**不可**在這裡新增「直接存回 meta.json」。
+- 區塊／搬入只在打開「收集文稿」時讀寫，不准掛上老師頁重整熱路徑。
 
 ## 改動前自問
 
@@ -89,7 +88,7 @@ t.raw_data.original_script = '【】\n' + script;
 
 1. 存檔時 `paste_windows` 跟合併後的 `original_script`／`student_display` 是否還同步？
 2. 單一視窗、沒標籤的最簡單案例，輸出格式是否還跟舊版完全一致？
-3. collector 是否仍然完全唯讀，沒有任何路徑會回寫到原始作業？
-4. 掃描邏輯是否仍然只讀 `window.TeacherDB` 現有記憶體資料，沒有另外觸發新的重量級 API？
+3. collector 是否仍然不會回寫原始作業？（區塊寫 `class_script_*` 可以；作業 `raw_data`／`tasks` 不行）
+4. 掃描是否仍然只讀 `window.TeacherDB`？區塊表是否只在打開收集頁時讀寫，沒掛重整熱路徑？
 
 若任一否，停下。

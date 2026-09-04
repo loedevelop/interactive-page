@@ -1,0 +1,61 @@
+---
+description: PDF 當附件不當套餐來源／又上傳到班級 PDF考卷夾／因為都是 PDF 就同一套餐／拿套餐 student_pdf 當考卷
+        globs: gas/Code.gs,110_teacher_core/feature-pdf-exam-job.js,110_teacher_core/feature-material-pdf-exam.js,110_teacher_core/feature-timeline.js,110_teacher_core/feature-class-material-combinations.js,110_teacher_core/api-gas-service.js,020_js_core/pdf-exam-paper.js
+alwaysApply: false
+---
+
+# PDF 考卷＝套餐來源（跟 Excel／JSON 同一層）（2026-08-29）
+
+PDF 是套餐的來源類型，跟 Excel、JSON 同一層。檔在 `01_My_Materials/{資料夾}` 或 `00_Class_Materials/{資料夾}`。不是班級「PDF考卷」夾，也不是資料夾附屬檔。
+
+套餐鑰匙仍是「這份來源＋這份試卷範本」。不是「都是 PDF 考卷就同一類」。PDF 試卷範本有兩種：① 左到右、上到下（預設）② 老師定位。解析後解答組數跟題目對不上 → 紅字警示，老師決定有問題的那一組要不要改用②。禁止因為某一組沒解析到就當成沒有。
+
+長篇：`docs/組合作業範圍與套餐.md`。
+
+## 症狀
+
+- 又把 PDF 上傳到班級 `PDF考卷` 夾
+- 教材區把 PDF-only 夾當成「沒有教材」
+- 因為都是 PDF 就把不同試卷範本收成一顆；或把「自動偵測大題」寫死成套餐定義
+- 拿套餐 student_pdf（課本頁對照）當考卷來源
+
+## 不變量
+
+```
+來源類型同一層：Excel、JSON、PDF。來源類型相同 ≠ 同一份套餐。
+PDF 套餐＝這份來源＋這份試卷範本。不走擷取、不產 meta。
+PDF 試卷範本兩種：左到右、上到下（預設）；老師定位。試卷範本不同＝不同套餐。
+解析後對帳解答組數跟題目組數。對不上＝紅字警示，老師決定那一組要不要改用老師定位。禁止把缺的組從畫面拿掉。
+解答有大題標頭＝這一組存在。沒有「1.」題號不准把該組整段丟掉；依出現順序收成第 1、2、3… 題（Quiz 1 的 walk, are walking 也是答案）。標頭同一行後面的字、題號前面的字、A. 後面的正文一律收進清單。編號 1…N 中間缺號＝缺的那一組仍要列出。
+其他可接受答案：解答原文認 or／OR／兩邊有空白的 /／||，可多於一組。畫面那一格用 || 接，不要用逗號、分號、頓號、也不要用 / 去接（／不易用）。
+同一種試卷範本、內容不同 → 現有 is_group。禁止因為都是 PDF 就收成一顆。
+列出雲端檔名 ≠ 每個檔各一份套餐。
+檔住教材子資料夾。出題選這份套餐／來源，不准複製到班級 PDF考卷夾。
+禁止 ensureMaterialFolder(..., 'PDF考卷')。
+套餐 student_pdf 是課本頁對照，不是考卷來源。不准拿來蓋 pdf_file_id。
+listMaterialMasters 回 pdfFiles；前端走 catalog.pdfOptions，不混進 meta 下拉。
+不准為了 PDF 去改 Excel／JSON 套餐程式。
+教材區套用／貼 txt：獨立表 material_pdf_exam_items，不是 material_combinations。產生在教材範本管理獨立區塊；教材區窗口只列已套用的卡。
+```
+
+## 禁止
+
+```javascript
+await GasService.ensureMaterialFolder(root, materialsRootName, 'PDF考卷');
+job.pdf_file_id = combo.studentPdfFileId; // 課本 student_pdf 當考卷
+// 因為都是 PDF 考卷就收成一個套餐
+```
+
+## 正確
+
+```javascript
+const folderId = job.material_folder_id; // 所選教材夾
+await GasService.uploadMaterialFile(base64, fileName, mime, folderId);
+```
+
+## 改動前自問
+
+1. PDF 是不是當套餐來源（跟 Excel／JSON 同一層），還是又當附件／PDF考卷夾？
+2. 套餐是不是來源＋試卷範本？有沒有因為都是 PDF、或把唯一那種試卷範本寫死，就收成一顆？
+3. 有沒有為了 PDF 去改 Excel／JSON 套餐程式？
+任一錯 → 停。

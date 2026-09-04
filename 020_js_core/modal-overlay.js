@@ -63,6 +63,14 @@ window.ModalOverlay = (function () {
         return !!(overlay && target === overlay);
     }
 
+    function overlayParent() {
+        var host = document.fullscreenElement
+            || document.webkitFullscreenElement
+            || document.msFullscreenElement;
+        if (host && host.nodeType === 1) return host;
+        return document.body;
+    }
+
     /**
      * 使用者要離開：沒改過／只是提示 → 直接關；有未存變更才問一次。
      * 儲存中（busy）不准問尚未儲存，取消＝離開，不准卡死。
@@ -156,7 +164,9 @@ window.ModalOverlay = (function () {
             });
         }
 
-        document.body.appendChild(overlay);
+        // 全螢幕時，掛在 body 上的節點通常看不見。確認框／第二層 popup 必須是
+        // fullscreen 那個節點的小孩，學生才能看到「確定要關閉嗎？」。
+        overlayParent().appendChild(overlay);
         if (stack.indexOf(id) === -1) stack.push(id);
         activeId = id;
         if (typeof options.onMount === 'function') options.onMount(overlay);

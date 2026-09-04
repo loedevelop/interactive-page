@@ -24,7 +24,9 @@ window.ServiceLineNotify = (() => {
                 }
             } else {
                 let icon = t.type === 'link' ? '🔗' : (t.type === 'drive' ? '📁' : '📌');
-                let dueStr = t.due_date ? ` (期限: ${t.due_date})` : '';
+                let dueStr = t.due_date
+                    ? ` (期限: ${(window.UtilsDate && window.UtilsDate.formatStampLabel) ? window.UtilsDate.formatStampLabel(t.due_date) : t.due_date})`
+                    : '';
                 text += `${indent}${icon} ${idx + 1}. ${cleanTitle}${dueStr}\n`;
                 
                 if (t.type === 'link' && t.url) {
@@ -73,7 +75,10 @@ window.ServiceLineNotify = (() => {
             msg += `📅 日期：${assignData.target_date}\n`;
             msg += `📝 標題：${cleanAssignTitle}\n`;
             if (assignData.due_date) {
-                msg += `⏰ 區塊期限：${assignData.due_date}\n`;
+                const dueLabel = (window.UtilsDate && typeof window.UtilsDate.formatStampLabel === 'function')
+                    ? window.UtilsDate.formatStampLabel(assignData.due_date)
+                    : assignData.due_date;
+                msg += `⏰ 區塊期限：${dueLabel}\n`;
             }
             msg += `----------------------\n`;
             

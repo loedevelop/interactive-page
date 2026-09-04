@@ -95,6 +95,7 @@ window.AssignmentClone = (function () {
             title: source.title || '',
             description: source.description || '',
             due_date: source.due_date || null,
+            open_at: source.open_at || null,
             is_published: false,
             raw_data: raw,
             tasks: assignNewIdsRecursive(Array.isArray(tasks) ? tasks : [])
@@ -109,6 +110,7 @@ window.AssignmentClone = (function () {
             title: cloned.title,
             description: cloned.description,
             due_date: cloned.due_date,
+            open_at: cloned.open_at || null,
             is_published: false,
             tasks: cloned.tasks,
             raw_data: mergedRaw

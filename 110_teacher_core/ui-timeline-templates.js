@@ -7,6 +7,20 @@
 
 window.TimelineTemplates = (() => {
 
+    function stampLabel(value) {
+        if (window.UtilsDate && typeof window.UtilsDate.formatStampLabel === 'function') {
+            return window.UtilsDate.formatStampLabel(value);
+        }
+        return String(value || '');
+    }
+
+    function dateTimeFields(dateId, timeId, stored, dateStyle, timeStyle) {
+        if (window.UtilsDate && typeof window.UtilsDate.dateTimeInputHtml === 'function') {
+            return window.UtilsDate.dateTimeInputHtml(dateId, timeId, stored, dateStyle, timeStyle);
+        }
+        return `<input type="date" id="${dateId}" class="form-control" style="${dateStyle || ''}" value="${stored || ''}">`;
+    }
+
     function escapeHtml(str) {
         return String(str == null ? '' : str)
             .replace(/&/g, '&amp;')
@@ -21,17 +35,38 @@ window.TimelineTemplates = (() => {
         return m ? m[1] : stem;
     }
 
+    function isComboInheritType(type) {
+        return type === 'check' || type === 'link' || type === 'audio_record'
+            || type === 'exam' || type === 'pdf_exam' || type === 'drive';
+    }
+
+    /** 組合層底下：小標題只讀上方 pack。不是組合層＝空。 */
+    function comboPackTitleForPath(pathStr) {
+        const FT = window.FeatureTimeline;
+        if (!FT || typeof FT.parentRangeGroupPathOf !== 'function') return '';
+        if (!FT.parentRangeGroupPathOf(pathStr)) return '';
+        if (typeof FT.packRangeLabelForAudio !== 'function') return '';
+        return FT.packRangeLabelForAudio(pathStr) || '';
+    }
+
+    function packShuffleOnForRender(r) {
+        if (!r) return true;
+        if (r.shuffle === false || r.shuffle === 'false' || r.shuffle === 0 || r.shuffle === '0') return false;
+        return true;
+    }
+
     function copyPackExamFieldsForRender(r) {
         return {
             lines_per_page: r && r.lines_per_page != null && r.lines_per_page !== '' ? String(r.lines_per_page) : '',
             difficulty: r && r.difficulty != null ? String(r.difficulty) : '',
             include_nums: r && r.include_nums != null ? String(r.include_nums) : '',
             exclude_nums: r && r.exclude_nums != null ? String(r.exclude_nums) : '',
-            count: r && r.count != null && r.count !== '' ? String(r.count) : ''
+            count: r && r.count != null && r.count !== '' ? String(r.count) : '',
+            shuffle: packShuffleOnForRender(r)
         };
     }
 
-    /** 組合層開包：選套餐 → 區塊＋範圍＋選題。考試／錄音只讀這份。 */
+    /** 組合層開包：選套餐 → 區段＋範圍＋選題。考試／錄音／PDF 考只讀這份。 */
     function normalizePackRowsForRender(raw) {
         const fallbackComboId = String((raw && raw.pack_combo_id) || '').trim();
         const fallbackComboLabel = String((raw && raw.pack_combo_label) || '').trim();
@@ -60,31 +95,34 @@ window.TimelineTemplates = (() => {
         }, copyPackExamFieldsForRender(null))];
     }
 
+    // ========================================================================
+    // 【死命註解｜永遠禁止刪除｜2026-08-27 老師命令綁死】
+    // 這裡產生套餐下拉。只列出該班的套餐名。其他全都不准出現。
+    // 資料從哪裡讀：
+    //   這個班：RPC fetch_class_combo_stats（combo_statistics，class_ids 含這個班）
+    //   文字：combo_label，開口 comboLabelText
+    //   清單開口：listAssignedCombosForHomework(這個班 classId)
+    // 不准列：別班、未勾這個班、全庫、活頁名、檔名、預設檔名、自己拼的字、
+    //         不在該班清單裡的舊 id
+    // ========================================================================
     function renderPackComboOptions(combos, currentId, currentLabel, cacheReady) {
         let html = '<option value="">— 請選擇這個班已指派的套餐 —</option>';
         if (!cacheReady) {
-            if (currentId) {
-                html += '<option value="' + escapeHtml(currentId) + '" selected>'
-                    + escapeHtml(currentLabel || '目前套餐') + '</option>';
-            }
             html += '<option value="" disabled>⏳ 載入套餐…</option>';
             return html;
         }
-        let matched = !currentId;
         (combos || []).forEach(function (c) {
             if (!c || !c.id) return;
-            const selected = String(c.id) === String(currentId);
-            if (selected) matched = true;
+            const selected = String(c.id) === String(currentId)
+                || (c.siblingIds || []).some(function (id) { return String(id) === String(currentId); });
             html += '<option value="' + escapeHtml(c.id) + '"' + (selected ? ' selected' : '') + '>'
-                + escapeHtml(c.label) + '</option>';
+                + escapeHtml((window.FeatureClassMaterialCombinations
+                    && typeof window.FeatureClassMaterialCombinations.comboLabelText === 'function')
+                    ? window.FeatureClassMaterialCombinations.comboLabelText(c)
+                    : String(c.combo_label || c.comboLabel || c.rawLabel || c.label || '').trim()) + '</option>';
         });
         const manualSelected = String(currentId) === '__manual__';
-        if (manualSelected) matched = true;
         html += '<option value="__manual__"' + (manualSelected ? ' selected' : '') + '>✏️ 其他（手動輸入教材）</option>';
-        if (!matched && currentId) {
-            html += '<option value="' + escapeHtml(currentId) + '" selected>'
-                + escapeHtml(currentLabel || currentId) + '</option>';
-        }
         if (!(combos || []).length) {
             html += '<option value="" disabled>（這個班還沒有已指派的套餐）</option>';
         }
@@ -103,15 +141,7 @@ window.TimelineTemplates = (() => {
         return /\.meta\.json$/i.test(stem) ? stem : (stem + '.meta.json');
     }
 
-    function packSheetDisplayName(file, templateName) {
-        const raw = String(file || '').replace(/\.meta\.json$/i, '').replace(/\.meta$/i, '');
-        if (window.MaterialFileNames && typeof window.MaterialFileNames.liveSheetName === 'function') {
-            return window.MaterialFileNames.liveSheetName(raw, templateName) || raw;
-        }
-        return raw;
-    }
-
-    /** 區塊格子：查這一本活頁列的活頁別稱。對不到才秀活頁名。不准寫「沒有別名」。 */
+    /** 區段格子：這一本活頁列的活頁別名。永遠有。沒改過的別名就是活頁名。 */
     function packSheetBlockLabel(sheet, templateName) {
         if (!sheet) return '';
         const stem = String(sheet.stem || '').trim()
@@ -119,7 +149,7 @@ window.TimelineTemplates = (() => {
         if (window.MaterialFileNames && typeof window.MaterialFileNames.currentAlias === 'function') {
             return window.MaterialFileNames.currentAlias(stem, sheet.id, templateName);
         }
-        return packSheetDisplayName(stem || sheet.meta, templateName);
+        return stem;
     }
 
     function packDefaultLpp(combo, row) {
@@ -191,30 +221,34 @@ window.TimelineTemplates = (() => {
         return { classId: classId, items: items };
     }
 
-    function computePackStats(groupNode) {
-        const collected = collectExpandedPackItems(groupNode);
-        let availSum = 0;
-        let availKnown = false;
-        let availPending = false;
-        collected.items.forEach(function (it) {
-            const availStr = packRowAvailLabel(collected.classId, it.combo, it.row);
-            if (availStr === '需讀取') availPending = true;
-            const a = Number(availStr);
-            if (!isNaN(a) && availStr !== '—' && availStr !== '需讀取') {
-                availSum += a;
-                availKnown = true;
-            }
+    function packSelectedCountSum(rows) {
+        let sum = 0;
+        let any = false;
+        (rows || []).forEach(function (row) {
+            const raw = String((row && row.count) != null ? row.count : '').trim();
+            if (raw === '') return;
+            const n = Number(raw);
+            if (isNaN(n) || n < 0) return;
+            sum += n;
+            any = true;
         });
-        const availLabel = availPending && !availKnown ? '需讀取' : (availKnown ? String(availSum) : '—');
-        return { avail: availLabel };
+        return any ? String(sum) : '—';
     }
 
-    function packStatsLineHtml(stats, extraClass, pathStr) {
-        const avail = (stats && stats.avail) || '—';
+    function computePackStats(groupNode) {
+        const collected = collectExpandedPackItems(groupNode);
+        return { selected: packSelectedCountSum((collected.items || []).map(function (it) { return it.row; })) };
+    }
+
+    function packStatsLineHtml(stats, extraClass, pathStr, kind) {
+        const selected = (stats && (stats.selected || stats.avail)) || '—';
+        const isCombo = kind === 'combo';
+        const title = isCombo ? '套餐總題數' : '區段考題數';
         return '<div class="range-pack-stats' + (extraClass ? (' ' + extraClass) : '') + '"'
             + (pathStr ? (' data-range-pack="' + escapeHtml(pathStr) + '"') : '')
-            + ' style="margin-top:8px; font-weight:800; color:#1E3A8A;">'
-            + '加總題數 ' + escapeHtml(avail)
+            + ' data-stats-kind="' + (isCombo ? 'combo' : 'section') + '"'
+            + ' style="font-weight:800; color:#1E3A8A; white-space:nowrap;">'
+            + title + ' ' + escapeHtml(selected)
             + '</div>';
     }
 
@@ -223,7 +257,151 @@ window.TimelineTemplates = (() => {
             return '<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這段範圍"'
                 + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackRow && window.FeatureTimeline.removeRangePackRow(\'' + pathStr + '\', ' + idx + ')">刪</button>';
         }
-        return '<button type="button" class="btn" disabled style="padding:4px 8px; background:#E2E8F0; color:#94A3B8; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="唯一區塊不能刪">刪</button>';
+        return '<button type="button" class="btn" disabled style="padding:4px 8px; background:#E2E8F0; color:#94A3B8; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="唯一區段不能刪">刪</button>';
+    }
+
+    function packRowOrderControls(pathStr, idx, posInBlock, rowCount) {
+        const canMove = rowCount > 1;
+        const upOff = !canMove || posInBlock <= 0;
+        const downOff = !canMove || posInBlock >= rowCount - 1;
+        function arrowBtn(dir, off, title) {
+            const delta = dir === 'up' ? -1 : 1;
+            const label = dir === 'up' ? '▲' : '▼';
+            if (off) {
+                return '<button type="button" class="btn range-pack-move-btn" disabled title="' + title + '"'
+                    + ' style="padding:0; width:22px; height:16px; line-height:1; font-size:10px; background:#E2E8F0; color:#94A3B8; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;">'
+                    + label + '</button>';
+            }
+            return '<button type="button" class="btn range-pack-move-btn" title="' + title + '"'
+                + ' style="padding:0; width:22px; height:16px; line-height:1; font-size:10px; background:#F8FAFC; color:#334155; border:1px solid #CBD5E1; font-weight:800;"'
+                + ' onmousedown="event.stopPropagation();"'
+                + ' onclick="window.FeatureTimeline && window.FeatureTimeline.moveRangePackRow && window.FeatureTimeline.moveRangePackRow(\'' + pathStr + '\', ' + idx + ', ' + delta + ')">'
+                + label + '</button>';
+        }
+        return '<div class="range-pack-move" draggable="' + (canMove ? 'true' : 'false') + '"'
+            + ' title="' + (canMove ? '按箭頭或拖曳調整順序' : '') + '"'
+            + (canMove
+                ? (' ondragstart="window.FeatureTimeline && window.FeatureTimeline.onRangePackRowDragStart && window.FeatureTimeline.onRangePackRowDragStart(event, \'' + pathStr + '\', ' + idx + ')"')
+                : '')
+            + ' style="display:flex; flex-direction:column; align-items:center; gap:1px; cursor:' + (canMove ? 'grab' : 'default') + ';">'
+            + arrowBtn('up', upOff, '上移')
+            + arrowBtn('down', downOff, '下移')
+            + '</div>';
+    }
+
+    function rowDropAttr(pathStr, idx) {
+        return ' data-row-idx="' + idx + '"'
+            + ' ondragover="event.preventDefault(); this.classList.add(\'range-pack-row--drag-over\');"'
+            + ' ondragleave="this.classList.remove(\'range-pack-row--drag-over\');"'
+            + ' ondrop="this.classList.remove(\'range-pack-row--drag-over\'); window.FeatureTimeline && window.FeatureTimeline.onRangePackRowDrop && window.FeatureTimeline.onRangePackRowDrop(event, \'' + pathStr + '\', ' + idx + ')">';
+    }
+
+    function rangePackUi() {
+        return {
+            escapeHtml: escapeHtml,
+            packRowDeleteBtn: packRowDeleteBtn,
+            packRowOrderControls: packRowOrderControls,
+            rowDropAttr: rowDropAttr,
+            packOwnSheets: packOwnSheets,
+            packSheetMetaValue: packSheetMetaValue,
+            packSheetBlockLabel: packSheetBlockLabel,
+            packDefaultLpp: packDefaultLpp,
+            packRowAvailLabel: packRowAvailLabel,
+            packDisplayPercent: packDisplayPercent
+        };
+    }
+
+    /** Excel/JSON 套餐自己的範圍表（含手動輸入）。由 sheet 策略呼叫，出作業宿主不准再 if 三種套餐。 */
+    function renderSheetPackTableHtml(ctx) {
+        const packUi = (ctx && ctx.packUi) || rangePackUi();
+        const pathStr = (ctx && ctx.pathStr) || '';
+        const rows = (ctx && ctx.block && ctx.block.rows) || [];
+        const blockCombo = ctx && ctx.blockCombo;
+        const isManual = !!(ctx && ctx.isManual);
+        const classId = (ctx && ctx.classId) || '';
+        const startIdx = Number(ctx && ctx.startIdx) || 0;
+        const ownSheets = packOwnSheets(blockCombo);
+        const isGroup = !!(blockCombo && blockCombo.isGroup === true);
+        const blockRowCount = rows.length;
+        const sheetRows = rows.map(function (row, posInBlock) {
+            const idx = startIdx + posInBlock;
+            const delSheet = packUi.packRowDeleteBtn(pathStr, idx, blockRowCount > 1);
+            const orderCell = packUi.packRowOrderControls(pathStr, idx, posInBlock, blockRowCount);
+            const drop = packUi.rowDropAttr(pathStr, idx);
+            let sheetCell;
+            if (isManual) {
+                sheetCell = '<input type="text" id="range-pack-manual-' + pathStr + '-' + idx + '" class="form-control range-pack-manual"'
+                    + ' value="' + escapeHtml(row.combo_label || '') + '" placeholder="手動輸入教材"'
+                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                    + '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">';
+            } else if (isGroup) {
+                const cur = String(row.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+                sheetCell = '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet"'
+                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
+                    + '<option value="">— 選區段 —</option>'
+                    + ownSheets.map(function (sheet) {
+                        const file = packSheetMetaValue(sheet);
+                        const key = String(file || '').replace(/\.meta\.json$/i, '').toUpperCase();
+                        return '<option value="' + escapeHtml(file) + '"'
+                            + (key && key === cur ? ' selected' : '') + '>'
+                            + escapeHtml(packSheetBlockLabel(sheet, blockCombo && blockCombo.extractionTemplateName)) + '</option>';
+                    }).join('')
+                    + '</select>';
+            } else if (ownSheets.length === 1) {
+                const only = ownSheets[0];
+                const file = packSheetMetaValue(only);
+                sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(file) + '">'
+                    + '<div>' + escapeHtml(packSheetBlockLabel(only, blockCombo && blockCombo.extractionTemplateName)) + '</div>';
+            } else if (blockCombo && ownSheets.length === 0) {
+                sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                    + '<div style="color:#B91C1C; font-weight:800;">這份套餐沒有活頁</div>';
+            } else if (blockCombo && ownSheets.length > 1) {
+                sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                    + '<div style="color:#B91C1C; font-weight:800;">這份套餐不是群組，卻有不只一本活頁</div>';
+            } else {
+                sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
+                    + '<div style="color:#94A3B8;">選套餐或手動輸入教材</div>';
+            }
+            const availStr = packRowAvailLabel(classId, blockCombo, row);
+            const pct = packDisplayPercent(row.count, availStr);
+            return '<div class="range-pack-row"' + drop
+                + orderCell
+                + '<div>' + sheetCell + '</div>'
+                + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control asg-field-input"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
+                + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
+                + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
+                + '</select>'
+                + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.start) + '"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
+                + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.end) + '"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
+                + '<input id="range-pack-lpp-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(packDefaultLpp(blockCombo, row)) + '" title="每頁行數"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + '<input id="range-pack-diff-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.difficulty || '') + '" placeholder="—" title="難度"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + '<input id="range-pack-inc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.include_nums || '') + '" placeholder="—" title="必考題號"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + '<input id="range-pack-exc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.exclude_nums || '') + '" placeholder="—" title="排除題號"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
+                + '<input id="range-pack-count-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.count != null && row.count !== '' ? String(row.count) : '') + '" placeholder="—" title="題數"'
+                + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                + ' onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); this.blur(); }">'
+                + '<div id="range-pack-avail-' + pathStr + '-' + idx + '" class="range-pack-avail">' + escapeHtml(availStr) + '</div>'
+                + '<div id="range-pack-pct-' + pathStr + '-' + idx + '" class="range-pack-pct">' + escapeHtml(pct) + '</div>'
+                + '<div>' + delSheet + '</div>'
+                + '</div>';
+        }).join('');
+        const html = rows.length
+            ? ('<div class="range-pack-table"><div class="range-pack-table-inner">'
+                + '<div class="range-pack-head"><div></div><div>' + (isManual ? '教材' : '區段') + '</div><div>基準</div><div>起</div><div>迄</div><div>每頁行數</div><div>難度</div><div>必考#</div><div>排除#</div><div>題數</div><div>可用題</div><div>顯示%</div><div>刪</div></div>'
+                + sheetRows
+                + '</div></div>')
+            : '';
+        return { html: html, rowCount: rows.length, showsExamStats: true };
     }
 
     function packBlocksFromRows(rows) {
@@ -294,7 +472,11 @@ window.TimelineTemplates = (() => {
         const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
         const classId = (bState && bState.classId) || '';
         const fcmc = window.FeatureClassMaterialCombinations;
-        const cacheReady = !!(fcmc && typeof fcmc.isComboStatsReady === 'function' && fcmc.isComboStatsReady(classId));
+        const cacheReady = !!(fcmc && (
+            (typeof fcmc.isHomeworkCombosReady === 'function' && fcmc.isHomeworkCombosReady(classId))
+            || (typeof fcmc.isComboStatsReady === 'function' && fcmc.isComboStatsReady(classId) && typeof fcmc.isHomeworkCombosReady !== 'function')
+        ));
+        // 【死命註解｜永遠禁止刪除】套餐下拉清單只准這一個開口：該班有勾的套餐。
         if (fcmc && typeof fcmc.listAssignedCombosForHomework === 'function') {
             fcmc.listAssignedCombosForHomework(classId);
         }
@@ -304,6 +486,7 @@ window.TimelineTemplates = (() => {
         const rows = normalizePackRowsForRender(raw);
         const blocks = packBlocksFromRows(rows);
         let globalIdx = 0;
+        let hideComboExamStats = true;
 
         const blockHtml = blocks.map(function (block, bi) {
             let blockCombo = null;
@@ -319,87 +502,48 @@ window.TimelineTemplates = (() => {
                 ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這份套餐"'
                     + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')">刪套餐</button>')
                 : '';
-            const ownSheets = packOwnSheets(blockCombo);
             const isManual = String(block.combo_id) === '__manual__';
-            const isGroup = !!(blockCombo && blockCombo.isGroup === true);
-            const sheetRows = (block.rows || []).map(function (row) {
-                const idx = globalIdx++;
-                const delSheet = packRowDeleteBtn(pathStr, idx, (block.rows || []).length > 1);
-                let sheetCell;
-                if (isManual) {
-                    sheetCell = '<input type="text" id="range-pack-manual-' + pathStr + '-' + idx + '" class="form-control range-pack-manual"'
-                        + ' value="' + escapeHtml(row.combo_label || '') + '" placeholder="手動輸入教材"'
-                        + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                        + '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">';
-                } else if (isGroup) {
-                    const cur = String(row.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
-                    sheetCell = '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet"'
-                        + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
-                        + '<option value="">— 選區塊 —</option>'
-                        + ownSheets.map(function (sheet) {
-                            const file = packSheetMetaValue(sheet);
-                            const key = String(file || '').replace(/\.meta\.json$/i, '').toUpperCase();
-                            return '<option value="' + escapeHtml(file) + '"'
-                                + (key && key === cur ? ' selected' : '') + '>'
-                                + escapeHtml(packSheetBlockLabel(sheet, blockCombo && blockCombo.extractionTemplateName)) + '</option>';
-                        }).join('')
-                        + '</select>';
-                } else if (ownSheets.length === 1) {
-                    const only = ownSheets[0];
-                    const file = packSheetMetaValue(only);
-                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(file) + '">'
-                        + '<div>' + escapeHtml(packSheetBlockLabel(only, blockCombo && blockCombo.extractionTemplateName)) + '</div>';
-                } else if (blockCombo && ownSheets.length === 0) {
-                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                        + '<div style="color:#B91C1C; font-weight:800;">這份套餐沒有活頁</div>';
-                } else if (blockCombo && ownSheets.length > 1) {
-                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                        + '<div style="color:#B91C1C; font-weight:800;">這份套餐不是群組，卻有不只一本活頁</div>';
-                } else {
-                    sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                        + '<div style="color:#94A3B8;">選套餐或手動輸入教材</div>';
+            const tableResult = (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.renderPackTableHtml === 'function')
+                ? window.MaterialComboStrategies.renderPackTableHtml({
+                    pathStr: pathStr,
+                    block: block,
+                    blockCombo: blockCombo,
+                    comboId: block.combo_id,
+                    isManual: isManual,
+                    classId: classId,
+                    startIdx: globalIdx,
+                    packUi: rangePackUi()
+                })
+                : renderSheetPackTableHtml({
+                    pathStr: pathStr,
+                    block: block,
+                    blockCombo: blockCombo,
+                    comboId: block.combo_id,
+                    isManual: isManual,
+                    classId: classId,
+                    startIdx: globalIdx,
+                    packUi: rangePackUi()
+                });
+            globalIdx += Number(tableResult && tableResult.rowCount) || 0;
+            if (tableResult && tableResult.showsExamStats) hideComboExamStats = false;
+            const sheetTable = (tableResult && tableResult.html) || '';
+            const addSheetBtn = (function () {
+                if (block.combo_id) {
+                    return '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
+                        + ' onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackSheet && window.FeatureTimeline.addRangePackSheet(\'' + pathStr + '\', ' + bi + ')">＋ 增加區段</button>';
                 }
-                return '<div class="range-pack-row" data-row-idx="' + idx + '">'
-                    + '<div>' + sheetCell + '</div>'
-                    + '<select id="range-pack-rtype-' + pathStr + '-' + idx + '" class="form-control asg-field-input"'
-                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
-                    + '<option value="page"' + (row.range_type === 'page' ? ' selected' : '') + '>頁碼</option>'
-                    + '<option value="qnum"' + (row.range_type === 'qnum' ? ' selected' : '') + '>題號</option>'
-                    + '</select>'
-                    + '<input id="range-pack-start-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.start) + '"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
-                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
-                    + '<input id="range-pack-end-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.end) + '"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
-                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })">'
-                    + '<input id="range-pack-lpp-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(packDefaultLpp(blockCombo, row)) + '" title="每頁行數"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                    + '<input id="range-pack-diff-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.difficulty || '') + '" placeholder="—" title="難度"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                    + '<input id="range-pack-inc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.include_nums || '') + '" placeholder="—" title="必考題號"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                    + '<input id="range-pack-exc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.exclude_nums || '') + '" placeholder="—" title="排除題號"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
-                    + '<input id="range-pack-count-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.count != null && row.count !== '' ? String(row.count) : '') + '" placeholder="—" title="題數"'
-                    + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
-                    + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
-                    + ' onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); this.blur(); }">'
-                    + (function () {
-                        const availStr = packRowAvailLabel(classId, blockCombo, row);
-                        const pct = packDisplayPercent(row.count, availStr);
-                        return '<div id="range-pack-avail-' + pathStr + '-' + idx + '" class="range-pack-avail">' + escapeHtml(availStr) + '</div>'
-                            + '<div id="range-pack-pct-' + pathStr + '-' + idx + '" class="range-pack-pct">' + escapeHtml(pct) + '</div>';
-                    }())
-                    + '<div>' + delSheet + '</div>'
-                    + '</div>';
-            }).join('');
-            const sheetTable = (block.rows || []).length
-                ? ('<div class="range-pack-table">'
-                    + '<div class="range-pack-table-inner">'
-                    + '<div class="range-pack-head"><div>' + (isManual ? '教材' : '區塊') + '</div><div>基準</div><div>起</div><div>迄</div><div>每頁行數</div><div>難度</div><div>必考#</div><div>排除#</div><div>題數</div><div>可用題</div><div>顯示%</div><div>刪</div></div>'
-                    + sheetRows
-                    + '</div></div>')
-                : '';
+                return '<button type="button" class="btn" disabled style="padding:4px 10px; background:#E2E8F0; color:#64748B; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="請先選套餐或手動輸入教材">＋ 增加區段</button>';
+            }());
+            const shuffleChecked = packShuffleOnForRender((block.rows && block.rows[0]) || null);
+            const shuffleAndStats = (tableResult && tableResult.showsExamStats) ? (
+                '<div style="display:flex; align-items:center; gap:12px; margin-left:auto;">'
+                + '<label style="font-weight:800; color:#334155; white-space:nowrap;" title="打勾＝這份套餐抽出的題目打亂順序。沒勾＝照上面列的順序。">'
+                + '<input id="range-pack-shuffle-' + pathStr + '-' + bi + '" class="range-pack-shuffle" type="checkbox"'
+                + (shuffleChecked ? ' checked' : '')
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"> 亂序</label>'
+                + packStatsLineHtml({ selected: packSelectedCountSum(block.rows) }, '', pathStr, 'section')
+                + '</div>'
+            ) : '';
             return '<div class="range-pack-block" data-block-idx="' + bi + '" style="margin-top:10px; padding:10px; border:1px dashed #93C5FD; border-radius:8px; background:#F8FAFC;">'
                 + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
                 + '<div style="flex:1 1 240px; min-width:200px;">'
@@ -410,43 +554,26 @@ window.TimelineTemplates = (() => {
                 + delBlock
                 + '</div>'
                 + sheetTable
-                + '<div style="margin-top:8px;">'
-                    + (function () {
-                    if (block.combo_id) {
-                        return '<button type="button" class="btn" style="padding:4px 10px; background:#ECFDF5; color:#047857; border:1px solid #6EE7B7; font-weight:800;"'
-                            + ' onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackSheet && window.FeatureTimeline.addRangePackSheet(\'' + pathStr + '\', ' + bi + ')">＋ 增加區塊</button>';
-                    }
-                    return '<button type="button" class="btn" disabled style="padding:4px 10px; background:#E2E8F0; color:#64748B; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;" title="請先選套餐或手動輸入教材">＋ 增加區塊</button>';
-                }())
+                + '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:8px; flex-wrap:wrap;">'
+                + addSheetBtn
+                + shuffleAndStats
                 + '</div>'
-                + packStatsLineHtml((function () {
-                    let availSum = 0;
-                    let availKnown = false;
-                    let availPending = false;
-                    (block.rows || []).forEach(function (row) {
-                        const availStr = packRowAvailLabel(classId, blockCombo, row);
-                        if (availStr === '需讀取') availPending = true;
-                        const a = Number(availStr);
-                        if (!isNaN(a) && availStr !== '—' && availStr !== '需讀取') {
-                            availSum += a;
-                            availKnown = true;
-                        }
-                    });
-                    return {
-                        avail: availPending && !availKnown ? '需讀取' : (availKnown ? String(availSum) : '—')
-                    };
-                }()))
                 + '</div>';
         }).join('');
+
+        const comboSelected = packSelectedCountSum(rows);
 
         return `
             <div class="range-pack-panel asg-unify" data-range-pack="${pathStr}" style="background:white; border:1px solid #93C5FD; border-radius:8px; padding:10px 12px; margin:0 0 12px 0;">
                 <div style="font-weight:900; color:#1E3A8A; margin-bottom:8px;">組合（套餐、範圍、選題）</div>
                 ${blockHtml}
-                <div style="margin-top:10px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                    <div>
                     <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
                         onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackCombo && window.FeatureTimeline.addRangePackCombo('${pathStr}')">＋ 增加套餐</button>
-                    <span style="margin-left:8px; color:#64748B; font-weight:700;">第一層選套餐，或手動輸入教材。同一套餐要另一段範圍就按「增加區塊」。</span>
+                    <span style="margin-left:8px; color:#64748B; font-weight:700;">第一層選套餐，或手動輸入教材。同一套餐要另一段範圍就按「增加區段」。</span>
+                    </div>
+                    ${hideComboExamStats ? '' : packStatsLineHtml({ selected: comboSelected }, 'range-pack-stats--combo', pathStr, 'combo')}
                 </div>
             </div>
         `;
@@ -512,6 +639,14 @@ window.TimelineTemplates = (() => {
                     line-height: 1.2;
                     box-sizing: border-box;
                 }
+                .asg-unify .range-pack-move-btn.btn {
+                    height: 16px !important;
+                    min-height: 16px !important;
+                    max-height: 16px;
+                    padding: 0 !important;
+                    font-size: 10px !important;
+                    line-height: 1;
+                }
                 .asg-unify .range-pack-combo { width: 100%; }
                 .asg-unify .range-pack-row select,
                 .asg-unify .exam-inline-row select { width: 100%; }
@@ -525,27 +660,38 @@ window.TimelineTemplates = (() => {
                     height: 24px;
                     margin-left: 2px;
                 }
-                .exam-seg-table, .range-pack-table { margin-top:8px; overflow-x:auto; max-width:100% !important; }
-                .range-pack-table-inner { min-width: 1180px; max-width:none !important; }
-                .asg-unify .range-pack-head,
-                .asg-unify .range-pack-row { max-width:none !important; }
-                .exam-seg-head, .exam-inline-row, .range-pack-head, .range-pack-row {
+                .range-pack-panel { max-width: 100%; }
+                .exam-seg-table, .range-pack-table { margin-top:8px; overflow-x:auto; width:100%; max-width:100% !important; }
+                .range-pack-table-inner { width:100%; min-width:0; max-width:100% !important; }
+                .timeline-node .range-pack-table-inner { max-width:100% !important; }
+                .exam-seg-head, .exam-inline-row {
                     display:grid;
-                    gap:8px;
+                    width:100%;
+                    box-sizing:border-box;
+                    gap:6px;
                     align-items:center;
+                    grid-template-columns: repeat(11, minmax(0, 1fr)) 36px;
                 }
-                .exam-seg-head, .exam-inline-row,
                 .range-pack-head, .range-pack-row {
-                    grid-template-columns: minmax(132px, 1.2fr) 88px 72px 72px 88px 72px 80px 80px 72px 72px 72px 52px;
+                    display:grid;
+                    width:100%;
+                    box-sizing:border-box;
+                    gap:6px;
+                    align-items:center;
+                    grid-template-columns: 28px repeat(11, minmax(0, 1fr)) 36px;
                 }
+                .range-pack-head--book, .range-pack-row--book {
+                    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 36px;
+                }
+                .range-pack-head--pdf, .range-pack-row--pdf {
+                    grid-template-columns: 28px minmax(0, 1fr) 36px;
+                }
+                .range-pack-row--drag-over { outline: 2px dashed #3B82F6; outline-offset: 1px; }
                 .exam-seg-head > div, .range-pack-head > div {
                     min-width:0;
-                    max-width:100% !important;
-                    white-space:nowrap;
-                }
-                .exam-inline-row > *, .range-pack-row > * {
-                    min-width:0;
-                    max-width:100% !important;
+                    white-space:normal;
+                    line-height:1.2;
+                    overflow-wrap:break-word;
                 }
                 .range-pack-avail { color:#0F766E; font-weight:800; }
                 .range-pack-pct { color:#64748B; font-weight:800; }
@@ -629,7 +775,7 @@ window.TimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
-    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf) {
+    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt) {
         let iconStr = window.TaskScriptResolver
             ? window.TaskScriptResolver.getTaskTypeIcon(t.type)
             : (t.type === 'check' ? '📌'
@@ -701,7 +847,9 @@ window.TimelineTemplates = (() => {
         let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${t.description}</div>` : '';
         
         let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
-        let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
+        let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${stampLabel(t.due_date)}</span>` : '';
+        let showTaskOpen = t.open_at && t.open_at !== effectiveBlockOpenAt;
+        let openBadge = showTaskOpen ? `<span style="font-size:0.9rem; color:#0369A1; margin-left:8px; font-weight:bold;">開放: ${stampLabel(t.open_at)}</span>` : '';
         
         let taskLateMode = t.late_mode || 'infinite';
         let taskPenalty = t.penalty_percentage || 0;
@@ -730,14 +878,14 @@ window.TimelineTemplates = (() => {
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; line-height: 1.2;">
                     <input type="checkbox" disabled style="transform: scale(1.3); margin-right: 8px; cursor: not-allowed; opacity: 0.5;" title="老師唯讀端核取方塊">
                     ${iconHtml}${taskTitleDisplay}${linkContent}
-                    ${extraTag} ${dueBadge} ${taskLateBadge}
+                    ${extraTag} ${dueBadge} ${openBadge} ${taskLateBadge}
                 </div>
                 ${taskDescHtml}
             </div>
         `;
     }
 
-    function renderReadOnlyTree(tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, depth = 0) {
+    function renderReadOnlyTree(tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, depth = 0, effectiveBlockOpenAt) {
         if (!tasks || tasks.length === 0) return '';
         let html = '';
         tasks.forEach((t, idx) => {
@@ -746,6 +894,7 @@ window.TimelineTemplates = (() => {
 
             if (t.type === 'group') {
                 let groupDueDate = t.due_date || effectiveBlockDueDate;
+                let groupOpenAt = t.open_at || effectiveBlockOpenAt;
                 let groupPolicy = {
                     mode: t.late_mode || effectiveBlockLatePolicy.mode,
                     penalty: t.penalty_percentage !== undefined ? t.penalty_percentage : effectiveBlockLatePolicy.penalty,
@@ -765,7 +914,8 @@ window.TimelineTemplates = (() => {
                     else if (groupPolicy.mode === 'custom') gLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 寬限 ${groupPolicy.grace}h (-${groupPolicy.penalty}%)</span>`;
                     else gLateBadge = groupPolicy.penalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${groupPolicy.penalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 接受遲交</span>`;
                 }
-                let gDueBadge = (t.due_date && t.due_date !== effectiveBlockDueDate) ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${t.due_date}</span>` : '';
+                let gDueBadge = (t.due_date && t.due_date !== effectiveBlockDueDate) ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${stampLabel(t.due_date)}</span>` : '';
+                let gOpenBadge = (t.open_at && t.open_at !== effectiveBlockOpenAt) ? `<span style="font-size:0.9rem; color:#0369A1; margin-left:8px; font-weight:bold;">開放: ${stampLabel(t.open_at)}</span>` : '';
 
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
                 const isRangeGroup = !!(t.raw_data && t.raw_data.group_role === 'range');
@@ -784,20 +934,20 @@ window.TimelineTemplates = (() => {
                         <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; margin-bottom: ${t.subTasks && t.subTasks.length > 0 ? '5px' : '0'}; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                             <span style="font-size:1.2rem;">${groupIcon}</span> <span class="rt-normalize">${groupTitleText || (isRangeGroup ? '未命名範圍' : '未命名群組作業')}</span>
                             ${rangeChip}
-                            ${gDueBadge} ${gLateBadge}
+                            ${gDueBadge} ${gOpenBadge} ${gLateBadge}
                         </div>
                 `;
                 
                 if (t.subTasks && t.subTasks.length > 0) {
                     html += `<div style="display:flex; flex-direction:column;">`;
-                    html += renderReadOnlyTree(t.subTasks, groupDueDate, groupPolicy, depth + 1);
+                    html += renderReadOnlyTree(t.subTasks, groupDueDate, groupPolicy, depth + 1, groupOpenAt);
                     html += `</div>`;
                 } else {
                     html += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top: 5px;">(此群組作業尚無內容)</div>`;
                 }
                 html += `</div>`;
             } else {
-                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf);
+                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt);
             }
         });
         return html;
@@ -906,8 +1056,7 @@ window.TimelineTemplates = (() => {
                     ? '<span style="font-size:0.75rem; background:#DBEAFE; color:#1D4ED8; padding:3px 8px; border-radius:999px; font-weight:800; white-space:nowrap;">組合層</span>'
                     : '';
                 const rangeHint = isRangeGroup
-                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">組標題＝套餐名（空白才帶入）。小標題＝表名＋範圍（起迄都填才進；表名＝活頁別名）。沒選套餐或本班尚未指派套餐時，組標題維持空白。</div>'
-                        + '<div style="margin:-2px 0 10px 42px;">' + packStatsLineHtml(computePackStats(t), 'range-pack-title-stats', pathStr) + '</div>'
+                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">組標題＝套餐名（空白才帶入）。小標題＝表名＋範圍（起迄都填才進；表名＝活頁別名，永遠有）。沒選套餐或本班尚未指派套餐時，組標題維持空白。</div>'
                     : '';
                 const rangePackHtml = isRangeGroup ? renderRangePackHtml(pathStr, t) : '';
 
@@ -934,7 +1083,11 @@ window.TimelineTemplates = (() => {
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <label style="font-weight:800; font-size:0.9rem; color:${lvl.text};">群組期限：</label>
-                                <input type="date" id="node-due-${pathStr}" class="form-control" style="width:auto; padding:4px 8px; font-size:0.9rem;" value="${t.due_date || ''}">
+                                ${dateTimeFields(`node-due-${pathStr}`, `node-due-time-${pathStr}`, t.due_date)}
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label style="font-weight:800; font-size:0.9rem; color:${lvl.text};" title="留空則繼承區塊">開放日期：</label>
+                                ${dateTimeFields(`node-open-${pathStr}`, `node-open-time-${pathStr}`, t.open_at)}
                             </div>
                             
                             <div style="display:flex; align-items:center; gap:8px;">
@@ -977,7 +1130,7 @@ window.TimelineTemplates = (() => {
                                 </div>
 
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
-                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle('${pathStr}')" title="建立組合作業：同一範圍，搭配錄音＋考試">+ 📐 組合（錄音＋考試）</button>
+                                <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle('${pathStr}')" title="建立組合作業：同一範圍，底下可再加類型">+ 📐 組合(錄音＋考試＋)</button>
                                 <button type="button" class="btn btn-action" style="font-size:0.9rem; padding:4px 10px; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode('${pathStr}', 'group')">+ 🗂️ 群組作業</button>
                                 <div style="width: 1px; height: 20px; background: #CBD5E1; margin: 0 5px;"></div>
                                 ${addResourceHtml}
@@ -1374,17 +1527,24 @@ window.TimelineTemplates = (() => {
                         : '<div style="margin-top:8px; color:#B91C1C;">FeaturePdfExamJob 未載入</div>';
                 }
 
-                // 錄音／考試標題：空白時繼承同層錄音 base 範圍
+                // 小標題：組合層底下＝上方表名＋範圍。不是組合層：錄音／考試各自原路。
                 let leafTitleHtml = String(t.title || '');
                 let leafTitleAuto = '0';
                 let leafTitleFromRange = '';
-                if (t.type === 'audio_record') {
+                const comboPackTitle = comboPackTitleForPath(pathStr);
+                const leafPlainTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+                const leafWasAuto = (t.raw_data || {}).title_auto_from_range === true;
+                if (comboPackTitle && isComboInheritType(t.type) && (leafWasAuto || !leafPlainTitle)) {
+                    leafTitleHtml = comboPackTitle.replace(/</g, '&lt;');
+                    leafTitleAuto = '1';
+                    leafTitleFromRange = comboPackTitle.replace(/"/g, '&quot;');
+                } else if (t.type === 'audio_record') {
                     leafTitleHtml = String(audioDisplayTitle || '').replace(/</g, '&lt;');
                     leafTitleAuto = audioTitleIsAuto ? '1' : '0';
                     leafTitleFromRange = audioTitleFromRangeAttr;
                 } else if (t.type === 'exam') {
                     const examRaw = t.raw_data || {};
-                    const plainExamTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
+                    const plainExamTitle = leafPlainTitle;
                     let examRangeHint = '';
                     if (window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getExamRangeLabel(pathStr, t) || '';
@@ -1416,9 +1576,13 @@ window.TimelineTemplates = (() => {
                                  style="flex:1; min-width:150px; font-size:1rem; padding:8px 12px; background:white; border:1px solid #CBD5E1; border-radius:6px; outline:none; min-height:38px;">${leafTitleHtml}</div>
                             
                             <div style="display:flex; align-items:center; gap:10px; padding-top:4px; flex-wrap:wrap;">
-                                <div style="display:flex; align-items:center; gap:5px;">
-                                    <label style="font-size:0.9rem; font-weight:bold; color:#64748B;">期限:</label>
-                                    <input type="date" id="node-due-${pathStr}" class="form-control" style="padding:6px; font-size:0.9rem; width:130px;" value="${t.due_date || ''}" title="留空則繼承外層">
+                                <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+                                    <label style="font-size:0.9rem; font-weight:bold; color:#64748B;" title="留空則繼承外層">期限:</label>
+                                    ${dateTimeFields(`node-due-${pathStr}`, `node-due-time-${pathStr}`, t.due_date, 'padding:6px; font-size:0.9rem; width:130px;', 'padding:6px; font-size:0.9rem; width:110px;')}
+                                </div>
+                                <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+                                    <label style="font-size:0.9rem; font-weight:bold; color:#64748B;" title="留空則繼承外層">開放:</label>
+                                    ${dateTimeFields(`node-open-${pathStr}`, `node-open-time-${pathStr}`, t.open_at, 'padding:6px; font-size:0.9rem; width:130px;', 'padding:6px; font-size:0.9rem; width:110px;')}
                                 </div>
                                 <div style="display:flex; align-items:center; gap:5px;">
                                     <label style="font-size:0.9rem; font-weight:bold; color:#64748B;">遲交:</label>
@@ -1516,9 +1680,13 @@ window.TimelineTemplates = (() => {
                     <div id="builder-desc-${bState.containerId}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="font-size:0.85rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
                     
                     <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
-                        <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                             <label style="font-weight:800; font-size:1rem; color:#334155;">區塊期限：</label>
-                            <input type="date" id="builder-due-${bState.containerId}" class="form-control" style="width:auto; padding:4px 8px; font-size:1rem;" value="${bState.due_date || ''}">
+                            ${dateTimeFields(`builder-due-${bState.containerId}`, `builder-due-time-${bState.containerId}`, bState.due_date, 'width:auto; padding:4px 8px; font-size:1rem;', 'width:110px; padding:4px 8px; font-size:1rem;')}
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <label style="font-weight:800; font-size:1rem; color:#334155;">開放日期：</label>
+                            ${dateTimeFields(`builder-open-${bState.containerId}`, `builder-open-time-${bState.containerId}`, bState.open_at, 'width:auto; padding:4px 8px; font-size:1rem;', 'width:110px; padding:4px 8px; font-size:1rem;')}
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label style="font-weight:800; font-size:1rem; color:#334155;">區塊遲交規則：</label>
@@ -1562,7 +1730,7 @@ window.TimelineTemplates = (() => {
                         <button type="button" class="btn btn-action" style="font-size:1rem; background: #10B981; color: white;" onclick="window.FeatureTimeline.addNode(null, 'drive')">+ 📁 Drive</button>
                     </div>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
-                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle(null)" title="建立組合作業：同一範圍，搭配錄音＋考試">+ 📐 組合（錄音＋考試）</button>
+                    <button type="button" class="btn btn-action" style="font-size:1rem; background: #2563EB; color: white;" onclick="window.FeatureTimeline.addRangeBundle(null)" title="建立組合作業：同一範圍，底下可再加類型">+ 📐 組合(錄音＋考試＋)</button>
                     <button type="button" class="btn btn-action" style="font-size:1rem; background: #8B5CF6; color: white;" onclick="window.FeatureTimeline.addNode(null, 'group')">+ 🗂️ 群組作業</button>
                     <div style="width: 1px; height: 24px; background: #CBD5E1; margin: 0 5px;"></div>
                     ${addResourceHtml}
@@ -1586,7 +1754,8 @@ window.TimelineTemplates = (() => {
         else if (blockLateMode === 'custom') lateBadgeText = ` (⏳ 寬限 ${blockGrace}h (-${blockPenalty}%))`;
         else lateBadgeText = blockPenalty > 0 ? ` (♾️ 遲交扣 ${blockPenalty}%)` : ' (♾️ 接受遲交)';
 
-        let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:1rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
+        let blockDueBadge = effectiveBlockDueDate ? `<span style="font-size:1rem; color:#475569; margin-left:10px; font-weight:bold;">⏰ 期限: ${stampLabel(effectiveBlockDueDate)}${lateBadgeText}</span>` : '';
+        let blockOpenBadge = a.open_at ? `<span style="font-size:1rem; color:#0369A1; margin-left:10px; font-weight:bold;">開放: ${stampLabel(a.open_at)}</span>` : '';
         let tasksSectionHtml = tasksHtml ? `<div style="margin-top: 15px; padding-top:10px; border-top:1px dashed #CBD5E1;">${tasksHtml}</div>` : '';
 
         const dragHandleHtml = canEditTimeline ? `<span style="cursor: grab; margin-right:8px; color:#94A3B8; display:inline-block; padding: 4px;" title="拖曳排序區塊" onmousedown="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'true')" onmouseup="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')" onmouseleave="document.getElementById('assign-block-${a.id}').setAttribute('draggable', 'false')">↕️</span>` : '';
@@ -1607,6 +1776,7 @@ window.TimelineTemplates = (() => {
                     </div>
                     <div style="display:flex; align-items:center; gap:15px; margin-left:auto;">
                         ${blockDueBadge}
+                        ${blockOpenBadge}
                         ${actionButtonsHtml}
                     </div>
                 </div>
@@ -1750,6 +1920,9 @@ window.TimelineTemplates = (() => {
         getAddSessionModalHtml,
         getMoveAssignModalHtml,
         getLinePushModalHtml,
-        renderPasteWindowRowHtml
+        renderPasteWindowRowHtml,
+        renderRangePackHtml,
+        renderSheetPackTableHtml,
+        packSelectedCountSum
     };
 })();

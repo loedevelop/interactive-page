@@ -164,10 +164,12 @@ window.FeatureStudentMessages = (() => {
 
     function getDueDateKey(row) {
         const fromPayload = row.payload && row.payload.due_date;
-        if (fromPayload) return String(fromPayload);
-        // 從 block_label「（截止 YYYY-MM-DD）」兜底
+        if (fromPayload) {
+            const mPay = String(fromPayload).match(/(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?)/);
+            return mPay ? mPay[1].replace('T', ' ') : String(fromPayload);
+        }
         const block = (row.payload && row.payload.block_label) || row.title || '';
-        const m = String(block).match(/截止\s*(\d{4}-\d{2}-\d{2})/);
+        const m = String(block).match(/截止\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)/);
         return m ? m[1] : '';
     }
 

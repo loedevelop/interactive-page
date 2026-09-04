@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
     <!-- v55 終極更新：強制破除快取，釋放最新 UI 狀態與 AI 容錯卡片 -->
-    <link rel="stylesheet" href="../010_css/style.css?v=64">
+    <link rel="stylesheet" href="../010_css/style.css?v=68">
     
     <style>
         body {
@@ -56,6 +56,7 @@
 
     <nav class="tabs-nav">
         <button class="tab-link" data-view="progress" onclick="window.FeatureStudentTimeline.switchView('progress', this)">課程進度</button>
+        <button class="tab-link" data-view="exam-grades" onclick="window.FeatureStudentTimeline.switchView('exam-grades', this)">考試成績</button>
         <button class="tab-link" data-view="analytics" onclick="window.FeatureStudentTimeline.switchView('analytics', this)" style="display:none;" aria-hidden="true">📊 學習分析</button>
         <button class="tab-link active" data-view="messages" id="tab-student-messages" onclick="window.FeatureStudentTimeline.switchView('messages', this)">📬 訊息</button>
         <button class="tab-link" data-view="resources" onclick="window.FeatureStudentTimeline.switchView('resources', this)">課程資源</button>
@@ -66,6 +67,10 @@
 
     <div id="view-progress" class="view-content">
         <div id="course-container"></div>
+    </div>
+
+    <div id="view-exam-grades" class="view-content">
+        <div id="exam-grades-container"></div>
     </div>
 
     <div id="view-analytics" class="view-content">
@@ -129,7 +134,7 @@
         (function () {
             try {
                 var pendingId = sessionStorage.getItem('pendingJumpAssignmentId');
-                var allowed = { progress: 1, messages: 1, resources: 1, review: 1 };
+                var allowed = { progress: 1, 'exam-grades': 1, messages: 1, resources: 1, review: 1 };
                 var target = pendingId ? 'progress' : (localStorage.getItem('studentActiveView') || '');
                 if (!allowed[target]) target = 'messages';
                 if (target === 'messages') return; // HTML 預設就是訊息分頁，不用動
@@ -201,28 +206,29 @@
     
     <script src="../020_js_core/api.js?v=60"></script>
     <script src="../020_js_core/store-side-tables.js?v=1"></script> 
-    <script src="../020_js_core/utils-date.js?v=55"></script>
+    <script src="../020_js_core/utils-date.js?v=59"></script>
     <script src="../020_js_core/grading-policy.js?v=1"></script>
     <script src="../020_js_core/task-script-resolver.js?v=8"></script> <!-- v8：TASK_TYPE_ICON 補 pdf_exam: 📄 -->
     <script src="../020_js_core/message-layout-template.js?v=11"></script>
-    <script src="../020_js_core/modal-overlay.js?v=8"></script> <!-- v8：儲存中按取消＝離開，不准問尚未儲存，不准卡死。 -->
+    <script src="../020_js_core/modal-overlay.js?v=9"></script> <!-- v9：全螢幕時確認框掛在 fullscreen 節點裡，否則看不見。 -->
     <script src="../020_js_core/layout-fields-eval.js?v=10"></script> <!-- v10：資料項名 - 與 _ 當同一名字，fill-in-the-blank-question 才對得到。 -->
     <script src="../020_js_core/material-name-map.js?v=5"></script> <!-- v5：活頁別稱跟活頁列走，按 sheet id 查 current_label。 -->
     <script src="../020_js_core/review-zone.js?v=4"></script> <!-- v4：資料夾鍵走對照中心。v3：教材以 folder|sheet meta 為鍵 -->
-    <script src="../020_js_core/quiz-paper-builder.js?v=49"></script> <!-- v49：老師批改雙列對齊（學生黑／錯深藍，解答黑／差紅，其他寫法差藍）。 -->
-    <script src="../020_js_core/pdf-exam-paper.js?v=15"></script> <!-- v15：同一頁上下兩大題一併記下標題列 yPct，學生端才能捲到下面那題。 --> <!-- v14：可行答案只認解答裡的 OR。 --> <!-- v13：Quiz 3 問句＋答句是小題，不是其他可接受答案。 --> <!-- v12：A/B 在題號底下當小題，不是一律當大題分組。 --> <!-- v11：同一大題 A／B 分組後再依題號排，不再只看數字。 --> <!-- v10：跟老師端共用同一份，見 teacher/index.html 同名載入的說明（逗號拆格改交叉檢查，不再用空格線 hint 偷偷改拆） -->
+    <script src="../020_js_core/quiz-paper-builder.js?v=58"></script> <!-- v58：申訴紀錄合併寫入，不准空陣列蓋掉。 -->
+    <script src="../020_js_core/pdf-exam-paper.js?v=20"></script> <!-- v20：標頭同一行後面的答案、題號前面的字一律收進清單，不准丟掉。 --> <!-- v19：沒有「1.」題號的答案行仍收進該組；缺號的 Quiz 不准從畫面拿掉。 --> <!-- v16：斜線＝其他可接受答案；解答／題目 Quiz 組對帳；兩欄接續；老師定位的大題學生只填字。 --> <!-- v15：同一頁上下兩大題一併記下標題列 yPct，學生端才能捲到下面那題。 --> <!-- v14：可行答案只認解答裡的 OR。 --> <!-- v13：Quiz 3 問句＋答句是小題，不是其他可接受答案。 --> <!-- v12：A/B 在題號底下當小題，不是一律當大題分組。 --> <!-- v11：同一大題 A／B 分組後再依題號排，不再只看數字。 --> <!-- v10：跟老師端共用同一份，見 teacher/index.html 同名載入的說明（逗號拆格改交叉檢查，不再用空格線 hint 偷偷改拆） -->
     <script src="../020_js_core/material-pdf-page-map.js?v=1"></script> <!-- v1：課本頁／題號對 PDF 檔案頁；對不到不准猜。 -->
 
     <script src="../120_student_core/ui-audio-templates.js?v=60"></script> <!-- v60：錄音艙只畫對照到的 PDF 檔案頁。 -->
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=150"></script> <!-- v150：錄音進度只看 getRecordingBoard 一個點。 -->
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=155"></script> <!-- v155：錄音鈕不再把文稿塞進 HTML，避免上傳鈕被弄壞。 -->
 
     <script defer src="../120_student_core/feature-student-audio.js?v=64"></script> <!-- v64：依套餐對照表只畫對到的 PDF 檔案頁。 -->
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>
-    <script defer src="../120_student_core/feature-student-messages.js?v=13"></script>
-    <script defer src="../120_student_core/feature-student-quiz.js?v=32"></script> <!-- v32：整卷打散＝全部題混成一個順序，不准先成塊再洗塊序。 -->
+    <script defer src="../120_student_core/feature-student-messages.js?v=14"></script>
+    <script defer src="../120_student_core/feature-student-quiz.js?v=46"></script> <!-- v46：未開放不准進考卷。 -->
     <script defer src="../120_student_core/feature-student-review.js?v=5"></script> <!-- v5：舊 GEPT-2_sentence 連結讀現用 GEPT-2。v4：學生選教材改為活頁 meta -->
-    <script defer src="../120_student_core/feature-student-pdf-quiz.js?v=21"></script> <!-- v21：作答框文字強制深色，批改鎖定後仍看得見學生答案。 --> <!-- v20：點大題籤捲到該題標題列，同一頁下面那題不再停在頁頂的上一題。 --> <!-- v19：考卷視窗改全螢幕。 --> <!-- v15：點大題籤只捲考卷區，不再 scrollIntoView 把整窗捲走。 --> <!-- v14：一按開始就先打開考卷框顯示下載進度，不再等 GAS 整份下載完畫面才動。 --> <!-- v13：考卷區 flex min-height:0，畫布透明不擋 PDF，開卷強制畫出目前大題頁。 --> <!-- v12：畫筆／螢光／擦掉視覺筆記，暫存並離開會一併存作答框與筆記；未整份交完再開會接續。 --> <!-- v10：畫面改成整份 PDF 連續捲動、每頁只畫一次（lazy render＋快取），不再是「一大題一獨立畫面」——同一頁被兩個大題共用時不會重複出現。上方大題按鈕改兩行（上：大題名／下：頁碼），按下用 scrollIntoView 精準捲到該大題起始頁；頁碼範圍現在只當捲動錨點，不再是內容顯示的硬邊界。作答框的鎖定/拖曳/刪除/輸入一律依框自己的 data-section-idx 判斷所屬大題，不假設等於目前選中的大題（因為同一頁可能同時看得到多個大題的框）。v9：呼叫 detectSectionPageRanges 時多傳 job.section_page_hints（解答裡「Quiz N, p. NN」課本印刷頁碼），輔助定位大題頁碼。v8：修正「✅ 已批改」按鈕看不清楚字——深色底白字按鈕用 opacity 調暗會讓底色跟白字一起淡化變成「淡配淡」，改成不透明的淺灰底＋深灰字。v7：允許自由跳大題作答（新增大題導覽按鈕、拿掉「往前要先提交」的擋）；提交這一大題不再強制作答框數量要等於程式判斷的格數，數量不符也能直接送出並批改；作答框跟答案清單的配對邏輯改呼叫 PdfExamPaper 共用函式。v6：批改鎖定後，錯的作答框背景改紅色（依建立順序反查答案清單 key 比對 wrong_items），對的維持原本灰色，不顯示正確答案只標出錯在哪格。v5：改成每大題各自提交批改（不用等整份考卷寫完），提交後鎖定該大題並馬上顯示對錯格數／百分比；中途關閉重開會自動接續上次已批改的大題。v4：繳交結果頁改成只標「哪一大題錯幾格＋百分比」，不再顯示正確答案；完整保留整份卷子作答框（pdf_quiz_boxes_by_section，含頁碼／位置／文字）。v3：作答框可拖曳（抓圓形編號拖動）、統一文字大小可調（＋／－，影響所有作答框）、輸入框寬度隨文字自動變長。v2：改版——空格位置不再由老師/程式預先定位，改成學生依「答案清單順序」自己在 PDF 頁面圖上點出每一格作答框（建立順序＝配對依據，不是座標；不會寫也要點出留空），一大題一畫面、不逐題彈窗提示；送出後用 QuizPaperBuilder.gradeAnswers 評分。完全獨立於 feature-student-quiz.js（meta 出題的線上考試），互不影響 -->
-    <script defer src="../120_student_core/feature-student-timeline.js?v=113"></script> <!-- v113：開錄音艙帶入套餐 PDF 對照頁。 -->
+    <script defer src="../120_student_core/feature-student-pdf-quiz.js?v=24"></script> <!-- v24：未開放不准進 PDF 考卷。 --> <!-- v23：老師已定位的大題只填字，不再自己點格。 --> <!-- v21：作答框文字強制深色，批改鎖定後仍看得見學生答案。 --> <!-- v20：點大題籤捲到該題標題列，同一頁下面那題不再停在頁頂的上一題。 --> <!-- v19：考卷視窗改全螢幕。 --> <!-- v15：點大題籤只捲考卷區，不再 scrollIntoView 把整窗捲走。 --> <!-- v14：一按開始就先打開考卷框顯示下載進度，不再等 GAS 整份下載完畫面才動。 --> <!-- v13：考卷區 flex min-height:0，畫布透明不擋 PDF，開卷強制畫出目前大題頁。 --> <!-- v12：畫筆／螢光／擦掉視覺筆記，暫存並離開會一併存作答框與筆記；未整份交完再開會接續。 --> <!-- v10：畫面改成整份 PDF 連續捲動、每頁只畫一次（lazy render＋快取），不再是「一大題一獨立畫面」——同一頁被兩個大題共用時不會重複出現。上方大題按鈕改兩行（上：大題名／下：頁碼），按下用 scrollIntoView 精準捲到該大題起始頁；頁碼範圍現在只當捲動錨點，不再是內容顯示的硬邊界。作答框的鎖定/拖曳/刪除/輸入一律依框自己的 data-section-idx 判斷所屬大題，不假設等於目前選中的大題（因為同一頁可能同時看得到多個大題的框）。v9：呼叫 detectSectionPageRanges 時多傳 job.section_page_hints（解答裡「Quiz N, p. NN」課本印刷頁碼），輔助定位大題頁碼。v8：修正「✅ 已批改」按鈕看不清楚字——深色底白字按鈕用 opacity 調暗會讓底色跟白字一起淡化變成「淡配淡」，改成不透明的淺灰底＋深灰字。v7：允許自由跳大題作答（新增大題導覽按鈕、拿掉「往前要先提交」的擋）；提交這一大題不再強制作答框數量要等於程式判斷的格數，數量不符也能直接送出並批改；作答框跟答案清單的配對邏輯改呼叫 PdfExamPaper 共用函式。v6：批改鎖定後，錯的作答框背景改紅色（依建立順序反查答案清單 key 比對 wrong_items），對的維持原本灰色，不顯示正確答案只標出錯在哪格。v5：改成每大題各自提交批改（不用等整份考卷寫完），提交後鎖定該大題並馬上顯示對錯格數／百分比；中途關閉重開會自動接續上次已批改的大題。v4：繳交結果頁改成只標「哪一大題錯幾格＋百分比」，不再顯示正確答案；完整保留整份卷子作答框（pdf_quiz_boxes_by_section，含頁碼／位置／文字）。v3：作答框可拖曳（抓圓形編號拖動）、統一文字大小可調（＋／－，影響所有作答框）、輸入框寬度隨文字自動變長。v2：改版——空格位置不再由老師/程式預先定位，改成學生依「答案清單順序」自己在 PDF 頁面圖上點出每一格作答框（建立順序＝配對依據，不是座標；不會寫也要點出留空），一大題一畫面、不逐題彈窗提示；送出後用 QuizPaperBuilder.gradeAnswers 評分。完全獨立於 feature-student-quiz.js（meta 出題的線上考試），互不影響 -->
+    <script defer src="../120_student_core/feature-student-exam-grades.js?v=2"></script>
+    <script defer src="../120_student_core/feature-student-timeline.js?v=116"></script> <!-- v116：錄音上傳從任務讀文稿；檔名去掉 #;。 -->
     <script defer src="../120_student_core/feature-student-analytics.js?v=3"></script>
     
     <script defer>

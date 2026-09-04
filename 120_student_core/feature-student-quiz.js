@@ -36,6 +36,7 @@ window.FeatureStudentQuiz = (function () {
     let examGuardOn = false;
     let allowUnload = false;
     let allowFsExit = false;
+    let closingQuiz = false;
     let leftWhileHidden = false;
     let leaveCount = 0;
     let leaveConfirmBusy = false;
@@ -68,6 +69,29 @@ window.FeatureStudentQuiz = (function () {
      */
     let sessionDisplayOrder = [];
     let sessionRetakeDisplayOrder = [];
+    /**
+     * 繳交結果／作答檢討：完整考卷 vs 只看錯題。切換時只改清單 DOM，不准再呼叫
+     * ModalOverlay.open（同一 id 會先 close 觸發舊 onClose）。
+     */
+    let reviewViewState = null;
+    const REVIEW_LIST_KINDS = {
+        wrong: {
+            id: 'wrong',
+            buttonLabel: '只看錯題',
+            pick: function (ctx) {
+                return (ctx.fullItems || []).filter(function (item) { return !(item && item.ok); });
+            },
+            emptyHtml: '<div style="color:#047857; font-weight:800; padding:12px;">本次全對，沒有錯題。</div>',
+            withSectionHeads: false
+        },
+        full: {
+            id: 'full',
+            buttonLabel: '完整考卷',
+            pick: function (ctx) { return ctx.fullItems || []; },
+            emptyHtml: '<div style="color:#B45309; font-weight:800; padding:12px;">找不到這份考卷題目，無法顯示完整考卷。</div>',
+            withSectionHeads: true
+        }
+    };
 
     function orderIndexMap(idList) {
         const map = {};
@@ -107,22 +131,283 @@ window.FeatureStudentQuiz = (function () {
      * quiz_stats.wrong_items.expected，畫面會一直停在舊的「a」。顯示與改正練習
      * 一律以目前作業卷上的 answer_en 為準。
      */
-    function liveExpectedFromPaper(task, itemId) {
+    function paperItemById(task, itemId) {
         const paper = getPaper(task);
-        if (!paper || !Array.isArray(paper.items) || itemId == null) return '';
-        const hit = paper.items.find(function (it) { return String(it.item_id) === String(itemId); });
+        if (!paper || !Array.isArray(paper.items) || itemId == null) return null;
+        return paper.items.find(function (it) { return String(it.item_id) === String(itemId); }) || null;
+    }
+
+    /** 做題與檢討同一把題幹：prompt_zh，沒有才讀 cells[1]（與 renderItemRow 同一句）。 */
+    function itemPromptText(it) {
+        if (!it) return '';
+        return String(it.prompt_zh || (it.cells && it.cells[1] && it.cells[1].text) || '');
+    }
+
+    function liveExpectedFromPaper(task, itemId) {
+        const hit = paperItemById(task, itemId);
         return hit ? String(hit.answer_en || '').trim() : '';
     }
 
     function overlayWrongItemsExpected(wrongItems, task) {
         return (wrongItems || []).map(function (item) {
+            const hit = paperItemById(task, item && item.item_id);
+            const next = Object.assign({}, item);
+            if (hit) {
+                const livePrompt = itemPromptText(hit);
+                if (livePrompt) next.prompt_zh = livePrompt;
+                if (hit.quiz_mode === 'cloze' && hit.cloze_stem) next.cloze_stem = hit.cloze_stem;
+                if (hit.section_id) next.section_id = hit.section_id;
+                if (hit.source) next.source = hit.source;
+            }
             const live = liveExpectedFromPaper(task, item && item.item_id);
-            if (!live || String(item.expected || '').trim() === live) return item;
-            const next = Object.assign({}, item, { expected: live });
-            delete next.diff;
-            delete next.ops;
+            if (live && live !== String(item.expected || '').trim()) {
+                next.expected = live;
+                delete next.diff;
+                delete next.ops;
+            }
             return next;
         });
+    }
+
+    /**
+     * 完整考卷順序＝這次作答畫面上的 item_id 清單（quiz_result.display_item_ids）。
+     * 舊繳交沒有這把鑰匙 → 用這份 quiz_paper.items 自己的順序。
+     * 卷上還有、清單沒列到的題一律接在後面（不准丟）。
+     */
+    function paperItemsInSavedOrder(paper, displayIds) {
+        const items = (paper && Array.isArray(paper.items)) ? paper.items : [];
+        const byId = {};
+        items.forEach(function (it) {
+            if (!it || it.item_id == null) return;
+            byId[String(it.item_id)] = it;
+        });
+        const out = [];
+        const seen = {};
+        (Array.isArray(displayIds) ? displayIds : []).forEach(function (id) {
+            const key = String(id);
+            const hit = byId[key];
+            if (!hit || seen[key]) return;
+            seen[key] = true;
+            out.push(hit);
+        });
+        items.forEach(function (it) {
+            if (!it || it.item_id == null) return;
+            const key = String(it.item_id);
+            if (seen[key]) return;
+            seen[key] = true;
+            out.push(it);
+        });
+        return out;
+    }
+
+    /** 完整考卷列＝這份 quiz_paper 的題（item_id 對到才列）＋這次 quiz_answers。題幹／標題與做題同一函式。 */
+    function buildFullReviewItems(task, raw) {
+        const paper = getPaper(task);
+        if (!paper || !Array.isArray(paper.items) || !paper.items.length) return [];
+        if (!window.QuizPaperBuilder || typeof window.QuizPaperBuilder.gradeAnswers !== 'function') return [];
+        const answers = (raw && raw.quiz_answers) || {};
+        const displayIds = raw && raw.quiz_result && raw.quiz_result.display_item_ids;
+        const ordered = paperItemsInSavedOrder(paper, displayIds);
+        const orderedPaper = Object.assign({}, paper, { items: ordered });
+        const graded = window.QuizPaperBuilder.gradeAnswers(orderedPaper, answers, raw);
+        const byId = {};
+        (graded.details || []).forEach(function (d) {
+            if (d && d.item_id != null) byId[String(d.item_id)] = d;
+        });
+        return ordered.map(function (paperItem, idx) {
+            const d = byId[String(paperItem.item_id)] || {};
+            const live = liveExpectedFromPaper(task, paperItem.item_id);
+            const expected = live || d.expected || '';
+            const item = {
+                item_id: paperItem.item_id,
+                seq: paperItem.seq,
+                ok: d.ok === true,
+                prompt_zh: itemPromptText(paperItem),
+                cloze_stem: (paperItem.quiz_mode === 'cloze' && paperItem.cloze_stem) ? paperItem.cloze_stem : '',
+                section_id: paperItem.section_id || '',
+                combo_label: comboLabelForQuizItem(paperItem, task),
+                expected: expected,
+                answer: d.answer || '',
+                source: paperItem.source || d.source || null,
+                allow_answer_appeal: paperItem.allow_answer_appeal
+            };
+            item.headline = formatItemHeadline(paperItem, idx + 1);
+            return item;
+        });
+    }
+
+    function appealStatusCounts(appealsByItemId) {
+        const counts = { pending: 0, accepted: 0, rejected: 0 };
+        Object.keys(appealsByItemId || {}).forEach(function (key) {
+            const a = appealsByItemId[key];
+            if (!a) return;
+            if (a.status === 'accepted') counts.accepted += 1;
+            else if (a.status === 'rejected') counts.rejected += 1;
+            else if (a.status === 'pending') counts.pending += 1;
+        });
+        return counts;
+    }
+
+    function renderAppealSummaryHtml(appealsByItemId) {
+        const list = appealsByItemId || {};
+        if (!Object.keys(list).length) return '';
+        const c = appealStatusCounts(list);
+        return '<div style="margin-bottom:12px; padding:10px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; font-weight:800; color:#5B21B6; font-size:0.85rem;">'
+            + '🚩 申訴進度：審核中 ' + c.pending + ' · 已接受 ' + c.accepted + ' · 未通過 ' + c.rejected
+            + '</div>';
+    }
+
+    /**
+     * 分組列＝這題所屬套餐的已存名（combo_label）。
+     * 對不到＝沒有。禁止自編「段落 1」、禁止借隔壁套餐。
+     */
+    function comboLabelForQuizItem(it, task) {
+        const baked = String((it && it.combo_label) || (it && it.source && it.source.combo_label) || '').trim();
+        if (baked) return baked;
+        const sid = String((it && it.section_id) || '');
+        const comboId = String((it && it.source && it.source.combination_id) || (it && it.combination_id) || '').trim();
+        const job = task && task.raw_data && task.raw_data.exam_job;
+        const sections = (job && Array.isArray(job.sections)) ? job.sections : [];
+        var i, sec, named;
+        if (sid) {
+            for (i = 0; i < sections.length; i++) {
+                sec = sections[i];
+                if (String((sec && sec.id) || '') !== sid) continue;
+                named = String((sec && (sec.combo_label || sec.comboLabel)) || '').trim();
+                if (named) return named;
+            }
+        }
+        if (comboId) {
+            for (i = 0; i < sections.length; i++) {
+                sec = sections[i];
+                if (String((sec && (sec.combination_id || sec.combo_id)) || '') !== comboId) continue;
+                named = String((sec && (sec.combo_label || sec.comboLabel)) || '').trim();
+                if (named) return named;
+            }
+            const rows = (task && task.raw_data && Array.isArray(task.raw_data.pack_rows))
+                ? task.raw_data.pack_rows : [];
+            for (i = 0; i < rows.length; i++) {
+                if (String((rows[i] && (rows[i].combo_id || rows[i].comboId || rows[i].combination_id)) || '') !== comboId) continue;
+                named = String((rows[i] && (rows[i].combo_label || rows[i].comboLabel)) || '').trim();
+                if (named) return named;
+            }
+            const raw = task && task.raw_data;
+            if (raw && String(raw.pack_combo_id || '') === comboId) {
+                named = String(raw.pack_combo_label || '').trim();
+                if (named) return named;
+            }
+        }
+        return '';
+    }
+
+    function comboSectionHeadHtml(label) {
+        const named = String(label || '').trim();
+        if (!named) return '';
+        return '<div style="margin:16px 0 8px; padding:6px 10px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px; font-weight:800; color:#065F46;">' + esc(named) + '</div>';
+    }
+
+    /** 全卷打亂＝ exam_job / quiz_paper 的 shuffle_sections。各套餐自己洗牌不算。 */
+    function paperShuffleSectionsOn(paper, task) {
+        const job = task && task.raw_data && task.raw_data.exam_job;
+        const opts = job && job.options;
+        return !!(opts && opts.shuffle_sections)
+            || !!(paper && paper.options && paper.options.shuffle_sections);
+    }
+
+    function comboKeyOfQuizItem(it, task) {
+        const id = String((it && it.source && it.source.combination_id) || (it && it.combination_id) || '').trim();
+        if (id) return 'id:' + id;
+        const sid = String((it && it.section_id) || '');
+        const job = task && task.raw_data && task.raw_data.exam_job;
+        const sections = (job && Array.isArray(job.sections)) ? job.sections : [];
+        if (sid) {
+            var i, sec, cid;
+            for (i = 0; i < sections.length; i++) {
+                sec = sections[i];
+                if (String((sec && sec.id) || '') !== sid) continue;
+                cid = String((sec && (sec.combination_id || sec.combo_id)) || '').trim();
+                if (cid) return 'id:' + cid;
+            }
+        }
+        const named = comboLabelForQuizItem(it, task);
+        if (named) return 'name:' + named;
+        return '';
+    }
+
+    function uniqueComboCountOnItems(items, task) {
+        const seen = {};
+        let n = 0;
+        (items || []).forEach(function (it) {
+            const key = comboKeyOfQuizItem(it, task);
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            n += 1;
+        });
+        return n;
+    }
+
+    /** 套餐名只在：這份卷套餐 > 1，且全卷沒有打亂。 */
+    function shouldShowComboSectionHeads(items, paper, task) {
+        const pool = (paper && Array.isArray(paper.items) && paper.items.length) ? paper.items : items;
+        const multiCombo = uniqueComboCountOnItems(pool, task) > 1;
+        const paperInOrder = !paperShuffleSectionsOn(paper, task);
+        return multiCombo && paperInOrder;
+    }
+
+    function renderReviewListKindToggleHtml(kind) {
+        const current = REVIEW_LIST_KINDS[kind] ? kind : 'wrong';
+        const buttons = ['full', 'wrong'].map(function (id) {
+            const s = REVIEW_LIST_KINDS[id];
+            const on = id === current;
+            const bg = on ? '#0F766E' : '#FFFFFF';
+            const color = on ? '#FFFFFF' : '#0F766E';
+            const border = on ? '1px solid #0F766E' : '1px solid #99F6E4';
+            return '<button type="button" class="btn" style="background:' + bg + '; color:' + color + '; border:' + border + '; padding:6px 12px; font-weight:800;"'
+                + ' onclick="window.FeatureStudentQuiz.setReviewListKind(\'' + s.id + '\')">'
+                + esc(s.buttonLabel) + '</button>';
+        }).join('');
+        return '<div id="' + REVIEW_MODAL_ID + '-kind-toggle" style="display:flex; gap:8px; margin:8px 0 10px; flex-wrap:wrap;">' + buttons + '</div>';
+    }
+
+    function renderReviewCardsHtml(items, cardOpts, withSectionHeads) {
+        const task = (cardOpts && cardOpts.task) || (reviewViewState && reviewViewState.task) || null;
+        const paper = getPaper(task);
+        const showHeads = withSectionHeads && shouldShowComboSectionHeads(items, paper, task);
+        if (!showHeads) {
+            return items.map(function (item) { return renderReviewItemCard(item, cardOpts); }).join('');
+        }
+        let lastSectionId = null;
+        return items.map(function (item) {
+            let head = '';
+            const sid = String(item.section_id || '');
+            if (sid && sid !== lastSectionId) {
+                lastSectionId = sid;
+                head = comboSectionHeadHtml(comboLabelForQuizItem(item, task));
+            }
+            return head + renderReviewItemCard(item, cardOpts);
+        }).join('');
+    }
+
+    function renderReviewListBodyHtml(kind, ctx) {
+        const strategy = REVIEW_LIST_KINDS[kind] || REVIEW_LIST_KINDS.wrong;
+        const items = strategy.pick(ctx) || [];
+        if (!items.length) return strategy.emptyHtml;
+        const cardOpts = { allowAppeal: ctx.allowAppeal, appealsByItemId: ctx.appealsByItemId, task: ctx.task };
+        return renderReviewCardsHtml(items, cardOpts, !!strategy.withSectionHeads);
+    }
+
+    function setReviewListKind(kind) {
+        if (!reviewViewState || !REVIEW_LIST_KINDS[kind]) return;
+        reviewViewState.kind = kind;
+        const bodyEl = document.getElementById(REVIEW_MODAL_ID + '-wrongcards');
+        const toggleWrap = document.getElementById(REVIEW_MODAL_ID + '-kind-toggle');
+        if (bodyEl) bodyEl.innerHTML = renderReviewListBodyHtml(kind, reviewViewState);
+        if (toggleWrap) {
+            const fresh = document.createElement('div');
+            fresh.innerHTML = renderReviewListKindToggleHtml(kind);
+            const next = fresh.firstElementChild;
+            if (next) toggleWrap.replaceWith(next);
+        }
     }
 
     async function refreshAssignmentFromDb(assignmentId) {
@@ -130,7 +415,7 @@ window.FeatureStudentQuiz = (function () {
             if (!window.supabaseClient || !isAssignmentId(assignmentId)) return;
             const { data, error } = await window.supabaseClient
                 .from('assignments')
-                .select('id, title, description, target_date, due_date, tasks, raw_data, is_published, class_id')
+                .select('id, title, description, target_date, due_date, open_at, tasks, raw_data, is_published, class_id')
                 .eq('id', assignmentId)
                 .maybeSingle();
             if (error || !data) return;
@@ -138,6 +423,12 @@ window.FeatureStudentQuiz = (function () {
                 ? window.FeatureStudentTimeline.getAssignments()
                 : [];
             const idx = (list || []).findIndex(function (a) { return String(a.id) === String(assignmentId); });
+            const visible = !window.UtilsDate || typeof window.UtilsDate.canStudentSeeAssignment !== 'function'
+                || window.UtilsDate.canStudentSeeAssignment(data);
+            if (!visible) {
+                if (idx >= 0) list.splice(idx, 1);
+                return;
+            }
             if (idx >= 0) list[idx] = data;
             else if (list) list.push(data);
         } catch (err) {
@@ -153,6 +444,25 @@ window.FeatureStudentQuiz = (function () {
             else if (t.subTasks) found = walkFindTask(t.subTasks, taskId);
         });
         return found;
+    }
+
+    function findAssignmentById(assignmentId) {
+        const list = (window.FeatureStudentTimeline && typeof window.FeatureStudentTimeline.getAssignments === 'function')
+            ? window.FeatureStudentTimeline.getAssignments()
+            : [];
+        return (list || []).find(function (a) {
+            return String(a.id) === String(assignmentId);
+        }) || null;
+    }
+
+    function assertStudentCanAccess(assignmentId, taskId) {
+        if (!window.UtilsDate || typeof window.UtilsDate.canStudentSeeTask !== 'function') return true;
+        const assign = findAssignmentById(assignmentId);
+        if (!assign || !window.UtilsDate.canStudentSeeTask(assign, taskId)) {
+            window.showFlash && window.showFlash('這份作業尚未開放', 'warning');
+            return false;
+        }
+        return true;
     }
 
     function findTaskInAssignments(assignmentId, taskId) {
@@ -422,32 +732,59 @@ window.FeatureStudentQuiz = (function () {
             : !!(opts && opts.allowAppeal);
         if (!allowed) return '';
         const appeal = (opts.appealsByItemId || {})[String(item.item_id)];
+        const noteHtml = function (prefix, color) {
+            const n = String((appeal && appeal.student_note) || '').trim();
+            if (!n) return '';
+            return '<div style="margin-top:4px; font-size:0.75rem; font-weight:700; color:' + color + '; white-space:pre-wrap;">' + prefix + esc(n) + '</div>';
+        };
+        if (!appeal && item && item.ok === true) return '';
         if (!appeal) {
-            return '<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:0.78rem; font-weight:700; color:#7C3AED; cursor:pointer;">'
-                + '<input type="checkbox" class="quiz-appeal-checkbox" data-item-id="' + esc(item.item_id) + '" data-seq="' + esc(item.seq) + '" data-answer="' + esc(item.answer || '') + '" data-expected="' + esc(item.expected || '') + '">'
+            return '<div class="quiz-appeal-block" style="margin-top:8px;">'
+                + '<label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; font-weight:700; color:#7C3AED; cursor:pointer;">'
+                + '<input type="checkbox" class="quiz-appeal-checkbox" data-item-id="' + esc(item.item_id) + '" data-seq="' + esc(item.seq) + '" data-answer="' + esc(item.answer || '') + '" data-expected="' + esc(item.expected || '') + '" onchange="window.FeatureStudentQuiz.onAppealCheck(this)">'
                 + '🚩 申訴這個答案（送出後老師/助教會審核）'
-                + '</label>';
+                + '</label>'
+                + '<textarea class="quiz-appeal-note" data-item-id="' + esc(item.item_id) + '" rows="3" '
+                + 'placeholder="請描述問題，例如：標點打不出來、標點後面自動多了空白…" '
+                + 'style="display:none; box-sizing:border-box; width:100%; margin-top:6px; padding:8px 10px; border:1px solid #DDD6FE; border-radius:8px; font-size:0.82rem; font-weight:700; color:#1E293B; resize:vertical;"></textarea>'
+                + '</div>';
         }
         if (appeal.status === 'accepted') {
-            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#047857;">✅ 申訴已被接受，成績已更新（重新整理／重新打開檢討可看到最新結果）</div>';
+            return noteHtml('你的說明：', '#047857');
         }
         if (appeal.status === 'rejected') {
-            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#DC2626;">❌ 申訴未通過審核</div>';
+            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#DC2626;">❌ 申訴未通過審核</div>'
+                + noteHtml('你的說明：', '#B91C1C');
         }
-        return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B45309;">🕐 申訴審核中，請等候老師/助教處理</div>';
+        return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B45309;">🕐 申訴審核中，請等候老師/助教處理</div>'
+            + noteHtml('你的說明：', '#6D28D9');
     }
 
-    function renderWrongItemCard(item, opts) {
+    function renderReviewItemCard(item, opts) {
         ensureItemDiff(item);
+        const ok = !!(item && item.ok === true);
+        const appeal = (opts && opts.appealsByItemId || {})[String(item && item.item_id)];
         const headline = item.headline || headlineFromWrongItem(item);
         const ops = (item.diff && item.diff.ops) || item.ops || [];
+        const appealedOk = !!(appeal && appeal.status === 'accepted');
+        const border = ok ? '1px solid #A7F3D0' : '1px solid #FECACA';
+        const bg = ok ? '#F0FDF4' : '#FFF7F7';
+        const headColor = ok ? '#047857' : '#B91C1C';
+        const mark = (ok && appealedOk) ? '申訴成功' : (ok ? '答對' : '答錯');
+        const cloze = item.cloze_stem
+            ? '<div style="margin-top:4px; margin-bottom:8px; color:#0F766E; font-weight:700; white-space:pre-wrap;">' + esc(item.cloze_stem) + '</div>'
+            : '';
         // 2026-08-13 老師要求先關掉「拼錯紀錄」：目前逐字對齊機制抓出來的拼錯配對還不夠準確、
         // 對學生／老師來說沒有參考意義，先不顯示（renderAnswerDiffHtml 本身的上下對齊已經夠用），
         // 之後演算法夠準了再考慮恢復 renderSpellingPairsHtml(pairs)。
         return (
-            '<div style="border:1px solid #FECACA; border-radius:10px; padding:12px; margin-bottom:10px; background:#FFF7F7;">' +
-                '<div style="font-size:0.85rem; color:#B91C1C; font-weight:900; margin-bottom:4px;">' + esc(headline) + '</div>' +
+            '<div style="border:' + border + '; border-radius:10px; padding:12px; margin-bottom:10px; background:' + bg + ';">' +
+                '<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:4px;">' +
+                    '<div style="font-size:0.85rem; color:' + headColor + '; font-weight:900;">' + esc(headline) + '</div>' +
+                    '<div style="font-size:0.75rem; font-weight:800; color:' + headColor + ';">' + mark + '</div>' +
+                '</div>' +
                 '<div style="font-size:0.92rem; font-weight:800; color:#1E293B; margin-bottom:8px; white-space:pre-wrap;">' + esc(item.prompt_zh || '') + '</div>' +
+                cloze +
                 '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>' +
                 '<div style="font-size:1rem; line-height:1.7; margin-bottom:6px;">' + renderStudentStrikeHtml(ops) + '</div>' +
                 '<div style="font-size:0.75rem; color:#DC2626; font-weight:800; margin-bottom:2px;">正確答案</div>' +
@@ -518,11 +855,17 @@ window.FeatureStudentQuiz = (function () {
         opts = opts || {};
         const wrongItems = stats.wrong_items || [];
         const appealsByItemId = opts.appealsByItemId || {};
-        const cardOpts = { allowAppeal: opts.allowAppeal, appealsByItemId: appealsByItemId };
+        const listKind = REVIEW_LIST_KINDS[opts.listKind] ? opts.listKind : 'full';
         const wrongCardsBodyId = REVIEW_MODAL_ID + '-wrongcards';
-        const wrongCards = wrongItems.length
-            ? wrongItems.map(function (item) { return renderWrongItemCard(item, cardOpts); }).join('')
-            : '<div style="color:#047857; font-weight:800; padding:12px;">本次全對，沒有錯題。</div>';
+        reviewViewState = {
+            kind: listKind,
+            wrongItems: wrongItems,
+            fullItems: opts.fullItems || [],
+            allowAppeal: opts.allowAppeal,
+            appealsByItemId: appealsByItemId,
+            task: opts.task || null
+        };
+        const listHtml = renderReviewListBodyHtml(listKind, reviewViewState);
         const closeAction = opts.reloadOnClose
             ? "window.FeatureStudentQuiz.closeReview(true)"
             : "window.FeatureStudentQuiz.closeReview(false)";
@@ -559,12 +902,12 @@ window.FeatureStudentQuiz = (function () {
                 + '</div>')
             : '';
         return (
-            '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
-                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+            '<div class="student-quiz-sheet">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; flex-shrink:0;">' +
                     '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">📋 ' + esc(title) + '</h3>' +
                     '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="' + closeAction + '">關閉</button>' +
                 '</div>' +
-                '<div style="margin-bottom:12px; padding:10px; background:#F0FDFA; border:1px solid #99F6E4; border-radius:8px; font-weight:800; color:#134E4A; font-size:0.88rem;">'
+                '<div class="student-quiz-sheet__stats">'
                     + '得分 ' + esc(result.correct) + ' / ' + esc(result.total) + '（' + esc(result.score) + '%）'
                     + ' · 已作答過 ' + esc(stats.complete_count) + ' 次'
                     + ' · 中途退出 ' + esc(stats.quit_count) + ' 次'
@@ -574,31 +917,30 @@ window.FeatureStudentQuiz = (function () {
                 + '</div>' +
                 retakeBannerHtml +
                 inputCorrectionBannerHtml +
-                '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">① 錯題本（本次）</div>' +
-                '<div id="' + wrongCardsBodyId + '" style="max-height:32vh; overflow:auto; margin-bottom:12px;">' + wrongCards + '</div>' +
+                renderAppealSummaryHtml(appealsByItemId) +
+                renderReviewListKindToggleHtml(listKind) +
+                '<div id="' + wrongCardsBodyId + '" class="student-quiz-sheet__list">' + listHtml + '</div>' +
                 appealSubmitHtml +
                 // 2026-08-13 老師要求先關掉「歷史錯字紀錄」：目前抓錯機制（逐字對齊）還不夠準確，
                 // 累積出來的 spelling_ledger 對老師／學生沒有參考意義，先不顯示這一區塊，之後
                 // 演算法夠準了再考慮恢復（ledgerHtml／renderSpellingLedgerHtml 保留，沒有刪掉邏輯）。
-                '<div style="display:flex; justify-content:flex-end; margin-top:12px;">' +
-                    '<button type="button" class="btn btn-action" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;" onclick="'
-                        + closeAction + '">知道了</button>' +
-                '</div>' +
             '</div>'
         );
     }
 
     function closeReview(reload) {
+        reviewViewState = null;
         if (window.ModalOverlay) window.ModalOverlay.close(REVIEW_MODAL_ID);
         if (reload) window.location.reload();
     }
 
     async function openReviewFromRaw(assignmentId, taskId) {
+        if (!assertStudentCanAccess(assignmentId, taskId)) return;
         if (!window.ModalOverlay) return;
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID,
             tier: 'A',
-            contentHtml: '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取最新批改結果…</div>'
+            contentHtml: '<div class="student-quiz-sheet student-quiz-sheet--loading">⏳ 讀取最新批改結果…</div>'
         });
         await Promise.all([
             refreshCompletionFromDb(assignmentId, taskId),
@@ -612,13 +954,28 @@ window.FeatureStudentQuiz = (function () {
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const stats = readStats(raw);
         const task = findTaskInAssignments(assignmentId, taskId);
-        stats.wrong_items = overlayWrongItemsExpected(stats.wrong_items, task);
+        stats.wrong_items = overlayWrongItemsExpected(
+            fullItems.filter(function (it) { return !(it && it.ok); }),
+            task
+        );
+        const appealsByItemId = appealsByItemIdFromRaw(raw);
+        const fullItems = buildFullReviewItems(task, raw);
         const qr = raw.quiz_result || {};
-        const result = {
-            correct: qr.correct != null ? qr.correct : '—',
-            total: qr.total != null ? qr.total : '—',
-            score: qr.score != null ? qr.score : '—'
-        };
+        const liveTotal = fullItems.length;
+        const liveCorrect = liveTotal
+            ? fullItems.filter(function (it) { return it && it.ok === true; }).length
+            : null;
+        const result = liveTotal
+            ? {
+                correct: liveCorrect,
+                total: liveTotal,
+                score: Math.round((liveCorrect / liveTotal) * 1000) / 10
+            }
+            : {
+                correct: qr.correct != null ? qr.correct : '—',
+                total: qr.total != null ? qr.total : '—',
+                score: qr.score != null ? qr.score : '—'
+            };
         const retake = raw.quiz_retake || null;
         const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
         const retakeReportReady = !!(retake && retake.done);
@@ -626,7 +983,7 @@ window.FeatureStudentQuiz = (function () {
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID,
             tier: 'A',
-            contentHtml: buildReviewHtml('作答檢討與錯字紀錄', result, stats, {
+            contentHtml: buildReviewHtml('作答檢討', result, stats, {
                 reloadOnClose: !!reloadOnClose,
                 assignmentId: assignmentId,
                 taskId: taskId,
@@ -634,7 +991,10 @@ window.FeatureStudentQuiz = (function () {
                 retakeReportReady: retakeReportReady,
                 allowAppeal: allowAppeal,
                 inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
-                appealsByItemId: appealsByItemIdFromRaw(raw)
+                appealsByItemId: appealsByItemId,
+                fullItems: fullItems,
+                listKind: 'full',
+                task: task
             })
         });
     }
@@ -710,7 +1070,7 @@ window.FeatureStudentQuiz = (function () {
     }
 
     function renderItemRow(it, prevAnswer, displayNo) {
-        const prompt = it.prompt_zh || (it.cells && it.cells[1] && it.cells[1].text) || '';
+        const prompt = itemPromptText(it);
         const fontDelta = (it.cells && it.cells[1] && it.cells[1].fontDelta) || 0;
         const fontSize = Math.max(0.75, 1 + (fontDelta * 0.08));
         const headline = formatItemHeadline(it, displayNo);
@@ -846,8 +1206,7 @@ window.FeatureStudentQuiz = (function () {
         const items = (paper && paper.items) || [];
         const job = task && task.raw_data && task.raw_data.exam_job;
         const opts = job && job.options;
-        const paperShuffleAll = !!(paper && paper.options && paper.options.shuffle_sections);
-        const shuffleAll = !!(opts && opts.shuffle_sections) || paperShuffleAll;
+        const shuffleAll = paperShuffleSectionsOn(paper, task);
         const canShuffle = window.QuizPaperBuilder && typeof window.QuizPaperBuilder.shuffleInPlace === 'function';
         if (shuffleAll && canShuffle) {
             return window.QuizPaperBuilder.shuffleInPlace(items.slice());
@@ -950,17 +1309,41 @@ window.FeatureStudentQuiz = (function () {
         const assignmentKey = (/^\d+$/.test(String(assignmentId).trim()))
             ? Number(assignmentId)
             : assignmentId;
+        let payloadRaw = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
+        if (Object.prototype.hasOwnProperty.call(payloadRaw, 'quiz_appeals')) {
+            await refreshCompletionFromDb(assignmentId, taskId);
+            const fresh = findCompletion(assignmentId, taskId);
+            const prevAppeals = fresh && fresh.raw_data ? fresh.raw_data.quiz_appeals : null;
+            payloadRaw = Object.assign({}, payloadRaw, {
+                quiz_appeals: (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.mergeQuizAppeals === 'function')
+                    ? window.QuizPaperBuilder.mergeQuizAppeals(prevAppeals, payloadRaw.quiz_appeals)
+                    : payloadRaw.quiz_appeals
+            });
+        }
         const { error: rpcErr } = await window.supabaseClient.rpc('student_set_task_completion', {
             p_assignment_id: assignmentKey,
             p_task_id: String(taskId),
             p_class_id: auth.classId,
             p_completed: !!completed,
-            p_raw_data: rawPayload
+            p_raw_data: payloadRaw
         });
         if (rpcErr) {
             const rpcMsg = String(rpcErr.message || rpcErr.details || '');
             const rpcMissing = /Could not find the function|does not exist|PGRST202|404/i.test(rpcMsg);
             if (!rpcMissing) throw rpcErr;
+            const { data: existingRow } = await window.supabaseClient.from('task_completions')
+                .select('raw_data')
+                .eq('task_id', String(taskId))
+                .eq('student_id', auth.userId)
+                .eq('class_id', auth.classId)
+                .maybeSingle();
+            let prevRaw = existingRow && existingRow.raw_data;
+            if (typeof prevRaw === 'string') {
+                try { prevRaw = JSON.parse(prevRaw); } catch (_e) { prevRaw = {}; }
+            }
+            const mergedRaw = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.prepareCompletionRawDataForSave === 'function')
+                ? window.QuizPaperBuilder.prepareCompletionRawDataForSave(prevRaw || {}, payloadRaw)
+                : Object.assign({}, prevRaw || {}, payloadRaw);
             const payload = {
                 assignment_id: assignmentId,
                 task_id: String(taskId),
@@ -968,7 +1351,7 @@ window.FeatureStudentQuiz = (function () {
                 class_id: auth.classId,
                 status: completed ? 'completed' : 'submitted',
                 deleted_at: null,
-                raw_data: rawPayload
+                raw_data: mergedRaw
             };
             const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('task_completions')
                 .update(payload)
@@ -983,7 +1366,7 @@ window.FeatureStudentQuiz = (function () {
                 if (insertErr) throw insertErr;
             }
         }
-        patchLocalCompletion(assignmentId, taskId, rawPayload, completed);
+        patchLocalCompletion(assignmentId, taskId, payloadRaw, completed);
     }
 
     async function persistQuitIfNeeded() {
@@ -1016,16 +1399,31 @@ window.FeatureStudentQuiz = (function () {
         }
     }
 
+    function markQuizClosing() {
+        if (window.ModalOverlay && typeof window.ModalOverlay.setBusy === 'function') {
+            window.ModalOverlay.setBusy(MODAL_ID, true);
+        }
+        const btn = document.querySelector('#' + MODAL_ID + ' button.btn-close');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '關閉中…';
+        }
+    }
+
     function closeQuizNow() {
+        if (closingQuiz) {
+            persistQuitIfNeeded();
+            return;
+        }
+        closingQuiz = true;
         allowUnload = true;
-        const doClose = function () {
-            detachExamGuards();
-            exitExamFullscreen().then(function () {
-                if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
-            });
-        };
-        // 先寫 quit，再關（不阻塞太久）
-        persistQuitIfNeeded().then(doClose).catch(doClose);
+        allowFsExit = true;
+        markQuizClosing();
+        detachExamGuards();
+        persistQuitIfNeeded();
+        exitExamFullscreen().then(function () {
+            if (window.ModalOverlay) window.ModalOverlay.close(MODAL_ID);
+        });
     }
 
     function detachExamGuards() {
@@ -1051,6 +1449,7 @@ window.FeatureStudentQuiz = (function () {
         examGuardOn = true;
         allowUnload = false;
         allowFsExit = false;
+        closingQuiz = false;
         leaveCount = 0;
         leaveLog = [];
         lastLeaveAt = 0;
@@ -1120,15 +1519,33 @@ window.FeatureStudentQuiz = (function () {
     }
 
     async function requestCloseQuiz() {
+        if (closingQuiz) return;
         if (!examGuardOn) {
             closeQuizNow();
             return;
         }
-        if (!(await window.ModalOverlay.confirm('作答尚未繳交，確定要中斷考試並關閉？\n目前離開次數：' + leaveCount))) return;
-        closeQuizNow();
+        if (leaveConfirmBusy) return;
+        leaveConfirmBusy = true;
+        // 確認框還在時按 Esc 會退出全螢幕；這次是在問要不要關考卷，不算作弊離開，也不准再疊一層「離開全螢幕」確認。
+        allowFsExit = true;
+        try {
+            const ok = await window.ModalOverlay.confirm('作答尚未繳交，確定要中斷考試並關閉？\n目前離開次數：' + leaveCount);
+            if (!ok) {
+                allowFsExit = false;
+                if (examGuardOn && !isFullscreen()) {
+                    const overlay = document.getElementById(MODAL_ID);
+                    requestExamFullscreen(overlay || document.documentElement);
+                }
+                return;
+            }
+            closeQuizNow();
+        } finally {
+            leaveConfirmBusy = false;
+        }
     }
 
     function openQuiz(assignmentId, taskId) {
+        if (!assertStudentCanAccess(assignmentId, taskId)) return;
         const task = findTaskInAssignments(assignmentId, taskId);
         if (!task) return window.showFlash('找不到考試任務', 'error');
         const paper = getPaper(task);
@@ -1170,15 +1587,14 @@ window.FeatureStudentQuiz = (function () {
         // （sessionDisplayOrder），submit() 交卷時要用同一份順序算編號，不能再重新洗牌一次。
         const displayItems = displayOrderItems(paper, task);
         sessionDisplayOrder = displayItems.map(function (it) { return it.item_id; });
+        const showComboHeads = shouldShowComboSectionHeads(displayItems, paper, task);
         let lastSectionId = null;
-        let sectionNo = 0;
         const itemsHtml = displayItems.map(function (it, idx) {
             let head = '';
             const sid = String(it.section_id || '');
-            if (sid && sid !== lastSectionId) {
+            if (showComboHeads && sid && sid !== lastSectionId) {
                 lastSectionId = sid;
-                sectionNo += 1;
-                head = '<div style="margin:16px 0 8px; padding:6px 10px; background:#ECFDF5; border:1px solid #6EE7B7; border-radius:8px; font-weight:800; color:#065F46;">段落 ' + sectionNo + '</div>';
+                head = comboSectionHeadHtml(comboLabelForQuizItem(it, task));
             }
             return head + renderItemRow(it, undefined, idx + 1);
         }).join('');
@@ -1319,6 +1735,7 @@ window.FeatureStudentQuiz = (function () {
                 correct: result.correct,
                 total: result.total,
                 wrong_items: stats.wrong_items,
+                display_item_ids: (sessionDisplayOrder || []).slice(),
                 graded_at: gradedAt,
                 leave_count: leaveCount,
                 leave_log: leaveLog.slice(),
@@ -1362,14 +1779,17 @@ window.FeatureStudentQuiz = (function () {
             window.ModalOverlay.open({
                 id: REVIEW_MODAL_ID,
                 tier: 'A',
-                contentHtml: buildReviewHtml('繳交結果・錯題與錯字', result, stats, {
+                contentHtml: buildReviewHtml('繳交結果', result, stats, {
                     reloadOnClose: true,
                     assignmentId: assignmentId,
                     taskId: taskId,
                     retakeEligible: retakeEligible,
                     allowAppeal: !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false),
                     inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
-                    appealsByItemId: appealsByItemIdFromRaw(rawPayload)
+                    appealsByItemId: appealsByItemIdFromRaw(rawPayload),
+                    fullItems: buildFullReviewItems(task, rawPayload),
+                    listKind: 'full',
+                    task: task
                 })
             });
         } catch (err) {
@@ -1387,6 +1807,7 @@ window.FeatureStudentQuiz = (function () {
     }
 
     function openRetakeQuiz(assignmentId, taskId) {
+        if (!assertStudentCanAccess(assignmentId, taskId)) return;
         const task = findTaskInAssignments(assignmentId, taskId);
         if (!task) return window.showFlash('找不到考試任務', 'error');
         const paper = getPaper(task);
@@ -1554,7 +1975,7 @@ window.FeatureStudentQuiz = (function () {
         const cardOpts = { allowAppeal: opts.allowAppeal, appealsByItemId: appealsByItemId };
         const wrongCardsBodyId = RETAKE_REPORT_MODAL_ID + '-wrongcards';
         const wrongCards = wrongItems.length
-            ? wrongItems.map(function (item) { return renderWrongItemCard(item, cardOpts); }).join('')
+            ? wrongItems.map(function (item) { return renderReviewItemCard(item, cardOpts); }).join('')
             : '<div style="color:#047857; font-weight:800; padding:12px;">重考的題目全部訂正成功！</div>';
         // 這裡是塞進 onclick="...('safeAssign','safeTask')" 的 JS 字串常值，要跳單引號，不是 HTML escape
         const safeAssign = String(opts.assignmentId == null ? '' : opts.assignmentId).replace(/'/g, "\\'");
@@ -1571,8 +1992,8 @@ window.FeatureStudentQuiz = (function () {
                 + '</div>')
             : '';
         return (
-            '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:18px; box-shadow:0 20px 50px rgba(15,23,42,0.2);">' +
-                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">' +
+            '<div class="student-quiz-sheet">' +
+                '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; flex-shrink:0;">' +
                     '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#B45309;">📊 ' + esc(title) + '・整體報告</h3>' +
                     '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">關閉</button>' +
                 '</div>' +
@@ -1591,11 +2012,8 @@ window.FeatureStudentQuiz = (function () {
                     '</div>' +
                 '</div>' +
                 (wrongItems.length ? '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">重考後仍錯的題目</div>' : '') +
-                '<div id="' + wrongCardsBodyId + '" style="max-height:38vh; overflow:auto; margin-bottom:8px;">' + wrongCards + '</div>' +
+                '<div id="' + wrongCardsBodyId + '" class="student-quiz-sheet__list">' + wrongCards + '</div>' +
                 appealSubmitHtml +
-                '<div style="display:flex; justify-content:flex-end; margin-top:12px;">' +
-                    '<button type="button" class="btn btn-action" style="background:#0F766E; color:white; border:none; padding:8px 14px; font-weight:800;" onclick="window.FeatureStudentQuiz.closeRetakeReport(true)">知道了</button>' +
-                '</div>' +
             '</div>'
         );
     }
@@ -1624,7 +2042,7 @@ window.FeatureStudentQuiz = (function () {
             window.ModalOverlay.open({
                 id: RETAKE_REPORT_MODAL_ID,
                 tier: 'A',
-                contentHtml: '<div style="max-width:760px; width:94vw; background:white; border-radius:14px; padding:24px; text-align:center; color:#64748B; font-weight:700;">⏳ 讀取最新批改結果…</div>'
+                contentHtml: '<div class="student-quiz-sheet student-quiz-sheet--loading">⏳ 讀取最新批改結果…</div>'
             });
         }
         await Promise.all([
@@ -1658,9 +2076,13 @@ window.FeatureStudentQuiz = (function () {
         const checked = Array.prototype.slice.call(scopeEl.querySelectorAll('.quiz-appeal-checkbox:checked'));
         if (!checked.length) return window.showFlash('請先勾選要申訴的題目', 'warning');
 
+        await refreshCompletionFromDb(assignmentId, taskId);
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
-        const existing = Array.isArray(raw.quiz_appeals) ? raw.quiz_appeals.slice() : [];
+        const existingKept = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.mergeQuizAppeals === 'function')
+            ? window.QuizPaperBuilder.mergeQuizAppeals(raw.quiz_appeals, [])
+            : raw.quiz_appeals;
+        const existing = Array.isArray(existingKept) ? existingKept.slice() : [];
         const existingIds = {};
         existing.forEach(function (a) { if (a && a.item_id != null) existingIds[String(a.item_id)] = true; });
 
@@ -1669,11 +2091,14 @@ window.FeatureStudentQuiz = (function () {
         checked.forEach(function (el) {
             const itemId = el.getAttribute('data-item-id');
             if (itemId == null || existingIds[String(itemId)]) return;
+            const block = el.closest ? el.closest('.quiz-appeal-block') : null;
+            const noteEl = block ? block.querySelector('.quiz-appeal-note') : null;
             newAppeals.push({
                 item_id: itemId,
                 seq: Number(el.getAttribute('data-seq')) || null,
                 answer: el.getAttribute('data-answer') || '',
                 expected: el.getAttribute('data-expected') || '',
+                student_note: noteEl ? String(noteEl.value || '').trim() : '',
                 status: 'pending',
                 appealed_at: appealedAt
             });
@@ -2004,6 +2429,7 @@ window.FeatureStudentQuiz = (function () {
     }
 
     function openInputPractice(assignmentId, taskId) {
+        if (!assertStudentCanAccess(assignmentId, taskId)) return;
         const task = findTaskInAssignments(assignmentId, taskId);
         if (!task) return window.showFlash('找不到考試任務', 'error');
         if (!task.raw_data || !task.raw_data.input_practice_enabled) return window.showFlash('這份考卷沒有開啟輸入練習', 'warning');
@@ -2286,8 +2712,17 @@ window.FeatureStudentQuiz = (function () {
     return {
         openQuiz: openQuiz,
         submit: submit,
+        onAppealCheck: function (el) {
+            if (!el) return;
+            const block = el.closest ? el.closest('.quiz-appeal-block') : null;
+            const note = block ? block.querySelector('.quiz-appeal-note') : null;
+            if (!note) return;
+            note.style.display = el.checked ? 'block' : 'none';
+            if (el.checked) note.focus();
+        },
         requestCloseQuiz: requestCloseQuiz,
         closeReview: closeReview,
+        setReviewListKind: setReviewListKind,
         openReviewFromRaw: openReviewFromRaw,
         startRetakeFromReview: startRetakeFromReview,
         openRetakeQuiz: openRetakeQuiz,

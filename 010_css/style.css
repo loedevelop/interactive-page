@@ -114,11 +114,46 @@ button:disabled,
 .btn-primary:disabled,
 .btn-danger:disabled,
 .std-btn:disabled,
+.task-btn:disabled,
 [disabled].btn,
 [disabled].btn-action,
-[disabled].std-btn {
+[disabled].std-btn,
+[disabled].task-btn {
     opacity: 1 !important;
     filter: none !important;
+}
+
+/* 學生時間軸任務列按鈕：尺寸／字重／圓角中央統一，色票只分實心／線框／完成。
+   禁止各任務列自己 inline 上色（曾出現實心綠、線框、橘色三顆並排）。
+   停用／完成不准用 opacity，走 --done。 */
+.task-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 34px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 2px solid #0F766E;
+    background: #0F766E;
+    color: #FFFFFF;
+    font-size: 0.85rem;
+    font-weight: 800;
+    line-height: 1.2;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.task-btn:hover {
+    filter: brightness(0.92);
+}
+.task-btn--ghost {
+    background: #FFFFFF;
+    color: #0F766E;
+}
+.task-btn--done {
+    background: #F0FDFA;
+    color: #0F766E;
+    border-color: #5EEAD4;
 }
 
 /* 🌟 滿版區塊按鈕 (Block Button) */
@@ -351,6 +386,11 @@ button:disabled,
     padding: 20px;
     box-sizing: border-box;
 }
+/* 全螢幕時，確認框會掛在這個 overlay 裡面；overflow:auto 會把 position:fixed 的小孩裁掉。 */
+.modal-overlay:fullscreen,
+.modal-overlay:-webkit-full-screen {
+    overflow: visible;
+}
 .modal-overlay--prompt {
     align-items: flex-start;
     padding-top: 33vh;
@@ -394,6 +434,75 @@ button:disabled,
     color: white;
     font-weight: 800;
     cursor: pointer;
+}
+
+/* 學生作答檢討／重考報告：佔滿可用畫面。題目清單自己捲，上頭統計與底下送出申訴留著。
+   手機／iPad 幾乎全螢幕；電腦最多約 1100×920。禁止再寫死 32vh。 */
+.modal-overlay:has(.student-quiz-sheet) {
+    padding: 8px;
+    align-items: stretch;
+    justify-content: center;
+}
+.student-quiz-sheet {
+    width: min(1100px, 100%);
+    height: calc(100dvh - 16px);
+    max-height: calc(100vh - 16px);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    background: white;
+    border-radius: 14px;
+    padding: 14px 14px max(14px, env(safe-area-inset-bottom));
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+}
+.student-quiz-sheet__list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 10px;
+}
+.student-quiz-sheet > *:not(.student-quiz-sheet__list) {
+    flex-shrink: 0;
+}
+.student-quiz-sheet__stats {
+    flex: 0 0 auto;
+    margin-bottom: 12px;
+    padding: 10px;
+    background: #F0FDFA;
+    border: 1px solid #99F6E4;
+    border-radius: 8px;
+    font-weight: 800;
+    color: #134E4A;
+    font-size: 0.88rem;
+    line-height: 1.55;
+}
+.student-quiz-sheet--loading {
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    color: #64748B;
+    font-weight: 700;
+}
+@media (min-width: 900px) {
+    .modal-overlay:has(.student-quiz-sheet) {
+        padding: 16px 24px;
+        align-items: center;
+    }
+    .student-quiz-sheet {
+        height: min(920px, calc(100dvh - 32px));
+        max-height: min(920px, calc(100vh - 32px));
+    }
+}
+@media (max-width: 768px) {
+    .student-quiz-sheet .btn {
+        min-height: 44px;
+        padding: 8px 14px;
+    }
+    .student-quiz-sheet__stats {
+        font-size: 0.8rem;
+    }
 }
 
 /* PDF 考卷學生畫筆（視覺筆記）：疊在頁面圖上、作答框之下 */
@@ -484,6 +593,15 @@ button:disabled,
     font-weight: 800;
     color: #134E4A;
 }
+#material-zone-container .mz-card .mz-source-row {
+    margin-bottom: 8px;
+}
+#material-zone-container .mz-card .mz-source-row label {
+    color: #92400E;
+}
+#material-zone-container .mz-card .mz-source-row .mz-source-file {
+    border-color: #D97706;
+}
 #material-zone-container .mz-source-row .mz-source-file {
     flex: 1 1 220px;
     min-width: 180px;
@@ -507,4 +625,108 @@ button:disabled,
     height: 36px;
     padding: 4px 10px;
     box-sizing: border-box;
+}
+#material-zone-container .mz-pdf-exam-card {
+    background: #ECFEFF;
+    border: 2px solid #0E7490;
+}
+#material-zone-container .mz-pdf-exam-apply,
+#material-zone-container .mz-pdf-exam-parse,
+#material-zone-container .mz-pdf-exam-save {
+    background: #FFFFFF;
+    color: #134E4A;
+    border: 1px solid #0E7490;
+}
+#material-zone-container .mz-pdf-exam-bank-btn {
+    height: auto;
+    min-height: 0;
+    padding: 2px 6px;
+}
+
+/* --- 學生端考試成績活頁 --- */
+.exam-grades-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.exam-grade-card {
+    background: white;
+    border-radius: 16px;
+    padding: 18px 20px;
+    border: 1px solid #F1F5F9;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+}
+.exam-grade-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.exam-grade-date {
+    font-weight: 900;
+    font-size: 1.05rem;
+    color: #0F766E;
+}
+.exam-grade-due {
+    display: inline-block;
+    margin-left: 10px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: #64748B;
+}
+.exam-grade-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.exam-grade-kind {
+    font-size: 0.75rem;
+    font-weight: 800;
+    color: #0F766E;
+    background: #F0FDFA;
+    border: 1px solid #99F6E4;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+.exam-grade-status {
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: #475569;
+}
+.exam-grade-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 16px;
+}
+.exam-grade-k {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: #94A3B8;
+    margin-bottom: 2px;
+}
+.exam-grade-v {
+    font-weight: 800;
+    color: #1E293B;
+    line-height: 1.4;
+    word-break: break-word;
+}
+.exam-grade-muted { color: #64748B; font-weight: 700; }
+.exam-grade-empty { color: #94A3B8; }
+.exam-grade-score { font-weight: 900; font-size: 1.15rem; }
+.exam-grade-extra {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: #475569;
+    line-height: 1.5;
+}
+.exam-grade-actions {
+    margin-top: 12px;
+}
+@media (max-width: 640px) {
+    .exam-grade-grid { grid-template-columns: 1fr; }
 }

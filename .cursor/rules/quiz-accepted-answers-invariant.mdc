@@ -14,6 +14,13 @@ alwaysApply: false
 
 ```
 多標準答案只存在 quiz_paper.items[].accepted_answers（考卷快照層，assignments.tasks JSON 裡）
+對錯只由 QuizPaperBuilder.gradeAnswers(paper, answers, rawData) 判定（gradeCompletion 是同一條）。
+有 quiz_appeals 且 status=accepted → 這題算對，寫在 gradeAnswers 裡。畫面只讀 details[].ok。
+「申訴成功」是標示，不是第二套計分。禁止老師／學生畫面各自再 if 申訴算對。
+quiz_appeals 有紀錄就留下。送出、接受、駁回、重新批閱都只准追加或改 status。
+禁止用 [] 或少一筆的清單整包蓋掉。已接受的不准被舊快取改回 pending。
+寫回 task_completions.raw_data 時，quiz_appeals 只走 QuizPaperBuilder.mergeQuizAppeals
+  ／prepareCompletionRawDataForSave；RPC 走 merge_task_completion_raw_data。
 不做「只改這個學生分數」的旁路開關——所有調整都是「改 accepted_answers／answer_en → 用
   QuizPaperBuilder.regradeCompletionRawData 重新算分」，分數永遠等於重算結果，不手動兜
 老師勾選「這個答案也算對」或新增答案 → 存檔時自動找同一 (assignment_id, task_id) 下所有
@@ -28,6 +35,7 @@ alwaysApply: false
 
 ## 症狀（若未來又踩到）
 
+- 申訴紀錄從「有」變成 0：重批／學生存檔用空陣列整包蓋掉 `quiz_appeals`（見 mergeQuizAppeals）
 - 老師勾了「也算對」，這次分數變了，但**其他班上寫一樣答案的學生**分數沒變——因為只改了
   這個學生的 `task_completions.raw_data`，沒有回頭改 `quiz_paper.items[].accepted_answers`
   （改錯層，只救到眼前這一個人，「以後」仍會判錯）
@@ -90,6 +98,10 @@ completion.raw_data.quiz_result.correct += 1; // 手動兜分數，跳過 regrad
 
 // ❌ 全班同任務的 completions 不篩 changed，整批 update
 allCompletions.forEach(c => save(c)); // 幾百個學生規模下是浪費寫入
+
+// ❌ 重批／學生存檔用空陣列蓋掉申訴紀錄
+nextRawData.quiz_appeals = [];
+raw_data = raw_data || { quiz_appeals: [] };
 ```
 
 ## 實測
@@ -114,5 +126,6 @@ allCompletions.forEach(c => save(c)); // 幾百個學生規模下是浪費寫入
 2. 全班重批是不是只寫「真的變動」的學生，沒受影響的人有沒有被誤觸寫入？
 3. 如果要重繪一個已經開著的 `ModalOverlay`，是不是直接改 DOM，而不是再呼叫一次
    `ModalOverlay.open` 同一個 id（會觸發舊 `onClose`）？
+5. 寫回 completion 時，既有 `quiz_appeals` 是不是還在？有沒有用 `[]` 整包蓋掉？
 
 若任一否，停下。

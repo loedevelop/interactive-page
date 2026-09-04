@@ -118,6 +118,26 @@ window.FeatureTimeline = (() => {
         return options;
     }
 
+    /** 同一批 listMaterialMasters：教材夾裡的 PDF（考卷），不混進 meta 下拉。 */
+    function collectMaterialPdfOptions(materials, rootKind) {
+        const kind = normalizeMaterialsRootKind(rootKind);
+        const options = [];
+        (materials || []).forEach(function (pack) {
+            (pack.pdfFiles || []).forEach(function (pf) {
+                if (!pf || !pf.name) return;
+                options.push({
+                    rootKind: kind,
+                    folderName: pack.folderName,
+                    folderId: pack.folderId || '',
+                    fileName: pf.name,
+                    fileId: pf.fileId || '',
+                    fileKind: 'pdf'
+                });
+            });
+        });
+        return options;
+    }
+
     /** 從已載入的 options 找回 fileId（避免再靠資料夾名找檔） */
     function resolveStoredFolderName(name) {
         const raw = String(name || '').trim();
@@ -165,6 +185,7 @@ window.FeatureTimeline = (() => {
         const materials = await window.GasService.listMaterialMasters(folderId, kind);
         return {
             options: collectMaterialMetaOptions(materials, kind),
+            pdfOptions: collectMaterialPdfOptions(materials, kind),
             debug: {
                 queriedFolderId: folderId,
                 debugVersion: materials.debugVersion || '',
@@ -223,6 +244,12 @@ window.FeatureTimeline = (() => {
             if (!o || String(o.folderName || '') !== folderClean) return true;
             return !namesSet[o.fileName];
         });
+        if (Array.isArray(entry.pdfOptions)) {
+            entry.pdfOptions = entry.pdfOptions.filter(function (o) {
+                if (!o || String(o.folderName || '') !== folderClean) return true;
+                return !namesSet[o.fileName];
+            });
+        }
     }
 
     /**
@@ -263,21 +290,30 @@ window.FeatureTimeline = (() => {
             delete _metaCatalogPromises[key];
         }
         const cached = _metaCatalog[key];
+        const cacheMissingPdfList = cached && cached.ok === true && !Array.isArray(cached.pdfOptions);
         const cacheHasRealContent = cached && cached.ok === true && Array.isArray(cached.options) && cached.options.length > 0;
         const cacheIsFreshEmpty = cached && cached.ok === true && Array.isArray(cached.options) && cached.options.length === 0
             && (Date.now() - (cached.loadedAt || 0) < 5000);
-        if (!options.force && (cacheHasRealContent || cacheIsFreshEmpty)) {
+        if (!options.force && !cacheMissingPdfList && (cacheHasRealContent || cacheIsFreshEmpty)) {
             return cached.options;
         }
         if (_metaCatalogPromises[key]) {
             return _metaCatalogPromises[key];
         }
         _metaCatalogPromises[key] = loadMaterialMetaOptionsWithDebug(classId, kind).then(function (result) {
-            _metaCatalog[key] = { options: result.options || [], error: null, ok: true, loadedAt: Date.now(), debug: result.debug || null };
+            _metaCatalog[key] = {
+                options: result.options || [],
+                pdfOptions: result.pdfOptions || [],
+                error: null,
+                ok: true,
+                loadedAt: Date.now(),
+                debug: result.debug || null
+            };
             return _metaCatalog[key].options;
         }).catch(function (err) {
             _metaCatalog[key] = {
                 options: [],
+                pdfOptions: [],
                 error: err,
                 ok: false,
                 loadedAt: Date.now(),
@@ -779,8 +815,8 @@ window.FeatureTimeline = (() => {
             const base = {
                 comboId: String(m.combo_id || m.comboId || '').trim(),
                 combo_id: String(m.combo_id || m.comboId || '').trim(),
-                comboLabel: String(m.label || m.combo_label || m.comboLabel || '').trim(),
-                combo_label: String(m.label || m.combo_label || m.comboLabel || '').trim(),
+                comboLabel: comboLabelText(m),
+                combo_label: comboLabelText(m),
                 metaFile: String(m.published_file || m.meta_file || m.metaFile || '').trim(),
                 meta_file: String(m.published_file || m.meta_file || m.metaFile || '').trim()
             };
@@ -1140,10 +1176,147 @@ window.FeatureTimeline = (() => {
         return parentRangeGroupOf(pathStr) ? parentPath : '';
     }
 
+    function isComboInheritType(type) {
+        return type === 'check' || type === 'link' || type === 'audio_record'
+            || type === 'exam' || type === 'pdf_exam' || type === 'drive';
+    }
+
+    /**
+     * 挑選：這一列自己的套餐 PDF × 這一列起迄。
+     * 沒選套餐或沒填迄＝這列沒有。對不到＝無對應資源。不准借隔壁套餐。
+     */
+    function pickPackPdfHits(packRows) {
+        const Map = window.MaterialPdfPageMap;
+        const hits = [];
+        (packRows || []).forEach(function (row) {
+            const start = String((row && row.start) || '').trim();
+            const end = String((row && row.end) || '').trim();
+            if (!start || !end) return;
+            const combo = row && row.combo;
+            const comboId = String((row && (row.comboId || row.combo_id)) || (combo && combo.id) || '').trim();
+            if (!comboId) return;
+            const label = pickPackSheetLabel(builderClassId(), row)
+                || (combo && combo.label)
+                || String((row && (row.comboLabel || row.combo_label)) || '').trim()
+                || '套餐';
+            if (!combo || !combo.studentPdfFileId) {
+                hits.push({ ok: false, label: label });
+                return;
+            }
+            if (!Map || typeof Map.resolvePages !== 'function') {
+                hits.push({ ok: false, label: label, fileName: combo.studentPdfFileName || '' });
+                return;
+            }
+            const resolved = Map.resolvePages(
+                combo.studentPdfPageMap,
+                row.rangeType || row.range_type,
+                start,
+                end
+            );
+            if (resolved.missing || !resolved.pages.length) {
+                hits.push({ ok: false, label: label, fileName: combo.studentPdfFileName || '' });
+                return;
+            }
+            hits.push({
+                ok: true,
+                label: label,
+                fileId: combo.studentPdfFileId,
+                fileName: combo.studentPdfFileName || '',
+                pages: resolved.pages.slice()
+            });
+        });
+        return hits;
+    }
+
+    function formatPackPdfStatus(hits) {
+        return (hits || []).map(function (h) {
+            if (!h.ok) return (h.label || '套餐') + '：無對應資源';
+            return (h.label || '套餐') + '（' + (h.fileName || '') + '）檔案頁 ' + (h.pages || []).join('、');
+        }).join('；');
+    }
+
+    function packPdfStatusForChildPath(pathStr) {
+        const parentPath = parentRangeGroupPathOf(pathStr);
+        if (!parentPath) return '';
+        const pack = buildRangePackForApply(parentPath, { clamp: false, notify: false, useState: true });
+        return formatPackPdfStatus(pickPackPdfHits(pack.rows));
+    }
+
+    function applyRangePackToPdfExam(task, pack) {
+        if (!task || task.type !== 'pdf_exam') return;
+        if (!task.raw_data) task.raw_data = {};
+        const job = (task.raw_data.pdf_exam_job && typeof task.raw_data.pdf_exam_job === 'object')
+            ? task.raw_data.pdf_exam_job
+            : {};
+        const pdfRows = ((pack && pack.rows) || []).filter(function (r) {
+            return packModeOfCombo(r && r.combo) === 'pdf';
+        });
+        if (pdfRows.length) {
+            const fileIds = [];
+            const byId = {};
+            pdfRows.forEach(function (r) {
+                const fid = String((r && r.pdf_file_id) || (r.combo && r.combo.pdfFileId) || '').trim();
+                if (!fid || byId[fid]) return;
+                byId[fid] = r;
+                fileIds.push(fid);
+            });
+            if (fileIds.length === 1) {
+                const hit = byId[fileIds[0]];
+                const combo = hit && hit.combo;
+                job.pdf_file_id = fileIds[0];
+                job.pdf_file_name = (combo && combo.pdfFileName) || job.pdf_file_name || '';
+                job.pdf_file_url = 'https://drive.google.com/file/d/' + fileIds[0] + '/view';
+                job.material_folder = (combo && combo.folderName) || job.material_folder || '';
+                if (combo && combo.examTemplateKey) job.exam_template_key = combo.examTemplateKey;
+                const item = (window.FeatureMaterialPdfExam && typeof window.FeatureMaterialPdfExam.getItem === 'function')
+                    ? window.FeatureMaterialPdfExam.getItem(fileIds[0], combo && combo.examTemplateKey)
+                    : null;
+                if (item && Array.isArray(item.parsed_bank)) job.parsed_bank = item.parsed_bank;
+            }
+            task.raw_data.pdf_exam_job = job;
+            return;
+        }
+        const hits = pickPackPdfHits((pack && pack.rows) || []);
+        job.pack_pdf_status = formatPackPdfStatus(hits);
+        // 考卷 PDF 改走教材夾全域檔（跟 Excel／meta 同一套）。套餐列的 student_pdf
+        // 是課本頁對照，不是考卷。只有舊作業已經 pack_pdf_inherited 才繼續用那條路更新。
+        if (job.pack_pdf_inherited !== true) {
+            task.raw_data.pdf_exam_job = job;
+            return;
+        }
+        const okHits = hits.filter(function (h) { return h.ok; });
+        const fileIds = [];
+        okHits.forEach(function (h) {
+            if (h.fileId && fileIds.indexOf(h.fileId) === -1) fileIds.push(h.fileId);
+        });
+        if (fileIds.length === 1) {
+            const pages = [];
+            okHits.forEach(function (h) {
+                if (h.fileId !== fileIds[0]) return;
+                (h.pages || []).forEach(function (p) {
+                    if (pages.indexOf(p) === -1) pages.push(p);
+                });
+            });
+            pages.sort(function (a, b) { return a - b; });
+            const hit = okHits.find(function (h) { return h.fileId === fileIds[0]; });
+            job.pdf_file_id = fileIds[0];
+            job.pdf_file_name = (hit && hit.fileName) || job.pdf_file_name || '';
+            job.pdf_file_url = 'https://drive.google.com/file/d/' + fileIds[0] + '/view';
+            job.pack_pdf_pages = pages;
+            job.pack_pdf_inherited = true;
+        } else if (job.pack_pdf_inherited) {
+            job.pdf_file_id = '';
+            job.pdf_file_name = '';
+            job.pdf_file_url = '';
+            job.pack_pdf_pages = [];
+        }
+        task.raw_data.pdf_exam_job = job;
+    }
+
     function isPackHostNode(node) {
         if (!node) return false;
         if (node.type === 'group' && node.raw_data && node.raw_data.group_role === 'range') return true;
-        return node.type === 'audio_record';
+        return node.type === 'audio_record' || node.type === 'exam' || node.type === 'pdf_exam';
     }
 
     /** 套用 Snapshot 只認範圍卡當下的套餐／活頁／起迄。隱藏列不准當第二套來源。 */
@@ -1166,6 +1339,7 @@ window.FeatureTimeline = (() => {
                 published_file: metaFile,
                 metaFile: metaFile,
                 label: String(metaFile).replace(/\.meta\.json$/i, '').replace(/\.meta$/i, ''),
+                combo_label: comboLabelText(r) || comboLabelText(combo),
                 range_spec: rangeSpec,
                 range_type: r.rangeType,
                 start: r.start,
@@ -1212,9 +1386,12 @@ window.FeatureTimeline = (() => {
         }
         titleEl.setAttribute('data-title-auto', '1');
         let rangeText = '';
+        if (parentRangeGroupPathOf(pathStr)) {
+            rangeText = packRangeLabelForAudio(pathStr) || '';
+        }
         const rangeEl = document.getElementById('node-material-range-' + pathStr)
             || document.getElementById('node-material-range-manual-' + pathStr);
-        if (rangeEl) rangeText = String(rangeEl.value || '').trim();
+        if (!rangeText && rangeEl) rangeText = String(rangeEl.value || '').trim();
         if (!rangeText) {
             const node = getTaskNodeByPathStr(pathStr);
             if (node && node.type === 'exam' && window.FeatureExamJob) {
@@ -1435,9 +1612,22 @@ window.FeatureTimeline = (() => {
      * 全站只准這支組字串。規格：docs/標題範圍處理規則.md
      */
     function combinePackRangeLabel(rows, classId) {
+        const bookParts = [];
+        const pageRows = [];
+        (rows || []).forEach(function (r) {
+            if (isBookPackRow(r)) {
+                const lab = (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.rangeLabel === 'function')
+                    ? window.FeatureMaterialBook.rangeLabel(r)
+                    : [String((r && r.major) || '').trim(), String((r && r.secondary) || '').trim(), String((r && r.minor) || '').trim()]
+                        .filter(Boolean).join(' / ');
+                if (lab) bookParts.push(lab);
+                return;
+            }
+            pageRows.push(r);
+        });
         const boxes = [];
         const boxIndex = {};
-        (rows || []).forEach(function (r) {
+        pageRows.forEach(function (r) {
             const startRaw = String((r && r.start) || '').trim();
             const endRaw = String((r && r.end) || '').trim();
             if (!startRaw || !endRaw) return;
@@ -1490,7 +1680,7 @@ window.FeatureTimeline = (() => {
             }
             parts.push(pickCollapsedSheetName(run) + ' ' + s.rangeStr);
         });
-        return parts.join('；');
+        return bookParts.concat(parts).join('；');
     }
 
     function listPackMetaFiles(classId, combo) {
@@ -1511,13 +1701,20 @@ window.FeatureTimeline = (() => {
         return names;
     }
 
+    function packShuffleOn(r) {
+        if (!r) return true;
+        if (r.shuffle === false || r.shuffle === 'false' || r.shuffle === 0 || r.shuffle === '0') return false;
+        return true;
+    }
+
     function blankPackExamFields() {
         return {
             lines_per_page: '',
             difficulty: '',
             include_nums: '',
             exclude_nums: '',
-            count: ''
+            count: '',
+            shuffle: true
         };
     }
 
@@ -1529,8 +1726,91 @@ window.FeatureTimeline = (() => {
             difficulty: String(r.difficulty || '').trim(),
             include_nums: String(r.include_nums || r.includeNums || '').trim(),
             exclude_nums: String(r.exclude_nums || r.excludeNums || '').trim(),
-            count: r.count != null && r.count !== '' ? String(r.count) : ''
+            count: r.count != null && r.count !== '' ? String(r.count) : '',
+            shuffle: packShuffleOn(r)
         };
+    }
+
+    function copyBookRangeFields(r) {
+        const book = window.FeatureMaterialBook;
+        if (book && typeof book.copyRangeFields === 'function') return book.copyRangeFields(r);
+        const MCS = window.MaterialComboStrategies;
+        const s = MCS && typeof MCS.forKind === 'function' ? MCS.forKind('book') : null;
+        if (s && typeof s.copyRangeFields === 'function') return s.copyRangeFields(r);
+        return {
+            major: String((r && r.major) || '').trim(),
+            secondary: String((r && r.secondary) || '').trim(),
+            minor: String((r && r.minor) || '').trim(),
+            book_script: String((r && (r.book_script || r.bookScript)) || '').trim()
+        };
+    }
+
+    function copyPdfRangeFields(r) {
+        const pdf = window.FeatureMaterialPdfExam;
+        if (pdf && typeof pdf.copyRangeFields === 'function') return pdf.copyRangeFields(r);
+        const MCS = window.MaterialComboStrategies;
+        const s = MCS && typeof MCS.forKind === 'function' ? MCS.forKind('pdf') : null;
+        if (s && typeof s.copyRangeFields === 'function') return s.copyRangeFields(r);
+        return {
+            pdf_file_id: String((r && (r.pdf_file_id || r.pdfFileId)) || '').trim()
+        };
+    }
+
+    function copyKindRangeFields(r) {
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.copyAllRangeFields === 'function') {
+            return window.MaterialComboStrategies.copyAllRangeFields(r);
+        }
+        return Object.assign({}, copyBookRangeFields(r), copyPdfRangeFields(r));
+    }
+
+    function packModeOfCombo(combo) {
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.packModeOf === 'function') {
+            return window.MaterialComboStrategies.packModeOf(combo);
+        }
+        if (combo && window.FeatureMaterialBook && typeof window.FeatureMaterialBook.isBookCombo === 'function'
+            && window.FeatureMaterialBook.isBookCombo(combo)) return 'book';
+        if (combo && window.FeatureMaterialPdfExam && typeof window.FeatureMaterialPdfExam.isPdfCombo === 'function'
+            && window.FeatureMaterialPdfExam.isPdfCombo(combo)) return 'pdf';
+        return 'sheet';
+    }
+
+    function usesMetaRange(combo) {
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.usesMetaRange === 'function') {
+            return window.MaterialComboStrategies.usesMetaRange(combo);
+        }
+        return packModeOfCombo(combo) === 'sheet';
+    }
+
+    function isBookPackRow(r) {
+        if (!r) return false;
+        if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.isBookCombo === 'function') {
+            if (window.FeatureMaterialBook.isBookCombo(r.combo || r)) return true;
+            const cid = String((r.comboId || r.combo_id) || '').trim();
+            if (cid && typeof window.FeatureMaterialBook.getCombo === 'function' && window.FeatureMaterialBook.getCombo(cid)) {
+                return true;
+            }
+        }
+        return !!(String((r && r.major) || '').trim()
+            || String((r && r.secondary) || '').trim()
+            || String((r && r.minor) || '').trim());
+    }
+
+    function packRowsAreOnlyBook(packRows) {
+        const rows = packRows || [];
+        if (!rows.length) return false;
+        return rows.every(function (r) { return isBookPackRow(r); });
+    }
+
+    /** 重寫 pack_rows 時整列帶走。禁止只抄套餐／起迄而把題數丟掉。課本列還要帶走大題／次題／小題／文稿。 */
+    function storedPackRowFromAny(r) {
+        return Object.assign({
+            combo_id: String((r && (r.combo_id || r.comboId)) || '').trim(),
+            combo_label: String((r && (r.combo_label || r.comboLabel)) || '').trim(),
+            meta_file: String((r && (r.meta_file || r.metaFile)) || '').trim(),
+            range_type: ((r && (r.range_type || r.rangeType)) === 'qnum') ? 'qnum' : 'page',
+            start: r && r.start != null ? String(r.start).trim() : '',
+            end: r && r.end != null ? String(r.end).trim() : ''
+        }, copyPackExamFields(r), copyKindRangeFields(r));
     }
 
     function normalizePackRows(raw) {
@@ -1548,7 +1828,7 @@ window.FeatureTimeline = (() => {
                     range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
                     start: r && r.start != null ? String(r.start) : '',
                     end: r && r.end != null ? String(r.end) : ''
-                }, copyPackExamFields(r));
+                }, copyPackExamFields(r), copyKindRangeFields(r));
             });
         }
         return [Object.assign({
@@ -1558,14 +1838,14 @@ window.FeatureTimeline = (() => {
             range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
             start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
             end: raw && raw.pack_end != null ? String(raw.pack_end) : ''
-        }, blankPackExamFields())];
+        }, blankPackExamFields(), copyKindRangeFields(raw))];
     }
 
     function writePackRowsToGroup(group, rows) {
         if (!group.raw_data) group.raw_data = {};
         const list = (rows && rows.length) ? rows : [Object.assign({
             combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: ''
-        }, blankPackExamFields())];
+        }, blankPackExamFields(), copyKindRangeFields(null))];
         group.raw_data.pack_rows = list;
         group.raw_data.pack_combo_id = list[0].combo_id || '';
         group.raw_data.pack_combo_label = list[0].combo_label || '';
@@ -1586,6 +1866,9 @@ window.FeatureTimeline = (() => {
                 const comboId = comboEl ? String(comboEl.value || '').trim() : '';
                 const opt = comboEl && comboEl.options[comboEl.selectedIndex];
                 const comboLabel = (comboId && comboId !== '__manual__' && opt) ? String(opt.text || '').trim() : '';
+                const shuffleEl = document.getElementById('range-pack-shuffle-' + pathStr + '-' + bi)
+                    || (blockEl && blockEl.querySelector('.range-pack-shuffle'));
+                const shuffleOn = shuffleEl ? !!shuffleEl.checked : true;
                 const rowEls = blockEl.querySelectorAll('.range-pack-row');
                 if (rowEls.length) {
                     Array.prototype.forEach.call(rowEls, function (rowEl) {
@@ -1606,6 +1889,9 @@ window.FeatureTimeline = (() => {
                         const incEl = idx != null ? document.getElementById('range-pack-inc-' + pathStr + '-' + idx) : null;
                         const excEl = idx != null ? document.getElementById('range-pack-exc-' + pathStr + '-' + idx) : null;
                         const countEl = idx != null ? document.getElementById('range-pack-count-' + pathStr + '-' + idx) : null;
+                        const kindFields = (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.readAllRowFields === 'function')
+                            ? window.MaterialComboStrategies.readAllRowFields(pathStr, idx, rowEl)
+                            : copyKindRangeFields(null);
                         rows.push(Object.assign({
                             comboId: comboId,
                             comboLabel: rowLabel,
@@ -1618,8 +1904,9 @@ window.FeatureTimeline = (() => {
                             difficulty: diffEl ? diffEl.value : '',
                             include_nums: incEl ? incEl.value : '',
                             exclude_nums: excEl ? excEl.value : '',
-                            count: countEl ? countEl.value : ''
-                        })));
+                            count: countEl ? countEl.value : '',
+                            shuffle: shuffleOn
+                        }), kindFields));
                     });
                 } else {
                     rows.push(Object.assign({
@@ -1629,12 +1916,12 @@ window.FeatureTimeline = (() => {
                         rangeType: 'page',
                         start: '',
                         end: ''
-                    }, blankPackExamFields()));
+                    }, copyPackExamFields({ shuffle: shuffleOn }), copyKindRangeFields(null)));
                 }
             });
         }
         if (!rows.length) {
-            rows.push(Object.assign({ comboId: '', comboLabel: '', metaFile: '', rangeType: 'page', start: '', end: '' }, blankPackExamFields()));
+            rows.push(Object.assign({ comboId: '', comboLabel: '', metaFile: '', rangeType: 'page', start: '', end: '' }, blankPackExamFields(), copyKindRangeFields(null)));
         }
         return {
             comboId: rows[0] ? rows[0].comboId : '',
@@ -1649,13 +1936,35 @@ window.FeatureTimeline = (() => {
         return fcmc.getAssignedComboById(classId, comboId) || null;
     }
 
+    function comboLabelText(src) {
+        const fcmc = window.FeatureClassMaterialCombinations;
+        if (fcmc && typeof fcmc.comboLabelText === 'function') return fcmc.comboLabelText(src);
+        if (src == null) return '';
+        if (typeof src === 'string') return String(src).trim();
+        return String(src.combo_label || src.comboLabel || src.rawLabel || '').trim();
+    }
+
     /** 這個 meta 只屬於一個已指派套餐時才回傳；0 或 2+ 不准猜。 */
     function findAssignedComboForMetaFile(classId, metaFile) {
         const want = String(metaFile || '').replace(/\.meta\.json$/i, '').toUpperCase();
         if (!want) return null;
         const fcmc = window.FeatureClassMaterialCombinations;
-        if (!fcmc || typeof fcmc.listAssignedCombosForClass !== 'function') return null;
-        const hits = (fcmc.listAssignedCombosForClass(classId) || []).filter(function (c) {
+        if (!fcmc) return null;
+        const lists = [];
+        if (typeof fcmc.listAssignedCombosForHomework === 'function') {
+            lists.push.apply(lists, fcmc.listAssignedCombosForHomework(classId) || []);
+        }
+        if (typeof fcmc.listAssignedCombosForClass === 'function') {
+            lists.push.apply(lists, fcmc.listAssignedCombosForClass(classId) || []);
+        }
+        const seen = {};
+        const unique = lists.filter(function (c) {
+            const id = String((c && c.id) || '');
+            if (!id || seen[id]) return false;
+            seen[id] = true;
+            return true;
+        });
+        const hits = unique.filter(function (c) {
             return listPackMetaFiles(classId, c).some(function (f) {
                 return String(f || '').replace(/\.meta\.json$/i, '').toUpperCase() === want;
             });
@@ -1717,8 +2026,23 @@ window.FeatureTimeline = (() => {
 
     function expandPackRowsForCombo(classId, combo, prevRows) {
         if (!combo) {
-            return [Object.assign({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }, blankPackExamFields())];
+            return [Object.assign({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }, blankPackExamFields(), copyKindRangeFields(null))];
         }
+        const MCS = window.MaterialComboStrategies;
+        if (MCS && typeof MCS.forCombo === 'function' && typeof MCS.expandPackRows === 'function') {
+            const s = MCS.forCombo(combo);
+            if (s && typeof s.expandPackRows === 'function') {
+                return MCS.expandPackRows(classId, combo, prevRows, {
+                    comboLabelText: comboLabelText,
+                    blankPackExamFields: blankPackExamFields,
+                    copyPackExamFields: copyPackExamFields
+                });
+            }
+        }
+        return expandSheetPackRows(classId, combo, prevRows);
+    }
+
+    function expandSheetPackRows(classId, combo, prevRows) {
         const ownSheets = Array.isArray(combo.ownSheets) ? combo.ownSheets : [];
         const files = ownSheets.map(function (s) {
             const meta = String((s && s.meta) || '').trim();
@@ -1737,7 +2061,7 @@ window.FeatureTimeline = (() => {
         function emptyPackRow(metaFile) {
             return Object.assign({
                 combo_id: combo.id,
-                combo_label: String(combo.label || '').trim(),
+                combo_label: comboLabelText(combo),
                 meta_file: metaFile || '',
                 range_type: 'page',
                 start: '',
@@ -1756,7 +2080,7 @@ window.FeatureTimeline = (() => {
             }).map(function (r) {
                 return Object.assign({
                     combo_id: combo.id,
-                    combo_label: String(combo.label || '').trim(),
+                    combo_label: comboLabelText(combo),
                     meta_file: String((r && (r.meta_file || r.metaFile)) || '').trim(),
                     range_type: (r && (r.range_type || r.rangeType) === 'qnum') ? 'qnum' : 'page',
                     start: r ? String(r.start || '').trim() : '',
@@ -1778,7 +2102,7 @@ window.FeatureTimeline = (() => {
             }).map(function (r) {
                 return Object.assign({
                     combo_id: combo.id,
-                    combo_label: String(combo.label || '').trim(),
+                    combo_label: comboLabelText(combo),
                     meta_file: files[0],
                     range_type: (r && (r.range_type || r.rangeType) === 'qnum') ? 'qnum' : 'page',
                     start: r ? String(r.start || '').trim() : '',
@@ -1788,7 +2112,7 @@ window.FeatureTimeline = (() => {
             if (kept.length) return kept;
             return [Object.assign({
                 combo_id: combo.id,
-                combo_label: String(combo.label || '').trim(),
+                combo_label: comboLabelText(combo),
                 meta_file: files[0],
                 range_type: 'page',
                 start: '',
@@ -1806,6 +2130,25 @@ window.FeatureTimeline = (() => {
         const packRows = Array.isArray(pack.rows) && pack.rows.length
             ? pack.rows
             : [{ combo: pack.combo, metaFile: pack.metaFile, rangeType: pack.rangeType, start: pack.start, end: pack.end, rangeSpec: pack.rangeSpec }];
+        if (packRowsAreOnlyBook(packRows)) {
+            if (!raw.script_source || raw.script_source === 'meta') raw.script_source = 'paste';
+            raw.material_refs = [];
+            raw.material_ref = null;
+            raw.material_range = combinePackRangeLabel(packRows, builderClassId());
+            const scripts = packRows.map(function (r) { return String((r && r.book_script) || '').trim(); }).filter(Boolean);
+            if (scripts.length) raw.original_script = scripts.join('\n\n');
+            return String(raw.material_range || '').trim();
+        }
+        const metaRows = packRows.filter(function (row) {
+            return usesMetaRange((row && row.combo) || pack.combo);
+        });
+        if (!metaRows.length) {
+            if (!raw.script_source || raw.script_source === 'meta') raw.script_source = 'paste';
+            raw.material_refs = [];
+            raw.material_ref = null;
+            raw.material_range = combinePackRangeLabel(packRows, builderClassId());
+            return String(raw.material_range || '').trim();
+        }
         const refs = [];
         packRows.forEach(function (row) {
             const rowCombo = (row && row.combo) || pack.combo;
@@ -1819,6 +2162,7 @@ window.FeatureTimeline = (() => {
                 published_file: metaFile,
                 metaFile: metaFile,
                 label: stem,
+                combo_label: comboLabelText(row) || comboLabelText(rowCombo),
                 range_spec: rangeSpec,
                 select_mode: 'range_spec',
                 combo_id: rowCombo.id || '',
@@ -1921,12 +2265,26 @@ window.FeatureTimeline = (() => {
                 });
             });
             const examTitleEl = document.getElementById('node-title-' + examPath);
-            if (examTitleEl && coverage && !String(examTitleEl.textContent || '').trim()) {
+            if (examTitleEl && coverage && examTitleEl.getAttribute('data-title-auto') !== '0') {
                 examTitleEl.textContent = coverage;
                 examTitleEl.setAttribute('data-title-auto', '1');
                 examTitleEl.setAttribute('data-title-from-range', coverage);
             }
         }
+        (group.subTasks || []).forEach(function (t, i) {
+            if (!t || !isComboInheritType(t.type) || t.type === 'audio_record' || t.type === 'exam') return;
+            const childPath = groupPathStr + '-' + i;
+            const titleEl = document.getElementById('node-title-' + childPath);
+            if (titleEl && coverage && titleEl.getAttribute('data-title-auto') !== '0') {
+                titleEl.textContent = coverage;
+                titleEl.setAttribute('data-title-auto', '1');
+                titleEl.setAttribute('data-title-from-range', coverage);
+            }
+            if (t.type === 'pdf_exam') {
+                const statusEl = document.getElementById('pdf-exam-pack-status-' + childPath);
+                if (statusEl) statusEl.textContent = packPdfStatusForChildPath(childPath);
+            }
+        });
     }
 
     function packRowFromRaw(r) {
@@ -1937,13 +2295,18 @@ window.FeatureTimeline = (() => {
             rangeType: ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page',
             start: r && r.start != null ? String(r.start).trim() : '',
             end: r && r.end != null ? String(r.end).trim() : ''
-        }, copyPackExamFields(r));
+        }, copyPackExamFields(r), copyKindRangeFields(r));
     }
 
     function packRowHasContent(r) {
         return !!(String((r && r.comboId) || '').trim()
             || String((r && r.metaFile) || '').trim()
-            || String((r && r.start) || '').trim());
+            || String((r && r.start) || '').trim()
+            || String((r && r.major) || '').trim()
+            || String((r && r.secondary) || '').trim()
+            || String((r && r.minor) || '').trim()
+            || String((r && r.book_script) || '').trim()
+            || String((r && r.pdf_file_id) || '').trim());
     }
 
     function packDisplayPercentLive(count, availStr) {
@@ -1982,10 +2345,12 @@ window.FeatureTimeline = (() => {
 
     function setPackStatsText(el, availLabel) {
         if (!el) return;
-        el.textContent = '加總題數 ' + availLabel;
+        const kind = el.getAttribute('data-stats-kind');
+        const title = kind === 'combo' ? '套餐總題數' : '區段考題數';
+        el.textContent = title + ' ' + availLabel;
     }
 
-    /** 可用題／顯示%／加總題數：從當列題數與範圍讀入。一列也算，不必等第二區塊。 */
+    /** 可用題／顯示%仍現算。區段考題數／套餐總題數＝各列題數加總。 */
     function refreshRangePackDerived(pathStr) {
         const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
         if (!panel) return;
@@ -1994,18 +2359,16 @@ window.FeatureTimeline = (() => {
         const fromDom = readRangePackFromDom(pathStr);
         const rows = (fromDom && fromDom.rows) || [];
         const blockEls = panel.querySelectorAll('.range-pack-block');
-        let grandAvail = 0;
-        let grandKnown = false;
-        let grandPending = false;
+        let comboSum = 0;
+        let comboKnown = false;
         Array.prototype.forEach.call(blockEls, function (blockEl, bi) {
             const comboEl = document.getElementById('range-pack-combo-' + pathStr + '-' + bi)
                 || (blockEl && blockEl.querySelector('.range-pack-combo'));
             const comboId = comboEl ? String(comboEl.value || '').trim() : '';
             const combo = resolvePackCombo(classId, comboId);
             const rowEls = blockEl.querySelectorAll('.range-pack-row');
-            let availSum = 0;
-            let availKnown = false;
-            let availPending = false;
+            let selectedSum = 0;
+            let selectedKnown = false;
             Array.prototype.forEach.call(rowEls, function (rowEl) {
                 const idx = Number(rowEl.getAttribute('data-row-idx'));
                 const r = rows[idx] || packRowFromRaw(null);
@@ -2015,24 +2378,30 @@ window.FeatureTimeline = (() => {
                 const pctEl = document.getElementById('range-pack-pct-' + pathStr + '-' + idx);
                 if (availEl) availEl.textContent = availStr;
                 if (pctEl) pctEl.textContent = packDisplayPercentLive(countEl ? countEl.value : '', availStr);
-                if (availStr === '需讀取') availPending = true;
-                const a = Number(availStr);
-                if (!isNaN(a) && availStr !== '—' && availStr !== '需讀取') {
-                    availSum += a;
-                    availKnown = true;
+                const raw = countEl ? String(countEl.value || '').trim() : '';
+                const n = Number(raw);
+                if (raw !== '' && !isNaN(n) && n >= 0) {
+                    selectedSum += n;
+                    selectedKnown = true;
                 }
             });
-            const blockAvail = availPending && !availKnown ? '需讀取' : (availKnown ? String(availSum) : '—');
-            setPackStatsText(blockEl.querySelector('.range-pack-stats'), blockAvail);
-            if (availPending && !availKnown) grandPending = true;
-            if (availKnown) {
-                grandAvail += availSum;
-                grandKnown = true;
+            const blockSelected = selectedKnown ? String(selectedSum) : '—';
+            setPackStatsText(blockEl.querySelector('.range-pack-stats[data-stats-kind="section"]'), blockSelected);
+            if (selectedKnown) {
+                comboSum += selectedSum;
+                comboKnown = true;
             }
         });
-        const titleAvail = grandPending && !grandKnown ? '需讀取' : (grandKnown ? String(grandAvail) : '—');
-        const titleEls = document.querySelectorAll('.range-pack-title-stats[data-range-pack="' + pathStr + '"]');
-        Array.prototype.forEach.call(titleEls, function (el) { setPackStatsText(el, titleAvail); });
+        const comboLabel = comboKnown ? String(comboSum) : '—';
+        setPackStatsText(
+            panel.querySelector('.range-pack-stats[data-stats-kind="combo"]'),
+            comboLabel
+        );
+        Array.prototype.forEach.call(document.querySelectorAll('[data-exam-pack-host]'), function (el) {
+            if (el.getAttribute('data-exam-pack-host') === pathStr) {
+                el.textContent = '總計考題 ' + comboLabel;
+            }
+        });
     }
 
     function clampPackRows(classId, packRows, opts) {
@@ -2044,6 +2413,7 @@ window.FeatureTimeline = (() => {
         (packRows || []).forEach(function (r) {
             const combo = r.combo || resolvePackCombo(classId, r.comboId);
             if (!combo) return;
+            if (!usesMetaRange(combo)) return;
             const total = (typeof fcmc.lookupSheetAvailableCount === 'function')
                 ? fcmc.lookupSheetAvailableCount(classId, combo, r.metaFile)
                 : null;
@@ -2085,7 +2455,7 @@ window.FeatureTimeline = (() => {
     }
 
     /**
-     * 組合包 → 帶入／Snapshot 同一把鑰匙：畫面有幾套餐、幾區塊就帶幾筆。
+     * 組合包 → 帶入／Snapshot 同一把鑰匙：畫面有幾套餐、幾區段就帶幾筆。
      * 對不到套餐物件仍保留該列 comboId／活頁／起迄，不准默默丟掉套餐二。
      */
     function buildRangePackForApply(pathStr, opts) {
@@ -2101,27 +2471,28 @@ window.FeatureTimeline = (() => {
         const packRows = source.map(function (r, i) {
             let rowCombo = resolvePackCombo(classId, r.comboId);
             let metaFile = resolvePackMetaFile(rowCombo, r.metaFile, classId) || r.metaFile;
+            const skipMeta = !usesMetaRange(rowCombo);
             if (r.comboId && !rowCombo) {
                 notes.push('第 ' + (i + 1) + ' 列套餐對不到已指派清單');
             }
-            if (!metaFile && (r.start || r.comboId)) {
+            if (!skipMeta && !metaFile && (r.start || r.comboId)) {
                 notes.push('第 ' + (i + 1) + ' 列沒有活頁');
             }
             return Object.assign({
                 combo: rowCombo,
                 comboId: r.comboId || (rowCombo && rowCombo.id) || '',
-                comboLabel: (rowCombo && rowCombo.label) || r.comboLabel || '',
-                metaFile: metaFile,
+                comboLabel: comboLabelText(rowCombo) || comboLabelText(r),
+                metaFile: skipMeta ? '' : metaFile,
                 rangeType: r.rangeType,
                 start: r.start,
                 end: r.end,
-                rangeSpec: buildPackRangeSpec(r.rangeType, r.start, r.end)
-            }, copyPackExamFields(r));
+                rangeSpec: skipMeta ? '' : buildPackRangeSpec(r.rangeType, r.start, r.end)
+            }, copyPackExamFields(r), copyKindRangeFields(r));
         });
         if (opts.clamp) {
             clampPackRows(classId, packRows, { notify: opts.notify !== false });
             packRows.forEach(function (r) {
-                r.rangeSpec = buildPackRangeSpec(r.rangeType, r.start, r.end);
+                r.rangeSpec = usesMetaRange(r.combo) ? buildPackRangeSpec(r.rangeType, r.start, r.end) : '';
             });
             writePackBoundsToDom(pathStr, packRows);
         }
@@ -2134,7 +2505,7 @@ window.FeatureTimeline = (() => {
                     range_type: r.rangeType,
                     start: r.start,
                     end: r.end
-                }, copyPackExamFields(r));
+                }, copyPackExamFields(r), copyKindRangeFields(r));
             }));
         }
         return {
@@ -2160,23 +2531,56 @@ window.FeatureTimeline = (() => {
         if (audioIdx >= 0) scheduleEnterAutoSnapshot(groupPath + '-' + audioIdx);
     }
 
+    function packRowsHaveMetaRange(packRows) {
+        return (packRows || []).some(function (r) {
+            return usesMetaRange((r && r.combo) || r);
+        });
+    }
+
     function applyRangePackToExamOf(pathStr, pack) {
+        if (!packRowsHaveMetaRange((pack && pack.rows) || [])) return;
         const group = getTaskNodeByPathStr(pathStr);
-        if (!group || group.type !== 'group') return;
-        const exam = (group.subTasks || []).find(function (t) { return t && t.type === 'exam'; });
-        if (!exam || (exam.raw_data && exam.raw_data.exam_force_standalone)) return;
-        if (window.FeatureExamJob && typeof window.FeatureExamJob.applyRangePackToExam === 'function') {
-            window.FeatureExamJob.applyRangePackToExam(exam, pack);
+        if (!group) return;
+        if (group.type === 'exam') {
+            if (window.FeatureExamJob && typeof window.FeatureExamJob.applyRangePackToExam === 'function') {
+                window.FeatureExamJob.applyRangePackToExam(group, pack);
+            }
+            return;
         }
+        if (group.type !== 'group') return;
+        (group.subTasks || []).forEach(function (exam) {
+            if (!exam || exam.type !== 'exam') return;
+            if (exam.raw_data && exam.raw_data.exam_force_standalone) return;
+            if (window.FeatureExamJob && typeof window.FeatureExamJob.applyRangePackToExam === 'function') {
+                window.FeatureExamJob.applyRangePackToExam(exam, pack);
+            }
+        });
+    }
+
+    function applyRangePackToPdfExamOf(pathStr, pack) {
+        if (packRowsAreOnlyBook((pack && pack.rows) || [])) return;
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!group) return;
+        if (group.type === 'pdf_exam') {
+            applyRangePackToPdfExam(group, pack);
+            return;
+        }
+        if (group.type !== 'group') return;
+        (group.subTasks || []).forEach(function (t) {
+            if (t && t.type === 'pdf_exam') applyRangePackToPdfExam(t, pack);
+        });
     }
 
     function applyRangePackToAudioOf(pathStr, pack) {
         const group = getTaskNodeByPathStr(pathStr);
         if (!group) return '';
-        const audio = group.type === 'audio_record'
-            ? group
-            : (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
-        return applyRangePackToAudio(audio, pack);
+        if (group.type === 'audio_record') return applyRangePackToAudio(group, pack);
+        let coverage = '';
+        (group.subTasks || []).forEach(function (audio) {
+            if (!audio || audio.type !== 'audio_record') return;
+            coverage = applyRangePackToAudio(audio, pack) || coverage;
+        });
+        return coverage;
     }
 
     /**
@@ -2218,11 +2622,9 @@ window.FeatureTimeline = (() => {
             }
         }
 
-        const audio = group.type === 'audio_record'
-            ? group
-            : (group.subTasks || []).find(function (t) { return t && t.type === 'audio_record'; });
-        const coverage = applyRangePackToAudio(audio, pack);
+        const coverage = applyRangePackToAudioOf(pathStr, pack);
         applyRangePackToExamOf(pathStr, pack);
+        applyRangePackToPdfExamOf(pathStr, pack);
         const hasCompleteRow = packRows.some(function (r) { return !!(r.combo && r.metaFile && r.rangeSpec); });
 
         if (rerender) {
@@ -2277,7 +2679,7 @@ window.FeatureTimeline = (() => {
         addRangePackCombo(pathStr);
     }
 
-    /** 增加區塊／帶入：同一本活頁、同一基準；起＝上一列迄＋1。迄留空給老師填這段。 */
+    /** 增加區段／帶入：同一本活頁、同一基準；起＝上一列迄＋1。迄留空給老師填這段。 */
     function nextRangeFromPrevRow(prev) {
         const last = prev || {};
         const endRaw = String(last.end || '').trim();
@@ -2316,21 +2718,37 @@ window.FeatureTimeline = (() => {
         const block = blocks[bi];
         if (!block) return;
         const last = block.rows[block.rows.length - 1] || {};
-        const inherited = nextRangeFromPrevRow(last);
+        const blockCombo = resolvePackCombo(builderClassId(), block.combo_id);
+        const packHelpers = {
+            blankPackExamFields: blankPackExamFields,
+            copyPackExamFields: copyPackExamFields,
+            comboLabelText: comboLabelText,
+            nextRangeFromPrevRow: nextRangeFromPrevRow,
+            packShuffleOn: packShuffleOn
+        };
+        let newRow = null;
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.nextSectionRow === 'function') {
+            newRow = window.MaterialComboStrategies.nextSectionRow(blockCombo, last, packHelpers);
+        }
+        if (!newRow) {
+            const inherited = nextRangeFromPrevRow(last);
+            newRow = Object.assign({
+                combo_id: block.combo_id || '',
+                combo_label: block.combo_label || last.combo_label || '',
+                meta_file: last.meta_file || '',
+                range_type: inherited.range_type,
+                start: inherited.start,
+                end: inherited.end
+            }, Object.assign(blankPackExamFields(), {
+                lines_per_page: last.lines_per_page != null && last.lines_per_page !== ''
+                    ? String(last.lines_per_page) : '',
+                shuffle: packShuffleOn(last)
+            }), copyKindRangeFields(last));
+        }
         let insertAt = 0;
         for (let i = 0; i < bi; i++) insertAt += blocks[i].rows.length;
         insertAt += block.rows.length;
-        rows.splice(insertAt, 0, Object.assign({
-            combo_id: block.combo_id || '',
-            combo_label: block.combo_label || last.combo_label || '',
-            meta_file: last.meta_file || '',
-            range_type: inherited.range_type,
-            start: inherited.start,
-            end: inherited.end
-        }, Object.assign(blankPackExamFields(), {
-            lines_per_page: last.lines_per_page != null && last.lines_per_page !== ''
-                ? String(last.lines_per_page) : ''
-        })));
+        rows.splice(insertAt, 0, newRow);
         writePackRowsToGroup(group, rows);
         if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
             window.FeatureTimeline.refreshBuilder({ skipSync: true });
@@ -2351,6 +2769,7 @@ window.FeatureTimeline = (() => {
         const prev = rows[i - 1];
         if (!cur || !prev) return;
         if (String(cur.combo_id || '') !== String(prev.combo_id || '')) return;
+        if (isBookPackRow(cur) || isBookPackRow(prev)) return;
         const inherited = nextRangeFromPrevRow(prev);
         rows[i] = Object.assign({}, cur, {
             meta_file: cur.meta_file || prev.meta_file,
@@ -2389,14 +2808,10 @@ window.FeatureTimeline = (() => {
         let expanded;
         if (comboId === '__manual__') {
             const keep = (block.rows && block.rows[0]) || {};
-            expanded = [{
+            expanded = [Object.assign(storedPackRowFromAny(keep), {
                 combo_id: '__manual__',
-                combo_label: String(keep.comboLabel || keep.combo_label || '').trim(),
-                meta_file: '',
-                range_type: (keep.rangeType || keep.range_type) === 'qnum' ? 'qnum' : 'page',
-                start: String(keep.start || '').trim(),
-                end: String(keep.end || '').trim()
-            }];
+                meta_file: ''
+            })];
         } else {
             const combo = resolvePackCombo(classId, comboId);
             expanded = expandPackRowsForCombo(classId, combo, block.rows || []);
@@ -2404,18 +2819,11 @@ window.FeatureTimeline = (() => {
         const next = [];
         blocks.forEach(function (b, i) {
             if (i === bi) {
-                expanded.forEach(function (r) { next.push(r); });
+                expanded.forEach(function (r) { next.push(storedPackRowFromAny(r)); });
                 return;
             }
             b.rows.forEach(function (r) {
-                next.push({
-                    combo_id: r.comboId || '',
-                    combo_label: r.comboLabel || '',
-                    meta_file: r.metaFile || '',
-                    range_type: r.rangeType === 'qnum' ? 'qnum' : 'page',
-                    start: String(r.start || '').trim(),
-                    end: String(r.end || '').trim()
-                });
+                next.push(storedPackRowFromAny(r));
             });
         });
         if (!next.length) next.push(Object.assign({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }, blankPackExamFields()));
@@ -2471,6 +2879,53 @@ window.FeatureTimeline = (() => {
         onRangePackChange(pathStr, { rerender: false });
     }
 
+    /** 同一套餐塊內調整區段列順序。不准跨套餐。 */
+    function moveRangePackRowTo(pathStr, fromIdx, toIdx) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group)) return;
+        if (!group.raw_data) group.raw_data = {};
+        const rows = normalizePackRows(group.raw_data);
+        const from = Number(fromIdx);
+        const to = Number(toIdx);
+        if (isNaN(from) || isNaN(to) || from === to) return;
+        if (from < 0 || to < 0 || from >= rows.length || to >= rows.length) return;
+        const fromCombo = String((rows[from] && rows[from].combo_id) || '');
+        const toCombo = String((rows[to] && rows[to].combo_id) || '');
+        if (fromCombo !== toCombo) return;
+        const item = rows.splice(from, 1)[0];
+        rows.splice(to, 0, item);
+        writePackRowsToGroup(group, rows);
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+        onRangePackChange(pathStr, { rerender: false, skipSync: true });
+    }
+
+    function moveRangePackRow(pathStr, fromIdx, delta) {
+        moveRangePackRowTo(pathStr, fromIdx, Number(fromIdx) + Number(delta));
+    }
+
+    function onRangePackRowDragStart(ev, pathStr, idx) {
+        if (!ev || !ev.dataTransfer) return;
+        ev.dataTransfer.setData('text/plain', JSON.stringify({ pathStr: String(pathStr), idx: Number(idx) }));
+        ev.dataTransfer.effectAllowed = 'move';
+    }
+
+    function onRangePackRowDrop(ev, pathStr, toIdx) {
+        if (ev) ev.preventDefault();
+        let payload = null;
+        try {
+            payload = JSON.parse((ev && ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || '{}');
+        } catch (err) {
+            return;
+        }
+        if (!payload || String(payload.pathStr) !== String(pathStr)) return;
+        moveRangePackRowTo(pathStr, payload.idx, toIdx);
+    }
+
     let _rangePackComboRefreshBusy = false;
     function maybeRefreshRangePackCombos() {
         if (_rangePackComboRefreshBusy) return;
@@ -2523,7 +2978,7 @@ window.FeatureTimeline = (() => {
 
     function syncSiblingExamTitleFromRange(audioPathStr, rangeText) {
         const bState = window.BuilderStore && window.BuilderStore.getState();
-        if (!bState || !Array.isArray(bState.tasks) || !rangeText) return;
+        if (!bState || !Array.isArray(bState.tasks)) return;
         const arr = String(audioPathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
         let list = bState.tasks;
         const base = [];
@@ -2533,14 +2988,20 @@ window.FeatureTimeline = (() => {
             base.push(arr[i]);
             list = node.subTasks || [];
         }
+        const packLabel = parentRangeGroupPathOf(audioPathStr)
+            ? (packRangeLabelForAudio(audioPathStr) || rangeText)
+            : rangeText;
+        if (!packLabel) return;
         for (let i = 0; i < (list || []).length; i++) {
             const t = list[i];
-            if (!t || t.type !== 'exam') continue;
-            const examPath = base.concat([i]).join('-');
-            const label = (window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function')
-                ? window.FeatureExamJob.getExamRangeLabel(examPath, t)
-                : rangeText;
-            applyInheritedTitleFromRange(examPath, label || rangeText);
+            if (!t || !isComboInheritType(t.type)) continue;
+            const childPath = base.concat([i]).join('-');
+            let label = packLabel;
+            if (t.type === 'exam' && window.FeatureExamJob
+                && typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
+                label = window.FeatureExamJob.getExamRangeLabel(childPath, t) || packLabel;
+            }
+            applyInheritedTitleFromRange(childPath, label);
         }
     }
 
@@ -2734,6 +3195,7 @@ window.FeatureTimeline = (() => {
             const ctx = Object.assign({}, picker, sliceOpts, {
                 materials_root_kind: rootKind,
                 label: picker.label,
+                combo_label: comboLabelText(picker) || comboLabelText(resolvePackCombo(classId, picker.combo_id)),
                 range_spec: sliceSpec,
                 sheet_lpp: picker.sheet_lpp || 0,
                 student_script: scriptCtx.student_script,
@@ -2774,6 +3236,7 @@ window.FeatureTimeline = (() => {
             refs.push(Object.assign({}, snapshot.material_ref, {
                 range_spec: picker.range_spec,
                 label: stem,
+                combo_label: comboLabelText(ctx),
                 fileId: (fileResult && fileResult.fileId) || lookupMetaFileId(pathStr, picker.material_folder, picker.published_file) || '',
                 combo_id: picker.combo_id || '',
                 extraction_template_id: picker.extraction_template_id || '',
@@ -3242,7 +3705,7 @@ window.FeatureTimeline = (() => {
                             blockPenalty = aRaw.late_policy.penalty_percentage || 0;
                         }
                         const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty, grace: blockGrace };
-                        let tasksHtml = TPL.renderReadOnlyTree(a.tasks || [], effectiveBlockDueDate, effectiveBlockLatePolicy, 0);
+                        let tasksHtml = TPL.renderReadOnlyTree(a.tasks || [], effectiveBlockDueDate, effectiveBlockLatePolicy, 0, a.open_at);
                         assignmentsHtml += TPL.getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml);
                     });
                 }
@@ -3669,7 +4132,7 @@ window.FeatureTimeline = (() => {
                 
                 const payload = {
                     class_id: bState.classId, target_date: window.UtilsDate.normalizeDateString(bState.target_date), title: bState.title, description: bState.description,
-                    due_date: bState.due_date || null, is_published: bState.is_published, tasks: [...bState.tasks], raw_data: mergedRawData
+                    due_date: bState.due_date || null, open_at: bState.open_at || null, is_published: bState.is_published, tasks: [...bState.tasks], raw_data: mergedRawData
                 };
 
                 let savedId = bState.editId;
@@ -3685,6 +4148,13 @@ window.FeatureTimeline = (() => {
                     if (error) throw new Error(error.message);
                     if (!data) throw new Error("資料庫拒絕了請求");
                     db.assignments.push(data); savedId = data.id; 
+                }
+                if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.collectFromSavedAssignment === 'function') {
+                    try {
+                        await window.FeatureMaterialBook.collectFromSavedAssignment(savedId, payload);
+                    } catch (collectErr) {
+                        window.showFlash('作業已存，但收集成書失敗：' + (collectErr.message || collectErr), 'error');
+                    }
                 }
                 const savedClassId = bState.classId; 
                 window.BuilderStore.clear();
@@ -4116,11 +4586,34 @@ window.FeatureTimeline = (() => {
         buildMaterialRangeLabelFromRows: buildMaterialRangeLabelFromRows,
         packRangeLabelForAudio: packRangeLabelForAudio,
         combinePackRangeLabel: combinePackRangeLabel,
+        isComboInheritType: isComboInheritType,
+        packPdfStatusForChildPath: packPdfStatusForChildPath,
+        applyRangePackToPdfExam: applyRangePackToPdfExam,
 
         // 供其他模組（如獨立考試教材資料夾下拉）重用同一套「老師個人／班級資源」清單快取，
         // 避免各自各刻一份 GasService.listMaterialMasters 呼叫（見 exam-standalone-material-invariant.mdc）
         ensureMetaCatalog: ensureMetaCatalog,
         getMetaCatalogEntry: getMetaCatalogEntry,
+        getMaterialPdfOptions: function (classId, rootKind) {
+            const entry = getMetaCatalogEntry(classId, rootKind);
+            return (entry && Array.isArray(entry.pdfOptions)) ? entry.pdfOptions : [];
+        },
+        addMaterialPdfOption: function (classId, rootKind, opt) {
+            const entry = getMetaCatalogEntry(classId, rootKind);
+            if (!entry) return;
+            if (!Array.isArray(entry.pdfOptions)) entry.pdfOptions = [];
+            const id = String((opt && opt.fileId) || '');
+            if (!id) return;
+            if (entry.pdfOptions.some(function (o) { return String((o && o.fileId) || '') === id; })) return;
+            entry.pdfOptions.push({
+                rootKind: normalizeMaterialsRootKind(rootKind),
+                folderName: (opt && opt.folderName) || '',
+                folderId: (opt && opt.folderId) || '',
+                fileName: (opt && opt.fileName) || '',
+                fileId: id,
+                fileKind: 'pdf'
+            });
+        },
         removeMetaCatalogFileOption: removeMetaCatalogFileOption,
         // 2026-08-06：教材資料夾清單「查到空的」時的除錯文字（GAS 版本戳記／實際解析到的
         // 資料夾 ID／子資料夾數），給 MaterialFolderPicker 等下拉的 emptyMessage 用
@@ -4231,6 +4724,12 @@ window.FeatureTimeline = (() => {
         onGroupTitleInput: onGroupTitleInput,
         parentRangeGroupOf: parentRangeGroupOf,
         parentRangeGroupPathOf: parentRangeGroupPathOf,
+        renderRangePackHtml: function (pathStr, node) {
+            const TPL = window.TimelineTemplates;
+            if (!TPL || typeof TPL.renderRangePackHtml !== 'function') return '';
+            return TPL.renderRangePackHtml(pathStr, node);
+        },
+        isPackHostNode: isPackHostNode,
         onRangePackChange: onRangePackChange,
         onRangePackComboChange: onRangePackComboChange,
         buildRangePackForApply: buildRangePackForApply,
@@ -4246,6 +4745,9 @@ window.FeatureTimeline = (() => {
         inheritRangePackRowFromAbove: inheritRangePackRowFromAbove,
         removeRangePackCombo: removeRangePackCombo,
         removeRangePackRow: removeRangePackRow,
+        moveRangePackRow: moveRangePackRow,
+        onRangePackRowDragStart: onRangePackRowDragStart,
+        onRangePackRowDrop: onRangePackRowDrop,
         refreshRangePackDerived: refreshRangePackDerived,
 
         onScriptSourceChange: function (pathStr) {

@@ -94,6 +94,12 @@ window.FeatureMaterialLayoutPairing = (function () {
     const FORMULA_BOTH_PLACEHOLDER = 'if(pre="",answer_en,pre&" "&answer_en)';
     const STUDENT_SCRIPT_TAG_HINT = '標記（可選）：&lt;page title&gt; 每頁一次　&lt;blank&gt; 空行（在 title 與 data 中間＝每頁一次；在 data 後＝每題一次）　&lt;data&gt; 每列一次。沒標記＝整份當資料列（仍加系統頁首）。有標記＝只套公式。';
     const STUDENT_SCRIPT_TAG_PLACEHOLDER = '<page title>vBK_name&" - "&page\n<blank>\n<data>item_no&". "&pos&"  "&pre&" "&answer_en&"    "&display_zh';
+    /** 編輯框只顯示老師寫過的。空的或程式自己塞的 _answer_combined_text 都當沒填。 */
+    function storedStudentScript(raw) {
+        const s = String(raw || '').trim();
+        if (!s || s === '_answer_combined_text') return '';
+        return s;
+    }
     let _sessionSemanticKeys = [];
     /** folder|templateId → { classIds, classNames }，給套用區塊即時顯示「哪些班已在用」 */
     let _comboUsageCache = {};
@@ -385,6 +391,7 @@ window.FeatureMaterialLayoutPairing = (function () {
         const name = String((o && o.fileName) || '').trim();
         if (!name || name === DRIVE_PICK_SHEETS) return false;
         if (o && o.fileKind === 'script') return false;
+        if (o && o.fileKind === 'pdf') return false;
         if (window.MaterialFileNames && typeof window.MaterialFileNames.isMetaFileName === 'function') {
             return window.MaterialFileNames.isMetaFileName(name);
         }
@@ -2760,7 +2767,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 ? ('已指派給：<b>' + usedNames.map(esc).join('、') + '</b>')
                 : '尚未指派給任何班級')
             + '</div>'
-            + '<div style="font-size:0.74rem; color:#64748B; font-weight:700;">要改套餐名稱、試卷範本或採用班級，請到下方「📁 教材區」儲存。</div>';
+            + '<div style="font-size:0.74rem; color:#64748B; font-weight:700;">要改 Excel/JSON 套餐名稱、試卷範本或採用班級，請到下方「📁 教材區」儲存。</div>';
     }
 
     function driveTargetSheetNames(seg) {
@@ -3296,7 +3303,7 @@ window.FeatureMaterialLayoutPairing = (function () {
     // ------------------------------------------------------------------
 
     function openTemplateEditorForNew() {
-        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'direct', speakFormula: '', linesPerPage: 10, fields: '', quizPrompt: '', studentScript: '_answer_combined_text', isExtractionRole: true, isExamRole: false };
+        _templateEditorState = { id: null, isNew: true, name: '', columns: [], designed_from: null, answerMode: 'combine', answerCombineNote: '', speakMode: 'direct', speakFormula: '', linesPerPage: 10, fields: '', quizPrompt: '', studentScript: '', isExtractionRole: true, isExamRole: false };
         renderTemplateEditor();
         renderTemplateList();
         const editorEl = document.getElementById('mlp-template-editor');
@@ -3331,7 +3338,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             // 只有勾了考卷範本才算得出來的唯讀預覽——跟每頁行數一樣放在編輯表單裡，直接讀寫 fields 欄位。
             fields: String((t && t.fields) || ''),
             quizPrompt: String((t && t.quiz_prompt) || ''),
-            studentScript: String((t && t.student_script) || '').trim() || '_answer_combined_text',
+            studentScript: storedStudentScript(t && t.student_script),
             // 2026-08-15（老師回報意外刪除事件後要求）：角色勾選（擷取範本／考卷範本）只在編輯表單
             // 裡才能改，不放在清單上，見 renderTemplateEditor() 的角色勾選那一行。
             isExtractionRole: t && t.is_extraction_role !== false,
@@ -3388,7 +3395,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <div style="margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid #C7D2FE; background:#F8FAFC;">
                     <div style="font-size:0.76rem; font-weight:800; color:#4338CA; margin-bottom:8px;">特殊排版</div>
                     <label style="display:block; font-size:0.78rem; font-weight:800; color:#475569;">學生文稿 特殊排版
-                        <textarea id="mlp-tpl-student-script" class="form-control" rows="5" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="${esc(STUDENT_SCRIPT_TAG_PLACEHOLDER)}">${esc(st.studentScript || '_answer_combined_text')}</textarea>
+                        <textarea id="mlp-tpl-student-script" class="form-control" rows="5" style="width:100%; margin-top:2px; padding:6px; font-family:monospace; font-size:0.8rem;" placeholder="${esc(STUDENT_SCRIPT_TAG_PLACEHOLDER)}">${esc(storedStudentScript(st.studentScript))}</textarea>
                     </label>
                     <div style="font-size:0.7rem; color:#64748B; margin-top:4px; margin-bottom:10px;">${STUDENT_SCRIPT_TAG_HINT} ${FORMULA_BOTH_HINT}。擷取／出作業 Snapshot 都讀這一格，沒有第二套。</div>
                     <div style="padding-top:8px; border-top:1px dashed #C7D2FE; opacity:${st.isExamRole ? '1' : '0.55'}; pointer-events:${st.isExamRole ? 'auto' : 'none'};">
@@ -3603,7 +3610,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 if (fresh) {
                     st.fields = fresh.fields || '';
                     st.quizPrompt = fresh.quiz_prompt || '';
-                    st.studentScript = String(fresh.student_script || '').trim() || '_answer_combined_text';
+                    st.studentScript = storedStudentScript(fresh.student_script);
                 }
                 renderTemplateEditor();
                 const freshMsgEl = document.getElementById('mlp-tpl-role-msg');
@@ -3798,7 +3805,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 const announceLine = function (label, value) {
                     return '<div style="font-size:0.8rem; color:' + announceColor + '; margin-top:2px; white-space:pre-wrap;">' + label + '：\n' + esc(value) + '</div>';
                 };
-                const rowStudent = announceLine('學生文稿 特殊排版', t.student_script || '_answer_combined_text');
+                const rowStudent = announceLine('學生文稿 特殊排版', storedStudentScript(t.student_script) || '尚無');
                 const rowFields = announceLine('訊息 特殊排版', t.fields || '尚無');
                 const rowQuiz = announceLine('題目 特殊排版', t.quiz_prompt || '尚無');
                 const row3 = announceLine('書寫 批改標準', aCount > 1 ? (t.answer_mode === 'separate' ? '分開比對' : '結合') : '—（書寫答案欄數≤1）');
@@ -3893,7 +3900,7 @@ window.FeatureMaterialLayoutPairing = (function () {
             linesPerPage: (t && t.lines_per_page) || 10,
             fields: String((t && t.fields) || ''),
             quizPrompt: String((t && t.quiz_prompt) || ''),
-            studentScript: String((t && t.student_script) || '').trim() || '_answer_combined_text',
+            studentScript: storedStudentScript(t && t.student_script),
             isExtractionRole: true,
             isExamRole: !!(t && t.is_exam_role)
         };
@@ -6083,6 +6090,22 @@ window.FeatureMaterialLayoutPairing = (function () {
         return lines.join('') + (anyLoading ? '<div style="font-size:0.74rem; color:#94A3B8; margin-top:2px;">（其餘範圍仍在載入中…）</div>' : '');
     }
 
+    function pdfFileNamesForFolder(classId, rootKind, folder) {
+        if (!window.FeatureTimeline || typeof window.FeatureTimeline.getMaterialPdfOptions !== 'function') return [];
+        const folderU = String(folder || '').trim().toUpperCase();
+        if (!folderU) return [];
+        const seen = {};
+        const out = [];
+        (window.FeatureTimeline.getMaterialPdfOptions(classId, rootKind) || []).forEach(function (o) {
+            if (!o || String(o.folderName || '').trim().toUpperCase() !== folderU) return;
+            const name = String(o.fileName || '').trim();
+            if (!name || seen[name.toUpperCase()]) return;
+            seen[name.toUpperCase()] = true;
+            out.push(name);
+        });
+        return out;
+    }
+
     function renderOverviewFoldersHtml(pairs, apps) {
         const scopeKeys = collectOverviewScopeKeys(pairs, apps);
         const blocks = [];
@@ -6092,7 +6115,9 @@ window.FeatureMaterialLayoutPairing = (function () {
             folders.forEach(function (folder) {
                 blocks.push({
                     scopeLabel: info.label, classId: info.classId, rootKind: info.rootKind,
-                    folder: folder, stems: sheetStemsForFolder(info.classId, info.rootKind, folder)
+                    folder: folder,
+                    stems: sheetStemsForFolder(info.classId, info.rootKind, folder),
+                    pdfs: pdfFileNamesForFolder(info.classId, info.rootKind, folder)
                 });
             });
         });
@@ -6100,19 +6125,27 @@ window.FeatureMaterialLayoutPairing = (function () {
             return renderOverviewFoldersEmptyStateHtml(scopeKeys);
         }
         return blocks.map(function (b) {
-            const stemsHtml = b.stems.length
-                ? b.stems.map(function (s) {
-                    return '<span style="display:inline-flex; align-items:center; gap:4px; background:white; border:1px solid #CBD5E1; border-radius:6px; padding:2px 4px 2px 8px; margin:2px 4px 0 0; font-size:0.74rem; color:#334155;">'
-                        + '📄 ' + esc(s)
-                        + '<button type="button" class="mlp-overview-stem-delete" data-stem="' + esc(s) + '" title="刪除這個活頁的 meta/script"'
-                        + ' style="border:none; background:none; color:#B91C1C; cursor:pointer; font-size:0.78rem; padding:0 2px; line-height:1;">🗑️</button>'
-                        + '</span>';
-                }).join('')
-                : '<span style="color:#CBD5E1; font-size:0.74rem;">（尚無 .meta.json）</span>';
+            const stemChips = b.stems.map(function (s) {
+                return '<span style="display:inline-flex; align-items:center; gap:4px; background:white; border:1px solid #CBD5E1; border-radius:6px; padding:2px 4px 2px 8px; margin:2px 4px 0 0; font-size:0.74rem; color:#334155;">'
+                    + '📄 ' + esc(s)
+                    + '<button type="button" class="mlp-overview-stem-delete" data-stem="' + esc(s) + '" title="刪除這個活頁的 meta/script"'
+                    + ' style="border:none; background:none; color:#B91C1C; cursor:pointer; font-size:0.78rem; padding:0 2px; line-height:1;">🗑️</button>'
+                    + '</span>';
+            }).join('');
+            const pdfChips = (b.pdfs || []).map(function (n) {
+                return '<span style="display:inline-flex; align-items:center; gap:4px; background:#ECFEFF; border:1px solid #67E8F9; border-radius:6px; padding:2px 8px; margin:2px 4px 0 0; font-size:0.74rem; color:#0E7490; font-weight:700;">📄 ' + esc(n) + '</span>';
+            }).join('');
+            const bits = [];
+            if (b.stems.length) bits.push(b.stems.length + ' 個活頁');
+            if ((b.pdfs || []).length) bits.push(b.pdfs.length + ' 個 PDF');
+            const countText = bits.length ? bits.join(' · ') : '沒列到檔案';
+            const filesHtml = (stemChips || pdfChips)
+                ? (stemChips + pdfChips)
+                : '<span style="color:#94A3B8; font-size:0.74rem;">（沒列到 meta／PDF）</span>';
             return '<div class="mlp-overview-folder-block" data-class-id="' + esc(b.classId) + '" data-root-kind="' + esc(b.rootKind) + '" data-folder="' + esc(b.folder) + '" style="margin-bottom:10px;">'
                 + '<div style="font-size:0.78rem; font-weight:800; color:#475569;">' + esc(b.scopeLabel) + ' ／ 📁 ' + esc(b.folder)
-                + '<span style="color:#94A3B8; font-weight:600;">（' + b.stems.length + ' 個活頁）</span></div>'
-                + '<div style="margin-top:2px;">' + stemsHtml + '</div>'
+                + '<span style="color:#94A3B8; font-weight:600;">（' + countText + '）</span></div>'
+                + '<div style="margin-top:2px;">' + filesHtml + '</div>'
                 + '</div>';
         }).join('');
     }
@@ -6500,7 +6533,7 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <p style="color:#64748B; font-size:0.8rem; margin:0 0 12px 0;">點擷取範本卡片可直接跳去編輯；其他兩張卡片是現況清單，實際操作在下面各區塊。</p>
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:14px;">
                     <div>
-                        <div style="font-size:0.85rem; font-weight:800; color:#1D4ED8; margin-bottom:6px;">📁 教材資料夾（既有 meta／script）</div>
+                        <div style="font-size:0.85rem; font-weight:800; color:#1D4ED8; margin-bottom:6px;">📁 教材資料夾（雲端真實檔）</div>
                         <div id="mlp-overview-folders">${renderOverviewFoldersHtml(pairs, apps)}</div>
                     </div>
                     <div>
@@ -6590,8 +6623,9 @@ window.FeatureMaterialLayoutPairing = (function () {
                 <div id="mlp-template-list"></div>
             </div>
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
-                <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">🧾 套用／設計範本</h3>
+                <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">🧾 Excel/JSON 套餐：套用／設計範本</h3>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0;">
+                    這塊只產生 Excel/JSON 套餐，不准跟下面 PDF／目錄的產生區塊合併。
                     <b>本機檔案</b>＝從 Excel 儲存格擷取、產生 meta/script。<b>雲端教材</b>＝現有 meta.json 就是內容：只套試卷不產檔；當擷取／雙用就從現有 json 產檔。
                     雲端選「整個資料夾」就全部 meta 納入、不用再勾；要只套其中幾本，選「自選活頁」再勾（可複選）。
                 </p>

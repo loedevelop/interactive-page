@@ -46,7 +46,7 @@ window.TeacherClassDataset = (function () {
                 .order('created_at', { ascending: true }),
             window.supabaseClient
                 .from('assignments')
-                .select('id, title, target_date, due_date, tasks, is_published, class_id')
+                .select('id, title, target_date, due_date, open_at, tasks, is_published, class_id')
                 .eq('class_id', classId)
                 .is('deleted_at', null)
                 .order('target_date', { ascending: false }),

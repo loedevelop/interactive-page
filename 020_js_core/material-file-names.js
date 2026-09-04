@@ -127,6 +127,11 @@ window.MaterialFileNames = (function () {
         return body.toUpperCase() === (L + '.' + tpl).toUpperCase();
     }
 
+    /**
+     * 這一本活頁列的活頁別名。永遠有。
+     * 老師改過＝name map 的 current_label；沒改過＝別名就是活頁名（欄位預設值）。
+     * 不是「有別名秀別名、沒有才秀活頁名」，也不是「對不到＝沒有」。
+     */
     function currentAlias(stem, sheetId, templateName) {
         var raw = String(stem || '').trim();
         var live = liveSheetName(raw, templateName) || raw;
@@ -143,7 +148,7 @@ window.MaterialFileNames = (function () {
                 lab = String(Map.currentLabelBySheetId(sheetId) || '').trim();
             }
         }
-        if (isPoisonedLiveAlias(lab, live, templateName)) lab = '';
+        if (isPoisonedLiveAlias(lab, live, templateName)) lab = live;
         return lab || live;
     }
 

@@ -1,0 +1,84 @@
+---
+description: 目錄套餐沒卡／拿夾裡檔自動產卡／當班級 01／下拉出現沒勾的／範圍另開第二張表／走 Snapshot 假裝有 meta／為了目錄改 Excel 畫卡
+globs: 110_teacher_core/feature-material-book.js,110_teacher_core/feature-class-material-combinations.js,110_teacher_core/feature-timeline.js,110_teacher_core/ui-timeline-templates.js,110_teacher_core/store-assignment-builder.js,110_teacher_core/feature-script-collector.js
+alwaysApply: false
+---
+
+# 目錄套餐＝收集成書（跟 Excel/JSON／PDF 同階層）（2026-08-29；2026-09-01 正名）
+
+長篇：`docs/組合作業範圍與套餐.md`
+
+畫面與文案叫 **目錄套餐**。表名暫留 `material_book_combos`／`kind: 'book'`，不跑改表 migration。
+
+## 症狀
+
+- 教材區沒有目錄卡，或把夾裡 text／PDF 自動產出這張卡
+- 當成班級 01 資源，Mason Shen 與 Ava 勾同一本卻變成兩本
+- 出作業下拉出現沒勾的班、或目錄被摺進 Excel 畫卡
+- 選目錄後範圍表仍是起迄／活頁，或另開第二張表
+- 選目錄卻走 Snapshot／`.script.txt`／「跟範圍走」假裝有 meta
+- 為了目錄去改 `ensureCombination`／`pickComboForCard`／`combo_statistics`
+- 在教材區資料夾窗口裡＋新增（產生應在同一頁獨立區塊）
+
+## 根因
+
+AI 把「夾裡有檔＝套餐」套到目錄。舊套餐確實由夾裡的檔產生（擷取／套用）。目錄是新類型：老師出作業一點一點提供範圍，系統收集成書。夾裡已有 text／之後也有 PDF，那是舊路或另一張卡，不准自動產這張。
+
+舊 `class_script_blocks` 綁班級，不能當這本全域書的家。
+
+## 不變量
+
+```
+同階層：Excel/JSON、PDF、目錄都在教材資料夾，都是套餐、都要有卡。一個窗口＝一個夾，教材區只顯示已有卡。
+舊套餐：資料由夾裡的檔產生（擷取／套用）。產生在教材範本管理「套用／設計範本」，不在窗口＋。
+目錄：老師出作業提供範圍，系統收集成書。不准拿夾裡 text／PDF 自動產出這張卡。產生在同一頁獨立區塊（選夾後＋新增目錄套餐）。不准跟 PDF 套用同一顆＋。
+全域＝這位老師的教材。Mason Shen 與 Ava 勾同一本 Our World 2。不是班級 01。
+出作業下拉：同一開口 listAssignedCombosForHomework，只列該班已勾。三種套餐走 MaterialComboStrategies，不准 Excel 主檔 concat。
+範圍三層：大題 → 次題 → 小題。三欄都提供，這次填到哪由老師定。錄音以這段為 assign 基準。
+規格化：每一欄可選這本已出過的紀錄（選了大題，次題只列該大題底下已有的）。沒有才手打；手打的進這本目錄。不借別本書的名字。
+text 存在該教材資料夾（Drive）。有文稿才寫 txt；範圍目錄即使文稿空也要留下。
+出作業選書＋填範圍＝收集。沒有第二道「搬入」。
+範圍卡仍只呼叫 renderRangePackHtml。選目錄時列改大題／次題／小題／文稿，不准另開第二張表。
+選目錄不准走 Snapshot／.script.txt／「跟範圍走」假裝有 meta。
+__manual__ 仍是打一次名字、不進任何書。
+獨立模組 feature-material-book.js。不准改 Excel／JSON：ensureCombination／pickComboForCard／combo_statistics 畫卡。
+小標題＝combinePackRangeLabel。目錄列用 大題 / 次題 / 小題 組字。
+```
+
+## 禁止
+
+```javascript
+ensureCombination(book); // 目錄寫進 Excel 套餐表
+pickComboForCard(folder); // 夾裡有 txt 就當目錄卡
+loadCombinations(userId); // 為了目錄去改 stats 畫卡
+if (hits.length === 1) return hits[0]; // 剛好一筆就當這本
+raw.script_source = 'meta'; // 選目錄還去抓 .script.txt
+```
+
+## 正確
+
+```javascript
+listAssignedCombosForHomework(classId); // MaterialComboStrategies（Excel/JSON／PDF／目錄）
+FeatureMaterialBook.bookRowInputsHtml(pathStr, idx, row, combo);
+await FeatureMaterialBook.collectFromSavedAssignment(savedId, payload);
+GasService.uploadMaterialFile(b64, '大題.次題.小題.txt', 'text/plain', folderId);
+FeatureMaterialBook.renderCreatePanel(); // 同一頁獨立區塊，不在教材區窗口
+```
+
+## 實測
+
+1. 教材範本管理獨立區塊能＋新增目錄套餐；教材區該夾窗口有卡、沒有＋鈕；不是從夾裡 txt 自動冒出來。
+2. 勾 Mason Shen 與 Ava → 兩班出作業下拉都有這本；沒勾的班沒有。
+3. 選這本後範圍卡是大題／次題／小題／文稿，不是起迄。
+4. 存檔後教材區已收集範圍出現這段；有文稿才在夾裡看到 txt。
+5. 選目錄後錄音沒有自動 Snapshot、沒有去抓 .script.txt。
+6. Excel／JSON 套餐卡與 combo_statistics 畫卡沒被改。
+
+## 改動前自問
+
+1. 目錄是不是同階層套餐、在教材資料夾、有卡？還是又當班級 01／附件？
+2. 有沒有拿夾裡的檔自動產這張卡？產生是不是獨立區塊、教材區是否只顯示？
+3. 下拉是不是只列該班已勾？開口是不是仍 listAssignedCombosForHomework？
+4. 範圍是不是仍 renderRangePackHtml？有沒有走 Snapshot 假裝有 meta？
+5. 有沒有為了目錄去改 Excel／JSON 畫卡？
+任一錯 → 停。

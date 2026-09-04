@@ -92,7 +92,10 @@ window.MaterialSnapshot = (function () {
             seenData = true;
             itemParts.push(p);
         });
-        if (!itemParts.length && !pageParts.length) {
+        var hasDataFormula = itemParts.some(function (p) {
+            return p.kind === 'data' && String(p.formula || '').trim();
+        });
+        if (!hasDataFormula) {
             itemParts = [{ kind: 'data', formula: DEFAULT_STUDENT_SCRIPT }];
         }
         return { tagged: true, pageParts: pageParts, itemParts: itemParts };
@@ -764,17 +767,20 @@ window.MaterialSnapshot = (function () {
     /**
      * 學生文稿＝該擷取範本「學生文稿 特殊排版」。
      * 有 <page title>／<data>／<blank>＝只套公式（不再加【檔名】[頁] 與題號.）。
-     * 沒標記＝整份當資料列，仍加系統頁首（舊公式相容）。
+     * 沒標記＝整份當資料列，仍加系統頁首（舊公式相容）。頁首只准套餐名。
      */
+    function comboLabelFromContext(context) {
+        context = context || {};
+        if (window.FeatureClassMaterialCombinations
+            && typeof window.FeatureClassMaterialCombinations.comboLabelText === 'function') {
+            return window.FeatureClassMaterialCombinations.comboLabelText(context);
+        }
+        return String(context.combo_label || context.comboLabel || '').trim();
+    }
+
     function formatStudentDisplayBlock(rows, context) {
         context = context || {};
-        var stem = String(context.label || context.stem || '').trim();
-        if (!stem) {
-            var file = context.published_file || context.metaFile || '';
-            stem = String(file).replace(/\.meta\.json$/i, '').replace(/\.json$/i, '');
-            var parts = stem.split(/[\/_]/);
-            stem = parts[parts.length - 1] || stem || '?';
-        }
+        var comboName = comboLabelFromContext(context);
 
         var byPage = {};
         var pageOrder = [];
@@ -850,7 +856,9 @@ window.MaterialSnapshot = (function () {
                     }
                 }
             } else {
-                lines.push('【' + stem + '】[' + headerPage + ']');
+                lines.push(comboName
+                    ? ('【' + comboName + '】[' + headerPage + ']')
+                    : ('[' + headerPage + ']'));
                 var dataFormula = (tpl.itemParts[0] && tpl.itemParts[0].formula) || DEFAULT_STUDENT_SCRIPT;
                 pageRows.forEach(function (row) {
                     var written = evalStudentScriptFormulaToText(dataFormula, row, colMap);

@@ -68,6 +68,16 @@ window.UIStudentTimelineTemplates = (() => {
         return 'file';
     };
 
+    const TASK_BTN_VARIANTS = {
+        solid: 'task-btn',
+        ghost: 'task-btn task-btn--ghost',
+        done: 'task-btn task-btn--done'
+    };
+    const taskBtn = (label, onclick, variant) => {
+        const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.solid;
+        return `<button type="button" class="${cls}" onclick="${onclick}">${label}</button>`;
+    };
+
     const resolveStreamUrl = (fileId) => {
         if (!fileId) return '';
         if (window.ApiService && typeof window.ApiService.getAudioStreamUrl === 'function') {
@@ -239,12 +249,7 @@ window.UIStudentTimelineTemplates = (() => {
         return range || title;
     };
 
-    const isUglyDisplayStem = (stem) => {
-        const s = String(stem || '').trim();
-        return !s || /[./]/.test(s) || s.length > 16 || /vocab-word|meta\.json/i.test(s);
-    };
-
-    /** 從學生顯示全文抽出某一頁（【stem】[2] … 到下一頁之前）。檔名當 stem 時改成 p. 2。 */
+    /** 從學生顯示全文抽出某一頁（【套餐名】[2] … 到下一頁之前）。 */
     const extractDisplayBlockForPage = (fullText, page) => {
         const text = String(fullText || '');
         if (!text.trim() || page == null || page === '') return '';
@@ -264,7 +269,7 @@ window.UIStudentTimelineTemplates = (() => {
             if (s.index > hit.index && (!next || s.index < next.index)) next = s;
         });
         let block = text.slice(hit.index, next ? next.index : text.length).trim();
-        const header = isUglyDisplayStem(hit.stem) ? ('p. ' + pageNum) : ('【' + hit.stem + '】[' + pageNum + ']');
+        const header = '【' + hit.stem + '】[' + pageNum + ']';
         block = block.replace(/【[^\n】]*】\s*\[\d+\]/, header);
         return block.trim();
     };
@@ -1624,14 +1629,7 @@ window.UIStudentTimelineTemplates = (() => {
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             
-                            const pureTaskTitle = displayTitle || '未命名任務';
                             const statusId = `upload-status-${course.id}-${task.id}`;
-                            
-                            const safeTitleForJS = escapeJsSingleQuoted(pureTaskTitle);
-                            const boothScript = studioScript || originalScript;
-                            const safeScriptForJS = escapeJsSingleQuoted(boothScript);
-                            const safeUrlForJS = escapeJsSingleQuoted(safeFormatUrl ? safeFormatUrl(materialUrl) : materialUrl);
-                            const safeRangeForJS = escapeJsSingleQuoted(materialRange);
 
                             if (recordingBoard && recordingBoard.players.length) hasValidAudioFile = true;
                             const studioPageCount = recordingBoard ? recordingBoard.expectedCount : 0;
@@ -1683,10 +1681,10 @@ window.UIStudentTimelineTemplates = (() => {
                                 : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="${btnBaseStyle} border:1px solid #E2E8F0; background:white; color:#64748B;">📁 Drive</button>`;
 
                             const studioBtnHtml = captureStudio
-                                ? `<button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${safeScriptForJS}', '${safeUrlForJS}', '${safeRangeForJS}')" class="btn-action" style="${recordBtnStyle} ${btnBaseStyle}">${recordBtnText}</button>`
+                                ? `<button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}')" class="btn-action" style="${recordBtnStyle} ${btnBaseStyle}">${recordBtnText}</button>`
                                 : '';
                             const uploadBtnHtml = captureUpload
-                                ? `<input type="file" id="${audioUploadId}" multiple accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', ${isLateUpload})">
+                                ? `<input type="file" id="${audioUploadId}" multiple accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${statusId}')">
                                     <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="${btnBaseStyle} background:#10B981; color:white; border:none;" title="可複選多檔；請依頁面順序點選">📤 上傳音檔（可複選）</button>`
                                 : '';
 
@@ -1736,21 +1734,19 @@ window.UIStudentTimelineTemplates = (() => {
                             const pDone = practiceSummary ? practiceSummary.done : 0;
                             const pAllDone = !!(practiceSummary && practiceSummary.allDone);
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${pAllDone ? 'checked' : ''} onclick="return false;" tabindex="-1" title="完成所有題目的輸入練習後自動打勾">`;
-                            const practiceBtnLabel = pAllDone ? '✅ 已完成・重新練習' : (pDone > 0 ? '✍️ 繼續輸入練習' : '✍️ 開始輸入練習');
+                            const practiceBtnLabel = pAllDone ? '已完成・重新練習' : (pDone > 0 ? '繼續輸入練習' : '開始輸入練習');
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                    <button type="button" class="btn-action" style="background:#0F766E; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openInputPractice('${safeCourseId}', '${safeTaskId}')">${practiceBtnLabel}</button>
+                                    ${taskBtn(practiceBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openInputPractice('${safeCourseId}', '${safeTaskId}')`, pAllDone ? 'done' : 'solid')}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pDone}/${pTotal} 題已完成</span>
                                 </div>
                             `;
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
                             const hasQuizDone = !!(quizRaw && (quizRaw.quiz_result || (quizRaw.quiz_stats && quizRaw.quiz_stats.complete_count)));
-                            const quizBtnLabel = hasQuizDone ? '再作一次' : '📝 開始作答';
+                            const quizBtnLabel = hasQuizDone ? '再作一次' : '開始作答';
                             const reviewBtn = hasQuizDone
-                                ? `<button type="button" class="btn-action" style="background:white; color:#0F766E; border:1px solid #99F6E4; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openReviewFromRaw('${safeCourseId}', '${safeTaskId}')">錯題／錯字</button>`
+                                ? taskBtn('作答結果', `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openReviewFromRaw('${safeCourseId}', '${safeTaskId}')`, 'ghost')
                                 : '';
                             // 🔁 重考錯題（僅一次）：老師勾選 allow_wrong_retake 才會有這個按鈕；持久顯示在時間軸，
                             // 讓學生繳交後不一定要當下重考，之後回來也看得到入口。done 後改顯示「整體報告」。
@@ -1758,25 +1754,25 @@ window.UIStudentTimelineTemplates = (() => {
                             const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
                             const retakeDone = !!(retake && retake.done);
                             const retakeBtn = retakeEligible
-                                ? `<button type="button" class="btn-action" style="background:#B45309; color:white; border:none; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeQuiz('${safeCourseId}', '${safeTaskId}')">🔁 重考錯題（僅一次）</button>`
+                                ? taskBtn('重考錯題（僅一次）', `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeQuiz('${safeCourseId}', '${safeTaskId}')`, 'ghost')
                                 : (retakeDone
-                                    ? `<button type="button" class="btn-action" style="background:white; color:#047857; border:1px solid #A7F3D0; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeReportFromRaw('${safeCourseId}', '${safeTaskId}')">📊 整體報告</button>`
+                                    ? taskBtn('整體報告', `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openRetakeReportFromRaw('${safeCourseId}', '${safeTaskId}')`, 'ghost')
                                     : '');
                             // 🔧 輸入改正（獨立於重考錯題／申訴答案）：有錯題才顯示；完成後顯示已完成狀態。
                             const correctionSummary = (hasQuizDone && window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.getInputCorrectionSummary === 'function')
                                 ? window.FeatureStudentQuiz.getInputCorrectionSummary(course.id, task.id)
                                 : null;
                             const correctionBtn = (correctionSummary && correctionSummary.total > 0)
-                                ? `<button type="button" class="btn-action" style="background:${correctionSummary.allDone ? 'white' : '#EA580C'}; color:${correctionSummary.allDone ? '#B45309' : 'white'}; border:${correctionSummary.allDone ? '1px solid #FDBA74' : 'none'}; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openInputCorrection('${safeCourseId}', '${safeTaskId}')">${correctionSummary.allDone ? '✅ 改正練習已完成' : `🔧 錯題改正練習 (${correctionSummary.done}/${correctionSummary.total})`}</button>`
+                                ? taskBtn(
+                                    correctionSummary.allDone ? '改正練習已完成' : (`錯題改正練習 (${correctionSummary.done}/${correctionSummary.total})`),
+                                    `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openInputCorrection('${safeCourseId}', '${safeTaskId}')`,
+                                    correctionSummary.allDone ? 'done' : 'ghost'
+                                )
                                 : '';
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
-                                    <button type="button" class="btn-action" style="background:#0F766E; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${quizBtnLabel}</button>
+                                    ${taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')`, 'solid')}
                                     ${reviewBtn}
                                     ${retakeBtn}
                                     ${correctionBtn}
@@ -1808,16 +1804,14 @@ window.UIStudentTimelineTemplates = (() => {
                                     ? `<span style="font-size:0.8rem; font-weight:800; color:#B45309; background:#FFFBEB; border:1px solid #FDE68A; padding:2px 8px; border-radius:6px;">作答中 ${escapeAttr(pdfResult.submitted_sections)}/${escapeAttr(pdfResult.total_sections)} 大題</span>`
                                     : `<span style="font-size:0.8rem; font-weight:800; color:#047857; background:#ECFDF5; border:1px solid #A7F3D0; padding:2px 8px; border-radius:6px;">${escapeAttr(pdfResult.correct)}/${escapeAttr(pdfResult.total)}（${escapeAttr(pdfResult.score)}%）</span>`)
                                 : '';
-                            const pdfBtnLabel = pdfInProgress ? '繼續作答' : (pdfResult ? '再作一次' : '📝 開始作答');
+                            const pdfBtnLabel = pdfInProgress ? '繼續作答' : (pdfResult ? '再作一次' : '開始作答');
                             const pdfReviewBtn = (pdfResult && !pdfInProgress)
-                                ? `<button type="button" class="btn-action" style="background:white; color:#0369A1; border:1px solid #BAE6FD; cursor:pointer; font-size:0.8rem; padding:6px 10px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openPastResult('${safeCourseId}', '${safeTaskId}')">上次成績</button>`
+                                ? taskBtn('上次成績', `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openPastResult('${safeCourseId}', '${safeTaskId}')`, 'ghost')
                                 : '';
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${pdfScoreHtml}
-                                    <button type="button" class="btn-action" style="background:#0369A1; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:6px 12px; border-radius:8px; font-weight:800;"
-                                        onclick="window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')">${pdfBtnLabel}</button>
+                                    ${taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')`, 'solid')}
                                     ${pdfReviewBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pdfItemN} 題</span>
                                 </div>
@@ -1910,7 +1904,7 @@ window.UIStudentTimelineTemplates = (() => {
                     if (task.due_date) {
                         if (task.due_date !== effectiveBlockDueDate) showTaskDue = true;
                     }
-                    let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${task.due_date}</span>` : '';
+                    let localDueHtml = showTaskDue ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 6px; border-radius:4px;">⏰ 期限: ${DateUtils && DateUtils.formatStampLabel ? DateUtils.formatStampLabel(task.due_date) : task.due_date}</span>` : '';
 
                     let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
@@ -1997,12 +1991,17 @@ window.UIStudentTimelineTemplates = (() => {
                                 isLateUpload = DateUtils.isPastDue(effectiveBlockDueDate);
                             }
 
-                            const countTasksRecursive = (tasksList) => {
+                            const countTasksRecursive = (tasksList, parentOpenAt) => {
                                 if (!Array.isArray(tasksList)) return;
                                 tasksList.forEach(t => {
-                                    if (t && t.type === 'group') {
-                                        countTasksRecursive(t.subTasks);
-                                    } else if (t) {
+                                    if (!t) return;
+                                    const effOpen = DateUtils && DateUtils.inheritStamp
+                                        ? DateUtils.inheritStamp(t.open_at, parentOpenAt)
+                                        : (t.open_at || parentOpenAt);
+                                    if (DateUtils && DateUtils.isOpenYet && !DateUtils.isOpenYet(effOpen)) return;
+                                    if (t.type === 'group') {
+                                        countTasksRecursive(t.subTasks, effOpen);
+                                    } else {
                                         totalTasksInDate += 1;
                                         if (safeCompletedTasks.includes(`${course.id}_${t.id}`)) {
                                             doneTasksInDate += 1;
@@ -2010,20 +2009,24 @@ window.UIStudentTimelineTemplates = (() => {
                                     }
                                 });
                             };
-                            if (course.tasks) countTasksRecursive(course.tasks);
+                            if (course.tasks) countTasksRecursive(course.tasks, course.open_at);
 
                             let cleanBlockDesc = course.description ? String(course.description).replace(/<[^>]*>?/gm, '').trim() : '';
                             let blockDescHtml = cleanBlockDesc !== '' ? `<div class="rt-normalize" style="font-size:0.95rem; color:#64748B; margin-top:8px;">${course.description}</div>` : '';
                             
                             let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (接受遲交)' : '';
-                            let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${effectiveBlockDueDate}${lateBadgeText}</span>` : '';
+                            let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${DateUtils && DateUtils.formatStampLabel ? DateUtils.formatStampLabel(effectiveBlockDueDate) : effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
-                            const renderTaskTree = (tasksList, depth = 0) => {
+                            const renderTaskTree = (tasksList, depth, parentOpenAt) => {
                                 if (!Array.isArray(tasksList)) return '';
                                 if (tasksList.length === 0) return '';
                                 
                                 return tasksList.map((task, idx) => {
                                     if (!task) return '';
+                                    const effOpen = DateUtils && DateUtils.inheritStamp
+                                        ? DateUtils.inheritStamp(task.open_at, parentOpenAt)
+                                        : (task.open_at || parentOpenAt);
+                                    if (DateUtils && DateUtils.isOpenYet && !DateUtils.isOpenYet(effOpen)) return '';
                                     const lvl = getLevelStyle(depth);
                                     
                                     let isFirstLeaf = (idx === 0);
@@ -2044,7 +2047,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         
                                         if (Array.isArray(task.subTasks) && task.subTasks.length > 0) {
                                             subTasksHtml = `<div style="display:flex; flex-direction:column;">` +
-                                                renderTaskTree(task.subTasks, depth + 1) +
+                                                renderTaskTree(task.subTasks, depth + 1, effOpen) +
                                                 `</div>`;
                                         } else {
                                             subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此作業群組尚無內容)</div>`;
@@ -2069,7 +2072,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                             let tasksHtml = '';
                             if (Array.isArray(course.tasks) && course.tasks.length > 0) {
-                                tasksHtml = renderTaskTree(course.tasks, 0);
+                                tasksHtml = renderTaskTree(course.tasks, 0, course.open_at);
                             }
                             
                             let safeCourseTitle = course.title ? course.title : '';

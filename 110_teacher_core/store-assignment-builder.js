@@ -84,7 +84,8 @@ window.BuilderStore = (() => {
 
     function syncRangePackFieldsFromDom(t, pathStr) {
         if (!t || !t.raw_data) return;
-        const isHost = t.raw_data.group_role === 'range' || t.type === 'audio_record';
+        const isHost = t.raw_data.group_role === 'range'
+            || t.type === 'audio_record' || t.type === 'exam' || t.type === 'pdf_exam';
         if (!isHost) return;
         const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
         const blockEls = panel ? panel.querySelectorAll('.range-pack-block') : [];
@@ -96,9 +97,12 @@ window.BuilderStore = (() => {
                 const comboId = comboEl ? String(comboEl.value || '').trim() : '';
                 const opt = comboEl && comboEl.options[comboEl.selectedIndex];
                 const comboLabel = (comboId && opt) ? String(opt.text || '').trim() : '';
+                const shuffleEl = document.getElementById('range-pack-shuffle-' + pathStr + '-' + bi)
+                    || (blockEl && blockEl.querySelector('.range-pack-shuffle'));
+                const shuffleOn = shuffleEl ? !!shuffleEl.checked : true;
                 const rowEls = blockEl.querySelectorAll('.range-pack-row');
                 if (!rowEls.length) {
-                    rows.push({ combo_id: comboId, combo_label: comboLabel, meta_file: '', range_type: 'page', start: '', end: '' });
+                    rows.push({ combo_id: comboId, combo_label: comboLabel, meta_file: '', range_type: 'page', start: '', end: '', major: '', secondary: '', minor: '', book_script: '', pdf_file_id: '', shuffle: shuffleOn });
                     return;
                 }
                 Array.prototype.forEach.call(rowEls, function (rowEl) {
@@ -113,6 +117,12 @@ window.BuilderStore = (() => {
                     const incEl = idx != null ? document.getElementById('range-pack-inc-' + pathStr + '-' + idx) : null;
                     const excEl = idx != null ? document.getElementById('range-pack-exc-' + pathStr + '-' + idx) : null;
                     const countEl = idx != null ? document.getElementById('range-pack-count-' + pathStr + '-' + idx) : null;
+                    const majorEl = idx != null ? document.getElementById('range-pack-book-major-' + pathStr + '-' + idx) : null;
+                    const secEl = idx != null ? document.getElementById('range-pack-book-secondary-' + pathStr + '-' + idx) : null;
+                    const minEl = idx != null ? document.getElementById('range-pack-book-minor-' + pathStr + '-' + idx) : null;
+                    const scriptEl = idx != null ? document.getElementById('range-pack-book-script-' + pathStr + '-' + idx) : null;
+                    const pdfEl = (idx != null ? document.getElementById('range-pack-pdf-file-' + pathStr + '-' + idx) : null)
+                        || (rowEl && rowEl.querySelector('.range-pack-pdf-file'));
                     rows.push({
                         combo_id: comboId,
                         combo_label: comboLabel,
@@ -124,7 +134,13 @@ window.BuilderStore = (() => {
                         difficulty: diffEl ? String(diffEl.value || '').trim() : '',
                         include_nums: incEl ? String(incEl.value || '').trim() : '',
                         exclude_nums: excEl ? String(excEl.value || '').trim() : '',
-                        count: countEl ? String(countEl.value || '').trim() : ''
+                        count: countEl ? String(countEl.value || '').trim() : '',
+                        shuffle: shuffleOn,
+                        major: majorEl ? String(majorEl.value || '').trim() : '',
+                        secondary: secEl ? String(secEl.value || '').trim() : '',
+                        minor: minEl ? String(minEl.value || '').trim() : '',
+                        book_script: scriptEl ? String(scriptEl.value || '').trim() : '',
+                        pdf_file_id: pdfEl ? String(pdfEl.value || '').trim() : ''
                     });
                 });
             });
@@ -167,6 +183,37 @@ window.BuilderStore = (() => {
         });
     }
 
+    function applyComboInheritTitleOnSync(t, pathStr, titleEl) {
+        const FT = window.FeatureTimeline;
+        if (!t || !FT || typeof FT.parentRangeGroupPathOf !== 'function') return;
+        if (!FT.parentRangeGroupPathOf(pathStr)) return;
+        const inherit = t.type === 'check' || t.type === 'link' || t.type === 'audio_record'
+            || t.type === 'exam' || t.type === 'pdf_exam' || t.type === 'drive';
+        if (!inherit) return;
+        if (typeof FT.packRangeLabelForAudio !== 'function') return;
+        const packLabel = FT.packRangeLabelForAudio(pathStr) || '';
+        if (!packLabel) return;
+        if (!t.raw_data) t.raw_data = {};
+        const titlePlain = titleEl
+            ? String(titleEl.textContent || '').trim()
+            : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+        const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
+        const prevFrom = titleEl
+            ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
+            : '';
+        const wasAuto = t.raw_data.title_auto_from_range === true;
+        const shouldAuto = !titlePlain || autoFlag === '1' || wasAuto
+            || (prevFrom && titlePlain === prevFrom);
+        if (!shouldAuto) return;
+        t.title = packLabel;
+        t.raw_data.title_auto_from_range = true;
+        if (titleEl) {
+            titleEl.textContent = packLabel;
+            titleEl.setAttribute('data-title-auto', '1');
+            titleEl.setAttribute('data-title-from-range', packLabel);
+        }
+    }
+
     function syncTasksState(tasks, parentPathArray = [], opts) {
         tasks.forEach((t, idx) => {
             const pathArray = [...parentPathArray, idx];
@@ -186,13 +233,19 @@ window.BuilderStore = (() => {
                 if (!t.raw_data) t.raw_data = {};
                 t.raw_data.title_auto_from_range = (titleEl.getAttribute('data-title-auto') === '1');
             }
+            applyComboInheritTitleOnSync(t, pathStr, titleEl);
             
             const dueEl = document.getElementById(`node-due-${pathStr}`);
             const lateModeEl = document.getElementById(`node-late-mode-${pathStr}`);
             const graceEl = document.getElementById(`node-grace-${pathStr}`);
             const penaltyEl = document.getElementById(`node-penalty-${pathStr}`);
             
-            if (dueEl) t.due_date = dueEl.value;
+            if (window.UtilsDate && typeof window.UtilsDate.readCombinedStamp === 'function') {
+                t.due_date = window.UtilsDate.readCombinedStamp(`node-due-${pathStr}`, `node-due-time-${pathStr}`);
+                t.open_at = window.UtilsDate.readCombinedStamp(`node-open-${pathStr}`, `node-open-time-${pathStr}`);
+            } else if (dueEl) {
+                t.due_date = dueEl.value;
+            }
             if (lateModeEl) t.late_mode = lateModeEl.value;
             if (graceEl) t.grace_period_hours = parseInt(graceEl.value) || 0;
             if (penaltyEl) t.penalty_percentage = parseInt(penaltyEl.value) || 0;
@@ -556,6 +609,11 @@ window.BuilderStore = (() => {
                     if (!t.raw_data.student_source_type) t.raw_data.student_source_type = 'text';
                 }
 
+                if (t.type === 'exam' || t.type === 'pdf_exam') {
+                    if (!t.raw_data) t.raw_data = {};
+                    syncRangePackFieldsFromDom(t, pathStr);
+                }
+
                 if (t.type === 'exam' && !(opts && opts.skipExam)) {
                     // 考試標題：這份考試自己的區塊＋起迄（沒有才退回同層錄音）。自動旗標跟錄音同一把。
                     const examRange = (window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function')
@@ -616,7 +674,12 @@ window.BuilderStore = (() => {
             let text = titleEl.textContent.trim();
             bState.title = (text === '') ? '' : titleEl.innerHTML;
         }
-        if (dueEl) bState.due_date = dueEl.value;
+        if (window.UtilsDate && typeof window.UtilsDate.readCombinedStamp === 'function') {
+            bState.due_date = window.UtilsDate.readCombinedStamp(`builder-due-${nid}`, `builder-due-time-${nid}`);
+            bState.open_at = window.UtilsDate.readCombinedStamp(`builder-open-${nid}`, `builder-open-time-${nid}`);
+        } else if (dueEl) {
+            bState.due_date = dueEl.value;
+        }
         if (pubEl) bState.is_published = pubEl.checked;
         if (descEl) {
             let text = descEl.textContent.trim();
@@ -646,7 +709,7 @@ window.BuilderStore = (() => {
         initNew: (classId, date, containerId) => {
             bState = { 
                 editId: null, classId, target_date: date, containerId, 
-                title: '', description: '', due_date: '', is_published: false, 
+                title: '', description: '', due_date: '', open_at: '', is_published: false, 
                 late_mode: 'infinite', late_grace: 0, late_penalty: 0, tasks: [] 
             };
         },
@@ -721,6 +784,7 @@ window.BuilderStore = (() => {
             url_text: '',
             description: '',
             due_date: '',
+            open_at: '',
             late_mode: 'infinite',
             grace_period_hours: 0,
             penalty_percentage: 0,
@@ -748,6 +812,12 @@ window.BuilderStore = (() => {
             else if (type === 'exam') raw = window.BuilderStore._defaultExamRaw();
             else if (type === 'pdf_exam') raw = window.BuilderStore._defaultPdfExamRaw();
             else if (type === 'group') raw = {};
+
+            const inheritType = type === 'check' || type === 'link' || type === 'audio_record'
+                || type === 'exam' || type === 'pdf_exam' || type === 'drive';
+            if (inheritType && window.BuilderStore._isRangeGroupNode(parentNode)) {
+                raw.title_auto_from_range = true;
+            }
 
             // 舊範圍層（沒選套餐）底下加錄音：若尚未填 material_range，帶入父層標題當提示。
             // 已開包選套餐的範圍層：組標題是套餐名，不可寫進錄音範圍。
@@ -789,6 +859,7 @@ window.BuilderStore = (() => {
                 url_text: '',
                 description: '',
                 due_date: '',
+                open_at: '',
                 late_mode: 'infinite',
                 grace_period_hours: 0,
                 penalty_percentage: 0,
@@ -889,6 +960,23 @@ window.BuilderStore = (() => {
                 if (!task.raw_data) task.raw_data = {};
                 if (task.raw_data.pdf_exam_job === undefined) task.raw_data.pdf_exam_job = null;
             }
+            const inherit = newType === 'check' || newType === 'link' || newType === 'audio_record'
+                || newType === 'exam' || newType === 'pdf_exam' || newType === 'drive';
+            if (inherit && arr.length >= 2) {
+                let walk = bState.tasks;
+                let parentNode = null;
+                for (let i = 0; i < arr.length - 1; i++) {
+                    parentNode = walk[arr[i]];
+                    if (!parentNode) break;
+                    walk = parentNode.subTasks || [];
+                }
+                if (window.BuilderStore._isRangeGroupNode(parentNode)) {
+                    if (!task.raw_data) task.raw_data = {};
+                    if (task.raw_data.title_auto_from_range !== false) {
+                        task.raw_data.title_auto_from_range = true;
+                    }
+                }
+            }
         },
         updateNodeUrl: (pathStr, val) => {
             syncState();
@@ -960,7 +1048,7 @@ window.BuilderStore = (() => {
             }
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type: 'link', title: res.name, url: res.url, url_text: '', 
-                description: '', due_date: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id,
+                description: '', due_date: '', open_at: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id,
                 raw_data: {}
             });
         },
@@ -971,6 +1059,7 @@ window.BuilderStore = (() => {
                 bState.title = cloned.title;
                 bState.description = cloned.description;
                 bState.due_date = cloned.due_date;
+                bState.open_at = cloned.open_at || '';
                 bState.is_published = false;
                 bState.tasks = cloned.tasks;
 
@@ -990,6 +1079,7 @@ window.BuilderStore = (() => {
             bState.title = historyAssignment.title; 
             bState.description = historyAssignment.description;
             bState.due_date = historyAssignment.due_date; 
+            bState.open_at = historyAssignment.open_at || '';
             bState.is_published = historyAssignment.is_published;
             
             let aRaw = historyAssignment.raw_data || {};

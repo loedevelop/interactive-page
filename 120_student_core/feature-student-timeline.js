@@ -71,6 +71,25 @@ window.FeatureStudentTimeline = (() => {
         return { userId: user.id, classId };
     }
 
+    function sanitizeUploadNamePart(s) {
+        return String(s || '')
+            .replace(/<[^>]*>?/g, '')
+            .replace(/[\\/:*?"<>|#;]/g, '_')
+            .replace(/\s+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .slice(0, 80) || '任務';
+    }
+
+    function taskTitleForUpload(taskConfig) {
+        if (!taskConfig) return '任務';
+        const title = String(taskConfig.title || '').replace(/<[^>]*>/g, '').trim();
+        if (title) return title;
+        const range = taskConfig.raw_data && taskConfig.raw_data.material_range
+            ? String(taskConfig.raw_data.material_range).trim() : '';
+        return range || '任務';
+    }
+
     function isUuid(value) {
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
     }
@@ -447,7 +466,7 @@ window.FeatureStudentTimeline = (() => {
         const classPrefix = (classId ? classId : '0000').substring(0, 4);
         const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
         const baseName = originalFileName ? originalFileName.replace(/\.[^/.]+$/, '') : 'Upload';
-        const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_${baseName}${uploadExt}`;
+        const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${sanitizeUploadNamePart(safeTitleForJS)}_${baseName}${uploadExt}`;
         const result = await window.ApiService.uploadToGAS(base64Data, finalFileName, uploadMime, targetFolderId, assignmentId, taskId, oldFileId || null);
         if (!result || !result.fileId) {
             throw new Error('上傳成功但沒有檔案 ID，無法播放。請再試一次或改用「上傳音檔」。');
@@ -768,7 +787,7 @@ window.FeatureStudentTimeline = (() => {
                     // 永遠是 undefined——不是渲染邏輯錯，是這裡的查詢從一開始就沒把這欄抓回來。
                     // 老師端 a.description（見 ui-timeline-templates.js getAssignmentBlockHtml）能顯示，
                     // 是因為老師端載入作業清單走的是別的查詢（select('*') 或含 description 的清單）。
-                    .select('id, title, description, target_date, due_date, tasks, raw_data, is_published, class_id')
+                    .select('id, title, description, target_date, due_date, open_at, tasks, raw_data, is_published, class_id')
                     .eq('class_id', classId)
                     .eq('is_published', true)
                     .is('deleted_at', null),
@@ -781,7 +800,13 @@ window.FeatureStudentTimeline = (() => {
                     .neq('status', 'incomplete')
             ]);
 
-            if (assignRes.error) throw assignRes.error;
+            if (assignRes.error) {
+                const msg = String((assignRes.error && assignRes.error.message) || assignRes.error || '');
+                if (/open_at/i.test(msg)) {
+                    throw new Error('作業資料缺少「開放日期」欄，請老師套用資料庫更新後再請學生重整。');
+                }
+                throw assignRes.error;
+            }
             if (compRes.error) throw compRes.error;
 
             // classes 精簡欄位若不存在於舊 schema，退回 select *
@@ -816,7 +841,10 @@ window.FeatureStudentTimeline = (() => {
                     : null;
 
             currentClassConfig = classData ? classData : {};
-            assignments = assignRes.data ? assignRes.data : [];
+            assignments = (assignRes.data ? assignRes.data : []).filter(function (a) {
+                return !window.UtilsDate || typeof window.UtilsDate.canStudentSeeAssignment !== 'function'
+                    || window.UtilsDate.canStudentSeeAssignment(a);
+            });
             window._studentTaskCompletions = compRes.data ? compRes.data : [];
             completedTasks = (compRes.data ? compRes.data : []).filter(function (row) {
                 const s = String((row && row.status) || '');
@@ -992,7 +1020,7 @@ window.FeatureStudentTimeline = (() => {
                     }, 150);
                     return;
                 }
-                const allowed = { progress: 1, messages: 1, resources: 1, review: 1 };
+                const allowed = { progress: 1, 'exam-grades': 1, messages: 1, resources: 1, review: 1 };
                 let savedView = '';
                 try { savedView = localStorage.getItem('studentActiveView') || ''; } catch (_e) {}
                 if (!allowed[savedView]) savedView = 'messages';
@@ -1114,6 +1142,10 @@ window.FeatureStudentTimeline = (() => {
             } else if (viewId === 'review') {
                 if (window.FeatureStudentReview && typeof window.FeatureStudentReview.render === 'function') {
                     window.FeatureStudentReview.render();
+                }
+            } else if (viewId === 'exam-grades') {
+                if (window.FeatureStudentExamGrades && typeof window.FeatureStudentExamGrades.render === 'function') {
+                    window.FeatureStudentExamGrades.render();
                 }
             }
         },
@@ -1387,9 +1419,10 @@ window.FeatureStudentTimeline = (() => {
                 const targetFolderId = resolveStudentUploadFolderId();
 
                 const classPrefix = (classId || '0000').substring(0, 4);
-                const cleanDateKey = String(dateKey || '').replace(/[\\/:*?"<>|]/g, '_');
+                const cleanDateKey = sanitizeUploadNamePart(dateKey);
                 const safeDateStr = (cleanDateKey && cleanDateKey !== '未分類日期') ? `${cleanDateKey}_` : '';
                 const lateSuffixStr = isLate ? '_late' : '';
+                const titlePart = sanitizeUploadNamePart(safeTitleForJS);
                 
                 const allImages = filesArray.every(file => file.type && file.type.startsWith('image/'));
                 const allAudio = filesArray.every(file => (file.type && file.type.startsWith('audio/')) || file.name.match(/\.(mp3|wav|m4a|ogg|aac)$/i));
@@ -1405,7 +1438,7 @@ window.FeatureStudentTimeline = (() => {
                             if (file.size > 25 * 1024 * 1024) throw new Error(`第 ${i+1} 個檔案超過 25MB`);
 
                             const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
-                            const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}_${i+1}${lateSuffixStr}${ext}`;
+                            const finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${titlePart}_${i+1}${lateSuffixStr}${ext}`;
 
                             let mime = file.type;
                             if (!mime || mime === '' || mime === 'text/plain') {
@@ -1469,12 +1502,12 @@ window.FeatureStudentTimeline = (() => {
                     }
                     base64Data = pdf.output('datauristring').split(',')[1];
                     finalMimeType = 'application/pdf';
-                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}.pdf`;
+                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${titlePart}${lateSuffixStr}.pdf`;
                 } else {
                     const file = filesArray[0];
                     if (file.size > 25 * 1024 * 1024) throw new Error('檔案超過 25MB。');
                     const ext = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
-                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${safeTitleForJS}${lateSuffixStr}${ext}`;
+                    finalFileName = `${safeDateStr}${classPrefix}_${studentUsername}_${titlePart}${lateSuffixStr}${ext}`;
                     
                     let mime = file.type;
                     if (!mime || mime === '' || mime === 'text/plain') {
@@ -1512,13 +1545,14 @@ window.FeatureStudentTimeline = (() => {
             }
         },
 
-        handleAudioFileUpload: async (inputElement, assignmentId, taskId, safeTitleForJS, statusId, isLate) => {
+        handleAudioFileUpload: async (inputElement, assignmentId, taskId, statusId) => {
             const filesArray = Array.from(inputElement.files || []);
             if (filesArray.length === 0) return;
             inputElement.value = '';
 
+            const taskConfig = findTaskConfig(assignmentId, taskId);
             const items = filesArray.map((f) => ({ blob: f, name: f.name }));
-            await uploadAudioFilesForGrading(assignmentId, taskId, safeTitleForJS, statusId, items);
+            await uploadAudioFilesForGrading(assignmentId, taskId, sanitizeUploadNamePart(taskTitleForUpload(taskConfig)), statusId, items);
         },
 
         /**
@@ -1615,7 +1649,7 @@ window.FeatureStudentTimeline = (() => {
                     const classPrefix = (classId || '0000').substring(0, 4);
                     const cleanDateKey = window.UtilsDate.getTaiwanTodayString().replace(/[\\/:*?"<>|]/g, '_');
                     const ext = file.name && file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
-                    const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${safeTitleForJS}_replace${ext}`;
+                    const finalFileName = `${cleanDateKey}_${classPrefix}_${studentUsername}_${sanitizeUploadNamePart(safeTitleForJS)}_replace${ext}`;
 
                     let mime = file.type;
                     if (!mime || mime === '' || mime === 'text/plain') {
@@ -1658,7 +1692,7 @@ window.FeatureStudentTimeline = (() => {
             }
         },
 
-        openAudioStudio: (assignmentId, taskId, safeTitleForJS, safeScriptForJS, safeMatUrl, safeMatRange) => {
+        openAudioStudio: (assignmentId, taskId) => {
             if (window.FeatureStudentAudio) {
                 
                 let foundTask = null;
@@ -1687,35 +1721,38 @@ window.FeatureStudentTimeline = (() => {
                     findTaskRecursive(parsedTasks);
                 }
 
-                let finalMaterialUrl = safeMatUrl;
-                if (finalMaterialUrl === 'undefined' || finalMaterialUrl === 'null') finalMaterialUrl = '';
-                
-                let finalMaterialRange = safeMatRange;
-                if (finalMaterialRange === 'undefined' || finalMaterialRange === 'null') finalMaterialRange = '';
+                const raw = (foundTask && foundTask.raw_data) || {};
+                let originalScript = raw.original_script ? String(raw.original_script) : '';
+                let studioScript = '';
+                if (raw.student_display_text) studioScript = String(raw.student_display_text);
+                else if (raw.student_display) studioScript = String(raw.student_display);
+                else if (raw.student_text) studioScript = String(raw.student_text);
+                else studioScript = originalScript;
+                const boothScript = studioScript || originalScript;
 
-                if (foundTask && foundTask.raw_data) {
-                    if (!finalMaterialUrl) {
-                        if (foundTask.raw_data.student_local_b64) {
-                            const b64 = foundTask.raw_data.student_local_b64;
-                            let mime = foundTask.raw_data.student_local_mime || 'application/pdf';
-                            if (mime === 'text/plain') mime = 'application/pdf'; 
-                            finalMaterialUrl = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
-                        } else {
-                            finalMaterialUrl = foundTask.raw_data.student_drive_url || foundTask.raw_data.student_local_url || foundTask.raw_data.url || '';
-                        }
-                    }
+                let displayTitle = String((foundTask && foundTask.title) || '').replace(/<[^>]*>/g, '').trim();
+                if (!displayTitle && raw.material_range) displayTitle = String(raw.material_range).trim();
+                if (!displayTitle) displayTitle = '語音錄製任務';
 
-                    if (!finalMaterialRange) {
-                        finalMaterialRange = foundTask.raw_data.student_drive_desc || foundTask.raw_data.student_local_desc || '';
-                    }
+                let finalMaterialUrl = '';
+                if (raw.student_local_b64) {
+                    const b64 = raw.student_local_b64;
+                    let mime = raw.student_local_mime || 'application/pdf';
+                    if (mime === 'text/plain') mime = 'application/pdf';
+                    finalMaterialUrl = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
+                } else {
+                    finalMaterialUrl = raw.student_drive_url || raw.student_local_url || raw.url || raw.material_url || '';
                 }
+
+                let finalMaterialRange = raw.material_range || raw.student_drive_desc || raw.student_local_desc || '';
 
                 const board = loadRecordingBoard(assignmentId, taskId, foundTask);
                 const studioPages = board.pages;
                 const submittedKeys = board.submittedKeys;
                 const initialIndex = firstUnsubmittedStudioIndex(studioPages, submittedKeys, -1);
+                const uploadTitle = sanitizeUploadNamePart(displayTitle);
 
-                window.FeatureStudentAudio.openStudio(safeTitleForJS, safeScriptForJS, finalMaterialUrl, finalMaterialRange, async (audioData) => {
+                window.FeatureStudentAudio.openStudio(displayTitle, boothScript, finalMaterialUrl, finalMaterialRange, async (audioData) => {
                     const statusId = `upload-status-${assignmentId}-${taskId}`;
                     const bin = atob(audioData.base64);
                     const bytes = new Uint8Array(bin.length);
@@ -1723,7 +1760,7 @@ window.FeatureStudentTimeline = (() => {
                     const wavBlob = new Blob([bytes], { type: audioData.mimeType || 'audio/wav' });
                     const targetUnit = audioData.page || null;
                     const result = await uploadAudioFilesForGrading(
-                        assignmentId, taskId, safeTitleForJS, statusId,
+                        assignmentId, taskId, uploadTitle, statusId,
                         [{ blob: wavBlob, name: audioData.fileName || 'recording.wav' }],
                         { targetUnit: targetUnit }
                     );

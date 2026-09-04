@@ -44,7 +44,7 @@ window.FeatureExamTemplateEditor = (function () {
     }
 
     function blankDraft() {
-        return { id: null, name: '', fields: '', fields_answer: '', quiz_prompt: '', quiz_answer: '', student_script: '_answer_combined_text', lines_per_page: DEFAULT_LINES_PER_PAGE, isExtractionRole: false };
+        return { id: null, name: '', fields: '', fields_answer: '', quiz_prompt: '', quiz_answer: '', student_script: '', lines_per_page: DEFAULT_LINES_PER_PAGE, isExtractionRole: false };
     }
 
     /** 給其他頁面（例如「🏫 班級教材組合」Step 2）呼叫的捷徑：直接開一個新增表單 */
@@ -61,7 +61,10 @@ window.FeatureExamTemplateEditor = (function () {
             fields_answer: template.fields_answer || '',
             quiz_prompt: template.quiz_prompt || '',
             quiz_answer: template.quiz_answer || '',
-            student_script: String(template.student_script || '').trim() || '_answer_combined_text',
+            student_script: (function () {
+                const s = String(template.student_script || '').trim();
+                return (!s || s === '_answer_combined_text') ? '' : s;
+            }()),
             lines_per_page: template.lines_per_page || DEFAULT_LINES_PER_PAGE,
             // 2026-08-14（老師回報）：雙用範本（同時也勾了擷取角色）的每頁行數只在「擷取範本」那一側
             // 編輯，這裡唯讀顯示同一個值，不要另外開一個輸入框（同一個欄位，不是各自存一份）。

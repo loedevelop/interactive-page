@@ -32,12 +32,18 @@ window.QuizPaperBuilder = (function () {
         return isNaN(n) ? NaN : n;
     }
 
+    /**
+     * 批改比對用。只把「同一個標點的不同字形」收成同一個字元
+     * （彎引號→直引號；省略號 …／⋯ → 三個點 ...），其餘一字不改。
+     * 大小寫、空白（含頭尾與連續空白）、其餘標點都要精準：
+     * Don't ≠ don't，Don't ≠ Don 't，Don't. ≠ Don't。
+     * 禁止壓空白、禁止去掉句尾標點、禁止轉小寫。
+     */
     function normalizeAnswer(s) {
-        return String(s || '')
+        return String(s == null ? '' : s)
             .replace(/[’‘]/g, "'")
-            .replace(/\s+/g, ' ')
-            .replace(/[.,!?;:]+$/g, '')
-            .trim();
+            .replace(/[“”]/g, '"')
+            .replace(/[\u2026\u22EF]/g, '...');
     }
 
     /**
@@ -275,7 +281,7 @@ window.QuizPaperBuilder = (function () {
      * 不影響對錯判定本身（判定是 normalizeAnswer 整串比對，不拆字）。以前用
      * `[^a-z0-9']+` 排除法分詞，會把 `/`、`-`、`(`、`)` 這些答案裡常見的合法符號也當成
      * 斷詞邊界切開，重組顯示時符號就消失了，讓老師誤以為系統連對錯都判斷錯了。
-     * 改成只依「空白」分詞，符號留在單字裡（跟 normalizeAnswer 一致：壓空白、保留大小寫）。
+     * 改成只依「空白」分詞，符號留在單字裡（跟批改一樣保留大小寫與標點；空白只拿來斷詞）。
      */
     function tokenizeWords(s) {
         const n = normalizeAnswer(s);
@@ -285,10 +291,9 @@ window.QuizPaperBuilder = (function () {
 
     /**
      * 💣 雷區（2026-08-13 老師回報「學生明明有打句號／大寫字，程式完全沒有如實記錄」）：
-     * 對錯判定／逐字對齊（alignTokens）本來就該用 normalizeAnswer 過的版本比對（壓空白、
-     * 去掉句尾標點；大小寫要一致才算對），不然句尾標點不同就會誤判成拼錯；但顯示給師生看的「你的
-     * 答案」必須「如實記錄」學生打的每一個字元——包括大小寫、句尾標點（. , ! ? 等）、
-     * 學生自己打的引號樣式，一個都不能因為「拿去比對用」的正規化而被畫面上跟著吃掉。
+     * 對錯判定／逐字對齊（alignTokens）跟批改同一把鑰匙：大小寫、標點、空白都精準。
+     * 顯示給師生看的「你的答案」必須「如實記錄」學生打的每一個字元——包括大小寫、
+     * 句尾標點（. , ! ? 等）、學生自己打的引號樣式，一個都不能被畫面吃掉。
      * 之前這裡誤把 normalizeAnswer 那套「去尾標點／轉直式引號」的正規化也複製過來，
      * 只差沒轉小寫，結果句尾的句號、學生打的引號樣式一樣被這裡吃掉——這是錯的：這份
      * 陣列唯一的功能是「跟 tokenizeWords 逐字對應、換回畫面顯示用的原始文字」，除了
@@ -850,6 +855,7 @@ window.QuizPaperBuilder = (function () {
             (sec && sec.segments ? sec.segments : []).forEach(function (seg) {
                 sections.push(Object.assign({}, seg, {
                     combination_id: seg.combination_id || sec.combination_id || '',
+                    combo_label: String(seg.combo_label || sec.combo_label || sec.comboLabel || '').trim(),
                     _section_id: sec.id || '',
                     _section_shuffle: sec.shuffle !== false,
                     _section_appeal: sec.allow_answer_appeal !== false
@@ -957,6 +963,16 @@ window.QuizPaperBuilder = (function () {
                     ' 題，已超過設定題數 ' + want + '，已自動全部納入（實際 ' + mandatoryRows.length + ' 題）');
             }
 
+            if (sec._section_shuffle === false) {
+                take.sort(function (a, b) {
+                    const na = toNum(a.item_no);
+                    const nb = toNum(b.item_no);
+                    if (isNaN(na) && isNaN(nb)) return 0;
+                    if (isNaN(na)) return 1;
+                    if (isNaN(nb)) return -1;
+                    return na - nb;
+                });
+            }
             take.forEach(function (row) {
                 const row2 = rowWithPairedWord(Object.assign({}, row, row.sheet_id ? {} : { sheet_id: sheetId }), findPairedMetaRow(metaCache, sheetId, row));
                 const item = buildItemFromRow(row2, {
@@ -974,6 +990,8 @@ window.QuizPaperBuilder = (function () {
                     layoutProfileId: (profile && profile.profile_id) || pid
                 });
                 item.section_id = sec._section_id || ('sec-' + sIdx);
+                item.combo_label = String(sec.combo_label || '').trim();
+                if (item.source) item.source.combo_label = item.combo_label;
                 item.section_shuffle = sec._section_shuffle !== false;
                 item.allow_answer_appeal = sec._section_appeal !== false;
                 item.segment_id = String(sec.sheet_id || '') + ':' + String(sec.start || '') + '-' + String(sec.end || '');
@@ -1070,19 +1088,135 @@ window.QuizPaperBuilder = (function () {
         };
     }
 
-    function gradeAnswers(paper, answersByItemId) {
+    function appealItemIdKey(a) {
+        if (!a || a.item_id == null) return '';
+        return String(a.item_id).trim();
+    }
+
+    function appealStatusRank(status) {
+        const s = String(status == null ? '' : status).trim().toLowerCase();
+        if (s === 'accepted') return 3;
+        if (s === 'rejected') return 2;
+        if (s === 'pending') return 1;
+        return 0;
+    }
+
+    /**
+     * 申訴列合併：有紀錄就留下。只能追加新題、或把 pending 改成 accepted／rejected。
+     * 禁止用空陣列／少一筆的清單蓋掉既有列；已接受的不准被舊快取降回 pending。
+     */
+    function mergeQuizAppeals(existing, incoming) {
+        const existingIsArray = Array.isArray(existing);
+        const incomingIsArray = Array.isArray(incoming);
+        const existingList = existingIsArray ? existing : [];
+        const incomingList = incomingIsArray ? incoming : [];
+        if (!existingIsArray && existing != null && existing !== '' && incomingList.length === 0) {
+            return existing;
+        }
+        if (existingList.length && incomingList.length === 0) return existingList.slice();
+        if (existingList.length === 0 && incomingList.length) return incomingList.slice();
+        if (existingList.length === 0 && incomingList.length === 0) {
+            if (existingIsArray) return existingList.slice();
+            if (incomingIsArray) return incomingList.slice();
+            return [];
+        }
+        const byId = {};
+        const order = [];
+        const noId = [];
+        function ingest(list, fromIncoming) {
+            list.forEach(function (a) {
+                if (a == null) {
+                    noId.push(a);
+                    return;
+                }
+                const id = appealItemIdKey(a);
+                if (!id) {
+                    noId.push(a);
+                    return;
+                }
+                if (!Object.prototype.hasOwnProperty.call(byId, id)) {
+                    byId[id] = a;
+                    order.push(id);
+                    return;
+                }
+                if (!fromIncoming) return;
+                const kept = byId[id];
+                const merged = Object.assign({}, kept, a);
+                if (appealStatusRank(kept && kept.status) > appealStatusRank(a.status)) {
+                    merged.status = kept.status;
+                }
+                byId[id] = merged;
+            });
+        }
+        ingest(existingList, false);
+        ingest(incomingList, true);
+        return noId.concat(order.map(function (id) { return byId[id]; }));
+    }
+
+    function readQuizAppeals(rawData) {
+        const raw = rawData && rawData.quiz_appeals;
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === 'string') {
+            try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_e) { return []; }
+        }
+        return [];
+    }
+
+    /** 寫回 completion 時：其餘欄位 incoming 覆蓋，quiz_appeals 走 mergeQuizAppeals。 */
+    function prepareCompletionRawDataForSave(prevRaw, incoming) {
+        const prev = prevRaw && typeof prevRaw === 'object' ? prevRaw : {};
+        const nextIn = incoming && typeof incoming === 'object' ? incoming : {};
+        const next = Object.assign({}, prev, nextIn);
+        next.quiz_appeals = mergeQuizAppeals(prev.quiz_appeals, nextIn.quiz_appeals);
+        return next;
+    }
+
+    function isAcceptedAppealStatus(status) {
+        return String(status == null ? '' : status).trim().toLowerCase() === 'accepted';
+    }
+
+    function acceptedAppealItemIdSet(rawData) {
+        const ids = {};
+        readQuizAppeals(rawData).forEach(function (a) {
+            if (!a || a.item_id == null || !isAcceptedAppealStatus(a.status)) return;
+            ids[String(a.item_id).trim()] = true;
+        });
+        return ids;
+    }
+
+    function gotForItem(map, itemId) {
+        if (!map) return undefined;
+        if (itemId != null && Object.prototype.hasOwnProperty.call(map, itemId)) return map[itemId];
+        const key = String(itemId == null ? '' : itemId);
+        if (Object.prototype.hasOwnProperty.call(map, key)) return map[key];
+        return undefined;
+    }
+
+    function gradeAnswers(paper, answersByItemId, rawData) {
         const items = (paper && paper.items) || [];
         const map = answersByItemId || {};
+        const acceptedAppealIds = acceptedAppealItemIdSet(rawData);
         let correct = 0;
         const details = items.map(function (it) {
-            const got = map[it.item_id];
+            const got = gotForItem(map, it && it.item_id);
             const isSubAnswer = Array.isArray(it.sub_answers) && it.sub_answers.length > 1;
             const subGrade = isSubAnswer ? gradeSubAnswerItem(it, got) : null;
-            const ok = isSubAnswer ? subGrade.ok : (function () {
-                const gotN = normalizeAnswer(got);
-                const okList = [it.answer_en].concat(it.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
+            const matchOk = isSubAnswer ? subGrade.ok : (function () {
+                const gotN = normalizeAnswer(plainQuizAnswer(got, it));
+                const appealAnswers = [];
+                readQuizAppeals(rawData).forEach(function (a) {
+                    if (!a || !isAcceptedAppealStatus(a.status) || a.item_id == null) return;
+                    if (String(a.item_id).trim() !== String((it && it.item_id) != null ? it.item_id : '').trim()) return;
+                    appealAnswers.push(a.answer);
+                });
+                const okList = [it.answer_en].concat(it.accepted_answers || []).concat(appealAnswers)
+                    .map(normalizeAnswer).filter(Boolean);
                 return isAcceptableAnswer(gotN, okList);
             })();
+            const ok = matchOk || !!acceptedAppealIds[String((it && it.item_id) != null ? it.item_id : '').trim()];
             if (ok) correct += 1;
             const expected = isSubAnswer ? subGrade.expected : (it.answer_en || '');
             const answer = isSubAnswer ? subGrade.answer : (got == null ? '' : String(got));
@@ -1111,6 +1245,15 @@ window.QuizPaperBuilder = (function () {
             details: details,
             wrong_items: wrongItems
         };
+    }
+
+    /**
+     * 一份學生作答的對錯：只走 gradeAnswers。有 raw_data.quiz_appeals 且已接受 → 這題算對。
+     * 老師批改、學生檢討、重批都走這條，不准各畫面自己再判一次申訴。
+     */
+    function gradeCompletion(paper, rawData) {
+        const src = rawData || {};
+        return gradeAnswers(paper, src.quiz_answers || {}, src);
     }
 
     function escHtml(s) {
@@ -1331,7 +1474,7 @@ window.QuizPaperBuilder = (function () {
 
     /**
      * 維持現有題目與順序，只依目前試卷範本公式重算每題標準答案。
-     * 不抽新題、不改 item_id。給「重新批改」用，不要跟「產生試卷」混在一起。
+     * 不抽新題、不改 item_id。給出題區「重新產生答案」用，不要跟「產生試卷」混在一起。
      */
     async function refreshPaperAnswersKeepItems(args) {
         const paper = args && args.paper;
@@ -1402,14 +1545,52 @@ window.QuizPaperBuilder = (function () {
                 skipStoredCombined: true
             });
             it.answer_en = rebuilt.answer_en;
-            it.accepted_answers = rebuilt.accepted_answers;
-            it.sub_answers = rebuilt.sub_answers;
+            // 範本重算只更新公式產出的標準答案；老師／申訴已接受的其他寫法必須留下。
+            it.accepted_answers = mergeAcceptedAnswers(rebuilt.accepted_answers, it.accepted_answers);
+            if (Array.isArray(rebuilt.sub_answers) && rebuilt.sub_answers.length) {
+                const prevByKey = {};
+                (it.sub_answers || []).forEach(function (sa) {
+                    if (sa && sa.key) prevByKey[sa.key] = sa;
+                });
+                it.sub_answers = rebuilt.sub_answers.map(function (sa) {
+                    const prev = prevByKey[sa.key];
+                    if (!prev) return sa;
+                    return Object.assign({}, sa, {
+                        accepted_answers: mergeAcceptedAnswers(sa.accepted_answers, prev.accepted_answers)
+                    });
+                });
+            } else {
+                it.sub_answers = rebuilt.sub_answers;
+            }
             if (!it.source) it.source = {};
             it.source.info_label = (rebuilt.source && rebuilt.source.info_label) || '';
             updated += 1;
         }
         paper.answers_refreshed_at = new Date().toISOString();
         return { paper: paper, updated: updated, missing: missing };
+    }
+
+    /**
+     * 老師已接受的申訴＝那一題的寫法算對。寫回卷面 accepted_answers，之後全班同寫法也算對。
+     * 回傳是否有新增（已在名單裡＝沒變）。
+     */
+    function applyAcceptedAppealsToPaper(paper, completions) {
+        if (!paper || !Array.isArray(paper.items)) return false;
+        const byId = {};
+        paper.items.forEach(function (it) {
+            if (it && it.item_id != null) byId[String(it.item_id)] = it;
+        });
+        let changed = false;
+        (completions || []).forEach(function (c) {
+            const list = readQuizAppeals(c && c.raw_data);
+            list.forEach(function (a) {
+                if (!a || !isAcceptedAppealStatus(a.status) || a.item_id == null) return;
+                const item = byId[String(a.item_id).trim()];
+                if (!item) return;
+                if (addAcceptedAnswer(item, a.answer)) changed = true;
+            });
+        });
+        return changed;
     }
 
     /**
@@ -1421,7 +1602,7 @@ window.QuizPaperBuilder = (function () {
     function regradeCompletionRawData(paper, rawData) {
         const src = rawData || {};
         const answers = src.quiz_answers || {};
-        const result = gradeAnswers(paper, answers);
+        const result = gradeAnswers(paper, answers, src);
         const prevResult = src.quiz_result || null;
         const prevScore = prevResult ? prevResult.score : null;
         const prevCorrect = prevResult ? prevResult.correct : null;
@@ -1462,6 +1643,7 @@ window.QuizPaperBuilder = (function () {
         });
 
         const nextRawData = Object.assign({}, src);
+        nextRawData.quiz_appeals = mergeQuizAppeals(src.quiz_appeals, src.quiz_appeals);
         nextRawData.quiz_result = Object.assign({}, prevResult || {}, {
             score: result.score,
             correct: result.correct,
@@ -1612,6 +1794,7 @@ window.QuizPaperBuilder = (function () {
         buildQuizPaper: buildQuizPaper,
         filterRowsForSection: filterRowsForSection,
         gradeAnswers: gradeAnswers,
+        gradeCompletion: gradeCompletion,
         normalizeAnswer: normalizeAnswer,
         plainQuizAnswer: plainQuizAnswer,
         tokenizeWords: tokenizeWords,
@@ -1628,6 +1811,10 @@ window.QuizPaperBuilder = (function () {
         addAcceptedAnswer: addAcceptedAnswer,
         removeAcceptedAnswer: removeAcceptedAnswer,
         setPrimaryAnswer: setPrimaryAnswer,
+        applyAcceptedAppealsToPaper: applyAcceptedAppealsToPaper,
+        mergeQuizAppeals: mergeQuizAppeals,
+        prepareCompletionRawDataForSave: prepareCompletionRawDataForSave,
+        readQuizAppeals: readQuizAppeals,
         regradeCompletionRawData: regradeCompletionRawData,
         EQUIVALENCE_PAIRS: EQUIVALENCE_PAIRS,
         expandWithEquivalents: expandWithEquivalents,

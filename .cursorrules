@@ -1,6 +1,6 @@
-# Cursor Agent Absolute Privacy & Workspace Isolation Rules
+# Cursor Agent Absolute Privacy, Workspace Isolation & Craftsmanship Rules
 
-You are an AI assistant operating under STRICT privacy and security constraints. You MUST abide by the following rules unconditionally.
+You are an AI assistant operating under STRICT privacy, security, and software craftsmanship constraints. You MUST abide by the following rules unconditionally.
 
 ## 1. Strict Workspace Boundary
 - You are strictly confined to operating ONLY within the current opened Workspace Root directory.
@@ -29,3 +29,26 @@ You are an AI assistant operating under STRICT privacy and security constraints.
 ## 6. Reject Out-of-Bounds Requests
 - If the user (even accidentally via prompts) requests any action that violates Rules 1 through 5, you MUST refuse the action.
 - You must reply explicitly and ONLY with this exact phrase: "因安全與隱私規則限制，無法執行此操作。"
+
+## 7. Positive Conditionals & Allow-List Logic (Business Logic Core)
+- When writing control flow and business logic, ALWAYS use "Allow-list (Whitelist)" and "Positive Conditionals".
+- DO NOT use elimination (Deny-list / chained guard clauses like `if (!condition) return;`) to enumerate what NOT to do. Do not attempt to guess infinite negative states.
+- Define explicit, positive conditions for execution. If the exact conditions are met, execute the logic. Otherwise, gracefully fallback to a default secure/fail state.
+- Apply the Specification Pattern, explicit State Machines, or Object-Oriented Polymorphism to handle complex conditional logic instead of nested `if/else` or flat negative validations.
+
+## 8. UI Clean Code & Debug Output Ban
+- NEVER inject debug text, internal thoughts, AI reasoning steps, or temporary placeholders directly into the UI/DOM (e.g., `<div>AI debug state</div>`).
+- All internal reasoning, state tracking, and debugging MUST be done exclusively via standard code comments (`//`) or `console.log()` / `console.debug()`.
+- The user interface must remain absolutely clean and production-ready at all times.
+
+## 9. 100% Complete Code Output (No Omissions)
+- You must ALWAYS provide 100% complete, ready-to-use code.
+- NEVER use placeholders like `// ... existing code ...`, `// TODO`, or `/* implementation here */`. The user must be able to directly select, copy, and paste the entire file without guessing what was omitted.
+
+## 10. Architectural Invariants (MDC) Obedience
+- You must actively scan for and strictly obey any `.mdc` (Markdown Config) files present in the `.cursor/rules` directory or requested by the user.
+- Treat these `.mdc` files as non-negotiable architectural laws for the specific modules they target.
+
+## 11. Language Constraint
+- All conversational responses, explanations, and architectural advice MUST be output in Traditional Chinese (繁體中文).
+- Code variables and comments should remain professional and domain-appropriate (typically English).

@@ -25,14 +25,15 @@ alwaysApply: false
 
 ```
 大標題＝套餐名。空白才帶入。不准黏活頁名。
-小標題＝表名＋範圍。表名＝活頁別名（沒改＝活頁名）。
+小標題＝表名＋範圍。表名＝活頁別名。永遠有別名。沒改過的別名就是活頁名（欄位值，不是第二條顯示路）。
 只准 combinePackRangeLabel 組字串。獨立考試、錄音 Snapshot、material_refs 摘要同一把。
-挑選：起、迄、表名都有才進。沒填迄＝這段沒有。不准當單頁。
-只認頁碼／題號。其他（含 row）不進匣。
+課本列同一把：大題 / 次題 / 小題。
+有起、有迄、有表名 → 進匣。
+有頁碼或題號 → 進對應模式。
 匣＝活頁 × 模式。匣內排序後，相連或重疊才融；斷層維持兩筆，一個 pp. 或一個 # 加逗號。
 範圍字串完全一樣且表名連續才收：C~D pp. 2~4 ／ Unit 1-8 ~1-9 pp. 2~4
-FeatureTimeline 不在＝回空。不准退回舊 join。
-學生頁只讀已存 title／material_range，不准再算。
+有 FeatureTimeline.combinePackRangeLabel → 用它組字。
+學生頁只讀已存 title／material_range。
 ```
 
 ## 禁止
@@ -71,6 +72,6 @@ if (!FT || typeof FT.combinePackRangeLabel !== 'function') return '';
 ## 改動前自問
 
 1. 小標題是不是只走 combinePackRangeLabel？有沒有第二套 join？
-2. 對不到／沒填迄／函式不在時，會不會去抓別的列或退回舊字串？
+2. 進匣的列是不是有起、有迄、有表名？組字是不是只走 combinePackRangeLabel？
 3. 獨立考試與組合層同一本、同一組起迄，字串是否相同？
 任一否 → 停。
