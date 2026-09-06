@@ -168,12 +168,34 @@ window.SheetRangeBounds = (function () {
             .replace(/"/g, '&quot;');
     }
 
+    function clampCount(countRaw, avail) {
+        const raw = String(countRaw == null ? '' : countRaw).trim();
+        if (raw === '') return { count: '', overflow: false };
+        if (avail == null || avail === '') return { count: raw, overflow: false };
+        const c = Number(raw);
+        const a = Number(avail);
+        if (isNaN(c)) return { count: raw, overflow: false };
+        if (isNaN(a) || a < 0) return { count: raw, overflow: false };
+        if (c > a) {
+            return { count: String(a), overflow: true, countOverflow: true, available: a, requested: c };
+        }
+        return { count: String(c), overflow: false };
+    }
+
     function notifyOverflow(notes) {
-        const list = (notes || []).filter(function (n) { return n && n.overflow; });
+        const list = (notes || []).filter(function (n) { return n && (n.overflow || n.countOverflow); });
         if (!list.length) return Promise.resolve();
         if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return Promise.resolve();
         const lines = list.map(function (n) {
             const name = n.label || '活頁';
+            if (n.countOverflow) {
+                return name
+                    + '：題數不能超過可用題數（'
+                    + n.available
+                    + '）。已改為 '
+                    + n.count
+                    + '。';
+            }
             return name
                 + '：超出範圍。最後一頁第 '
                 + n.lastPage
@@ -300,6 +322,7 @@ window.SheetRangeBounds = (function () {
         bounds: bounds,
         countAvailable: countAvailable,
         clampRange: clampRange,
+        clampCount: clampCount,
         notifyOverflow: notifyOverflow,
         totalFromMetaRows: totalFromMetaRows,
         examLppForCombo: examLppForCombo,

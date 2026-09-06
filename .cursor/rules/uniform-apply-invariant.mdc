@@ -40,7 +40,7 @@ alwaysApply: true
 套餐＝活頁 + 擷取範本 + 試卷範本（Excel／JSON 這條，未改）。三個都對到才是這一份。同一本活頁可有多份套餐（試卷範本不同＝不同套餐）。套餐名＝material_combinations.label，只走 comboLabelText。舊句「資料夾＋Excel＋擷取」已作廢，不准再摺疊出作業下拉。改名稱＝改這筆 label，不准新建。
 PDF 來源跟 Excel／JSON 同一層，但套餐鑰匙仍是「這份來源＋這份試卷範本」，不是「都是 PDF 就同一類」。PDF 試卷範本兩種：左到右、上到下（預設）；老師定位。試卷範本不同＝不同套餐。群組＝套用時勾選（Excel／JSON 在處理時勾；PDF 在套用試卷範本時勾）。沒勾＝false，不准猜。長篇：docs/組合作業範圍與套餐.md。
 教材區 PDF 套用／貼 txt 走獨立模組（feature-material-pdf-exam.js），產生在同一頁獨立區塊，不准寫進程式當 Excel 套用列。不准改 Excel／JSON 套餐程式（ensureCombination／pickComboForCard／combo_statistics 畫卡）。教材區窗口只列已套用的 PDF 卡。
-目錄套餐跟 Excel/JSON／PDF 同階層、在教材資料夾、有卡。舊套餐由夾裡的檔產生；目錄由老師出作業提供範圍、系統收集成書。不准拿夾裡 text／PDF 自動產出這張卡。產生在同一頁另一獨立區塊（選夾後＋新增）。獨立模組 feature-material-book.js，不准改 Excel／JSON 畫卡。出作業下拉同一開口 listAssignedCombosForHomework，只列該班已勾。範圍三層大題／次題／小題都提供，這次填到哪由老師定。有文稿才寫 txt 進該教材資料夾。選目錄不准走 Snapshot／.script.txt 假裝有 meta。
+目錄套餐跟 Excel/JSON／PDF 同階層、在教材資料夾、有卡。舊套餐由夾裡的檔產生；目錄由老師出作業提供範圍、系統收集成書。不准拿夾裡 text／PDF 自動產出這張卡。產生在同一頁另一獨立區塊（選夾後＋新增）。獨立模組 feature-material-book.js，不准改 Excel／JSON 畫卡。出作業下拉同一開口 listAssignedCombosForHomework，只列該班已勾。範圍六層主單元／次單元／標題／大題／次題／小題都提供，這次填到哪由老師定。有目錄文稿才寫 txt 進該教材資料夾。目錄文稿與這次錄音口說答案是兩把鑰匙，不准互抄。選目錄不准走 Snapshot／.script.txt 假裝有 meta。
 只有擷取範本或來源檔不同，或沒勾的另一本活頁，才多一張卡
 活頁名可在同一資料夾重複；不可重複＝資料夾＋活頁名＋擷取範本
 群組開關跟活頁列走（material_sheets.is_group）；一次套用寫進這次勾的每一本。勾了＝教材區／改檔名共一顆標籤。出作業下拉也是這一顆；範圍表仍是一次一本活頁一列，各自選頁。不准因 is_group 把全部活頁塞進同一列。

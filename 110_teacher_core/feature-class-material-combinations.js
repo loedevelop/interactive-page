@@ -1106,8 +1106,9 @@ window.FeatureClassMaterialCombinations = (function () {
 
     // 【死命註解｜永遠禁止刪除｜2026-08-27 老師命令綁死】
     // 開口仍是這一個函式。三種套餐同層：Excel/JSON／PDF／目錄都走 MaterialComboStrategies。
-    // Excel／JSON 只讀這個班的 statistics：fetch_class_combo_stats。文字＝combo_label。
+    // 使用＝同一清單。Excel／JSON 只讀這個班的 statistics：fetch_class_combo_stats。文字＝combo_label。
     // PDF／目錄走獨立表，不准寫進 combo_statistics。
+    // 就緒閘門＝這個班 Excel 統計已到 且 三種策略都載完。不准 Excel 先到就當整份清單完成，也不准只等其中一種。
     function listAssignedSheetCombosForHomework(classId) {
         ensureComboStatsLoading(classId);
         return (_assignedCombosForHomeworkAllByClass[String(classId || '')] || []).slice();
@@ -1222,6 +1223,7 @@ window.FeatureClassMaterialCombinations = (function () {
         _materialZoneRowsCache = null;
         _homeworkZoneRowsCache = null;
         _homeworkCardsReadyByClass = {};
+        _homeworkGateKeyByClass = {};
         _teacherComboStatsRows = null;
         _teacherComboStatsLoad = null;
     }
@@ -1553,6 +1555,7 @@ window.FeatureClassMaterialCombinations = (function () {
         _materialZoneRowsCache = null;
         _homeworkZoneRowsCache = null;
         _homeworkCardsReadyByClass = {};
+        _homeworkGateKeyByClass = {};
         _teacherComboStatsRows = null;
         _teacherComboStatsLoad = null;
     }
@@ -2050,6 +2053,19 @@ window.FeatureClassMaterialCombinations = (function () {
         return list;
     }
 
+    /** 教材區窗口＝三種套餐任一有卡的夾 ∪ Drive 有檔的夾。不准 Excel 統計當宿主再旁支 append 目錄。 */
+    function comboStrategyFolderNames() {
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.folderNames === 'function') {
+            return window.MaterialComboStrategies.folderNames() || [];
+        }
+        return [];
+    }
+
+    function assembleMaterialZoneRows(statRows, driveFolders) {
+        let rows = appendUnusedDriveFolderRows(buildMaterialZoneRowsFromStats(statRows), driveFolders);
+        return appendUnusedDriveFolderRows(rows, comboStrategyFolderNames());
+    }
+
     function exactDriveMetasForTemplate(driveNames, templateName) {
         const token = templateFileToken(templateName);
         if (!token) return [];
@@ -2361,11 +2377,16 @@ window.FeatureClassMaterialCombinations = (function () {
     async function listMaterialZoneRows() {
         const userId = await getCurrentUserId();
         if (!userId) return [];
-        if (_materialZoneRowsCache) return _materialZoneRowsCache;
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.ensureLoaded === 'function') {
+            await window.MaterialComboStrategies.ensureLoaded();
+        }
+        const ready = comboStrategiesReady();
+        if (_materialZoneRowsCache && ready) return _materialZoneRowsCache;
         const statRows = await loadTeacherComboStatistics(false);
         const driveFolders = await teacherDriveFolderNames();
-        _materialZoneRowsCache = appendUnusedDriveFolderRows(buildMaterialZoneRowsFromStats(statRows), driveFolders);
-        return _materialZoneRowsCache;
+        const rows = assembleMaterialZoneRows(statRows, driveFolders);
+        if (ready) _materialZoneRowsCache = rows;
+        return rows;
     }
 
     async function updateMaterialZoneLabel(row, label) {
@@ -2838,7 +2859,7 @@ window.FeatureClassMaterialCombinations = (function () {
         return (
             '<div class="mz-card" data-key="' + esc(row.key) + '">'
             + '<label style="display:block; font-weight:800; color:#92400E; margin-bottom:2px;">Excel/JSON 套餐（出作業下拉會顯示這個）</label>'
-            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="Excel/JSON 套餐" style="font-weight:800; color:#78350F; margin-bottom:8px;">'
+            + '<input type="text" class="mz-label" data-key="' + esc(row.key) + '" value="' + esc(displayName) + '" placeholder="例如 GEPT-2 整句翻譯" title="Excel/JSON 套餐" style="width:100%; box-sizing:border-box; font-weight:800; color:#78350F; margin-bottom:8px; padding:8px 10px; font-size:1rem;">'
             + sourceHtml
             + roleLineHtml
             + '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #F59E0B;">'
@@ -2848,10 +2869,15 @@ window.FeatureClassMaterialCombinations = (function () {
             + '</div>'
             + '<div class="mz-exam-box">' + examHtml + '</div>'
             + '</div>'
-            + '<div style="margin-top:10px;">'
-            + '<div style="font-weight:800; color:#15803D; margin-bottom:4px;">採用班級</div>'
-            + '<div class="mz-class-box">' + classHtml + '</div>'
-            + '</div>'
+            + '<details class="mz-class-details" style="margin-top:10px;">'
+            + '<summary style="font-weight:800; color:#15803D; cursor:pointer;">' + (function () {
+                const names = (row.classIds || []).map(classNameById).filter(Boolean);
+                if (!names.length) return '採用班級　尚未勾選';
+                if (names.length <= 2) return '採用班級　' + names.join('、');
+                return '採用班級　' + names.slice(0, 2).join('、') + ' 等 ' + names.length + ' 班';
+            })() + '</summary>'
+            + '<div class="mz-class-box" style="margin-top:6px;">' + classHtml + '</div>'
+            + '</details>'
             + '<div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">'
             + '<button type="button" class="mz-save btn btn-primary" data-key="' + esc(row.key) + '" style="border-radius:6px; font-weight:800; cursor:pointer;">儲存設定</button>'
             + '<button type="button" class="mz-rename-files btn" data-key="' + esc(row.key) + '" style="border-radius:6px; border:1px solid #B45309; background:#FFFBEB; color:#92400E; font-weight:800; cursor:pointer;">改活頁／檔名</button>'
@@ -3905,8 +3931,8 @@ window.FeatureClassMaterialCombinations = (function () {
     }
 
     function paintMaterialZone(wrap, rows) {
-        function paint() {
-            const groups = groupMaterialZoneRows(rows);
+        function paint(useRows) {
+            const groups = groupMaterialZoneRows(useRows);
             const list = groups.length
                 ? groups.map(renderMaterialZoneGroupHtml).join('')
                 : '<div style="color:#94A3B8; font-size:0.8rem; padding:8px 0;">目前還沒有教材實例。Excel/JSON 請到上面「套用／設計範本」；PDF、目錄請用各自獨立區塊產生。這裡只顯示已有的卡。</div>';
@@ -3917,23 +3943,34 @@ window.FeatureClassMaterialCombinations = (function () {
                 + list
                 + '</div>'
             );
-            bindMaterialZoneRename(wrap, rows || []);
+            bindMaterialZoneRename(wrap, useRows || []);
             if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.bind === 'function') {
                 window.MaterialComboStrategies.bind(wrap);
             }
             refreshCreatePanels();
         }
-        const pending = [];
-        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.ensureLoaded === 'function') {
-            pending.push(window.MaterialComboStrategies.ensureLoaded().catch(function (err) {
-                console.error('[FeatureClassMaterialCombinations] 套餐策略載入失敗', err);
-            }));
+        let tries = 0;
+        function waitThenPaint() {
+            const pending = (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.ensureLoaded === 'function')
+                ? window.MaterialComboStrategies.ensureLoaded()
+                : Promise.resolve();
+            pending.then(function () {
+                if (!comboStrategiesReady() && tries < 25) {
+                    tries += 1;
+                    setTimeout(waitThenPaint, 400);
+                    return;
+                }
+                listMaterialZoneRows().then(paint).catch(function () { paint(rows); });
+            }).catch(function () {
+                tries += 1;
+                if (tries < 25) {
+                    setTimeout(waitThenPaint, 400);
+                    return;
+                }
+                listMaterialZoneRows().then(paint).catch(function () { paint(rows); });
+            });
         }
-        if (pending.length) {
-            Promise.all(pending).then(paint);
-            return;
-        }
-        paint();
+        waitThenPaint();
     }
 
     function renderMaterialZone() {
@@ -3945,6 +3982,7 @@ window.FeatureClassMaterialCombinations = (function () {
         }).catch(function (err) {
             console.error('[FeatureClassMaterialCombinations] 教材區載入失敗', err);
             wrap.innerHTML = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 教材區載入失敗：' + esc(err.message || err) + '</div>';
+            refreshCreatePanels();
         });
     }
 
@@ -3955,10 +3993,12 @@ window.FeatureClassMaterialCombinations = (function () {
         if (wrap) wrap.innerHTML = '<div style="padding:20px; text-align:center; color:var(--primary); font-weight:800;">⏳ 載入班級教材組合…</div>';
         if (mzWrap) mzWrap.innerHTML = '<div style="padding:20px; text-align:center; color:#0F766E; font-weight:800;">⏳ 載入教材區…</div>';
         (async function () {
+            refreshCreatePanels();
             const userId = await getCurrentUserId();
             if (!userId) {
                 if (wrap) wrap.innerHTML = '';
                 if (mzWrap) mzWrap.innerHTML = '';
+                refreshCreatePanels();
                 return;
             }
             const examTemplatesPromise = (window.FeatureTemplateLibrary && typeof window.FeatureTemplateLibrary.fetchTemplates === 'function')
@@ -3969,8 +4009,9 @@ window.FeatureClassMaterialCombinations = (function () {
                 examTemplatesPromise
             ]);
             const driveFolders = await teacherDriveFolderNames();
-            _materialZoneRowsCache = appendUnusedDriveFolderRows(buildMaterialZoneRowsFromStats(statRows), driveFolders);
-            if (mzWrap) paintMaterialZone(mzWrap, _materialZoneRowsCache);
+            const assembled = assembleMaterialZoneRows(statRows, driveFolders);
+            _materialZoneRowsCache = comboStrategiesReady() ? assembled : null;
+            if (mzWrap) paintMaterialZone(mzWrap, assembled);
             if (wrap) paint(wrap, statRows);
             refreshCreatePanels();
         })().catch(function (err) {
@@ -3978,6 +4019,7 @@ window.FeatureClassMaterialCombinations = (function () {
             const msg = '<div style="padding:16px; color:#EF4444; font-weight:800;">❌ 載入失敗：' + esc(err.message || err) + '</div>';
             if (wrap) wrap.innerHTML = msg;
             if (mzWrap) mzWrap.innerHTML = msg;
+            refreshCreatePanels();
         });
     }
 
@@ -4423,6 +4465,10 @@ window.FeatureClassMaterialCombinations = (function () {
 
     let _comboStatsByClass = {};
     const _comboStatsLoad = {};
+    let _homeworkGateKeyByClass = {};
+    const _strategyRetryTimer = {};
+    const _strategyRetryCount = {};
+    const _comboEnsureInflight = {};
     let _sheetPageCountsByClass = {};
 
     function comboStatsHintKey(hint) {
@@ -5095,25 +5141,50 @@ window.FeatureClassMaterialCombinations = (function () {
         return _comboStatsLoad[cid];
     }
 
+    function comboStrategiesReady() {
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.isReady === 'function') {
+            return window.MaterialComboStrategies.isReady();
+        }
+        return true;
+    }
+
     function ensureComboStatsLoading(classId) {
         const cid = String(classId || '');
         if (!cid) return;
-        if (_comboStatsByClass[cid] || _comboStatsLoad[cid]) return;
-        loadComboStatsForClass(cid, false).then(function () {
-            const after = function () {
-                if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-                    window.FeatureTimeline.refreshBuilder({ skipSync: true });
-                }
-                if (window.FeatureExamJob && typeof window.FeatureExamJob.refreshExamBuilder === 'function') {
-                    window.FeatureExamJob.refreshExamBuilder();
-                }
-            };
-            if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.ensureLoaded === 'function') {
-                window.FeatureMaterialBook.ensureLoaded().then(after).catch(after);
+        if (_comboEnsureInflight[cid]) return;
+        const statsP = (_comboStatsByClass[cid] || _comboStatsLoad[cid])
+            ? (_comboStatsLoad[cid] || Promise.resolve())
+            : loadComboStatsForClass(cid, false);
+        const stratP = (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.ensureLoaded === 'function')
+            ? window.MaterialComboStrategies.ensureLoaded()
+            : Promise.resolve();
+        _comboEnsureInflight[cid] = true;
+        Promise.all([statsP, stratP]).then(function () {
+            _comboEnsureInflight[cid] = false;
+            if (!_comboStatsByClass[cid]) return;
+            if (!comboStrategiesReady()) {
+                _strategyRetryCount[cid] = (_strategyRetryCount[cid] || 0) + 1;
+                if (_strategyRetryCount[cid] > 40) return;
+                if (_strategyRetryTimer[cid]) return;
+                _strategyRetryTimer[cid] = setTimeout(function () {
+                    delete _strategyRetryTimer[cid];
+                    ensureComboStatsLoading(cid);
+                }, 400);
                 return;
             }
-            after();
-        }).catch(function () {});
+            _strategyRetryCount[cid] = 0;
+            if (_homeworkGateKeyByClass[cid] === 'ready') return;
+            _homeworkGateKeyByClass[cid] = 'ready';
+            const bState = window.BuilderStore && typeof window.BuilderStore.getState === 'function'
+                ? window.BuilderStore.getState()
+                : null;
+            if (!bState || !bState.containerId || !document.getElementById(bState.containerId)) return;
+            if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+                window.FeatureTimeline.refreshBuilder({ skipSync: true });
+            }
+        }).catch(function () {
+            _comboEnsureInflight[cid] = false;
+        });
     }
 
     async function prefetchForClass(classId) {
@@ -5551,7 +5622,7 @@ window.FeatureClassMaterialCombinations = (function () {
             return !!_comboStatsByClass[String(classId || '')];
         },
         isHomeworkCombosReady: function (classId) {
-            return !!_comboStatsByClass[String(classId || '')];
+            return !!_comboStatsByClass[String(classId || '')] && comboStrategiesReady();
         }
     };
 })();

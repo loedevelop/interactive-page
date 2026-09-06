@@ -29,6 +29,7 @@ SheetRangeBounds.countAvailable
 ```
 
 超出這本最後一頁／最後題號：`ModalOverlay` 告知，並自動改起迄。  
+題數超過可用題：`ModalOverlay` 告知，並改成可用題數。不准留下超過的數字。  
 起也超出：頁碼→起迄都改最後一頁；題號→起改最後一頁第一題、迄改最後題號。
 
 每頁行數必須帶入這一列考卷範本的 `lines_per_page`，不可用預設 10 蓋過範本。  
@@ -65,6 +66,7 @@ if (section.available_count > 0) return section.available_count
 不要寫「需Snapshot」，不要用複習目錄套組統計粉飾
 每頁行數 = 考卷範本.lines_per_page（區段沒手動改過時）
 超出 → popup 並改起迄，不准顯示 0 假裝沒題
+題數超過可用題 → popup 並改成可用題數，不准留下超過的數字
 ```
 
 ## 不變量

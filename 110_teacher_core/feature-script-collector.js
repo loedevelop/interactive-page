@@ -104,6 +104,9 @@ window.FeatureScriptCollector = (function () {
         seg = seg || {};
         return {
             label: seg.label || '',
+            primary_unit: seg.primary_unit || seg.primaryUnit || '',
+            secondary_unit: seg.secondary_unit || seg.secondaryUnit || '',
+            heading: seg.heading || seg.range_heading || '',
             unit: seg.unit || '',
             section: seg.section || '',
             subsection: seg.subsection || '',
@@ -417,6 +420,9 @@ window.FeatureScriptCollector = (function () {
         const segs = Array.isArray(card && card.segments) ? card.segments : [];
         const s = segs[0] || {};
         return {
+            primary: String(s.primary_unit || '').trim(),
+            secondaryUnit: String(s.secondary_unit || '').trim(),
+            heading: String(s.heading || '').trim(),
             unit: String(s.unit || '').trim(),
             section: String(s.section || '').trim(),
             sub: String(s.subsection || '').trim()
@@ -429,6 +435,15 @@ window.FeatureScriptCollector = (function () {
         cards.sort(function (a, b) {
             const ka = cardInnerKeys(a);
             const kb = cardInnerKeys(b);
+            const pa = ka.primary || '\uffff';
+            const pb = kb.primary || '\uffff';
+            if (pa !== pb) return pa.localeCompare(pb, 'zh-Hant');
+            const sua = ka.secondaryUnit || '\uffff';
+            const sub = kb.secondaryUnit || '\uffff';
+            if (sua !== sub) return sua.localeCompare(sub, 'zh-Hant');
+            const ha = ka.heading || '\uffff';
+            const hb = kb.heading || '\uffff';
+            if (ha !== hb) return ha.localeCompare(hb, 'zh-Hant');
             const ua = ka.unit || '\uffff';
             const ub = kb.unit || '\uffff';
             if (ua !== ub) return ua.localeCompare(ub, 'zh-Hant');
@@ -445,30 +460,60 @@ window.FeatureScriptCollector = (function () {
             return db.localeCompare(da);
         });
         let html = '';
+        let lastP = null;
+        let lastSu = null;
+        let lastH = null;
         let lastU = null;
         let lastS = null;
         let lastSub = null;
         let lastD = null;
         cards.forEach(function (c) {
             const k = cardInnerKeys(c);
+            if (k.primary !== lastP) {
+                lastP = k.primary;
+                lastSu = null;
+                lastH = null;
+                lastU = null;
+                lastS = null;
+                lastSub = null;
+                lastD = null;
+                html += '<div style="font-size:0.86rem; font-weight:900; color:#1E3A8A; margin:12px 0 6px;">📘 ' + esc(k.primary ? ('主單元 ' + k.primary) : '未填主單元') + '</div>';
+            }
+            if (k.secondaryUnit !== lastSu) {
+                lastSu = k.secondaryUnit;
+                lastH = null;
+                lastU = null;
+                lastS = null;
+                lastSub = null;
+                lastD = null;
+                html += '<div style="font-size:0.82rem; font-weight:800; color:#334155; margin:8px 0 4px 8px;">📗 ' + esc(k.secondaryUnit ? ('次單元 ' + k.secondaryUnit) : '未填次單元') + '</div>';
+            }
+            if (k.heading !== lastH) {
+                lastH = k.heading;
+                lastU = null;
+                lastS = null;
+                lastSub = null;
+                lastD = null;
+                html += '<div style="font-size:0.82rem; font-weight:800; color:#0F766E; margin:8px 0 4px 12px;">🏷️ ' + esc(k.heading ? ('標題 ' + k.heading) : '未填標題') + '</div>';
+            }
             if (k.unit !== lastU) {
                 lastU = k.unit;
                 lastS = null;
                 lastSub = null;
                 lastD = null;
-                html += '<div style="font-size:0.86rem; font-weight:900; color:#1E3A8A; margin:12px 0 6px;">📘 ' + esc(k.unit ? ('大題 ' + k.unit) : '未填大題') + '</div>';
+                html += '<div style="font-size:0.82rem; font-weight:800; color:#1E3A8A; margin:8px 0 4px 16px;">' + esc(k.unit ? ('大題 ' + k.unit) : '未填大題') + '</div>';
             }
             if (k.section !== lastS) {
                 lastS = k.section;
                 lastSub = null;
                 lastD = null;
-                html += '<div style="font-size:0.82rem; font-weight:800; color:#334155; margin:8px 0 4px 10px;">📝 ' + esc(k.section ? ('次題 ' + k.section) : '未填次題') + '</div>';
+                html += '<div style="font-size:0.8rem; font-weight:800; color:#334155; margin:6px 0 4px 24px;">📝 ' + esc(k.section ? ('次題 ' + k.section) : '未填次題') + '</div>';
             }
             if (k.sub) {
                 if (k.sub !== lastSub) {
                     lastSub = k.sub;
                     lastD = null;
-                    html += '<div style="font-size:0.78rem; font-weight:800; color:#64748B; margin:6px 0 4px 20px;">▫️ 小題 ' + esc(k.sub) + '</div>';
+                    html += '<div style="font-size:0.78rem; font-weight:800; color:#64748B; margin:6px 0 4px 32px;">▫️ 小題 ' + esc(k.sub) + '</div>';
                 }
             } else {
                 lastSub = '';
@@ -476,7 +521,7 @@ window.FeatureScriptCollector = (function () {
             const d = dateKey(c.targetDate);
             if (d !== lastD) {
                 lastD = d;
-                html += '<div style="font-size:0.78rem; font-weight:800; color:#64748B; margin:6px 0 4px 20px;">📅 ' + esc(dateGroupLabel(d)) + '</div>';
+                html += '<div style="font-size:0.78rem; font-weight:800; color:#64748B; margin:6px 0 4px 32px;">📅 ' + esc(dateGroupLabel(d)) + '</div>';
             }
             html += cardHtml(c, classId, currentBlockId);
         });
@@ -488,23 +533,38 @@ window.FeatureScriptCollector = (function () {
         return `
             <div class="sc-seg-row" data-idx="${segIdx}" style="display:flex; gap:8px; align-items:flex-start; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:8px; margin-bottom:6px;">
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;">
-                    <div style="display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px;">
+                    <div style="display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:6px;">
+                        <label style="font-size:0.72rem; font-weight:800; color:#334155;">主單元
+                            <input type="text" class="form-control sc-seg-primary-unit" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#1E3A8A;" placeholder="主單元" value="${esc(seg.primary_unit)}">
+                        </label>
+                        <label style="font-size:0.72rem; font-weight:800; color:#334155;">次單元
+                            <input type="text" class="form-control sc-seg-secondary-unit" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#1E3A8A;" placeholder="次單元" value="${esc(seg.secondary_unit)}">
+                        </label>
+                        <label style="font-size:0.72rem; font-weight:800; color:#334155;">標題
+                            <input type="text" class="form-control sc-seg-heading" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#0F766E;" placeholder="標題" value="${esc(seg.heading)}">
+                        </label>
                         <label style="font-size:0.72rem; font-weight:800; color:#334155;">大題
-                            <input type="text" class="form-control sc-seg-unit" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#1E3A8A;" placeholder="這次填到哪由老師定" value="${esc(seg.unit)}">
+                            <input type="text" class="form-control sc-seg-unit" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#1E3A8A;" placeholder="大題" value="${esc(seg.unit)}">
                         </label>
                         <label style="font-size:0.72rem; font-weight:800; color:#334155;">次題
-                            <input type="text" class="form-control sc-seg-section" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#1E3A8A;" placeholder="可空" value="${esc(seg.section)}">
+                            <input type="text" class="form-control sc-seg-section" style="width:100%; padding:5px; font-size:0.8rem; font-weight:800; color:#1E3A8A;" placeholder="次題" value="${esc(seg.section)}">
                         </label>
                         <label style="font-size:0.72rem; font-weight:800; color:#334155;">小題
-                            <input type="text" class="form-control sc-seg-sub" style="width:100%; padding:5px; font-size:0.8rem;" placeholder="可空" value="${esc(seg.subsection)}">
+                            <input type="text" class="form-control sc-seg-sub" style="width:100%; padding:5px; font-size:0.8rem;" placeholder="小題" value="${esc(seg.subsection)}">
                         </label>
                         <label style="font-size:0.72rem; font-weight:800; color:#334155;">頁碼
                             <input type="text" class="form-control sc-seg-page" style="width:100%; padding:5px; font-size:0.8rem;" placeholder="可空" value="${esc(seg.page)}">
                         </label>
                     </div>
                     <input type="text" class="form-control sc-seg-label" style="padding:5px; font-size:0.8rem; font-weight:800; color:#7C3AED; max-width:220px;" placeholder="標籤（如 Page 2／Ex.3）" value="${esc(seg.label)}">
-                    <textarea class="form-control sc-seg-script" style="width:100%; min-height:52px; padding:6px; font-size:0.82rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="口說答案">${esc(seg.script)}</textarea>
-                    <textarea class="form-control sc-seg-student" style="width:100%; min-height:40px; padding:6px; font-size:0.8rem; border-radius:6px; border:1px solid #E2E8F0; color:#475569;" placeholder="書寫答案（若跟口說答案不同才需要另外填）">${esc(seg.student)}</textarea>
+                    <div>
+                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">🎯 口說答案（AI 基準）</div>
+                        <textarea class="form-control sc-seg-script" style="width:100%; min-height:52px; padding:6px; font-size:0.82rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上口說答案…">${esc(seg.script)}</textarea>
+                    </div>
+                    <div>
+                        <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">👀 書寫答案</div>
+                        <textarea class="form-control sc-seg-student" style="width:100%; min-height:40px; padding:6px; font-size:0.8rem; border-radius:6px; border:1px solid #E2E8F0; color:#475569;" placeholder="跟口說答案不同才要另填">${esc(seg.student)}</textarea>
+                    </div>
                 </div>
                 <button type="button" class="btn sc-seg-del" style="padding:5px 7px; color:#B91C1C;" title="刪除此段">🗑</button>
             </div>`;
@@ -622,8 +682,8 @@ window.FeatureScriptCollector = (function () {
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
                 <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">📥 由下往上收集文稿</h3>
                 <p style="color:#64748B; font-size:0.85rem; margin:0 0 10px 0; line-height:1.6;">
-                    目錄套餐在教材範本管理獨立區塊新增、教材區顯示已有卡，跟 Excel/JSON／PDF 同階層。出作業選書＋填大題／次題／小題＝收集成書（有文稿才寫 txt 進該教材資料夾）。
-                    下面班級區仍可掃描 C／D／E 文稿。三層都提供，這次填到哪由老師定。不改原始作業。
+                    目錄套餐在教材範本管理獨立區塊新增、教材區顯示已有卡，跟 Excel/JSON／PDF 同階層。出作業選書＋填主單元／次單元／標題／大題／次題／小題＝收集成書（有文稿才寫 txt 進該教材資料夾）。
+                    下面班級區仍可掃描 C／D／E 文稿。這次填到哪由老師定。不改原始作業。
                 </p>
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
                     <button type="button" id="sc-rescan" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;">🔄 重新掃描</button>
@@ -646,6 +706,9 @@ window.FeatureScriptCollector = (function () {
         return Array.prototype.map.call(cardEl.querySelectorAll('.sc-seg-row'), function (row) {
             return normalizeSeg({
                 label: (row.querySelector('.sc-seg-label') || {}).value || '',
+                primary_unit: (row.querySelector('.sc-seg-primary-unit') || {}).value || '',
+                secondary_unit: (row.querySelector('.sc-seg-secondary-unit') || {}).value || '',
+                heading: (row.querySelector('.sc-seg-heading') || {}).value || '',
                 unit: (row.querySelector('.sc-seg-unit') || {}).value || '',
                 section: (row.querySelector('.sc-seg-section') || {}).value || '',
                 subsection: (row.querySelector('.sc-seg-sub') || {}).value || '',
@@ -677,6 +740,9 @@ window.FeatureScriptCollector = (function () {
             segs.forEach(function (seg, idx) {
                 lines.push('');
                 lines.push('【段 ' + (idx + 1) + (seg.label ? '：' + seg.label : '') + '】');
+                if (seg.primary_unit) lines.push('主單元：' + seg.primary_unit);
+                if (seg.secondary_unit) lines.push('次單元：' + seg.secondary_unit);
+                if (seg.heading) lines.push('標題：' + seg.heading);
                 if (seg.unit) lines.push('大題：' + seg.unit);
                 if (seg.section) lines.push('次題：' + seg.section);
                 if (seg.subsection) lines.push('小題：' + seg.subsection);

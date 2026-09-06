@@ -162,6 +162,12 @@ window.TeacherUI = (() => {
             if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
                 window.FeatureExamTemplateEditor.render();
             }
+            if (window.FeatureMaterialPdfExam && typeof window.FeatureMaterialPdfExam.renderCreatePanel === 'function') {
+                window.FeatureMaterialPdfExam.renderCreatePanel();
+            }
+            if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.renderCreatePanel === 'function') {
+                window.FeatureMaterialBook.renderCreatePanel();
+            }
             if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.render === 'function') {
                 window.FeatureClassMaterialCombinations.render();
             }
@@ -553,6 +559,12 @@ window.TeacherUI = (() => {
             }
             if (window.FeatureExamTemplateEditor && typeof window.FeatureExamTemplateEditor.render === 'function') {
                 window.FeatureExamTemplateEditor.render();
+            }
+            if (window.FeatureMaterialPdfExam && typeof window.FeatureMaterialPdfExam.renderCreatePanel === 'function') {
+                window.FeatureMaterialPdfExam.renderCreatePanel();
+            }
+            if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.renderCreatePanel === 'function') {
+                window.FeatureMaterialBook.renderCreatePanel();
             }
             if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.render === 'function') {
                 window.FeatureClassMaterialCombinations.render();

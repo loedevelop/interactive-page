@@ -848,7 +848,12 @@ window.QuizPaperBuilder = (function () {
         if (!jobSections.length) throw new Error('exam_job 沒有段落');
         // 段落洗牌＝整份卷全部打散。抽題仍照老師排的套餐／區塊順序；勾了才在抽完後整池打散。
         // 不准只洗套餐卡片順序、也不准區塊成塊再對調（那樣鄰座仍看到同一串）。
-        const shuffleSections = !!(examJob.options && examJob.options.shuffle_sections);
+        const shuffleSections = (function (options) {
+            if (!options) return true;
+            if (options.shuffle_sections === false || options.shuffle_sections === 'false'
+                || options.shuffle_sections === 0 || options.shuffle_sections === '0') return false;
+            return true;
+        })(examJob.options);
         const orderedSections = jobSections.slice();
         const sections = [];
         orderedSections.forEach(function (sec) {
@@ -951,7 +956,11 @@ window.QuizPaperBuilder = (function () {
             const countRaw = sec.count;
             const countMissing = countRaw === '' || countRaw == null
                 || (typeof countRaw === 'string' && !String(countRaw).trim());
-            const want = countMissing ? restPool.length : Math.max(0, Number(countRaw) || 0);
+            const wantRaw = countMissing ? restPool.length : Math.max(0, Number(countRaw) || 0);
+            if (!countMissing && wantRaw > pool.length) {
+                notices.push('活頁 ' + sheetId + ' 題數 ' + wantRaw + ' 超過可用題 ' + pool.length + '，已改抽 ' + pool.length + ' 題');
+            }
+            const want = countMissing ? restPool.length : Math.min(wantRaw, pool.length);
             if (!countMissing && want === 0 && !includeSet) {
                 continue;
             }

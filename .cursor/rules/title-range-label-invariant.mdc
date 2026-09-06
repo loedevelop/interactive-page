@@ -1,37 +1,38 @@
 ---
-description: 小標題消去法／pp. 1~2 分號 p. 3／中括號包範圍／獨立考試另組字串
+description: 小標題消去法／pp. 1~2 分號 p. 3／中括號包範圍／獨立考試另組字串／錄音考試標題用了活頁名
 globs: 110_teacher_core/feature-timeline.js,110_teacher_core/feature-exam-job.js,110_teacher_core/ui-timeline-templates.js,110_teacher_core/store-assignment-builder.js
 alwaysApply: false
 ---
 
-# 標題範圍小標題鐵律（挑選目標｜2026-08-24）
+# 標題範圍小標題鐵律（挑選目標｜2026-09-04）
 
 長篇規格：`docs/標題範圍處理規則.md`
 
 ## 症狀
 
-- 同一本填 1～2 與 3，小標題變成「表名 pp. 1~2 ; 表名 p. 3」或先黏再削
+- 同一套餐填 1～2 與 3，小標題變成「套餐名 pp. 1~2 ; 套餐名 p. 3」或先黏再削
 - 斷層被收成一段，或被中括號包成兩塊
 - 獨立考試標題走另一套 join，跟組合層不一樣
 - 沒填迄也被當成單頁帶進標題
-- 組標題黏了活頁名；小標題只剩 pp. 沒有表名
+- 組標題黏了活頁名；錄音／考試小標題用了活頁別名（例：`AvaLiu-vBK-2 pp. 6~10`，套餐名是 `vBK-2`）
 
 ## 根因
 
-組合層已走 FeatureTimeline.combinePackRangeLabel（挑選、分匣、排序融合、表名收納）。
+組合層已走 FeatureTimeline.combinePackRangeLabel（挑選、分匣、排序融合）。
 獨立考試 buildExamRangeLabelFromTask、錄音 refs 的 buildMaterialRangeLabelFromRows 曾各自 join 分號，沒填迄還當單頁。同類列第二套邏輯。
+小標題曾誤用 pickPackSheetLabel（活頁別名）。老師定案：錄音／考試名字＝套餐名＋範圍。活頁別名只給區段欄。
 
 ## 不變量
 
 ```
 大標題＝套餐名。空白才帶入。不准黏活頁名。
-小標題＝表名＋範圍。表名＝活頁別名。永遠有別名。沒改過的別名就是活頁名（欄位值，不是第二條顯示路）。
+小標題＝套餐名＋範圍。匣＝套餐 × 模式（頁碼／題號）。活頁別名不准進錄音／考試標題。
+區段欄仍用活頁別名（pickPackSheetLabel）。標題不准借用區段欄。
 只准 combinePackRangeLabel 組字串。獨立考試、錄音 Snapshot、material_refs 摘要同一把。
-課本列同一把：大題 / 次題 / 小題。
-有起、有迄、有表名 → 進匣。
+課本列同一把：套餐名＋空格＋主單元 / 次單元 / 標題 / 大題 / 次題 / 小題。
+有起、有迄、有套餐名 → 進匣。
 有頁碼或題號 → 進對應模式。
-匣＝活頁 × 模式。匣內排序後，相連或重疊才融；斷層維持兩筆，一個 pp. 或一個 # 加逗號。
-範圍字串完全一樣且表名連續才收：C~D pp. 2~4 ／ Unit 1-8 ~1-9 pp. 2~4
+匣內排序後，相連或重疊才融；斷層維持兩筆，一個 pp. 或一個 # 加逗號。
 有 FeatureTimeline.combinePackRangeLabel → 用它組字。
 學生頁只讀已存 title／material_range。
 ```
@@ -48,6 +49,9 @@ const hi = end || start;
 
 // FeatureTimeline 不在就走舊路
 if (!FT) return oldJoin(segs);
+
+// 標題用活頁別名
+const label = pickPackSheetLabel(classId, r);
 ```
 
 ## 正確
@@ -62,16 +66,18 @@ if (!FT || typeof FT.combinePackRangeLabel !== 'function') return '';
 
 ## 實測
 
-1. 同一本 1～2 與 3 → 表名 pp. 1~3
-2. 同一本 1～5 與 8～10 → 表名 pp. 1~5, 8~10
-3. C、D 都是 pp. 2~4 → C~D pp. 2~4
-4. Unit 1-8、Unit 1-9 範圍一樣 → Unit 1-8 ~1-9 pp. 2~4
-5. 獨立考試兩個區塊同一本相連起迄 → 與組合層同一串，不是兩段分號
+1. 套餐 vBK-2、兩段 6～10 與 221～230 → `vBK-2 pp. 6~10, 221~230`（不是活頁別名）
+2. 同一套餐 1～2 與 3 → 套餐名 pp. 1~3
+3. 同一套餐 1～5 與 8～10 → 套餐名 pp. 1~5, 8~10
+4. 兩份套餐 → 套餐名 pp. …；另一套餐名 pp. …
+5. 獨立考試兩個區塊同一套餐相連起迄 → 與組合層同一串，不是兩段分號
 6. 沒填迄的列不進標題
+7. 區段欄仍顯示活頁別名（例：AvaLiu-vBK-2）
 
 ## 改動前自問
 
 1. 小標題是不是只走 combinePackRangeLabel？有沒有第二套 join？
-2. 進匣的列是不是有起、有迄、有表名？組字是不是只走 combinePackRangeLabel？
-3. 獨立考試與組合層同一本、同一組起迄，字串是否相同？
+2. 進匣的列是不是有起、有迄、有套餐名？組字是不是只走 combinePackRangeLabel？
+3. 獨立考試與組合層同一套餐、同一組起迄，字串是否相同？
+4. 錄音／考試標題是不是套餐名＋範圍，而不是活頁別名？
 任一否 → 停。

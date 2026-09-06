@@ -1,6 +1,10 @@
 /**
  * 教材套餐同層多型：Excel/JSON、PDF、目錄平起平坐（三種，不是四種）。
- * 出作業下拉、教材區資料夾卡、依 id 取套餐，只准走這份註冊，不准 Excel 主檔再 concat 旁支。
+ *
+ * 產生：三個獨立區塊（來源不同，不是主從）。
+ * 使用：同一就緒、同一清單、同一窗口。教材區一個夾一個窗口，三種卡平排。
+ * 出作業下拉、依 id 取套餐、就緒閘門，只准走這份註冊。
+ * 不准 Excel 當宿主再 concat／append 旁支，不准「只等其中一種」。
  */
 window.MaterialComboStrategies = (function () {
     'use strict';
@@ -27,8 +31,19 @@ window.MaterialComboStrategies = (function () {
 
     function ensureLoaded() {
         return Promise.all(byOrder().map(function (s) {
-            return (typeof s.ensureLoaded === 'function') ? s.ensureLoaded() : Promise.resolve();
+            var p = (typeof s.ensureLoaded === 'function') ? s.ensureLoaded() : Promise.resolve();
+            return p.catch(function (err) {
+                console.warn('[MaterialComboStrategies] ' + s.kind + ' 載入失敗', err);
+                return null;
+            });
         }));
+    }
+
+    function isReady() {
+        return byOrder().every(function (s) {
+            if (typeof s.isReady === 'function') return !!s.isReady();
+            return true;
+        });
     }
 
     function listAssignedForHomework(classId) {
@@ -36,6 +51,22 @@ window.MaterialComboStrategies = (function () {
         byOrder().forEach(function (s) {
             if (typeof s.listAssignedForHomework !== 'function') return;
             out.push.apply(out, s.listAssignedForHomework(classId) || []);
+        });
+        return out;
+    }
+
+    function folderNames() {
+        var seen = {};
+        var out = [];
+        byOrder().forEach(function (s) {
+            if (typeof s.folderNames !== 'function') return;
+            (s.folderNames() || []).forEach(function (name) {
+                var n = String(name || '').trim();
+                var u = n.toUpperCase();
+                if (!n || seen[u]) return;
+                seen[u] = true;
+                out.push(n);
+            });
         });
         return out;
     }
@@ -169,7 +200,9 @@ window.MaterialComboStrategies = (function () {
     return {
         register: register,
         ensureLoaded: ensureLoaded,
+        isReady: isReady,
         listAssignedForHomework: listAssignedForHomework,
+        folderNames: folderNames,
         getAssignedById: getAssignedById,
         renderFolderHtml: renderFolderHtml,
         bind: bind,

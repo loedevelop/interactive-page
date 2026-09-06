@@ -6599,6 +6599,12 @@ window.FeatureMaterialLayoutPairing = (function () {
         }
         const layoutCatalog = getLayoutCatalog();
         paint(container, pairs, apps, layoutCatalog);
+        if (window.FeatureMaterialPdfExam && typeof window.FeatureMaterialPdfExam.renderCreatePanel === 'function') {
+            window.FeatureMaterialPdfExam.renderCreatePanel();
+        }
+        if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.renderCreatePanel === 'function') {
+            window.FeatureMaterialBook.renderCreatePanel();
+        }
         refreshMetaCatalogsInBackground(container, pairs, apps);
         // Template 清單獨立於這一次 render，存好之後才知道要不要重畫，用背景載入＋事後補畫（跟其他
         // 進度式載入同一套模式），不會擋整頁出現

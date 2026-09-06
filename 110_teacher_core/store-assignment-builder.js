@@ -102,7 +102,7 @@ window.BuilderStore = (() => {
                 const shuffleOn = shuffleEl ? !!shuffleEl.checked : true;
                 const rowEls = blockEl.querySelectorAll('.range-pack-row');
                 if (!rowEls.length) {
-                    rows.push({ combo_id: comboId, combo_label: comboLabel, meta_file: '', range_type: 'page', start: '', end: '', major: '', secondary: '', minor: '', book_script: '', pdf_file_id: '', shuffle: shuffleOn });
+                    rows.push({ combo_id: comboId, combo_label: comboLabel, meta_file: '', range_type: 'page', start: '', end: '', primary_unit: '', secondary_unit: '', heading: '', major: '', secondary: '', minor: '', page: '', book_script: '', pdf_file_id: '', shuffle: shuffleOn });
                     return;
                 }
                 Array.prototype.forEach.call(rowEls, function (rowEl) {
@@ -117,12 +117,20 @@ window.BuilderStore = (() => {
                     const incEl = idx != null ? document.getElementById('range-pack-inc-' + pathStr + '-' + idx) : null;
                     const excEl = idx != null ? document.getElementById('range-pack-exc-' + pathStr + '-' + idx) : null;
                     const countEl = idx != null ? document.getElementById('range-pack-count-' + pathStr + '-' + idx) : null;
+                    const pairEl = idx != null ? document.getElementById('range-pack-book-unit-pair-' + pathStr + '-' + idx) : null;
+                    const primaryUnitEl = idx != null ? document.getElementById('range-pack-book-primary-unit-' + pathStr + '-' + idx) : null;
+                    const secondaryUnitEl = idx != null ? document.getElementById('range-pack-book-secondary-unit-' + pathStr + '-' + idx) : null;
+                    const headingEl = idx != null ? document.getElementById('range-pack-book-heading-' + pathStr + '-' + idx) : null;
                     const majorEl = idx != null ? document.getElementById('range-pack-book-major-' + pathStr + '-' + idx) : null;
                     const secEl = idx != null ? document.getElementById('range-pack-book-secondary-' + pathStr + '-' + idx) : null;
                     const minEl = idx != null ? document.getElementById('range-pack-book-minor-' + pathStr + '-' + idx) : null;
+                    const pageEl = idx != null ? document.getElementById('range-pack-book-page-' + pathStr + '-' + idx) : null;
                     const scriptEl = idx != null ? document.getElementById('range-pack-book-script-' + pathStr + '-' + idx) : null;
                     const pdfEl = (idx != null ? document.getElementById('range-pack-pdf-file-' + pathStr + '-' + idx) : null)
                         || (rowEl && rowEl.querySelector('.range-pack-pdf-file'));
+                    const parsedPair = (pairEl && window.FeatureMaterialBook && typeof window.FeatureMaterialBook.parseUnitPair === 'function')
+                        ? window.FeatureMaterialBook.parseUnitPair(pairEl.value)
+                        : null;
                     rows.push({
                         combo_id: comboId,
                         combo_label: comboLabel,
@@ -136,9 +144,13 @@ window.BuilderStore = (() => {
                         exclude_nums: excEl ? String(excEl.value || '').trim() : '',
                         count: countEl ? String(countEl.value || '').trim() : '',
                         shuffle: shuffleOn,
+                        primary_unit: parsedPair ? parsedPair.primary : (primaryUnitEl ? String(primaryUnitEl.value || '').trim() : ''),
+                        secondary_unit: parsedPair ? parsedPair.secondary : (secondaryUnitEl ? String(secondaryUnitEl.value || '').trim() : ''),
+                        heading: headingEl ? String(headingEl.value || '').trim() : '',
                         major: majorEl ? String(majorEl.value || '').trim() : '',
                         secondary: secEl ? String(secEl.value || '').trim() : '',
                         minor: minEl ? String(minEl.value || '').trim() : '',
+                        page: pageEl ? String(pageEl.value || '').trim() : '',
                         book_script: scriptEl ? String(scriptEl.value || '').trim() : '',
                         pdf_file_id: pdfEl ? String(pdfEl.value || '').trim() : ''
                     });
@@ -246,12 +258,22 @@ window.BuilderStore = (() => {
             } else if (dueEl) {
                 t.due_date = dueEl.value;
             }
-            if (lateModeEl) t.late_mode = lateModeEl.value;
-            if (graceEl) t.grace_period_hours = parseInt(graceEl.value) || 0;
-            if (penaltyEl) t.penalty_percentage = parseInt(penaltyEl.value) || 0;
-            
-            if (t.late_mode === 'no_late') { t.grace_period_hours = 0; t.penalty_percentage = 0; }
-            if (t.late_mode === 'infinite') { t.grace_period_hours = 0; }
+            if (lateModeEl) {
+                const modeVal = lateModeEl.value;
+                if (modeVal === 'inherit' || modeVal === '') {
+                    t.late_policy_own = false;
+                    t.late_mode = '';
+                    t.grace_period_hours = 0;
+                    t.penalty_percentage = 0;
+                } else {
+                    t.late_policy_own = true;
+                    t.late_mode = modeVal;
+                    if (graceEl) t.grace_period_hours = parseInt(graceEl.value, 10) || 0;
+                    if (penaltyEl) t.penalty_percentage = parseInt(penaltyEl.value, 10) || 0;
+                    if (t.late_mode === 'no_late') { t.grace_period_hours = 0; t.penalty_percentage = 0; }
+                    if (t.late_mode === 'infinite') { t.grace_period_hours = 0; }
+                }
+            }
             
             if (t.type === 'group') {
                 syncRangePackFieldsFromDom(t, pathStr);
@@ -785,7 +807,8 @@ window.BuilderStore = (() => {
             description: '',
             due_date: '',
             open_at: '',
-            late_mode: 'infinite',
+            late_mode: '',
+            late_policy_own: false,
             grace_period_hours: 0,
             penalty_percentage: 0,
             raw_data: rawData || {}
@@ -836,7 +859,7 @@ window.BuilderStore = (() => {
 
         /**
          * 一鍵建立「範圍群組 → 錄音＋考試」（僅影響新建節點，不改舊作業）
-         * 開包後先選本班已指派套餐；組標題＝套餐名，錄音／考試小標題＝表名＋範圍。
+         * 開包後先選本班已指派套餐；組標題＝套餐名，錄音／考試小標題＝套餐名＋範圍。
          */
         addRangeBundle: (pathStr) => {
             syncState();
@@ -860,7 +883,8 @@ window.BuilderStore = (() => {
                 description: '',
                 due_date: '',
                 open_at: '',
-                late_mode: 'infinite',
+                late_mode: '',
+                late_policy_own: false,
                 grace_period_hours: 0,
                 penalty_percentage: 0,
                 raw_data: {
@@ -1048,7 +1072,7 @@ window.BuilderStore = (() => {
             }
             targetArr.push({
                 id: `task_${Date.now()}_${Math.random()}`, type: 'link', title: res.name, url: res.url, url_text: '', 
-                description: '', due_date: '', open_at: '', late_mode: 'infinite', grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id,
+                description: '', due_date: '', open_at: '', late_mode: '', late_policy_own: false, grace_period_hours: 0, penalty_percentage: 0, resource_id: res.id,
                 raw_data: {}
             });
         },

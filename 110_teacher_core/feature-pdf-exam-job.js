@@ -438,6 +438,9 @@ window.FeaturePdfExamJob = (function () {
     }
 
     function renderBankTableHtml(pathStr, job) {
+        if (job && Array.isArray(job.parsed_bank) && window.PdfExamPaper && typeof window.PdfExamPaper.normalizeAllItemBlanks === 'function') {
+            window.PdfExamPaper.normalizeAllItemBlanks(job.parsed_bank);
+        }
         var bank = job.parsed_bank || [];
         if (!bank.length) {
             return '<div style="color:#94A3B8; font-size:0.85rem; padding:8px;">尚未解析出任何答案，請貼上文字後按「解析成答案清單」</div>';
@@ -458,13 +461,22 @@ window.FeaturePdfExamJob = (function () {
         var btnOff = btnBase + ' border:1px solid #E2E8F0; background:#F1F5F9; color:#94A3B8; cursor:not-allowed;';
         var btnAdd = btnBase + ' border:1px solid #99F6E4; background:#CCFBF1; color:#0F766E;';
         var btnDel = btnBase + ' border:1px solid #FECACA; background:#FEF2F2; color:#B91C1C;';
-        return groups.map(function (g) {
-            var secWarn = !!warnedSections[g.section] || !!g.missing;
-            var lastShownGroup = null;
-            var rowsHtml = (g.items || []).length
-                ? g.items.map(function (bk) {
+        var activeG = (window.PdfExamPaper && typeof window.PdfExamPaper.pickBankSection === 'function')
+            ? window.PdfExamPaper.pickBankSection(groups, job._bankSection)
+            : (groups[0] || null);
+        if (activeG) job._bankSection = activeG.section || '';
+        var g = activeG || { section: '', items: [] };
+        var confirmed = window.PdfExamPaper && typeof window.PdfExamPaper.isSectionConfirmed === 'function'
+            && window.PdfExamPaper.isSectionConfirmed(job.split_review, g.section);
+        var secWarn = !confirmed && (!!warnedSections[g.section] || !!g.missing);
+        var confirmBtn = (g.section && window.PdfExamPaper && typeof window.PdfExamPaper.sectionConfirmButtonHtml === 'function')
+            ? window.PdfExamPaper.sectionConfirmButtonHtml(g.section, job.split_review, { btnClass: 'pdf-exam-confirm-section', pathStr: pathStr, confirmLabel: '確認無誤' })
+            : '';
+        var lastShownGroup = null;
+        var rowsHtml = (g.items || []).length
+            ? g.items.map(function (bk) {
                 var idx = bank.indexOf(bk);
-                var flagReason = flagged[bk.key] || '';
+                var flagReason = confirmed ? '' : (flagged[bk.key] || '');
                 var isFlag = !!flagReason || secWarn;
                 var rowBg = isFlag ? '#FEF2F2' : 'transparent';
                 var labelColor = isFlag ? '#B91C1C' : '#0369A1';
@@ -479,13 +491,19 @@ window.FeaturePdfExamJob = (function () {
                     groupHead = '<div style="font-size:0.75rem; font-weight:800; color:#0F766E; margin:8px 0 2px;">' + esc(bk.group) + '</div>';
                 }
                 lastShownGroup = bk.group || lastShownGroup;
+                var suffix = (bk.part ? ('-' + bk.part) : '') + (bk.blank_index ? ('-' + bk.blank_index) : '');
                 return groupHead + (
-                    '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid ' + (isFlag ? '#FECACA' : '#E0F2FE') + '; background:' + rowBg + ';"'
+                    '<div class="pdf-exam-bank-row" data-idx="' + idx + '" data-section="' + esc(g.section || '') + '" style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid ' + (isFlag ? '#FECACA' : '#E0F2FE') + '; background:' + rowBg + ';"'
                         + (flagReason ? ' title="' + esc(flagReason) + '"' : '') + '>' +
-                        '<span style="width:72px; flex-shrink:0; font-size:0.78rem; color:' + labelColor + '; font-weight:800;" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + (bk.group ? esc(bk.group) + '-' : '') + esc(bk.item_no) + (bk.part ? ('-' + esc(bk.part)) : '') + (bk.blank_index ? ('-' + esc(bk.blank_index)) : '') + '</span>' +
-                        '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + '; font-weight:' + (isFlag ? '800' : '400') + ';" ' +
+                        '<span style="display:inline-flex; align-items:center; gap:2px; width:88px; flex-shrink:0; font-size:0.78rem; color:' + labelColor + '; font-weight:800;">' +
+                            (bk.group ? esc(bk.group) + '-' : '') +
+                            '<input type="text" class="pdf-exam-itemno" data-idx="' + idx + '" value="' + esc(bk.item_no || '') + '" title="題號，解析錯了可以直接改" style="width:2.2em; padding:2px 3px; font-size:0.76rem; font-weight:800; text-align:center; border:1px solid ' + inputBorder + '; color:' + labelColor + ';" ' +
+                                'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'item_no\', this.value)">' +
+                            (suffix ? '<span>' + esc(suffix) + '</span>' : '') +
+                        '</span>' +
+                        '<input type="text" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:100px; padding:6px 8px; font-size:0.9rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + '; font-weight:' + (isFlag ? '800' : '400') + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'answer_text\', this.value)">' +
-                        '<input type="text" value="' + esc(window.PdfExamPaper.formatAcceptedAnswerList(bk.accepted_answers)) + '" placeholder="其他可接受答案（用 || 分隔）" style="flex:1; min-width:110px; padding:4px 6px; font-size:0.82rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + ';" ' +
+                        '<input type="text" value="' + esc(window.PdfExamPaper.formatAcceptedAnswerList(bk.accepted_answers)) + '" placeholder="其他可接受答案（用 || 分隔）" style="flex:1; min-width:110px; padding:6px 8px; font-size:0.9rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'accepted_answers\', this.value)">' +
                         '<span style="display:flex; gap:3px; flex-shrink:0; white-space:nowrap;">' +
                             '<button type="button" title="上移" style="' + (canUp ? btnOn : btnOff) + '" ' + (canUp ? 'onclick="window.FeaturePdfExamJob.moveBankRow(\'' + pathStr + '\', ' + idx + ', -1)"' : 'disabled') + '>↑</button>' +
@@ -497,9 +515,18 @@ window.FeaturePdfExamJob = (function () {
                     '</div>'
                 );
             }).join('')
-                : '<div style="font-size:0.76rem; font-weight:700; color:#B91C1C; padding:6px 0;">這一組在解答裡沒有列出來的題（沒有捨棄）。請核對原文，或改用老師定位。</div>';
-            return '<div style="margin-bottom:8px;"><div style="font-weight:800; color:' + (secWarn ? '#B91C1C' : '#0369A1') + '; font-size:0.82rem; margin:6px 0 2px;">📘 ' + esc(g.section) + (secWarn ? ' ⚠' : '') + '</div>' + rowsHtml + '</div>';
-        }).join('');
+            : '<div style="font-size:0.76rem; font-weight:700; color:' + (secWarn ? '#B91C1C' : '#0369A1') + '; padding:6px 0;">這一組在解答裡沒有列出來的題（沒有捨棄）。請核對原文，或改用老師定位。</div>';
+        var tabs = (window.PdfExamPaper && typeof window.PdfExamPaper.bankSectionTabsHtml === 'function' && groups.length > 1)
+            ? window.PdfExamPaper.bankSectionTabsHtml(groups, g.section, {
+                tabClass: 'pdf-exam-quiz-tab',
+                review: job.split_review,
+                warnedSections: warnedSections,
+                pathStr: pathStr
+            })
+            : '';
+        return tabs
+            + '<div style="display:flex; align-items:center; flex-wrap:wrap; font-weight:800; color:' + (secWarn ? '#B91C1C' : '#0369A1') + '; font-size:0.82rem; margin:0 0 6px;">📘 ' + esc(g.section || '') + (secWarn ? ' ⚠' : '') + confirmBtn + '</div>'
+            + '<div class="mz-pdf-exam-bank" style="border:1px solid #E0F2FE; border-radius:6px; padding:10px;">' + rowsHtml + '</div>';
     }
 
     function renderStatusLineHtml(job) {
@@ -513,11 +540,26 @@ window.FeaturePdfExamJob = (function () {
             + regradeWarning;
     }
 
-    function refreshBankTable(pathStr, job) {
+    function refreshBankTable(pathStr, job, anchor) {
+        if (anchor && anchor.section) job._bankSection = anchor.section;
         var el = document.getElementById('pdf-exam-bank-' + pathStr);
+        var snap = (anchor && anchor.snap) || ((window.PdfExamPaper && typeof window.PdfExamPaper.snapshotScroller === 'function')
+            ? window.PdfExamPaper.snapshotScroller(el)
+            : []);
         if (el) el.innerHTML = renderBankTableHtml(pathStr, job);
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.afterBankRedraw === 'function') {
+            window.PdfExamPaper.afterBankRedraw(el, snap, anchor || null);
+        }
         var reviewEl = document.getElementById('pdf-exam-split-review-' + pathStr);
         if (reviewEl) reviewEl.innerHTML = renderSplitReviewHtml(job, pathStr);
+    }
+
+    function selectBankSection(pathStr, section) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task) return;
+        var job = ensureJob(task);
+        job._bankSection = String(section || '');
+        refreshBankTable(pathStr, job, { section: job._bankSection });
     }
 
     function refreshStatusLine(pathStr, job) {
@@ -564,37 +606,47 @@ window.FeaturePdfExamJob = (function () {
         // 這裡先複製到 job.section_page_hints 這個一般物件欄位，才能真正跟著 parsed_bank 一起存檔、
         // 供學生端 detectSectionPageRanges 用「解答裡的印刷頁碼」輔助定位大題頁碼。
         job.section_page_hints = Object.assign({}, job.section_page_hints || {}, parsed.sectionPageHints || {});
-        var freshKeys = {};
-        parsed.forEach(function (b) { freshKeys[b.key] = true; });
-        var prevByKey = {};
-        (job.parsed_bank || []).forEach(function (b) { prevByKey[b.key] = b; });
-        // 老師手動編輯過的答案文字不要被重新解析結果覆蓋掉；手動新增的列（不在這次解析結果內）保留下來。
-        var merged = parsed.map(function (b) {
-            var prev = prevByKey[b.key];
-            if (prev && prev._manuallyEdited) {
-                return { key: b.key, section: b.section, item_no: b.item_no, part: b.part, group: b.group, blank_index: b.blank_index, answer_text: prev.answer_text, accepted_answers: prev.accepted_answers, _manuallyEdited: true };
-            }
-            return b;
-        });
-        var preservedManual = (job.parsed_bank || []).filter(function (b) { return !freshKeys[b.key] && b._manual; });
-        job.parsed_bank = merged.concat(preservedManual);
+        var prevBank = job.parsed_bank || [];
+        job.parsed_bank = (typeof window.PdfExamPaper.mergeParsedBankKeepingOrder === 'function')
+            ? window.PdfExamPaper.mergeParsedBankKeepingOrder(prevBank, parsed)
+            : parsed;
+        if (typeof window.PdfExamPaper.applyAcceptedSplitsToItem === 'function') {
+            job.parsed_bank.forEach(function (b) { window.PdfExamPaper.applyAcceptedSplitsToItem(b); });
+        }
         var prevReview = job.split_review || {};
         job.split_review = window.PdfExamPaper.buildSplitReview(job.parsed_bank, blankStats, {
             paperLabels: paperLabels,
             reattachLog: parsed.column_reattach || [],
             section_template_overrides: prevReview.section_template_overrides || {},
-            teacher_located_boxes: prevReview.teacher_located_boxes || {}
+            teacher_located_boxes: prevReview.teacher_located_boxes || {},
+            confirmed_sections: prevReview.confirmed_sections || {}
         });
         markNeedsRegrade(pathStr, job);
         refreshBankTable(pathStr, job);
-        var warnN = ((job.split_review.section_warnings || []).length)
-            + Object.keys(job.split_review.flagged_keys || {}).length;
+        var warnN = ((job.split_review.section_warnings || []).filter(function (w) {
+            return w && !(window.PdfExamPaper.isSectionConfirmed && window.PdfExamPaper.isSectionConfirmed(job.split_review, w.section));
+        }).length)
+            + Object.keys(job.split_review.flagged_keys || {}).filter(function (k) {
+                var bk = (job.parsed_bank || []).filter(function (it) { return it && it.key === k; })[0];
+                return !(bk && window.PdfExamPaper.isSectionConfirmed && window.PdfExamPaper.isSectionConfirmed(job.split_review, bk.section));
+            }).length;
         window.showFlash(
             warnN
-                ? ('⚠ 已解析出 ' + parsed.length + ' 題，有 ' + warnN + ' 處警示（解答組數／格數跟題目對不上），請看紅色標示並人工核對')
+                ? ('⚠ 已解析出 ' + parsed.length + ' 題，有 ' + warnN + ' 處警示。核對後可按該 Quiz 旁「確認無誤」，再儲存作業')
                 : ('✅ 已解析出 ' + parsed.length + ' 題，請逐項確認答案文字'),
             warnN ? 'warning' : 'success'
         );
+    }
+
+    function confirmSection(pathStr, section) {
+        var task = getBuilderTaskByPath(pathStr);
+        if (!task || !section) return;
+        var job = ensureJob(task);
+        job.split_review = job.split_review || {};
+        if (window.PdfExamPaper.isSectionConfirmed(job.split_review, section)) return;
+        window.PdfExamPaper.setSectionConfirmed(job.split_review, section, true);
+        refreshBankTable(pathStr, job, { section: section });
+        window.showFlash('「' + section + '」已確認無誤，請儲存作業', 'success');
     }
 
     function useTeacherLocate(pathStr, section) {
@@ -619,7 +671,7 @@ window.FeaturePdfExamJob = (function () {
             onSaved: function (boxes) {
                 job.split_review = window.PdfExamPaper.setSectionTeacherLocate(job.split_review || {}, section, boxes);
                 markNeedsRegrade(pathStr, job);
-                refreshBankTable(pathStr, job);
+                refreshBankTable(pathStr, job, { section: section });
                 window.showFlash('「' + section + '」已改用老師定位，請儲存作業', 'success');
             }
         });
@@ -633,11 +685,27 @@ window.FeaturePdfExamJob = (function () {
         if (!bk) return;
         if (field === 'answer_text') {
             bk.answer_text = value;
+            if (typeof window.PdfExamPaper.applyAcceptedSplitsToItem === 'function') {
+                window.PdfExamPaper.applyAcceptedSplitsToItem(bk);
+            }
         } else if (field === 'accepted_answers') {
             bk.accepted_answers = window.PdfExamPaper.parseAcceptedAnswerList(value);
+        } else if (field === 'item_no') {
+            if (typeof window.PdfExamPaper.applyItemNoToBankRow === 'function') {
+                window.PdfExamPaper.applyItemNoToBankRow(job.parsed_bank, idx, value);
+            } else {
+                bk.item_no = String(value || '').trim() || bk.item_no;
+            }
         }
         bk._manuallyEdited = true;
         markNeedsRegrade(pathStr, job);
+        var sec = bk.section || '';
+        if (sec && window.PdfExamPaper.isSectionConfirmed && window.PdfExamPaper.isSectionConfirmed(job.split_review, sec)) {
+            window.PdfExamPaper.setSectionConfirmed(job.split_review, sec, false);
+            refreshBankTable(pathStr, job, { idx: idx, section: sec });
+            return;
+        }
+        if (field === 'answer_text' || field === 'item_no') refreshBankTable(pathStr, job, { idx: idx, section: sec });
     }
 
     function siblingIndexInSection(bank, idx, dir) {
@@ -657,32 +725,6 @@ window.FeaturePdfExamJob = (function () {
         return -1;
     }
 
-    function makeInsertedBankRow(job, template) {
-        var section = template.section || '(未分類)';
-        var itemNo = String(template.item_no || '').trim() || '?';
-        var part = template.part || null;
-        var group = template.group || null;
-        var blank = Number(template.blank_index) || 1;
-        var key = window.PdfExamPaper.makeKey(section, itemNo, part, blank, group);
-        var used = {};
-        (job.parsed_bank || []).forEach(function (b) { if (b && b.key) used[b.key] = true; });
-        while (used[key] && blank < 99) {
-            blank += 1;
-            key = window.PdfExamPaper.makeKey(section, itemNo, part, blank, group);
-        }
-        return {
-            key: key,
-            section: section,
-            item_no: itemNo,
-            part: part,
-            group: group,
-            blank_index: blank,
-            answer_text: '',
-            accepted_answers: [],
-            _manual: true
-        };
-    }
-
     function moveBankRow(pathStr, idx, dir) {
         var task = getBuilderTaskByPath(pathStr);
         if (!task) return;
@@ -693,8 +735,11 @@ window.FeaturePdfExamJob = (function () {
         var tmp = bank[idx];
         bank[idx] = bank[otherIdx];
         bank[otherIdx] = tmp;
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.numberItemBlanks === 'function') {
+            window.PdfExamPaper.numberItemBlanks(bank, tmp);
+        }
         markNeedsRegrade(pathStr, job);
-        refreshBankTable(pathStr, job);
+        refreshBankTable(pathStr, job, { idx: otherIdx, section: tmp && tmp.section });
     }
 
     function insertBankRow(pathStr, idx, after) {
@@ -704,41 +749,51 @@ window.FeaturePdfExamJob = (function () {
         var bank = job.parsed_bank || [];
         var template = bank[idx];
         if (!template) return;
-        var row = makeInsertedBankRow(job, template);
-        var insertAt = Number(idx) + (after ? 1 : 0);
-        bank.splice(insertAt, 0, row);
+        var ins = window.PdfExamPaper.insertBlankRow(bank, idx, after);
+        if (!ins || !ins.row) return;
         markNeedsRegrade(pathStr, job);
-        refreshBankTable(pathStr, job);
+        refreshBankTable(pathStr, job, { idx: ins.insertAt, section: ins.row.section });
     }
 
     async function removeBankRow(pathStr, idx) {
         var task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         var job = ensureJob(task);
+        var bankEl = document.getElementById('pdf-exam-bank-' + pathStr);
+        var snap = (window.PdfExamPaper && typeof window.PdfExamPaper.snapshotScroller === 'function')
+            ? window.PdfExamPaper.snapshotScroller(bankEl)
+            : [];
         if (!(await window.ModalOverlay.confirm('刪除這一題答案？若已經在 PDF 上畫框對應這一題，那個框不會自動刪除，會變成「未指定題目」。'))) return;
-        job.parsed_bank.splice(idx, 1);
+        var removed = job.parsed_bank.splice(idx, 1)[0];
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.numberItemBlanks === 'function') {
+            window.PdfExamPaper.numberItemBlanks(job.parsed_bank, removed);
+        }
         markNeedsRegrade(pathStr, job);
-        refreshBankTable(pathStr, job);
+        refreshBankTable(pathStr, job, {
+            idx: Math.min(idx, Math.max(0, job.parsed_bank.length - 1)),
+            section: (job.parsed_bank[Math.min(idx, Math.max(0, job.parsed_bank.length - 1))] || {}).section,
+            snap: snap
+        });
     }
 
     function addBankRow(pathStr) {
         var task = getBuilderTaskByPath(pathStr);
         if (!task) return;
         var job = ensureJob(task);
-        var section = window.prompt('這一題屬於哪個大題？（例如 Quiz 1；留空＝未分類）', '');
-        section = String(section || '(未分類)').replace(/\s+/g, ' ').trim() || '(未分類)';
-        var itemNo = window.prompt('題號？（例如 12）', '');
-        if (itemNo == null || !String(itemNo).trim()) return;
-        var part = window.prompt('子項（若這題有 A/B 兩格才填，否則留空）', '') || '';
-        part = String(part).trim().toUpperCase() || null;
-        var key = window.PdfExamPaper.makeKey(section, String(itemNo).trim(), part);
-        if ((job.parsed_bank || []).some(function (b) { return b.key === key; })) {
-            window.showFlash('這個題號已經存在，請改用清單裡的欄位直接修改', 'warning');
-            return;
-        }
-        job.parsed_bank.push({ key: key, section: section, item_no: String(itemNo).trim(), part: part, answer_text: '', accepted_answers: [], _manual: true });
-        markNeedsRegrade(pathStr, job);
-        refreshBankTable(pathStr, job);
+        if (!window.PdfExamPaper || typeof window.PdfExamPaper.openAddManualBankRowModal !== 'function') return;
+        window.PdfExamPaper.openAddManualBankRowModal({
+            getBank: function () {
+                job.parsed_bank = job.parsed_bank || [];
+                return job.parsed_bank;
+            },
+            onCommit: function (ins) {
+                markNeedsRegrade(pathStr, job);
+                refreshBankTable(pathStr, job, {
+                    idx: ins.insertAt,
+                    section: (ins.row && ins.row.section) || ''
+                });
+            }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -817,7 +872,7 @@ window.FeaturePdfExamJob = (function () {
                 '<div style="margin-bottom:10px;">' +
                     '<label style="font-size:0.85rem; font-weight:800; color:#334155; display:block; margin-bottom:4px;">③ 答案清單（請逐項確認/修正——這是最後一道防線，自動解析不保證 100% 準）</label>' +
                     '<div id="pdf-exam-split-review-' + pathStr + '">' + renderSplitReviewHtml(job, pathStr) + '</div>' +
-                    '<div id="pdf-exam-bank-' + pathStr + '" style="max-height:220px; overflow:auto; border:1px solid #E0F2FE; border-radius:6px; padding:6px;">' + bankHtml + '</div>' +
+                    '<div id="pdf-exam-bank-' + pathStr + '">' + bankHtml + '</div>' +
                     '<button type="button" class="btn" style="font-size:0.8rem; padding:4px 10px; margin-top:6px;" onclick="window.FeaturePdfExamJob.addBankRow(\'' + pathStr + '\')">＋ 手動新增一題</button>' +
                 '</div>' +
                 '<div style="margin-bottom:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">' +
@@ -1325,8 +1380,10 @@ window.FeaturePdfExamJob = (function () {
         onMaterialFolderChange: onMaterialFolderChange,
         onMaterialFileChange: onMaterialFileChange,
         refreshMaterialPickers: function (pathStr) { return hydratePdfMaterialPickers(pathStr, true); },
+        selectBankSection: selectBankSection,
         parseAnswerTextAction: parseAnswerTextAction,
         useTeacherLocate: useTeacherLocate,
+        confirmSection: confirmSection,
         updateBankField: updateBankField,
         removeBankRow: removeBankRow,
         addBankRow: addBankRow,

@@ -55,6 +55,13 @@ window.TimelineTemplates = (() => {
         return true;
     }
 
+    function copyKindRangeFieldsForRender(r) {
+        if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.copyAllRangeFields === 'function') {
+            return window.MaterialComboStrategies.copyAllRangeFields(r);
+        }
+        return {};
+    }
+
     function copyPackExamFieldsForRender(r) {
         return {
             lines_per_page: r && r.lines_per_page != null && r.lines_per_page !== '' ? String(r.lines_per_page) : '',
@@ -82,7 +89,7 @@ window.TimelineTemplates = (() => {
                     range_type: (r && r.range_type) === 'qnum' ? 'qnum' : 'page',
                     start: r && r.start != null ? String(r.start) : '',
                     end: r && r.end != null ? String(r.end) : ''
-                }, copyPackExamFieldsForRender(r));
+                }, copyPackExamFieldsForRender(r), copyKindRangeFieldsForRender(r));
             });
         }
         return [Object.assign({
@@ -92,7 +99,7 @@ window.TimelineTemplates = (() => {
             range_type: (raw && raw.pack_range_type) === 'qnum' ? 'qnum' : 'page',
             start: raw && raw.pack_start != null ? String(raw.pack_start) : '',
             end: raw && raw.pack_end != null ? String(raw.pack_end) : ''
-        }, copyPackExamFieldsForRender(null))];
+        }, copyPackExamFieldsForRender(null), copyKindRangeFieldsForRender(raw))];
     }
 
     // ========================================================================
@@ -252,6 +259,36 @@ window.TimelineTemplates = (() => {
             + '</div>';
     }
 
+    function packComboDeleteBtn(onclickAttr, canDelete) {
+        if (!canDelete) return '';
+        return '<button type="button" class="btn range-pack-combo-del" title="刪這份套餐"'
+            + ' style="width:36px; height:36px; padding:0; border:none; border-radius:10px; background:#FECACA; color:#B91C1C; font-size:22px; font-weight:800; line-height:36px; cursor:pointer;"'
+            + ' onclick="' + onclickAttr + '">×</button>';
+    }
+
+    function packComboOrderControls(pathStr, blockIdx, blockCount) {
+        const canMove = blockCount > 1;
+        const upOff = !canMove || blockIdx <= 0;
+        const downOff = !canMove || blockIdx >= blockCount - 1;
+        function arrowBtn(dir, off, title) {
+            const delta = dir === 'up' ? -1 : 1;
+            const label = dir === 'up' ? '▲' : '▼';
+            if (off) {
+                return '<button type="button" class="btn range-pack-move-btn" disabled title="' + title + '"'
+                    + ' style="padding:0; width:22px; height:16px; line-height:1; font-size:10px; background:#E2E8F0; color:#94A3B8; border:1px solid #CBD5E1; font-weight:800; cursor:not-allowed;">'
+                    + label + '</button>';
+            }
+            return '<button type="button" class="btn range-pack-move-btn" title="' + title + '"'
+                + ' style="padding:0; width:22px; height:16px; line-height:1; font-size:10px; background:#F8FAFC; color:#334155; border:1px solid #CBD5E1; font-weight:800;"'
+                + ' onclick="window.FeatureTimeline && window.FeatureTimeline.moveRangePackCombo && window.FeatureTimeline.moveRangePackCombo(\'' + pathStr + '\', ' + blockIdx + ', ' + delta + ')">'
+                + label + '</button>';
+        }
+        return '<div class="range-pack-combo-move" style="display:flex; flex-direction:column; align-items:center; gap:1px;">'
+            + arrowBtn('up', upOff, '上移套餐')
+            + arrowBtn('down', downOff, '下移套餐')
+            + '</div>';
+    }
+
     function packRowDeleteBtn(pathStr, idx, canDelete) {
         if (canDelete) {
             return '<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這段範圍"'
@@ -387,8 +424,12 @@ window.TimelineTemplates = (() => {
                 + '<input id="range-pack-exc-' + pathStr + '-' + idx + '" class="form-control asg-num" value="' + escapeHtml(row.exclude_nums || '') + '" placeholder="—" title="排除題號"'
                 + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
                 + '<input id="range-pack-count-' + pathStr + '-' + idx + '" type="number" class="form-control asg-num" value="' + escapeHtml(row.count != null && row.count !== '' ? String(row.count) : '') + '" placeholder="—" title="題數"'
+                + (function () {
+                    const n = Number(availStr);
+                    return (!isNaN(n) && n >= 0 && availStr !== '需讀取' && availStr !== '—') ? (' max="' + n + '"') : '';
+                }())
                 + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
-                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })"'
+                + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false, clamp: true })"'
                 + ' onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); this.blur(); }">'
                 + '<div id="range-pack-avail-' + pathStr + '-' + idx + '" class="range-pack-avail">' + escapeHtml(availStr) + '</div>'
                 + '<div id="range-pack-pct-' + pathStr + '-' + idx + '" class="range-pack-pct">' + escapeHtml(pct) + '</div>'
@@ -498,10 +539,11 @@ window.TimelineTemplates = (() => {
                 block.rows = window.FeatureTimeline.expandPackRowsForCombo(classId, blockCombo, block.rows);
             }
             const comboOpts = renderPackComboOptions(combos, block.combo_id, block.combo_label, cacheReady);
-            const delBlock = blocks.length > 1
-                ? ('<button type="button" class="btn" style="padding:4px 8px; background:#FEF2F2; color:#B91C1C; border:1px solid #FCA5A5; font-weight:800;" title="刪這份套餐"'
-                    + ' onclick="window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')">刪套餐</button>')
-                : '';
+            const delBlock = packComboDeleteBtn(
+                'window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')',
+                blocks.length > 1
+            );
+            const comboOrder = packComboOrderControls(pathStr, bi, blocks.length);
             const isManual = String(block.combo_id) === '__manual__';
             const tableResult = (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.renderPackTableHtml === 'function')
                 ? window.MaterialComboStrategies.renderPackTableHtml({
@@ -547,7 +589,10 @@ window.TimelineTemplates = (() => {
             return '<div class="range-pack-block" data-block-idx="' + bi + '" style="margin-top:10px; padding:10px; border:1px dashed #93C5FD; border-radius:8px; background:#F8FAFC;">'
                 + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
                 + '<div style="flex:1 1 240px; min-width:200px;">'
-                + '<label class="asg-field-label">套餐</label>'
+                + '<div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">'
+                + comboOrder
+                + '<label class="asg-field-label" style="margin:0;">套餐</label>'
+                + '</div>'
                 + '<select id="range-pack-combo-' + pathStr + '-' + bi + '" class="form-control range-pack-combo"'
                 + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackComboChange && window.FeatureTimeline.onRangePackComboChange(\'' + pathStr + '\', ' + bi + ')">'
                 + comboOpts + '</select></div>'
@@ -571,7 +616,6 @@ window.TimelineTemplates = (() => {
                     <div>
                     <button type="button" class="btn" style="padding:4px 10px; background:#EFF6FF; color:#1D4ED8; border:1px solid #93C5FD; font-weight:800;"
                         onclick="window.FeatureTimeline && window.FeatureTimeline.addRangePackCombo && window.FeatureTimeline.addRangePackCombo('${pathStr}')">＋ 增加套餐</button>
-                    <span style="margin-left:8px; color:#64748B; font-weight:700;">第一層選套餐，或手動輸入教材。同一套餐要另一段範圍就按「增加區段」。</span>
                     </div>
                     ${hideComboExamStats ? '' : packStatsLineHtml({ selected: comboSelected }, 'range-pack-stats--combo', pathStr, 'combo')}
                 </div>
@@ -647,6 +691,20 @@ window.TimelineTemplates = (() => {
                     font-size: 10px !important;
                     line-height: 1;
                 }
+                .asg-unify .range-pack-combo-del.btn {
+                    width: 36px;
+                    height: 36px !important;
+                    min-height: 36px !important;
+                    max-height: 36px;
+                    padding: 0 !important;
+                    border: none;
+                    border-radius: 10px;
+                    background: #FECACA;
+                    color: #B91C1C;
+                    font-size: 22px !important;
+                    font-weight: 800;
+                    line-height: 36px;
+                }
                 .asg-unify .range-pack-combo { width: 100%; }
                 .asg-unify .range-pack-row select,
                 .asg-unify .exam-inline-row select { width: 100%; }
@@ -681,7 +739,24 @@ window.TimelineTemplates = (() => {
                     grid-template-columns: 28px repeat(11, minmax(0, 1fr)) 36px;
                 }
                 .range-pack-head--book, .range-pack-row--book {
-                    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) 36px;
+                    grid-template-columns: 28px minmax(88px, 1.1fr) minmax(64px, 0.7fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 1.2fr) 36px;
+                }
+                .range-pack-row--book { align-items:start; }
+                .range-pack-book-combo { display:flex; flex-direction:column; gap:4px; min-width:0; }
+                .range-pack-book-pick {
+                    width:100%;
+                    min-height:36px;
+                    appearance: menulist;
+                    -webkit-appearance: menulist;
+                    background-color:#FFFFFF;
+                    padding-right:22px;
+                }
+                .range-pack-book-manual { width:100%; }
+                .range-pack-book-script {
+                    min-height: 36px;
+                    height: 36px;
+                    resize: none;
+                    line-height: 1.4;
                 }
                 .range-pack-head--pdf, .range-pack-row--pdf {
                     grid-template-columns: 28px minmax(0, 1fr) 36px;
@@ -775,6 +850,80 @@ window.TimelineTemplates = (() => {
         return styles[Math.min(depth, 4)];
     }
 
+    function parentLatePolicyOrDefault(parentPolicy) {
+        const U = window.UtilsDate;
+        if (parentPolicy) return parentPolicy;
+        if (U && typeof U.latePolicyFromMode === 'function') {
+            const bState = window.BuilderStore && window.BuilderStore.getState && window.BuilderStore.getState();
+            if (bState) return U.latePolicyFromMode(bState.late_mode, bState.late_penalty, bState.late_grace);
+            return U.latePolicyFromMode('infinite', 0, 0);
+        }
+        return { mode: 'infinite', penalty: 0, grace: 0 };
+    }
+
+    function effectiveNodeLatePolicy(node, parentPolicy) {
+        const U = window.UtilsDate;
+        const parent = parentLatePolicyOrDefault(parentPolicy);
+        if (U && typeof U.inheritLatePolicy === 'function') return U.inheritLatePolicy(node, parent);
+        return parent;
+    }
+
+    function lateBadgeHtml(policy, opts) {
+        opts = opts || {};
+        if (!policy) return '';
+        const size = opts.size || '0.85rem';
+        const margin = opts.margin || '8px';
+        if (policy.mode === 'no_late') return `<span style="font-size:${size}; color:#EF4444; margin-left:${margin}; font-weight:bold;">🚫 無遲交</span>`;
+        if (policy.mode === 'custom') return `<span style="font-size:${size}; color:#F59E0B; margin-left:${margin}; font-weight:bold;">⏳ 寬限 ${policy.grace || 0}h (-${policy.penalty || 0}%)</span>`;
+        if ((policy.penalty || 0) > 0) return `<span style="font-size:${size}; color:#F59E0B; margin-left:${margin}; font-weight:bold;">♾️ 遲交扣 ${policy.penalty}%</span>`;
+        return `<span style="font-size:${size}; color:#10B981; margin-left:${margin}; font-weight:bold;">♾️ 接受遲交</span>`;
+    }
+
+    function lateModeBuilderControlsHtml(pathStr, node, parentPolicy, compact) {
+        const U = window.UtilsDate;
+        const parent = parentLatePolicyOrDefault(parentPolicy);
+        const own = U && typeof U.hasOwnLatePolicy === 'function' && U.hasOwnLatePolicy(node);
+        const selected = own ? String(node.late_mode || 'infinite') : 'inherit';
+        const parentLabel = (U && typeof U.latePolicyLabel === 'function') ? U.latePolicyLabel(parent) : '上層';
+        const selStyle = compact
+            ? 'padding:6px; font-size:0.9rem; width:auto;'
+            : 'padding:4px 8px; font-size:0.9rem; width:auto;';
+        const label = compact ? '遲交:' : '遲交規則：';
+        const labelColor = compact ? '#64748B' : '';
+        const showCustom = (selected === 'infinite' || selected === 'custom');
+        const showGrace = selected === 'custom';
+        const graceVal = node.grace_period_hours || 0;
+        const penaltyVal = node.penalty_percentage || 0;
+        const customPad = compact ? '4px 8px' : '4px 10px';
+        const numW = compact ? '50px' : '60px';
+        const graceLabel = compact ? '寬限(時):' : '寬限(小時):';
+        const onchange = "const m=this.value;const c=document.getElementById('node-late-custom-" + pathStr + "');const g=document.getElementById('node-grace-wrapper-" + pathStr + "');if(c)c.style.display=(m==='infinite'||m==='custom')?'flex':'none';if(g)g.style.display=(m==='custom')?'flex':'none';";
+        return {
+            selected: selected,
+            selectHtml: `
+                                <div style="display:flex; align-items:center; gap:${compact ? '5px' : '8px'};">
+                                    <label style="font-size:${compact ? '0.9rem' : '0.9rem'}; font-weight:${compact ? 'bold' : '800'}; color:${labelColor || 'inherit'};">${label}</label>
+                                    <select id="node-late-mode-${pathStr}" class="form-control" style="${selStyle}" onchange="${onchange}">
+                                        <option value="inherit" ${selected === 'inherit' ? 'selected' : ''}>繼承上層（${parentLabel}）</option>
+                                        <option value="no_late" ${selected === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
+                                        <option value="infinite" ${selected === 'infinite' ? 'selected' : ''}>♾️ 接受遲交</option>
+                                        <option value="custom" ${selected === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
+                                    </select>
+                                </div>`,
+            customHtml: `
+                                <div id="node-late-custom-${pathStr}" style="display:${showCustom ? 'flex' : 'none'}; align-items:center; gap:${compact ? '5px' : '10px'}; background:#F8FAFC; padding:${customPad}; border-radius:6px; border: 1px solid #E2E8F0;">
+                                    <div id="node-grace-wrapper-${pathStr}" style="display:${showGrace ? 'flex' : 'none'}; align-items:center; gap:5px;">
+                                        <label style="font-size:0.85rem; ${compact ? 'color:#64748B;' : 'font-weight:bold;'}">${graceLabel}</label>
+                                        <input type="number" id="node-grace-${pathStr}" class="form-control" style="padding:4px; width:${numW};" value="${graceVal}" min="0">
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:5px;">
+                                        <label style="font-size:0.85rem; ${compact ? 'color:#64748B;' : 'font-weight:bold;'}">扣分(%):</label>
+                                        <input type="number" id="node-penalty-${pathStr}" class="form-control" style="padding:4px; width:${numW};" value="${penaltyVal}" min="0" max="100">
+                                    </div>
+                                </div>`
+        };
+    }
+
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt) {
         let iconStr = window.TaskScriptResolver
             ? window.TaskScriptResolver.getTaskTypeIcon(t.type)
@@ -850,26 +999,14 @@ window.TimelineTemplates = (() => {
         let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${stampLabel(t.due_date)}</span>` : '';
         let showTaskOpen = t.open_at && t.open_at !== effectiveBlockOpenAt;
         let openBadge = showTaskOpen ? `<span style="font-size:0.9rem; color:#0369A1; margin-left:8px; font-weight:bold;">開放: ${stampLabel(t.open_at)}</span>` : '';
-        
-        let taskLateMode = t.late_mode || 'infinite';
-        let taskPenalty = t.penalty_percentage || 0;
-        let taskGrace = t.grace_period_hours || 0;
-        let showLateBadge = true;
 
-        if (effectiveBlockLatePolicy) {
-            if (taskLateMode === effectiveBlockLatePolicy.mode && 
-                taskPenalty === effectiveBlockLatePolicy.penalty && 
-                taskGrace === (effectiveBlockLatePolicy.grace || 0)) {
-                showLateBadge = false;
-            }
-        }
-
-        let taskLateBadge = '';
-        if (showLateBadge) {
-            if (taskLateMode === 'no_late') taskLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
-            else if (taskLateMode === 'custom') taskLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 寬限 ${taskGrace}h (-${taskPenalty}%)</span>`;
-            else taskLateBadge = taskPenalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${taskPenalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 接受遲交</span>`;
-        }
+        const U = window.UtilsDate;
+        const taskPolicy = effectiveNodeLatePolicy(t, effectiveBlockLatePolicy);
+        const parentPolicy = parentLatePolicyOrDefault(effectiveBlockLatePolicy);
+        const showLateBadge = !(U && typeof U.latePoliciesEqual === 'function'
+            ? U.latePoliciesEqual(taskPolicy, parentPolicy)
+            : false);
+        const taskLateBadge = showLateBadge ? lateBadgeHtml(taskPolicy) : '';
         
         let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
@@ -895,25 +1032,13 @@ window.TimelineTemplates = (() => {
             if (t.type === 'group') {
                 let groupDueDate = t.due_date || effectiveBlockDueDate;
                 let groupOpenAt = t.open_at || effectiveBlockOpenAt;
-                let groupPolicy = {
-                    mode: t.late_mode || effectiveBlockLatePolicy.mode,
-                    penalty: t.penalty_percentage !== undefined ? t.penalty_percentage : effectiveBlockLatePolicy.penalty,
-                    grace: t.grace_period_hours !== undefined ? t.grace_period_hours : (effectiveBlockLatePolicy.grace || 0)
-                };
-
-                let showGroupLateBadge = true;
-                if (groupPolicy.mode === effectiveBlockLatePolicy.mode && 
-                    groupPolicy.penalty === effectiveBlockLatePolicy.penalty && 
-                    groupPolicy.grace === effectiveBlockLatePolicy.grace) {
-                    showGroupLateBadge = false;
-                }
-
-                let gLateBadge = '';
-                if (showGroupLateBadge) {
-                    if (groupPolicy.mode === 'no_late') gLateBadge = `<span style="font-size:0.85rem; color:#EF4444; margin-left:8px; font-weight:bold;">🚫 無遲交</span>`;
-                    else if (groupPolicy.mode === 'custom') gLateBadge = `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">⏳ 寬限 ${groupPolicy.grace}h (-${groupPolicy.penalty}%)</span>`;
-                    else gLateBadge = groupPolicy.penalty > 0 ? `<span style="font-size:0.85rem; color:#F59E0B; margin-left:8px; font-weight:bold;">♾️ 遲交扣 ${groupPolicy.penalty}%</span>` : `<span style="font-size:0.85rem; color:#10B981; margin-left:8px; font-weight:bold;">♾️ 接受遲交</span>`;
-                }
+                const U = window.UtilsDate;
+                const groupPolicy = effectiveNodeLatePolicy(t, effectiveBlockLatePolicy);
+                const parentPolicy = parentLatePolicyOrDefault(effectiveBlockLatePolicy);
+                const showGroupLateBadge = !(U && typeof U.latePoliciesEqual === 'function'
+                    ? U.latePoliciesEqual(groupPolicy, parentPolicy)
+                    : false);
+                const gLateBadge = showGroupLateBadge ? lateBadgeHtml(groupPolicy) : '';
                 let gDueBadge = (t.due_date && t.due_date !== effectiveBlockDueDate) ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${stampLabel(t.due_date)}</span>` : '';
                 let gOpenBadge = (t.open_at && t.open_at !== effectiveBlockOpenAt) ? `<span style="font-size:0.9rem; color:#0369A1; margin-left:8px; font-weight:bold;">開放: ${stampLabel(t.open_at)}</span>` : '';
 
@@ -957,18 +1082,24 @@ window.TimelineTemplates = (() => {
      * C. 自行貼上：單一視窗卡片。win = { label, script, student }。
      * total<=1 時不顯示刪除鈕（至少留一個視窗），標籤欄位在只有 1 個視窗時仍可填，
      * 但存檔時只有「視窗數 >1 或標籤非空」才會真的寫入 【label】 前綴，避免污染最單純的舊格式。
+     * 目錄套餐：標籤＝上面那一列範圍，一口說／書寫對一列。
      */
-    function renderPasteWindowRowHtml(pathStr, winIdx, win, total) {
+    function renderPasteWindowRowHtml(pathStr, winIdx, win, total, bookPack) {
         const safeLabel = String((win && win.label) || '').replace(/"/g, '&quot;');
+        const rangeHead = String((win && win.label) || ('區段 ' + (winIdx + 1))).replace(/</g, '&lt;');
         const safeWinScript = String((win && win.script) || '').replace(/</g, '&lt;');
         const safeWinStudent = String((win && win.student) || '').replace(/</g, '&lt;');
-        const removeBtn = total > 1
+        const removeBtn = !bookPack && total > 1
             ? `<button type="button" class="btn" style="padding:6px 8px; background:white; color:#B91C1C; border:1px solid #FCA5A5; flex-shrink:0;" onclick="window.FeatureTimeline.removePasteWindowRow(this, '${pathStr}')" title="刪除此視窗">🗑</button>`
             : '';
+        const labelHtml = bookPack
+            ? `<input type="hidden" class="paste-window-label" value="${safeLabel}">
+               <div class="paste-window-range-label" style="font-weight:900; color:#5B21B6; font-size:0.88rem;">${rangeHead}</div>`
+            : `<input type="text" class="form-control paste-window-label" style="padding:6px; font-size:0.85rem; font-weight:800; color:#7C3AED; max-width:260px;" placeholder="這段標籤（選填，如 Page 2／Ex.3）" value="${safeLabel}">`;
         return `
             <div class="paste-window-row" data-idx="${winIdx}" style="display:flex; gap:8px; align-items:flex-start; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
-                    <input type="text" class="form-control paste-window-label" style="padding:6px; font-size:0.85rem; font-weight:800; color:#7C3AED; max-width:260px;" placeholder="這段標籤（選填，如 Page 2／Ex.3）" value="${safeLabel}">
+                    ${labelHtml}
                     <div>
                         <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">🎯 口說答案（AI 基準）</div>
                         <textarea class="form-control paste-window-script" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上口說答案…">${safeWinScript}</textarea>
@@ -980,6 +1111,31 @@ window.TimelineTemplates = (() => {
                 </div>
                 ${removeBtn}
             </div>`;
+    }
+
+    function bookPasteWindowsForRender(pathStr, raw, bookPack) {
+        const base = (Array.isArray(raw.paste_windows) && raw.paste_windows.length)
+            ? raw.paste_windows.slice()
+            : [{ label: '', script: raw.original_script || '', student: raw.student_display_text || raw.student_display || raw.student_text || '' }];
+        if (!bookPack) return base;
+        const rows = (window.FeatureTimeline && typeof window.FeatureTimeline.packRowsForAudioPath === 'function')
+            ? (window.FeatureTimeline.packRowsForAudioPath(pathStr) || [])
+            : [];
+        if (!rows.length) return base;
+        const Book = window.FeatureMaterialBook;
+        const wins = base.slice();
+        while (wins.length < rows.length) wins.push({ label: '', script: '', student: '' });
+        return wins.map(function (win, i) {
+            if (i >= rows.length) return win;
+            const label = (Book && typeof Book.pasteWindowLabel === 'function')
+                ? Book.pasteWindowLabel(rows[i], i)
+                : ('區段 ' + (i + 1));
+            return {
+                label: label,
+                script: (win && win.script) || '',
+                student: (win && win.student) || ''
+            };
+        });
     }
 
     function getArrowButtonsHtml(pathStr, idx, arrLength, depth, hasPrevSiblingGroup) {
@@ -998,7 +1154,8 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '') {
+    function renderBuilderTree(tasks, parentPathArray = [], classResOpts = '', parentLatePolicy) {
+        const inheritedLate = parentLatePolicyOrDefault(parentLatePolicy);
         let treeHtml = tasks.map((t, idx) => {
             const pathArray = [...parentPathArray, idx];
             const pathStr = pathArray.join('-');
@@ -1029,7 +1186,7 @@ window.TimelineTemplates = (() => {
                 let subTasksHtml = '';
                 if (t.subTasks && t.subTasks.length > 0) {
                     subTasksHtml = `<div style="padding-left: 10px; display:flex; flex-direction:column;">` +
-                                   renderBuilderTree(t.subTasks, pathArray, classResOpts) +
+                                   renderBuilderTree(t.subTasks, pathArray, classResOpts, effectiveNodeLatePolicy(t, inheritedLate)) +
                                    `</div>`;
                 } else {
                     subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此群組作業尚無內容)</div>`;
@@ -1042,7 +1199,7 @@ window.TimelineTemplates = (() => {
                     </select>
                 ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:0.9rem; padding:4px 10px;" title="請先至資源管理新增並派發資源">+ 📚 尚無任何可用資源</button>`;
 
-                let gLateMode = t.late_mode || 'infinite';
+                const gLateUi = lateModeBuilderControlsHtml(pathStr, t, inheritedLate, false);
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
                 const groupBg = isRangeGroup ? '#EFF6FF' : '#F3E8FF';
                 const groupBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
@@ -1054,9 +1211,6 @@ window.TimelineTemplates = (() => {
                 const titleBorder = isRangeGroup ? '#93C5FD' : '#D8B4FE';
                 const rangeBadge = isRangeGroup
                     ? '<span style="font-size:0.75rem; background:#DBEAFE; color:#1D4ED8; padding:3px 8px; border-radius:999px; font-weight:800; white-space:nowrap;">組合層</span>'
-                    : '';
-                const rangeHint = isRangeGroup
-                    ? '<div style="font-size:0.8rem; color:#64748B; margin:-4px 0 10px 42px; line-height:1.4;">組標題＝套餐名（空白才帶入）。小標題＝表名＋範圍（起迄都填才進；表名＝活頁別名，永遠有）。沒選套餐或本班尚未指派套餐時，組標題維持空白。</div>'
                     : '';
                 const rangePackHtml = isRangeGroup ? renderRangePackHtml(pathStr, t) : '';
 
@@ -1077,7 +1231,6 @@ window.TimelineTemplates = (() => {
                                 <button type="button" class="btn-danger" style="padding:6px 12px; border-radius:6px; border:none; cursor:pointer;" onclick="window.FeatureTimeline.removeNode('${pathStr}')" title="刪除此群組">🗑️</button>
                             </div>
                         </div>
-                        ${rangeHint}
                         ${rangePackHtml}
 
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
@@ -1089,30 +1242,8 @@ window.TimelineTemplates = (() => {
                                 <label style="font-weight:800; font-size:0.9rem; color:${lvl.text};" title="留空則繼承區塊">開放日期：</label>
                                 ${dateTimeFields(`node-open-${pathStr}`, `node-open-time-${pathStr}`, t.open_at)}
                             </div>
-                            
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <label style="font-weight:800; font-size:0.9rem; color:${lvl.text};">遲交規則：</label>
-                                <select id="node-late-mode-${pathStr}" class="form-control" style="padding:4px 8px; font-size:0.9rem; width:auto;" onchange="
-                                    const m = this.value;
-                                    document.getElementById('node-late-custom-${pathStr}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
-                                    document.getElementById('node-grace-wrapper-${pathStr}').style.display = (m === 'custom') ? 'flex' : 'none';
-                                ">
-                                    <option value="no_late" ${gLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                    <option value="infinite" ${gLateMode === 'infinite' ? 'selected' : ''}>♾️ 接受遲交</option>
-                                    <option value="custom" ${gLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
-                                </select>
-                            </div>
-
-                            <div id="node-late-custom-${pathStr}" style="display:${(gLateMode === 'infinite' || gLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:#F8FAFC; padding:4px 10px; border-radius:6px; border: 1px solid #E2E8F0;">
-                                <div id="node-grace-wrapper-${pathStr}" style="display:${gLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
-                                    <label style="font-size:0.85rem; font-weight:bold; color:${lvl.text};">寬限(小時):</label>
-                                    <input type="number" id="node-grace-${pathStr}" class="form-control" style="padding:4px; width:60px;" value="${t.grace_period_hours || 0}" min="0">
-                                </div>
-                                <div style="display:flex; align-items:center; gap:5px;">
-                                    <label style="font-size:0.85rem; font-weight:bold; color:${lvl.text};">扣分(%):</label>
-                                    <input type="number" id="node-penalty-${pathStr}" class="form-control" style="padding:4px; width:60px;" value="${t.penalty_percentage || 0}" min="0" max="100">
-                                </div>
-                            </div>
+                            ${gLateUi.selectHtml}
+                            ${gLateUi.customHtml}
                         </div>
                         
                         <div style="padding-left: 10px;">
@@ -1201,11 +1332,12 @@ window.TimelineTemplates = (() => {
                     // C. 自行貼上：可拆成多個視窗（每頁／每個 exercise 各一個），存成 raw_data.paste_windows；
                     // 只有 1 個視窗、且沒標籤時，跟舊資料格式完全相同（單一 original_script／student_display）。
                     // 見 .cursor/rules/assignment-title-auto-inherit-invariant.mdc 旁的 paste-windows 說明。
-                    const pasteWindows = (Array.isArray(raw.paste_windows) && raw.paste_windows.length)
-                        ? raw.paste_windows
-                        : [{ label: '', script: raw.original_script || '', student: raw.student_display_text || raw.student_display || raw.student_text || '' }];
+                    const bookPack = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.audioUsesBookRangePack === 'function'
+                        && window.FeatureTimeline.audioUsesBookRangePack(pathStr));
+                    const pasteWindows = bookPasteWindowsForRender(pathStr, raw, bookPack);
                     const pasteWindowsHtml = pasteWindows.map(function (win, winIdx) {
-                        return renderPasteWindowRowHtml(pathStr, winIdx, win, pasteWindows.length);
+                        return renderPasteWindowRowHtml(pathStr, winIdx, win, pasteWindows.length, bookPack);
                     }).join('');
                     // 標題空白時以 base 範圍顯示（data-title-auto 供範圍變更時同步更新）
                     const plainTaskTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
@@ -1321,6 +1453,11 @@ window.TimelineTemplates = (() => {
                         && typeof window.FeatureTimeline.parentRangeGroupOf === 'function'
                         && window.FeatureTimeline.parentRangeGroupOf(pathStr));
                     const rangePackOnAudio = underRangePack ? '' : renderRangePackHtml(pathStr, t);
+                    const gatedByPack = underRangePack || !!rangePackOnAudio;
+                    const hasPackCombo = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.audioHasPackCombo === 'function'
+                        && window.FeatureTimeline.audioHasPackCombo(pathStr));
+                    const showScriptPanels = !gatedByPack || hasPackCombo;
                     const pdfStatusText = audioPdfStatusHtml(pathStr, t);
 
                     let resOptsHtmlForResource = '';
@@ -1330,11 +1467,11 @@ window.TimelineTemplates = (() => {
                         </select>`;
                     }
 
-                    const showMeta = scriptSource === 'meta';
-                    const showRangeOnly = scriptSource === 'range_only';
-                    const showPaste = scriptSource === 'paste';
-                    const showResource = scriptSource === 'resource';
-                    const showSkeleton = scriptSource === 'skeleton';
+                    const showMeta = showScriptPanels && !bookPack && scriptSource === 'meta';
+                    const showRangeOnly = showScriptPanels && !bookPack && scriptSource === 'range_only';
+                    const showPaste = showScriptPanels && (bookPack || scriptSource === 'paste');
+                    const showResource = showScriptPanels && !bookPack && scriptSource === 'resource';
+                    const showSkeleton = showScriptPanels && !bookPack && scriptSource === 'skeleton';
                     // 💣 雷區：base 範圍在骨架模式下預設「依路徑自動整理」，但老師可手動微調覆寫；
                     // 一旦手動改過（且沒清空）就不可再被路徑異動自動蓋回去，否則等同「跑掉不見」
                     // （見 feature-timeline.js refreshSkeletonRangeLabel 旁的雷區說明）。
@@ -1385,7 +1522,11 @@ window.TimelineTemplates = (() => {
                                 </div>
                             </div>
 
-                            <div style="margin-bottom:14px; padding:12px; background:white; border:1px solid #E2E8F0; border-radius:8px;">
+                            ${!showScriptPanels
+                                ? ''
+                                : (bookPack
+                                ? `<input type="hidden" id="node-script-source-${pathStr}" value="paste">`
+                                : `<div style="margin-bottom:14px; padding:12px; background:white; border:1px solid #E2E8F0; border-radius:8px;">
                                 <div style="font-weight:900; color:#0F172A; margin-bottom:8px;">📄 文稿來源</div>
                                 <select id="node-script-source-${pathStr}" class="form-control" style="width:100%; max-width:560px; padding:8px; font-size:0.9rem; font-weight:800;" onchange="window.FeatureTimeline.onScriptSourceChange('${pathStr}')">
                                     <option value="meta" ${scriptSource === 'meta' ? 'selected' : ''}>跟範圍走（口說＝文稿檔，書寫＝公式）</option>
@@ -1395,7 +1536,7 @@ window.TimelineTemplates = (() => {
                                     <option value="resource" ${scriptSource === 'resource' ? 'selected' : ''}>PDF 對照頁（教材範本管理已上傳的）</option>
                                 </select>
                                 <div style="font-size:0.78rem; color:#64748B; margin-top:6px;">範圍只出現一次。預設跟範圍走；文稿不健全就改「只錄」。PDF 不在這裡上傳。</div>
-                            </div>
+                            </div>`)}
 
                             <div id="node-base-range-wrap-${pathStr}" style="display:${showSkeleton ? 'flex' : 'none'}; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px;">
                                 <span style="font-weight:900; color:#92400E; font-size:0.9rem; flex:0 0 100%;">📍 base 範圍（必填）</span>
@@ -1456,17 +1597,17 @@ window.TimelineTemplates = (() => {
                             </div>
 
                             <div id="script-source-panel-paste-${pathStr}" style="display:${showPaste ? 'block' : 'none'}; margin-bottom:14px;">
-                                <div style="font-size:0.78rem; color:#64748B; margin-bottom:8px; line-height:1.5;">
+                                ${bookPack ? `<div style="font-size:0.78rem; color:#5B21B6; margin-bottom:8px; line-height:1.5; font-weight:700;">下面每一格口說／書寫對上面一列範圍。按「＋ 增加區段」會多一格空欄。</div>` : `<div style="font-size:0.78rem; color:#64748B; margin-bottom:8px; line-height:1.5;">
                                     一次貼一整段常常混了好幾頁／好幾個 exercise，之後很難拆。若這次內容涵蓋不只一頁／一個 exercise，
                                     建議按「➕ 增加視窗」，每頁／每個 exercise 各開一個視窗、標好頁碼或題號──日後用「📥 由下往上收集文稿」
                                     整理教材時，才能自動依視窗分段，不用再手動猜哪裡該切。
-                                </div>
+                                </div>`}
                                 <div id="node-paste-windows-${pathStr}" style="display:flex; flex-direction:column; gap:10px;">${pasteWindowsHtml}</div>
-                                <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                                ${bookPack ? '' : `<div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
                                     <button type="button" class="btn-action" style="font-size:0.85rem; padding:6px 12px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:800; cursor:pointer;" onclick="window.FeatureTimeline.addPasteWindowRow('${pathStr}')">➕ 增加視窗</button>
                                     <span style="font-size:0.75rem; color:#94A3B8;">${pasteWindows.length > 1 ? ('目前 ' + pasteWindows.length + ' 個視窗') : '只有 1 個視窗時不會加標籤，維持原本單段格式'}</span>
                                 </div>
-                                <div style="font-size:0.78rem; color:#64748B; margin-top:8px;">內容寫入作業 Snapshot 欄位；建議歸檔本班 01_Class_Resources。</div>
+                                <div style="font-size:0.78rem; color:#64748B; margin-top:8px;">內容寫入作業 Snapshot 欄位；建議歸檔本班 01_Class_Resources。</div>`}
                             </div>
 
                             <div id="script-source-panel-resource-${pathStr}" style="display:${showResource ? 'block' : 'none'}; margin-bottom:14px; background:white; border:1px solid #FDBA74; border-radius:8px; padding:12px;">
@@ -1527,7 +1668,7 @@ window.TimelineTemplates = (() => {
                         : '<div style="margin-top:8px; color:#B91C1C;">FeaturePdfExamJob 未載入</div>';
                 }
 
-                // 小標題：組合層底下＝上方表名＋範圍。不是組合層：錄音／考試各自原路。
+                // 小標題：組合層底下＝上方套餐名＋範圍。不是組合層：錄音／考試各自原路。
                 let leafTitleHtml = String(t.title || '');
                 let leafTitleAuto = '0';
                 let leafTitleFromRange = '';
@@ -1563,7 +1704,7 @@ window.TimelineTemplates = (() => {
                     }
                 }
 
-                let tLateMode = t.late_mode || 'infinite';
+                const tLateUi = lateModeBuilderControlsHtml(pathStr, t, inheritedLate, true);
 
                 return `
                     <div id="node-block-${pathStr}"
@@ -1584,29 +1725,8 @@ window.TimelineTemplates = (() => {
                                     <label style="font-size:0.9rem; font-weight:bold; color:#64748B;" title="留空則繼承外層">開放:</label>
                                     ${dateTimeFields(`node-open-${pathStr}`, `node-open-time-${pathStr}`, t.open_at, 'padding:6px; font-size:0.9rem; width:130px;', 'padding:6px; font-size:0.9rem; width:110px;')}
                                 </div>
-                                <div style="display:flex; align-items:center; gap:5px;">
-                                    <label style="font-size:0.9rem; font-weight:bold; color:#64748B;">遲交:</label>
-                                    <select id="node-late-mode-${pathStr}" class="form-control" style="padding:6px; font-size:0.9rem; width:auto;" onchange="
-                                        const m = this.value;
-                                        document.getElementById('node-late-custom-${pathStr}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
-                                        document.getElementById('node-grace-wrapper-${pathStr}').style.display = (m === 'custom') ? 'flex' : 'none';
-                                    ">
-                                        <option value="no_late" ${tLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                        <option value="infinite" ${tLateMode === 'infinite' ? 'selected' : ''}>♾️ 接受遲交</option>
-                                        <option value="custom" ${tLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
-                                    </select>
-                                </div>
-                                
-                                <div id="node-late-custom-${pathStr}" style="display:${(tLateMode === 'infinite' || tLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:5px; background:#F8FAFC; padding:4px 8px; border-radius:6px; border:1px solid #E2E8F0;">
-                                    <div id="node-grace-wrapper-${pathStr}" style="display:${tLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
-                                        <label style="font-size:0.85rem; color:#64748B;">寬限(時):</label>
-                                        <input type="number" id="node-grace-${pathStr}" class="form-control" style="padding:4px; width:50px;" value="${t.grace_period_hours || 0}" min="0">
-                                    </div>
-                                    <div style="display:flex; align-items:center; gap:5px;">
-                                        <label style="font-size:0.85rem; color:#64748B;">扣分(%):</label>
-                                        <input type="number" id="node-penalty-${pathStr}" class="form-control" style="padding:4px; width:50px;" value="${t.penalty_percentage || 0}" min="0" max="100">
-                                    </div>
-                                </div>
+                                ${tLateUi.selectHtml}
+                                ${tLateUi.customHtml}
                             </div>
 
                             <div style="display:flex; align-items:center; gap:8px; padding-top:4px; margin-left:auto;">
@@ -1679,41 +1799,45 @@ window.TimelineTemplates = (() => {
                     <div id="builder-title-${bState.containerId}" class="rt-normalize" contenteditable="true" data-placeholder="✏️ 標題" style="font-weight:900; font-size:1rem; border-bottom:1px solid #E2E8F0; padding-bottom:8px; margin-bottom:10px; outline:none; min-height:30px; color: var(--primary-dark);">${bState.title || ''}</div>
                     <div id="builder-desc-${bState.containerId}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="font-size:0.85rem; outline:none; min-height:50px; margin-bottom:15px; color: #475569;">${bState.description || ''}</div>
                     
-                    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">區塊期限：</label>
-                            ${dateTimeFields(`builder-due-${bState.containerId}`, `builder-due-time-${bState.containerId}`, bState.due_date, 'width:auto; padding:4px 8px; font-size:1rem;', 'width:110px; padding:4px 8px; font-size:1rem;')}
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">開放日期：</label>
-                            ${dateTimeFields(`builder-open-${bState.containerId}`, `builder-open-time-${bState.containerId}`, bState.open_at, 'width:auto; padding:4px 8px; font-size:1rem;', 'width:110px; padding:4px 8px; font-size:1rem;')}
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-weight:800; font-size:1rem; color:#334155;">區塊遲交規則：</label>
-                            <select id="builder-late-mode-${bState.containerId}" class="form-control" style="padding:4px 8px; font-size:1rem; width:auto;" onchange="
-                                const m = this.value;
-                                document.getElementById('builder-late-custom-${bState.containerId}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
-                                document.getElementById('builder-grace-wrapper-${bState.containerId}').style.display = (m === 'custom') ? 'flex' : 'none';
-                            ">
-                                <option value="no_late" ${bLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
-                                <option value="infinite" ${bLateMode === 'infinite' ? 'selected' : ''}>♾️ 接受遲交</option>
-                                <option value="custom" ${bLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
-                            </select>
-                        </div>
-                        <div id="builder-late-custom-${bState.containerId}" style="display:${(bLateMode === 'infinite' || bLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:#F1F5F9; padding:4px 10px; border-radius:6px; border:1px solid #CBD5E1;">
-                            <div id="builder-grace-wrapper-${bState.containerId}" style="display:${bLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
-                                <label style="font-size:0.9rem; font-weight:bold; color:#475569;">寬限(小時):</label>
-                                <input type="number" id="builder-grace-${bState.containerId}" class="form-control" style="padding:4px; width:70px;" value="${bState.late_grace || 0}" min="0">
+                    <div style="display:flex; flex-direction:column; gap:10px; background:#F8FAFC; padding:10px 12px; border-radius:6px; border: 1px solid #E2E8F0;">
+                        <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center;">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <label style="font-weight:800; font-size:1rem; color:#334155;">區塊期限：</label>
+                                ${dateTimeFields(`builder-due-${bState.containerId}`, `builder-due-time-${bState.containerId}`, bState.due_date, 'width:auto; padding:4px 8px; font-size:1rem;', 'width:110px; padding:4px 8px; font-size:1rem;')}
                             </div>
-                            <div style="display:flex; align-items:center; gap:5px;">
-                                <label style="font-size:0.9rem; font-weight:bold; color:#475569;">扣分(%):</label>
-                                <input type="number" id="builder-penalty-${bState.containerId}" class="form-control" style="padding:4px; width:70px;" value="${bState.late_penalty || 0}" min="0" max="100">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <label style="font-weight:800; font-size:1rem; color:#334155;">開放日期：</label>
+                                ${dateTimeFields(`builder-open-${bState.containerId}`, `builder-open-time-${bState.containerId}`, bState.open_at, 'width:auto; padding:4px 8px; font-size:1rem;', 'width:110px; padding:4px 8px; font-size:1rem;')}
+                            </div>
+                            <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#334155; margin-left: auto;">
+                                <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
+                                📢 發佈
+                            </label>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label style="font-weight:800; font-size:1rem; color:#334155;">區塊遲交規則：</label>
+                                <select id="builder-late-mode-${bState.containerId}" class="form-control" style="padding:4px 8px; font-size:1rem; width:auto;" onchange="
+                                    const m = this.value;
+                                    document.getElementById('builder-late-custom-${bState.containerId}').style.display = (m === 'infinite' || m === 'custom') ? 'flex' : 'none';
+                                    document.getElementById('builder-grace-wrapper-${bState.containerId}').style.display = (m === 'custom') ? 'flex' : 'none';
+                                ">
+                                    <option value="no_late" ${bLateMode === 'no_late' ? 'selected' : ''}>🚫 無遲交</option>
+                                    <option value="infinite" ${bLateMode === 'infinite' ? 'selected' : ''}>♾️ 接受遲交</option>
+                                    <option value="custom" ${bLateMode === 'custom' ? 'selected' : ''}>⏳ 自訂寬限</option>
+                                </select>
+                            </div>
+                            <div id="builder-late-custom-${bState.containerId}" style="display:${(bLateMode === 'infinite' || bLateMode === 'custom') ? 'flex' : 'none'}; align-items:center; gap:10px; background:#F1F5F9; padding:4px 10px; border-radius:6px; border:1px solid #CBD5E1;">
+                                <div id="builder-grace-wrapper-${bState.containerId}" style="display:${bLateMode === 'custom' ? 'flex' : 'none'}; align-items:center; gap:5px;">
+                                    <label style="font-size:0.9rem; font-weight:bold; color:#475569;">寬限(小時):</label>
+                                    <input type="number" id="builder-grace-${bState.containerId}" class="form-control" style="padding:4px; width:70px;" value="${bState.late_grace || 0}" min="0">
+                                </div>
+                                <div style="display:flex; align-items:center; gap:5px;">
+                                    <label style="font-size:0.9rem; font-weight:bold; color:#475569;">扣分(%):</label>
+                                    <input type="number" id="builder-penalty-${bState.containerId}" class="form-control" style="padding:4px; width:70px;" value="${bState.late_penalty || 0}" min="0" max="100">
+                                </div>
                             </div>
                         </div>
-                        <label style="display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; font-size:1rem; color:#334155; margin-left: auto;">
-                            <input type="checkbox" id="builder-pub-${bState.containerId}" style="transform:scale(1.2);" ${bState.is_published ? 'checked' : ''}>
-                            📢 發佈
-                        </label>
                     </div>
                 </div>
 

@@ -1978,15 +1978,20 @@ window.UIStudentTimelineTemplates = (() => {
                             if (typeof aRaw === 'string') {
                                 try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; }
                             }
-                            
-                            let isLateUpload = false;
+                            let blockLatePolicy = { mode: 'no_late', penalty: 0, grace: 0 };
                             let allowLateFlag = false;
-                            if (aRaw.late_policy && typeof aRaw.late_policy === 'object') {
-                                allowLateFlag = aRaw.late_policy.allow_late === true;
+                            if (aRaw.late_policy && typeof aRaw.late_policy === 'object'
+                                && DateUtils && typeof DateUtils.latePolicyFromAssignmentRaw === 'function') {
+                                blockLatePolicy = DateUtils.latePolicyFromAssignmentRaw(aRaw);
+                                allowLateFlag = DateUtils.allowLateFromPolicy
+                                    ? DateUtils.allowLateFromPolicy(blockLatePolicy)
+                                    : aRaw.late_policy.allow_late === true;
                             } else if (aRaw.allow_late === true) {
+                                blockLatePolicy = { mode: 'infinite', penalty: 0, grace: 0 };
                                 allowLateFlag = true;
                             }
                             
+                            let isLateUpload = false;
                             if (effectiveBlockDueDate && DateUtils) {
                                 isLateUpload = DateUtils.isPastDue(effectiveBlockDueDate);
                             }
@@ -2017,9 +2022,10 @@ window.UIStudentTimelineTemplates = (() => {
                             let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (接受遲交)' : '';
                             let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${DateUtils && DateUtils.formatStampLabel ? DateUtils.formatStampLabel(effectiveBlockDueDate) : effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
-                            const renderTaskTree = (tasksList, depth, parentOpenAt) => {
+                            const renderTaskTree = (tasksList, depth, parentOpenAt, parentLatePolicy) => {
                                 if (!Array.isArray(tasksList)) return '';
                                 if (tasksList.length === 0) return '';
+                                const parentLate = parentLatePolicy || blockLatePolicy;
                                 
                                 return tasksList.map((task, idx) => {
                                     if (!task) return '';
@@ -2028,6 +2034,12 @@ window.UIStudentTimelineTemplates = (() => {
                                         : (task.open_at || parentOpenAt);
                                     if (DateUtils && DateUtils.isOpenYet && !DateUtils.isOpenYet(effOpen)) return '';
                                     const lvl = getLevelStyle(depth);
+                                    const taskLate = (DateUtils && typeof DateUtils.inheritLatePolicy === 'function')
+                                        ? DateUtils.inheritLatePolicy(task, parentLate)
+                                        : parentLate;
+                                    const taskAllowLate = (DateUtils && typeof DateUtils.allowLateFromPolicy === 'function')
+                                        ? DateUtils.allowLateFromPolicy(taskLate)
+                                        : allowLateFlag;
                                     
                                     let isFirstLeaf = (idx === 0);
                                     if (!isFirstLeaf && tasksList[idx - 1] && tasksList[idx - 1].type === 'group') isFirstLeaf = true;
@@ -2047,7 +2059,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         
                                         if (Array.isArray(task.subTasks) && task.subTasks.length > 0) {
                                             subTasksHtml = `<div style="display:flex; flex-direction:column;">` +
-                                                renderTaskTree(task.subTasks, depth + 1, effOpen) +
+                                                renderTaskTree(task.subTasks, depth + 1, effOpen, taskLate) +
                                                 `</div>`;
                                         } else {
                                             subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此作業群組尚無內容)</div>`;
@@ -2065,14 +2077,14 @@ window.UIStudentTimelineTemplates = (() => {
                                             </div>
                                         `;
                                     } else {
-                                        return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf);
+                                        return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, taskAllowLate, node, depth, isFirstLeaf, isLastLeaf);
                                     }
                                 }).join('');
                             };
 
                             let tasksHtml = '';
                             if (Array.isArray(course.tasks) && course.tasks.length > 0) {
-                                tasksHtml = renderTaskTree(course.tasks, 0, course.open_at);
+                                tasksHtml = renderTaskTree(course.tasks, 0, course.open_at, blockLatePolicy);
                             }
                             
                             let safeCourseTitle = course.title ? course.title : '';

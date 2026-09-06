@@ -844,12 +844,12 @@ window.FeatureTimeline = (() => {
         return (bState && bState.classId) || '';
     }
 
-    /** 小標題＝表名＋範圍。只准 combinePackRangeLabel。 */
+    /** 小標題＝套餐名＋範圍。只准 combinePackRangeLabel。 */
     function buildMaterialRangeLabelFromRows(rows) {
         return combinePackRangeLabel(packRowsFromMaterialRows(rows), builderClassId());
     }
 
-    /** 錄音／考試小標題＝表名＋範圍（挑選：起迄都填才進）。 */
+    /** 錄音／考試小標題＝套餐名＋範圍（挑選：起迄都填才進）。 */
     function packRangeLabelForAudio(audioPathStr) {
         const hostPath = parentRangeGroupPathOf(audioPathStr)
             || (isPackHostNode(getTaskNodeByPathStr(audioPathStr)) ? audioPathStr : '');
@@ -1167,6 +1167,130 @@ window.FeatureTimeline = (() => {
             return parent;
         }
         return null;
+    }
+
+    function audioHasPackCombo(pathStr) {
+        const parent = parentRangeGroupOf(pathStr);
+        const node = getTaskNodeByPathStr(pathStr);
+        const host = parent || node;
+        if (!host || !host.raw_data) return false;
+        return normalizePackRows(host.raw_data).some(function (r) {
+            return !!String((r && (r.combo_id || r.comboId)) || '').trim();
+        });
+    }
+
+    function audioUsesBookRangePack(pathStr) {
+        const parent = parentRangeGroupOf(pathStr);
+        const node = getTaskNodeByPathStr(pathStr);
+        const host = parent || (node && isPackHostNode(node) ? node : null);
+        if (!host) return false;
+        return packRowsAreOnlyBook(normalizePackRows(host.raw_data));
+    }
+
+    function packRowsForAudioPath(pathStr) {
+        const parent = parentRangeGroupOf(pathStr);
+        const node = getTaskNodeByPathStr(pathStr);
+        const host = parent || (node && isPackHostNode(node) ? node : null);
+        if (!host || !host.raw_data) return [];
+        return normalizePackRows(host.raw_data);
+    }
+
+    function audioTaskAndPathOfPackHost(pathStr) {
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!group) return { audio: null, audioPath: '' };
+        if (group.type === 'audio_record') return { audio: group, audioPath: pathStr };
+        const idx = (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
+        if (idx < 0) return { audio: null, audioPath: '' };
+        return { audio: group.subTasks[idx], audioPath: pathStr + '-' + idx };
+    }
+
+    function bookPasteWindowLabel(row, idx) {
+        if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.pasteWindowLabel === 'function') {
+            return window.FeatureMaterialBook.pasteWindowLabel(row, idx);
+        }
+        return '區段 ' + (Number(idx) + 1);
+    }
+
+    function readAudioPasteWindows(audio) {
+        const raw = (audio && audio.raw_data) || {};
+        if (Array.isArray(raw.paste_windows) && raw.paste_windows.length) {
+            return raw.paste_windows.map(function (w) {
+                return {
+                    label: String((w && w.label) || ''),
+                    script: String((w && w.script) || ''),
+                    student: String((w && w.student) || '')
+                };
+            });
+        }
+        return [{
+            label: '',
+            script: String(raw.original_script || ''),
+            student: String(raw.student_display_text || raw.student_display || raw.student_text || '')
+        }];
+    }
+
+    /**
+     * 目錄套餐：一口說／書寫對一列範圍。增加區段＝多一格空欄；標籤跟上面那列走。
+     * 多出來、已有字的視窗不准默默丟掉。
+     */
+    function alignBookPasteWindowsToRows(pathStr, opts) {
+        opts = opts || {};
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group) || !group.raw_data) return;
+        const rows = normalizePackRows(group.raw_data);
+        if (!packRowsAreOnlyBook(rows)) return;
+        const found = audioTaskAndPathOfPackHost(pathStr);
+        const audio = found.audio;
+        if (!audio) return;
+        if (!audio.raw_data) audio.raw_data = {};
+        let wins = readAudioPasteWindows(audio);
+        if (opts.insertAt != null) {
+            wins.splice(Number(opts.insertAt), 0, { label: '', script: '', student: '' });
+        }
+        if (opts.removeAt != null) {
+            const n = opts.removeCount != null ? Number(opts.removeCount) : 1;
+            if (Number(opts.removeAt) >= 0 && n > 0) wins.splice(Number(opts.removeAt), n);
+        }
+        if (opts.moveFrom != null && opts.moveTo != null) {
+            const from = Number(opts.moveFrom);
+            const to = Number(opts.moveTo);
+            if (from >= 0 && to >= 0 && from < wins.length) {
+                const item = wins.splice(from, 1)[0];
+                wins.splice(to, 0, item);
+            }
+        }
+        while (wins.length < rows.length) wins.push({ label: '', script: '', student: '' });
+        rows.forEach(function (row, i) {
+            if (!wins[i]) wins[i] = { label: '', script: '', student: '' };
+            wins[i].label = bookPasteWindowLabel(row, i);
+        });
+        audio.raw_data.paste_windows = wins;
+        audio.raw_data.script_source = 'paste';
+    }
+
+    function refreshBookPasteWindowLabelsDom(pathStr) {
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group) || !group.raw_data) return;
+        const rows = normalizePackRows(group.raw_data);
+        if (!packRowsAreOnlyBook(rows)) return;
+        const found = audioTaskAndPathOfPackHost(pathStr);
+        if (!found.audioPath) return;
+        const container = document.getElementById('node-paste-windows-' + found.audioPath);
+        if (!container) return;
+        const winRows = container.querySelectorAll('.paste-window-row');
+        rows.forEach(function (row, i) {
+            const el = winRows[i];
+            if (!el) return;
+            let live = row;
+            if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.readRowFields === 'function') {
+                live = Object.assign({}, row, window.FeatureMaterialBook.readRowFields(pathStr, i));
+            }
+            const label = bookPasteWindowLabel(live, i);
+            const hidden = el.querySelector('.paste-window-label');
+            if (hidden) hidden.value = label;
+            const head = el.querySelector('.paste-window-range-label');
+            if (head) head.textContent = label;
+        });
     }
 
     function parentRangeGroupPathOf(pathStr) {
@@ -1496,6 +1620,16 @@ window.FeatureTimeline = (() => {
         return lo === hi ? ('p. ' + lo) : ('pp. ' + lo + '~' + hi);
     }
 
+    function pickPackComboName(classId, row) {
+        const comboId = String((row && (row.comboId || row.combo_id)) || '').trim();
+        const combo = (row && row.combo) || resolvePackCombo(classId, comboId);
+        if (combo) {
+            const named = comboLabelText(combo);
+            if (named) return named;
+        }
+        return String((row && (row.comboLabel || row.combo_label)) || '').trim();
+    }
+
     function pickPackSheetLabel(classId, row) {
         const comboId = String((row && (row.comboId || row.combo_id)) || '').trim();
         const combo = (row && row.combo) || resolvePackCombo(classId, comboId);
@@ -1606,9 +1740,9 @@ window.FeatureTimeline = (() => {
     }
 
     /**
-     * 小標題＝挑選目標。起迄都填才進。同一活頁匣內排序＋相連／重疊才融。
-     * A pp. 1~5, 8~10；B p. 1, #31~50
-     * 範圍字串一樣且表名連續才收：C~D pp. 2~4 ／ Unit 1-8 ~1-9 pp. 2~4
+     * 小標題＝套餐名＋範圍。起迄都填才進。同一套餐匣內排序＋相連／重疊才融。
+     * vBK-2 pp. 6~10, 221~230；WORD p. 1, #31~50
+     * 活頁別名只給區段欄，不准進錄音／考試標題。
      * 全站只准這支組字串。規格：docs/標題範圍處理規則.md
      */
     function combinePackRangeLabel(rows, classId) {
@@ -1618,9 +1752,11 @@ window.FeatureTimeline = (() => {
             if (isBookPackRow(r)) {
                 const lab = (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.rangeLabel === 'function')
                     ? window.FeatureMaterialBook.rangeLabel(r)
-                    : [String((r && r.major) || '').trim(), String((r && r.secondary) || '').trim(), String((r && r.minor) || '').trim()]
+                    : [String((r && (r.primary_unit || r.primaryUnit)) || '').trim(), String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim(), String((r && (r.heading || r.range_heading)) || '').trim(), String((r && r.major) || '').trim(), String((r && r.secondary) || '').trim(), String((r && r.minor) || '').trim()]
                         .filter(Boolean).join(' / ');
-                if (lab) bookParts.push(lab);
+                const comboName = pickPackComboName(classId, r);
+                if (lab && comboName) bookParts.push(comboName + ' ' + lab);
+                else if (lab) bookParts.push(lab);
                 return;
             }
             pageRows.push(r);
@@ -1634,10 +1770,10 @@ window.FeatureTimeline = (() => {
             const startN = Number(startRaw);
             const endN = Number(endRaw);
             if (isNaN(startN) || isNaN(endN)) return;
-            const label = pickPackSheetLabel(classId, r);
+            const label = pickPackComboName(classId, r);
             if (!label) return;
-            const file = String((r && (r.metaFile || r.meta_file)) || '').replace(/\.meta\.json$/i, '').toUpperCase();
-            const key = file || ('label:' + label.toUpperCase());
+            const comboId = String((r && (r.comboId || r.combo_id)) || '').trim();
+            const key = comboId ? ('combo:' + comboId) : ('name:' + label.toUpperCase());
             if (boxIndex[key] == null) {
                 boxIndex[key] = boxes.length;
                 boxes.push({ label: label, page: [], qnum: [] });
@@ -1655,30 +1791,8 @@ window.FeatureTimeline = (() => {
             ].filter(Boolean).join(', ');
             return { label: box.label, rangeStr: rangeStr };
         }).filter(function (s) { return !!s.rangeStr; });
-        const used = {};
-        const parts = [];
-        sheets.forEach(function (s, i) {
-            if (used[i]) return;
-            const run = [s];
-            used[i] = true;
-            let expect = pickSuccessorLabel(pickNameCollapseInfo(s.label));
-            while (expect) {
-                let found = -1;
-                for (let j = 0; j < sheets.length; j++) {
-                    if (used[j]) continue;
-                    if (sheets[j].rangeStr !== s.rangeStr) continue;
-                    if (String(sheets[j].label) === expect
-                        || String(sheets[j].label).toUpperCase() === expect.toUpperCase()) {
-                        found = j;
-                        break;
-                    }
-                }
-                if (found < 0) break;
-                run.push(sheets[found]);
-                used[found] = true;
-                expect = pickSuccessorLabel(pickNameCollapseInfo(sheets[found].label));
-            }
-            parts.push(pickCollapsedSheetName(run) + ' ' + s.rangeStr);
+        const parts = sheets.map(function (s) {
+            return s.label + ' ' + s.rangeStr;
         });
         return bookParts.concat(parts).join('；');
     }
@@ -1738,9 +1852,13 @@ window.FeatureTimeline = (() => {
         const s = MCS && typeof MCS.forKind === 'function' ? MCS.forKind('book') : null;
         if (s && typeof s.copyRangeFields === 'function') return s.copyRangeFields(r);
         return {
+            primary_unit: String((r && (r.primary_unit || r.primaryUnit)) || '').trim(),
+            secondary_unit: String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim(),
+            heading: String((r && (r.heading || r.range_heading)) || '').trim(),
             major: String((r && r.major) || '').trim(),
             secondary: String((r && r.secondary) || '').trim(),
             minor: String((r && r.minor) || '').trim(),
+            page: String((r && r.page) || '').trim(),
             book_script: String((r && (r.book_script || r.bookScript)) || '').trim()
         };
     }
@@ -1790,9 +1908,13 @@ window.FeatureTimeline = (() => {
                 return true;
             }
         }
-        return !!(String((r && r.major) || '').trim()
+        return !!(String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+            || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+            || String((r && (r.heading || r.range_heading)) || '').trim()
+            || String((r && r.major) || '').trim()
             || String((r && r.secondary) || '').trim()
-            || String((r && r.minor) || '').trim());
+            || String((r && r.minor) || '').trim()
+            || String((r && r.page) || '').trim());
     }
 
     function packRowsAreOnlyBook(packRows) {
@@ -1801,7 +1923,7 @@ window.FeatureTimeline = (() => {
         return rows.every(function (r) { return isBookPackRow(r); });
     }
 
-    /** 重寫 pack_rows 時整列帶走。禁止只抄套餐／起迄而把題數丟掉。課本列還要帶走大題／次題／小題／文稿。 */
+    /** 重寫 pack_rows 時整列帶走。禁止只抄套餐／起迄而把題數丟掉。課本列還要帶走主單元／次單元／標題／大題／次題／小題／文稿。 */
     function storedPackRowFromAny(r) {
         return Object.assign({
             combo_id: String((r && (r.combo_id || r.comboId)) || '').trim(),
@@ -2131,12 +2253,10 @@ window.FeatureTimeline = (() => {
             ? pack.rows
             : [{ combo: pack.combo, metaFile: pack.metaFile, rangeType: pack.rangeType, start: pack.start, end: pack.end, rangeSpec: pack.rangeSpec }];
         if (packRowsAreOnlyBook(packRows)) {
-            if (!raw.script_source || raw.script_source === 'meta') raw.script_source = 'paste';
+            raw.script_source = 'paste';
             raw.material_refs = [];
             raw.material_ref = null;
             raw.material_range = combinePackRangeLabel(packRows, builderClassId());
-            const scripts = packRows.map(function (r) { return String((r && r.book_script) || '').trim(); }).filter(Boolean);
-            if (scripts.length) raw.original_script = scripts.join('\n\n');
             return String(raw.material_range || '').trim();
         }
         const metaRows = packRows.filter(function (row) {
@@ -2302,9 +2422,13 @@ window.FeatureTimeline = (() => {
         return !!(String((r && r.comboId) || '').trim()
             || String((r && r.metaFile) || '').trim()
             || String((r && r.start) || '').trim()
+            || String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+            || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+            || String((r && (r.heading || r.range_heading)) || '').trim()
             || String((r && r.major) || '').trim()
             || String((r && r.secondary) || '').trim()
             || String((r && r.minor) || '').trim()
+            || String((r && r.page) || '').trim()
             || String((r && r.book_script) || '').trim()
             || String((r && r.pdf_file_id) || '').trim());
     }
@@ -2377,6 +2501,11 @@ window.FeatureTimeline = (() => {
                 const availEl = document.getElementById('range-pack-avail-' + pathStr + '-' + idx);
                 const pctEl = document.getElementById('range-pack-pct-' + pathStr + '-' + idx);
                 if (availEl) availEl.textContent = availStr;
+                if (countEl) {
+                    const a = Number(availStr);
+                    if (!isNaN(a) && a >= 0 && availStr !== '需讀取' && availStr !== '—') countEl.max = String(a);
+                    else countEl.removeAttribute('max');
+                }
                 if (pctEl) pctEl.textContent = packDisplayPercentLive(countEl ? countEl.value : '', availStr);
                 const raw = countEl ? String(countEl.value || '').trim() : '';
                 const n = Number(raw);
@@ -2427,17 +2556,38 @@ window.FeatureTimeline = (() => {
                 start: r.start,
                 end: r.end
             });
-            if (!result || !result.overflow) return;
-            r.start = String(result.start);
-            r.end = String(result.end);
-            notes.push({
-                overflow: true,
-                label: r.metaFile || combo.label || '活頁',
-                lastPage: result.lastPage,
-                lastItem: result.lastItem,
-                start: result.start,
-                end: result.end
-            });
+            if (result && result.overflow) {
+                r.start = String(result.start);
+                r.end = String(result.end);
+                notes.push({
+                    overflow: true,
+                    label: r.metaFile || combo.label || '活頁',
+                    lastPage: result.lastPage,
+                    lastItem: result.lastItem,
+                    start: result.start,
+                    end: result.end
+                });
+            }
+            if (typeof SR.countAvailable === 'function' && typeof SR.clampCount === 'function') {
+                const avail = SR.countAvailable({
+                    total: total,
+                    lpp: lpp,
+                    rangeType: r.rangeType,
+                    start: r.start,
+                    end: r.end,
+                    excludeNums: r.exclude_nums || r.excludeNums
+                });
+                const cc = SR.clampCount(r.count, avail);
+                if (cc && cc.overflow) {
+                    r.count = cc.count;
+                    notes.push({
+                        countOverflow: true,
+                        label: r.metaFile || combo.label || '活頁',
+                        available: cc.available,
+                        count: cc.count
+                    });
+                }
+            }
         });
         if (notes.length && opts.notify !== false && typeof SR.notifyOverflow === 'function') {
             SR.notifyOverflow(notes);
@@ -2449,8 +2599,10 @@ window.FeatureTimeline = (() => {
         (packRows || []).forEach(function (r, idx) {
             const startEl = document.getElementById('range-pack-start-' + pathStr + '-' + idx);
             const endEl = document.getElementById('range-pack-end-' + pathStr + '-' + idx);
+            const countEl = document.getElementById('range-pack-count-' + pathStr + '-' + idx);
             if (startEl && r.start != null) startEl.value = String(r.start);
             if (endEl && r.end != null) endEl.value = String(r.end);
+            if (countEl && r.count != null) countEl.value = String(r.count);
         });
     }
 
@@ -2643,6 +2795,7 @@ window.FeatureTimeline = (() => {
         }
         if (group.type === 'group') syncRangePackChildDom(pathStr, pack, coverage);
         refreshRangePackDerived(pathStr);
+        refreshBookPasteWindowLabelsDom(pathStr);
         const audioIdx = group.type === 'audio_record'
             ? -2
             : (group.subTasks || []).findIndex(function (t) { return t && t.type === 'audio_record'; });
@@ -2750,6 +2903,7 @@ window.FeatureTimeline = (() => {
         insertAt += block.rows.length;
         rows.splice(insertAt, 0, newRow);
         writePackRowsToGroup(group, rows);
+        alignBookPasteWindowsToRows(pathStr, { insertAt: insertAt });
         if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
             window.FeatureTimeline.refreshBuilder({ skipSync: true });
         }
@@ -2850,7 +3004,47 @@ window.FeatureTimeline = (() => {
             last.rows.push(r);
         });
         if (blocks.length <= 1) return;
+        let removeAt = 0;
+        for (let i = 0; i < Number(blockIdx); i++) removeAt += blocks[i].rows.length;
+        const removeCount = blocks[Number(blockIdx)].rows.length;
         blocks.splice(Number(blockIdx), 1);
+        const next = [];
+        blocks.forEach(function (b) {
+            b.rows.forEach(function (r) { next.push(r); });
+        });
+        writePackRowsToGroup(group, next);
+        alignBookPasteWindowsToRows(pathStr, { removeAt: removeAt, removeCount: removeCount });
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+        onRangePackChange(pathStr, { rerender: false });
+    }
+
+    function moveRangePackCombo(pathStr, blockIdx, delta) {
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
+        const group = getTaskNodeByPathStr(pathStr);
+        if (!isPackHostNode(group)) return;
+        if (!group.raw_data) group.raw_data = {};
+        const rows = normalizePackRows(group.raw_data);
+        const blocks = [];
+        rows.forEach(function (r) {
+            const id = String(r.combo_id || '').trim();
+            const last = blocks[blocks.length - 1];
+            if (!last || String(last.combo_id || '') !== id) {
+                blocks.push({ combo_id: id, rows: [r] });
+                return;
+            }
+            last.rows.push(r);
+        });
+        const from = Number(blockIdx);
+        const to = from + Number(delta);
+        if (blocks.length <= 1) return;
+        if (isNaN(from) || isNaN(to) || from === to) return;
+        if (from < 0 || to < 0 || from >= blocks.length || to >= blocks.length) return;
+        const item = blocks.splice(from, 1)[0];
+        blocks.splice(to, 0, item);
         const next = [];
         blocks.forEach(function (b) {
             b.rows.forEach(function (r) { next.push(r); });
@@ -2859,7 +3053,7 @@ window.FeatureTimeline = (() => {
         if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
             window.FeatureTimeline.refreshBuilder({ skipSync: true });
         }
-        onRangePackChange(pathStr, { rerender: false });
+        onRangePackChange(pathStr, { rerender: false, skipSync: true });
     }
 
     function removeRangePackRow(pathStr, idx) {
@@ -2873,6 +3067,7 @@ window.FeatureTimeline = (() => {
         if (rows.length <= 1) return;
         rows.splice(Number(idx), 1);
         writePackRowsToGroup(group, rows);
+        alignBookPasteWindowsToRows(pathStr, { removeAt: Number(idx) });
         if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
             window.FeatureTimeline.refreshBuilder({ skipSync: true });
         }
@@ -2898,6 +3093,7 @@ window.FeatureTimeline = (() => {
         const item = rows.splice(from, 1)[0];
         rows.splice(to, 0, item);
         writePackRowsToGroup(group, rows);
+        alignBookPasteWindowsToRows(pathStr, { moveFrom: from, moveTo: to });
         if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
             window.FeatureTimeline.refreshBuilder({ skipSync: true });
         }
@@ -3697,14 +3893,13 @@ window.FeatureTimeline = (() => {
                         let effectiveBlockDueDate = a.due_date;
                         let aRaw = a.raw_data || {};
                         if (typeof aRaw === 'string') { try { aRaw = JSON.parse(aRaw); } catch(e) { aRaw = {}; } }
-                        
-                        let blockLateMode = 'infinite', blockPenalty = 0, blockGrace = 0;
-                        if (aRaw.late_policy) {
-                            if (!aRaw.late_policy.allow_late) blockLateMode = 'no_late';
-                            else if (aRaw.late_policy.grace_period_hours > 0) { blockLateMode = 'custom'; blockGrace = aRaw.late_policy.grace_period_hours; }
-                            blockPenalty = aRaw.late_policy.penalty_percentage || 0;
-                        }
-                        const effectiveBlockLatePolicy = { mode: blockLateMode, penalty: blockPenalty, grace: blockGrace };
+                        const U = window.UtilsDate;
+                        const effectiveBlockLatePolicy = (U && typeof U.latePolicyFromAssignmentRaw === 'function')
+                            ? U.latePolicyFromAssignmentRaw(aRaw)
+                            : { mode: 'infinite', penalty: 0, grace: 0 };
+                        const blockLateMode = effectiveBlockLatePolicy.mode;
+                        const blockPenalty = effectiveBlockLatePolicy.penalty;
+                        const blockGrace = effectiveBlockLatePolicy.grace;
                         let tasksHtml = TPL.renderReadOnlyTree(a.tasks || [], effectiveBlockDueDate, effectiveBlockLatePolicy, 0, a.open_at);
                         assignmentsHtml += TPL.getAssignmentBlockHtml(a, classId, canEditTimeline, effectiveBlockDueDate, blockLateMode, blockPenalty, blockGrace, tasksHtml);
                     });
@@ -3815,7 +4010,11 @@ window.FeatureTimeline = (() => {
             }).join('');
         }
 
-        let tasksHtml = bState.tasks && bState.tasks.length > 0 ? TPL.renderBuilderTree(bState.tasks, [], classResOpts) : '';
+        const U = window.UtilsDate;
+        const blockLatePolicy = (U && typeof U.latePolicyFromMode === 'function')
+            ? U.latePolicyFromMode(bState.late_mode, bState.late_penalty, bState.late_grace)
+            : { mode: bState.late_mode || 'infinite', penalty: bState.late_penalty || 0, grace: bState.late_grace || 0 };
+        let tasksHtml = bState.tasks && bState.tasks.length > 0 ? TPL.renderBuilderTree(bState.tasks, [], classResOpts, blockLatePolicy) : '';
         let tasksContainerHtml = tasksHtml ? `<div style="margin-bottom: 15px;">${tasksHtml}</div>` : '';
         const allAssignsForHistory = (db && db.assignments || []).filter(a => a.class_id === bState.classId);
         let historyHtml = (bState.editId) ? `<div style="color:var(--primary); font-weight:900; margin-bottom:15px; font-size:1rem;">「修改模式」</div>` : TPL.getHistoryDropdownHtml(allAssignsForHistory, bState.containerId);
@@ -4724,6 +4923,9 @@ window.FeatureTimeline = (() => {
         onGroupTitleInput: onGroupTitleInput,
         parentRangeGroupOf: parentRangeGroupOf,
         parentRangeGroupPathOf: parentRangeGroupPathOf,
+        audioUsesBookRangePack: audioUsesBookRangePack,
+        packRowsForAudioPath: packRowsForAudioPath,
+        audioHasPackCombo: audioHasPackCombo,
         renderRangePackHtml: function (pathStr, node) {
             const TPL = window.TimelineTemplates;
             if (!TPL || typeof TPL.renderRangePackHtml !== 'function') return '';
@@ -4744,6 +4946,7 @@ window.FeatureTimeline = (() => {
         addRangePackSheet: addRangePackSheet,
         inheritRangePackRowFromAbove: inheritRangePackRowFromAbove,
         removeRangePackCombo: removeRangePackCombo,
+        moveRangePackCombo: moveRangePackCombo,
         removeRangePackRow: removeRangePackRow,
         moveRangePackRow: moveRangePackRow,
         onRangePackRowDragStart: onRangePackRowDragStart,
@@ -4837,7 +5040,13 @@ window.FeatureTimeline = (() => {
             if (!container || !window.TimelineTemplates || typeof window.TimelineTemplates.renderPasteWindowRowHtml !== 'function') return;
             const idx = container.querySelectorAll('.paste-window-row').length;
             const wrapper = document.createElement('div');
-            wrapper.innerHTML = window.TimelineTemplates.renderPasteWindowRowHtml(pathStr, idx, { label: '', script: '', student: '' }, idx + 1);
+            wrapper.innerHTML = window.TimelineTemplates.renderPasteWindowRowHtml(
+                pathStr,
+                idx,
+                { label: '', script: '', student: '' },
+                idx + 1,
+                typeof this.audioUsesBookRangePack === 'function' && this.audioUsesBookRangePack(pathStr)
+            );
             const row = wrapper.firstElementChild;
             container.appendChild(row);
             // 剛加的新視窗一定會讓總數變成 >=2，補回第一列本來沒顯示的刪除鈕

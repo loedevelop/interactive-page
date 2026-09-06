@@ -121,6 +121,66 @@ window.UtilsDate = (() => {
         return String(parent || '').trim();
     }
 
+    /**
+     * 遲交跟期限同一把鑰匙：沒刻意另設（late_policy_own）＝繼承上層。
+     * 舊資料新建時寫死 infinite，沒有旗標＝不是老師勾的，一律繼承。
+     */
+    function latePolicyFromMode(mode, penalty, grace) {
+        const m = String(mode || 'infinite');
+        if (m === 'inherit' || m === '') {
+            return { mode: 'infinite', penalty: 0, grace: 0 };
+        }
+        if (m === 'no_late') return { mode: 'no_late', penalty: 0, grace: 0 };
+        const p = parseInt(penalty, 10) || 0;
+        const g = parseInt(grace, 10) || 0;
+        if (m === 'custom') return { mode: 'custom', penalty: p, grace: g };
+        return { mode: 'infinite', penalty: p, grace: 0 };
+    }
+
+    function latePolicyFromAssignmentRaw(aRaw) {
+        const raw = aRaw || {};
+        const p = raw.late_policy;
+        if (p && typeof p === 'object') {
+            if (p.allow_late !== true) return { mode: 'no_late', penalty: 0, grace: 0 };
+            if (Number(p.grace_period_hours) > 0) {
+                return { mode: 'custom', penalty: p.penalty_percentage || 0, grace: p.grace_period_hours };
+            }
+            return { mode: 'infinite', penalty: p.penalty_percentage || 0, grace: 0 };
+        }
+        if (raw.allow_late === true) return { mode: 'infinite', penalty: 0, grace: 0 };
+        return { mode: 'infinite', penalty: 0, grace: 0 };
+    }
+
+    function hasOwnLatePolicy(node) {
+        return !!(node && node.late_policy_own === true);
+    }
+
+    function inheritLatePolicy(node, parentPolicy) {
+        const fallback = parentPolicy || { mode: 'infinite', penalty: 0, grace: 0 };
+        if (!hasOwnLatePolicy(node)) return fallback;
+        return latePolicyFromMode(node.late_mode, node.penalty_percentage, node.grace_period_hours);
+    }
+
+    function allowLateFromPolicy(policy) {
+        if (!policy) return false;
+        return policy.mode === 'infinite' || policy.mode === 'custom';
+    }
+
+    function latePoliciesEqual(a, b) {
+        if (!a || !b) return false;
+        return a.mode === b.mode
+            && (Number(a.penalty) || 0) === (Number(b.penalty) || 0)
+            && (Number(a.grace) || 0) === (Number(b.grace) || 0);
+    }
+
+    function latePolicyLabel(policy) {
+        if (!policy) return '♾️ 接受遲交';
+        if (policy.mode === 'no_late') return '🚫 無遲交';
+        if (policy.mode === 'custom') return '⏳ 寬限 ' + (policy.grace || 0) + 'h (-' + (policy.penalty || 0) + '%)';
+        if ((policy.penalty || 0) > 0) return '♾️ 遲交扣 ' + policy.penalty + '%';
+        return '♾️ 接受遲交';
+    }
+
     function parseTaiwanLocal(dateStr, timeStr) {
         const date = stampDatePart(dateStr);
         if (!date) return null;
@@ -257,6 +317,13 @@ window.UtilsDate = (() => {
         stampTimePart,
         combineStamp,
         inheritStamp,
+        latePolicyFromMode,
+        latePolicyFromAssignmentRaw,
+        hasOwnLatePolicy,
+        inheritLatePolicy,
+        allowLateFromPolicy,
+        latePoliciesEqual,
+        latePolicyLabel,
         formatStampLabel,
         readCombinedStamp,
         dateTimeInputHtml,

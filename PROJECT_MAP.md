@@ -78,6 +78,7 @@
 ├── 120_student_core
 │   ├── feature-student-analytics.js
 │   ├── feature-student-audio.js
+│   ├── feature-student-exam-grades.js
 │   ├── feature-student-messages.js
 │   ├── feature-student-pdf-quiz.js
 │   ├── feature-student-quiz.js
@@ -231,7 +232,10 @@
 │   │   ├── 20260829120000_material_pdf_exam_items.sql
 │   │   ├── 20260829130000_material_pdf_exam_items_is_group.sql
 │   │   ├── 20260829200000_material_book_combos.sql
-│   │   └── 20260901120000_class_material_pdf_exam_items.sql
+│   │   ├── 20260901120000_class_material_pdf_exam_items.sql
+│   │   ├── 20260903220000_preserve_quiz_appeals.sql
+│   │   ├── 20260904090000_assignment_open_at.sql
+│   │   └── 20260904091000_scan_due_reminders_open_at.sql
 │   └── .DS_Store
 ├── teacher
 │   └── index.html
@@ -266,5 +270,6 @@
 ├── Azar-2-5th_test_unit04.pdf
 ├── generate-map.js
 ├── index.html
+├── PROJECT_MAP.md
 └── reset-password.html
 ```

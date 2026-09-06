@@ -308,7 +308,12 @@ window.PdfExamPaper = (function () {
                             if (secMatch && !/^\d+[.\)]/.test(collapsed) && !/^\d+[.\)]/.test(lineText)) {
                                 var composed = _composeSectionLabel(pdfTestCtx, secMatch[1]);
                                 pdfTestCtx = composed.testCtx;
-                                if (composed.isTestHeader || !composed.label) return;
+                                if (composed.isTestHeader) {
+                                    currentSection = composed.label || composed.testCtx;
+                                    currentItemNo = null;
+                                    return;
+                                }
+                                if (!composed.label) return;
                                 currentSection = composed.label;
                                 currentItemNo = null;
                                 return; // 標頭本身不是空格所在行，不用再找底線
@@ -719,7 +724,7 @@ window.PdfExamPaper = (function () {
                 var hintN = st && st.byLoose ? st.byLoose[loose] : null;
                 if (hintN == null || hintN <= 0 || hintN === items.length) return;
                 var label = (items[0].item_no || '') + (items[0].part ? ('-' + items[0].part) : '');
-                var reason = '第 ' + label + ' 題：清單 ' + items.length + ' 格，空格線 ' + hintN + ' 格';
+                var reason = '「' + g.section + '」第 ' + label + ' 題：清單 ' + items.length + ' 格，空格線 ' + hintN + ' 格';
                 items.forEach(function (it) { flagged[it.key] = reason; });
             });
         });
@@ -751,7 +756,8 @@ window.PdfExamPaper = (function () {
             section_warnings: sectionWarnings,
             flagged_keys: flagged,
             section_template_overrides: extra.section_template_overrides || {},
-            teacher_located_boxes: extra.teacher_located_boxes || {}
+            teacher_located_boxes: extra.teacher_located_boxes || {},
+            confirmed_sections: extra.confirmed_sections || {}
         };
     }
 
@@ -850,10 +856,11 @@ window.PdfExamPaper = (function () {
     // 同名 Part A~F」的複習測驗（TEST 1 跟 TEST 2 底下都各有一組 Part A~F）。沒有 Test 這一層，
     // parseAnswerText／detectSectionPageRanges 會把兩份測驗同名的 Part 直接當成「同一個大題」
     // 合併在一起（見 _composeSectionLabel 說明），造成大題數量、頁碼、學生作答框全部對不起來。
-    var SECTION_HEADER_RE = /^(Quiz\s*\d+|Test\s*\d+|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
+    // Test(?:\s*\d+)?：解答／題目都有「TEST」（不一定帶數字）。後面只能是結尾、逗號／頁碼，不准吃到 Tested／TEST YOURSELF。
+    var SECTION_HEADER_RE = /^(Quiz\s*\d+|Test(?:\s*\d+)?(?=\s*$|[,;:]|\s+p\.)|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
     // detectSectionPageRanges 專用：跟 SECTION_HEADER_RE 同一組關鍵字，但不要求一定要在整行最前面
     // （PDF 掃描頁上偶爾會有頁碼／裝飾文字混在同一行），避免因為位置沒對齊就整頁判定找不到標題。
-    var SECTION_HEADER_ANYWHERE_RE = /(Quiz\s*\d+|Test\s*\d+|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
+    var SECTION_HEADER_ANYWHERE_RE = /(Quiz\s*\d+|Test(?:\s*\d+)?(?=\s*$|[,;:]|\s+p\.)|Chapter\s*\d+|Unit\s*\d+|Part\s+[A-Za-z0-9]+|Section\s*\d+|Lesson\s*\d+|第\s*[一二三四五六七八九十\d]+\s*[大課單元部分節])/i;
     // 用來判斷一個大題標題屬於哪個「家族」（quiz/test/part/…），供 _composeSectionLabel 判斷
     // 是否要把 Part 這一層跟目前的 Test 上下文組合起來（見下方說明）。
     var SECTION_FAMILY_OF_LABEL_RE = /^(quiz|test|chapter|unit|part|section|lesson)/i;
@@ -867,17 +874,18 @@ window.PdfExamPaper = (function () {
      * 兩次代表的是完全不同的 10 題。若只用裸字串 "Part D" 當大題 key，會把兩份測驗的 Part D
      * 直接合併成同一大題（實測事故：24 個大題裡 6 個 Part 大題各混了兩份測驗的題目，位置序全部
      * 對不起來）。這裡在真正組出「大題 key」前，維護一個「目前是在哪個 Test 底下」的狀態
-     * （testCtx，可為 null）：遇到 Test 家族的標頭就更新 testCtx、標頭本身不當成獨立大題；
-     * 遇到 Part 家族的標頭，若 testCtx 有值就組成「TEST 1 - Part D」這種帶上下文的大題名；
+     * （testCtx，可為 null）：遇到 Test 家族的標頭，TEST／TEST 1 本身就是大題
+     * （Azar：Quiz 1… 然後 TEST，底下直接 1. 2.）。後面若出現 Part，再組成「TEST 1 - Part D」。
      * 遇到其他家族（quiz/chapter/unit/section/lesson）一律清空 testCtx（那些不會附屬在 Test 底下）。
      * parseAnswerText（解答文字）跟 detectSectionPageRanges（掃 PDF 標題文字）兩處都要維持
      * 同一份 testCtx 狀態機、用同一個函式組 key，兩邊組出來的大題名才會一致、才能互相比對定位。
+     * 禁止把 TEST 標頭略過、把底下題號收進前一個 Quiz，再在警示裡寫成「第 2 題」假裝那是大題。
      */
     function _composeSectionLabel(testCtx, rawLabel) {
         var family = sectionFamily(rawLabel);
         var normalized = normalizeSectionLabel(rawLabel);
         if (family === 'test') {
-            return { testCtx: normalized, label: null, isTestHeader: true };
+            return { testCtx: normalized, label: normalized, isTestHeader: true };
         }
         if (family === 'part' && testCtx) {
             return { testCtx: testCtx, label: testCtx + ' - ' + normalized, isTestHeader: false };
@@ -928,7 +936,6 @@ window.PdfExamPaper = (function () {
     var ITEM_MARKER_RE = /(\d+)\.\s*/g;
     var AB_LINE_RE = /^([A-Za-z]):\s*(.*)$/;
     var OR_LEAD_RE = /^OR\b[\s:]*\s*(.*)$/i;
-    var TRAILING_OR_RE = /\bOR\s*$/i;
     // 💣 A/B 有兩層，不能一律當大題：
     // ① 練習分組（大題裡先 A 再 1~，後 B 再 1~）：「A.」「B. Directions」「A. 1. xxx」
     // ② 同一題底下的小題／對白（1 下面的 A/B）：「1. A: …」「B: …」或「A. 答案文字」
@@ -975,8 +982,9 @@ window.PdfExamPaper = (function () {
     }
 
     function stripTrailingOr(text) {
-        var endsWithOr = TRAILING_OR_RE.test(text);
-        return { text: endsWithOr ? text.replace(TRAILING_OR_RE, '').trim() : text, endsWithOr: endsWithOr };
+        var t = String(text || '').trim();
+        var endsWithOr = /(?:^|\s)OR\s*$/i.test(t);
+        return { text: endsWithOr ? t.replace(/(?:^|\s)OR\s*$/i, '').trim() : t, endsWithOr: endsWithOr };
     }
 
     function _nextPartLetter(part) {
@@ -1002,25 +1010,181 @@ window.PdfExamPaper = (function () {
         return { question: q, answer: a };
     }
 
+    function _normalizeAltSlashes(s) {
+        return String(s || '').replace(/[\uFF0F\u2044\u2215]/g, '/');
+    }
+
+    function _hasLatinLetter(s) {
+        return /[A-Za-z]/.test(String(s || ''));
+    }
+
+    function _keepSlashAsOneToken(left, right) {
+        var L = String(left || '').trim();
+        var R = String(right || '').trim();
+        if (!L || !R) return true;
+        if (/^and$/i.test(L) && /^or\b/i.test(R)) return true;
+        if (/^\d+$/.test(L) && /^\d+/.test(R)) return true;
+        if (!_hasLatinLetter(L) || !_hasLatinLetter(R)) return true;
+        return false;
+    }
+
     /**
-     * 其他可接受答案的分隔：or／OR／兩邊有空白的 /／||。可多於一組。
+     * 完整形／縮寫對上，一邊少了後面的字＝共用。
+     * do not / don't call → do not call || don't call
+     * is not / isn't studying → is not studying || isn't studying
+     * 兩邊後面的字不一樣＝不是這把鑰匙，不准猜。
+     */
+    var CONTRACTION_PAIRS = [
+        ['i am', "i'm"], ['i will', "i'll"], ['i have', "i've"], ['i had', "i'd"], ['i would', "i'd"],
+        ['you are', "you're"], ['you will', "you'll"], ['you have', "you've"], ['you would', "you'd"],
+        ['he is', "he's"], ['he will', "he'll"], ['he has', "he's"],
+        ['she is', "she's"], ['she will', "she'll"], ['she has', "she's"],
+        ['it is', "it's"], ['it will', "it'll"], ['it has', "it's"],
+        ['we are', "we're"], ['we will', "we'll"], ['we have', "we've"], ['we would', "we'd"],
+        ['they are', "they're"], ['they will', "they'll"], ['they have', "they've"], ['they would', "they'd"],
+        ['that is', "that's"], ['there is', "there's"], ['what is', "what's"], ['who is', "who's"],
+        ['let us', "let's"],
+        ['is not', "isn't"], ['are not', "aren't"], ['was not', "wasn't"], ['were not', "weren't"],
+        ['do not', "don't"], ['does not', "doesn't"], ['did not', "didn't"],
+        ['have not', "haven't"], ['has not', "hasn't"], ['had not', "hadn't"],
+        ['will not', "won't"], ['would not', "wouldn't"], ['can not', "can't"], ['cannot', "can't"],
+        ['could not', "couldn't"], ['should not', "shouldn't"], ['must not', "mustn't"]
+    ];
+
+    function _normApos(s) {
+        return String(s || '').replace(/[\u2018\u2019]/g, "'");
+    }
+
+    function _wordTokens(s) {
+        return _normApos(s).trim().split(/\s+/).filter(Boolean);
+    }
+
+    function _tokenEq(a, b) {
+        return _normApos(a).toLowerCase() === _normApos(b).toLowerCase();
+    }
+
+    function _matchPhrasePrefix(tokens, phrase) {
+        var pt = _wordTokens(phrase);
+        if (!pt.length || tokens.length < pt.length) return null;
+        var i;
+        for (i = 0; i < pt.length; i++) {
+            if (!_tokenEq(tokens[i], pt[i])) return null;
+        }
+        return tokens.slice(pt.length);
+    }
+
+    function _shareContractionRemainder(left, right) {
+        var L = _wordTokens(left);
+        var R = _wordTokens(right);
+        if (!L.length || !R.length) return null;
+        var i;
+        var t;
+        for (i = 0; i < CONTRACTION_PAIRS.length; i++) {
+            var tries = [
+                { a: CONTRACTION_PAIRS[i][0], b: CONTRACTION_PAIRS[i][1] },
+                { a: CONTRACTION_PAIRS[i][1], b: CONTRACTION_PAIRS[i][0] }
+            ];
+            for (t = 0; t < tries.length; t++) {
+                var leftRest = _matchPhrasePrefix(L, tries[t].a);
+                var rightRest = _matchPhrasePrefix(R, tries[t].b);
+                if (!leftRest || !rightRest) continue;
+                if (!leftRest.length && rightRest.length) {
+                    return { left: String(left).trim() + ' ' + rightRest.join(' '), right: String(right).trim() };
+                }
+                if (!rightRest.length && leftRest.length) {
+                    return { left: String(left).trim(), right: String(right).trim() + ' ' + leftRest.join(' ') };
+                }
+            }
+        }
+        return null;
+    }
+
+    function _shareAdjacentContractionParts(parts) {
+        var out = (parts || []).map(function (p) { return String(p || '').trim(); }).filter(Boolean);
+        var i;
+        for (i = 0; i < out.length - 1; i++) {
+            var shared = _shareContractionRemainder(out[i], out[i + 1]);
+            if (shared) {
+                out[i] = shared.left;
+                out[i + 1] = shared.right;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * `/` 切開：兩邊都有英文字＝其他可接受答案（does not/doesn't eat、does not / doesn't eat）。
+     * 有這把鑰匙才拆。1/2、and/or、沒有英文字的片段不拆。
+     * 切開後若是完整形／縮寫＋共用後面的字，把少的那邊補上（do not / don't call → do not call || don't call）。
+     */
+    function splitSlashParts(text) {
+        var raw = _normalizeAltSlashes(text);
+        if (raw.indexOf('/') === -1) return [raw];
+        var segs = raw.split('/');
+        var acc = segs[0];
+        var pieces = [];
+        var k;
+        for (k = 1; k < segs.length; k++) {
+            if (_keepSlashAsOneToken(acc, segs[k])) {
+                acc = acc + '/' + segs[k];
+            } else {
+                pieces.push(acc);
+                acc = segs[k];
+            }
+        }
+        pieces.push(acc);
+        return pieces.map(function (p) { return String(p || '').trim(); }).filter(Boolean);
+    }
+
+    /**
+     * 其他可接受答案的分隔：or／OR／/／||。可多於一組。
      * 畫面編輯格用 || 接起來（／不易用）。
      * 禁止用逗號、分號、頓號去拆——英文句子裡本來就常有逗號（No, she hasn't）。
-     * 不用無空白的 / 去拆（1/2、and/or 不是兩種答案）。
      */
     function splitAcceptedAnswerParts(text) {
         var raw = String(text || '').trim();
         if (!raw) return [];
         var parts = [];
         raw.split(/\s*\|\|\s*/).forEach(function (pipePart) {
-            String(pipePart || '').split(/\s*\bOR\b\s*/i).forEach(function (orPart) {
-                String(orPart || '').split(/\s+\/\s+/).forEach(function (slashPart) {
+            String(pipePart || '').split(/\s+\bOR\b\s+/i).forEach(function (orPart) {
+                splitSlashParts(orPart).forEach(function (slashPart) {
                     var s = String(slashPart || '').trim();
                     if (s) parts.push(s);
                 });
             });
         });
         return parts;
+    }
+
+    function applyAcceptedSplitsToItem(item) {
+        if (!item) return item;
+        var parts = splitAcceptedAnswerParts(item.answer_text);
+        var extra = [];
+        (item.accepted_answers || []).forEach(function (a) {
+            splitAcceptedAnswerParts(a).forEach(function (p) { extra.push(p); });
+        });
+        var primary = (parts[0] != null && String(parts[0]).trim()) ? String(parts[0]).trim() : String(item.answer_text || '').trim();
+        item.answer_text = primary;
+        var seen = {};
+        var out = [];
+        parts.slice(1).concat(extra).forEach(function (p) {
+            var k = String(p || '').trim();
+            if (!k || k === primary || seen[k]) return;
+            seen[k] = true;
+            out.push(k);
+        });
+        var shared = _shareAdjacentContractionParts([primary].concat(out));
+        item.answer_text = shared[0] || primary;
+        seen = {};
+        out = [];
+        shared.slice(1).forEach(function (p) {
+            var k = String(p || '').trim();
+            if (!k || k === item.answer_text || seen[k]) return;
+            seen[k] = true;
+            out.push(k);
+        });
+        item.accepted_answers = out;
+        return item;
     }
 
     function formatAcceptedAnswerList(list) {
@@ -1032,13 +1196,13 @@ window.PdfExamPaper = (function () {
     }
 
     /**
-     * 可行答案（accepted_answers）：解答裡的 or／OR、兩邊有空白的 /、以及 ||。
+     * 可行答案（accepted_answers）：解答裡的 or／OR、/（兩邊都有英文字）、以及 ||。
      * 沒有這些標記＝不是替代寫法。禁止把換行、問句、小題、逗號當成其他可接受答案。
      */
     function _splitOrAlternatives(text) {
         var raw = String(text || '').trim();
         if (!raw) return { primary: '', accepted: [] };
-        var parts = splitAcceptedAnswerParts(raw);
+        var parts = _shareAdjacentContractionParts(splitAcceptedAnswerParts(raw));
         if (parts.length <= 1) return { primary: raw, accepted: [] };
         return { primary: parts[0], accepted: parts.slice(1) };
     }
@@ -1262,7 +1426,9 @@ window.PdfExamPaper = (function () {
                     }
                 }
                 if (composed.isTestHeader) {
-                    line = leftoverAfterHeader(line, secMatch, composed.testCtx);
+                    currentSection = composed.label || composed.testCtx;
+                    currentGroup = null;
+                    line = leftoverAfterHeader(line, secMatch, currentSection);
                     continue;
                 }
                 currentSection = composed.label;
@@ -1379,27 +1545,7 @@ window.PdfExamPaper = (function () {
         var fresh = parseAnswerText(job.answer_text_raw);
         if (!fresh.length) return false;
         var prev = Array.isArray(job.parsed_bank) ? job.parsed_bank : [];
-        var prevByKey = {};
-        prev.forEach(function (b) { if (b && b.key) prevByKey[b.key] = b; });
-        var freshKeys = {};
-        fresh.forEach(function (b) { freshKeys[b.key] = true; });
-        var merged = fresh.map(function (b) {
-            var p = prevByKey[b.key];
-            if (p && p._manuallyEdited) {
-                return {
-                    key: b.key, section: b.section, item_no: b.item_no, part: b.part, group: b.group,
-                    blank_index: b.blank_index,
-                    answer_text: p.answer_text, accepted_answers: p.accepted_answers, _manuallyEdited: true
-                };
-            }
-            return b;
-        });
-        var preservedManual = prev.filter(function (b) {
-            if (!b || !b._manual || freshKeys[b.key]) return false;
-            // 舊的未拆格 key（Quiz 2::1::B）已被 Quiz 2::1::B::1 取代時，不要再留那一列
-            return !freshKeys[String(b.key) + '::1'];
-        });
-        var next = merged.concat(preservedManual);
+        var next = mergeParsedBankKeepingOrder(prev, fresh);
         var sig = function (bank) {
             return (bank || []).map(function (b) {
                 return [b.key, b.answer_text || '', (b.accepted_answers || []).join('|')].join('\t');
@@ -1416,6 +1562,253 @@ window.PdfExamPaper = (function () {
     function makeKey(section, itemNo, part, blankIndex, group) {
         var g = group ? (String(group).toUpperCase() + '::') : '';
         return String(section || '') + '::' + g + String(itemNo || '') + (part ? ('::' + part) : '') + (blankIndex ? ('::' + blankIndex) : '');
+    }
+
+    function applyItemNoToBankRow(bank, idx, newNo) {
+        var row = bank && bank[idx];
+        if (!row) return row;
+        var no = String(newNo || '').trim();
+        if (!no) return row;
+        var before = {
+            section: row.section,
+            item_no: row.item_no,
+            part: row.part,
+            group: row.group
+        };
+        row.item_no = no;
+        row._manual = true;
+        row._manuallyEdited = true;
+        numberItemBlanks(bank, before);
+        numberItemBlanks(bank, row);
+        return row;
+    }
+
+    function sameItemBlankFamily(a, b) {
+        return !!(a && b
+            && String(a.section || '') === String(b.section || '')
+            && String(a.item_no || '') === String(b.item_no || '')
+            && String(a.part || '') === String(b.part || '')
+            && String(a.group || '') === String(b.group || ''));
+    }
+
+    function retargetBankRowKey(row) {
+        if (!row) return row;
+        row.key = makeKey(row.section, row.item_no, row.part, row.blank_index, row.group);
+        return row;
+    }
+
+    /** 同一題號的各格依畫面順序編成 1、2、3…；只剩一格就不標格號。只編相鄰的那一串，底下另有一個 2 不算同一題的第 2 格。 */
+    function numberItemBlanks(bank, template) {
+        if (!template || !bank || !bank.length) return;
+        var idx = -1;
+        var i;
+        for (i = 0; i < bank.length; i++) {
+            if (bank[i] === template) { idx = i; break; }
+        }
+        if (idx < 0) {
+            for (i = 0; i < bank.length; i++) {
+                if (sameItemBlankFamily(bank[i], template)) { idx = i; break; }
+            }
+        }
+        if (idx < 0) return;
+        var start = idx;
+        var end = idx;
+        while (start > 0 && sameItemBlankFamily(bank[start - 1], bank[idx])) start--;
+        while (end < bank.length - 1 && sameItemBlankFamily(bank[end + 1], bank[idx])) end++;
+        var n = end - start + 1;
+        var j;
+        for (j = start; j <= end; j++) {
+            bank[j].blank_index = n <= 1 ? null : (j - start + 1);
+            retargetBankRowKey(bank[j]);
+        }
+    }
+
+    function normalizeAllItemBlanks(bank) {
+        var i = 0;
+        while (i < (bank || []).length) {
+            numberItemBlanks(bank, bank[i]);
+            var end = i;
+            while (end < bank.length - 1 && sameItemBlankFamily(bank[end + 1], bank[i])) end++;
+            i = end + 1;
+        }
+        return bank;
+    }
+
+    /**
+     * ＋上／＋下＝同一題號加一格。原列與新列編成 2-1、2-2。
+     * 不是新題號，也不是 2-A／2-B 小題。
+     */
+    function insertBlankRow(bank, idx, after) {
+        bank = bank || [];
+        var template = bank[idx];
+        if (!template) return { insertAt: -1, row: null };
+        var insertAt = Number(idx) + (after ? 1 : 0);
+        var row = {
+            key: '',
+            section: template.section || '(未分類)',
+            item_no: String(template.item_no || '').trim() || '?',
+            part: template.part || null,
+            group: template.group || null,
+            blank_index: null,
+            answer_text: '',
+            accepted_answers: [],
+            _manual: true
+        };
+        bank.splice(insertAt, 0, row);
+        numberItemBlanks(bank, row);
+        return { insertAt: insertAt, row: row };
+    }
+
+    /**
+     * 手動新增一題＝這份 PDF 答案清單裡的一列（你填的大題＋題號）。
+     * 加在該大題現有列的最後面。不是＋下那種同一題加一格，也不是整份清單最底。
+     * 這個大題還沒有列＝接到整份清單最後（新大題）。
+     */
+    function insertManualBankRow(bank, row) {
+        bank = bank || [];
+        row = row || {};
+        var sec = row.section || '(未分類)';
+        var last = -1;
+        var i;
+        for (i = 0; i < bank.length; i++) {
+            if ((bank[i].section || '(未分類)') === sec) last = i;
+        }
+        var insertAt = last >= 0 ? last + 1 : bank.length;
+        if (!row.key) {
+            row.key = makeKey(row.section, row.item_no, row.part);
+        }
+        bank.splice(insertAt, 0, row);
+        return { insertAt: insertAt, row: row };
+    }
+
+    function openAddManualBankRowModal(opts) {
+        opts = opts || {};
+        if (!window.ModalOverlay || typeof window.ModalOverlay.open !== 'function') return;
+        var getBank = typeof opts.getBank === 'function' ? opts.getBank : function () { return []; };
+        var onCommit = opts.onCommit;
+        var dirty = false;
+        var modalId = 'pdf-exam-add-manual-row';
+        window.ModalOverlay.open({
+            id: modalId,
+            tier: 'B',
+            prompt: true,
+            isDirty: function () { return dirty; },
+            contentHtml: '<div style="background:white; padding:20px; border-radius:10px; min-width:420px; max-width:560px;">'
+                + '<div style="font-weight:800; color:#0F766E; margin-bottom:6px;">手動新增一題</div>'
+                + '<p style="font-size:0.82rem; color:#64748B; margin:0 0 10px 0; line-height:1.45;">加在這份 PDF 答案清單裡、你填的那個大題的最後面。不是＋下那種同一題加一格。</p>'
+                + '<label style="display:block; font-weight:700; font-size:0.82rem; margin-bottom:8px;">大題（例如 Quiz 1；留空＝未分類）'
+                + '<input id="pdf-exam-add-sec" type="text" style="width:100%; margin-top:4px; padding:6px; box-sizing:border-box;"></label>'
+                + '<label style="display:block; font-weight:700; font-size:0.82rem; margin-bottom:8px;">題號（例如 12）'
+                + '<input id="pdf-exam-add-no" type="text" style="width:100%; margin-top:4px; padding:6px; box-sizing:border-box;"></label>'
+                + '<label style="display:block; font-weight:700; font-size:0.82rem; margin-bottom:8px;">子項（若這題有 A/B 兩格才填，否則留空）'
+                + '<input id="pdf-exam-add-part" type="text" style="width:100%; margin-top:4px; padding:6px; box-sizing:border-box;"></label>'
+                + '<div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">'
+                + '<button type="button" class="btn btn-primary" id="pdf-exam-add-ok" style="background:#0F766E; color:white; border:1px solid #0F766E; font-weight:800;">新增</button>'
+                + '<button type="button" class="btn" id="pdf-exam-add-cancel" style="background:white; color:#134E4A; border:1px solid #CBD5E1; font-weight:800;">取消</button>'
+                + '<span id="pdf-exam-add-err" style="font-weight:700; color:#B91C1C;"></span>'
+                + '</div></div>',
+            onMount: function (overlay) {
+                overlay.querySelectorAll('input').forEach(function (inp) {
+                    inp.addEventListener('input', function () { dirty = true; });
+                });
+                overlay.querySelector('#pdf-exam-add-cancel').addEventListener('click', function () {
+                    window.ModalOverlay.requestClose(modalId);
+                });
+                overlay.querySelector('#pdf-exam-add-ok').addEventListener('click', function () {
+                    var section = String((overlay.querySelector('#pdf-exam-add-sec') || {}).value || '(未分類)').replace(/\s+/g, ' ').trim() || '(未分類)';
+                    var itemNo = String((overlay.querySelector('#pdf-exam-add-no') || {}).value || '').trim();
+                    var err = overlay.querySelector('#pdf-exam-add-err');
+                    if (!itemNo) {
+                        if (err) err.textContent = '請填題號';
+                        return;
+                    }
+                    var part = String((overlay.querySelector('#pdf-exam-add-part') || {}).value || '').trim().toUpperCase() || null;
+                    var bank = getBank() || [];
+                    var key = makeKey(section, itemNo, part);
+                    if (bank.some(function (b) { return b.key === key; })) {
+                        if (err) err.textContent = '這個題號已經存在，請改用清單裡的欄位直接修改';
+                        return;
+                    }
+                    var row = {
+                        key: key,
+                        section: section,
+                        item_no: itemNo,
+                        part: part,
+                        answer_text: '',
+                        accepted_answers: [],
+                        _manual: true
+                    };
+                    var ins = insertManualBankRow(bank, row);
+                    dirty = false;
+                    window.ModalOverlay.close(modalId);
+                    if (typeof onCommit === 'function') onCommit(ins);
+                });
+            }
+        });
+    }
+
+    /**
+     * 再解析時維持畫面上的列順序。手動加的列留在原位，不准接到最後。
+     * 第一次解析（清單還是空的）才用解析器排出來的順序。
+     */
+    function mergeParsedBankKeepingOrder(prev, fresh) {
+        prev = prev || [];
+        fresh = fresh || [];
+        if (!prev.length) return fresh.slice();
+        var freshByKey = {};
+        fresh.forEach(function (b) { if (b && b.key) freshByKey[b.key] = b; });
+        var used = {};
+        var out = [];
+        prev.forEach(function (old) {
+            if (!old) return;
+            var hit = old.key ? freshByKey[old.key] : null;
+            if (hit) {
+                used[old.key] = true;
+                if (old._manuallyEdited) {
+                    var kept = {
+                        key: hit.key,
+                        section: hit.section,
+                        item_no: hit.item_no,
+                        part: hit.part,
+                        group: hit.group,
+                        blank_index: hit.blank_index,
+                        answer_text: old.answer_text,
+                        accepted_answers: old.accepted_answers,
+                        _manuallyEdited: true,
+                        _manual: old._manual || false
+                    };
+                    applyAcceptedSplitsToItem(kept);
+                    out.push(kept);
+                } else {
+                    out.push(hit);
+                }
+                return;
+            }
+            if (old._manual) {
+                if (freshByKey[String(old.key) + '::1']) return;
+                out.push(old);
+                return;
+            }
+            var prefix = String(old.key || '') + '::';
+            fresh.forEach(function (b) {
+                if (b && b.key && !used[b.key] && b.key.indexOf(prefix) === 0) {
+                    used[b.key] = true;
+                    out.push(b);
+                }
+            });
+        });
+        fresh.forEach(function (b) {
+            if (!b || !b.key || used[b.key]) return;
+            var already = out.some(function (x) { return sameItemBlankFamily(x, b); });
+            if (already) {
+                used[b.key] = true;
+                return;
+            }
+            out.push(b);
+            used[b.key] = true;
+        });
+        normalizeAllItemBlanks(out);
+        return out;
     }
 
     function itemLabel(it) {
@@ -1739,6 +2132,15 @@ window.PdfExamPaper = (function () {
         var labels = [];
         var seen = {};
         var pdfTestCtx = null;
+        var pendingTest = null;
+
+        function addScanLabel(label) {
+            var key = _sectionReviewKey(label);
+            if (!label || seen[key]) return;
+            seen[key] = true;
+            labels.push(label);
+        }
+
         return pageNums.reduce(function (chain, pageNum) {
             return chain.then(function () {
                 return pdfDoc.getPage(pageNum).then(function (page) {
@@ -1751,16 +2153,27 @@ window.PdfExamPaper = (function () {
                             if (!secMatch) return;
                             var composed = _composeSectionLabel(pdfTestCtx, secMatch[1]);
                             pdfTestCtx = composed.testCtx;
-                            if (composed.isTestHeader || !composed.label) return;
-                            var key = _sectionReviewKey(composed.label);
-                            if (seen[key]) return;
-                            seen[key] = true;
-                            labels.push(composed.label);
+                            var fam = sectionFamily(secMatch[1]);
+                            if (composed.isTestHeader) {
+                                if (pendingTest) addScanLabel(pendingTest);
+                                pendingTest = composed.label || composed.testCtx;
+                                return;
+                            }
+                            if (fam === 'part') {
+                                pendingTest = null;
+                            } else if (pendingTest) {
+                                addScanLabel(pendingTest);
+                                pendingTest = null;
+                            }
+                            if (composed.label) addScanLabel(composed.label);
                         });
                     });
                 });
             });
-        }, Promise.resolve()).then(function () { return labels; });
+        }, Promise.resolve()).then(function () {
+            if (pendingTest) addScanLabel(pendingTest);
+            return labels;
+        });
     }
 
     function sectionOverrideKey(review, section) {
@@ -1769,6 +2182,153 @@ window.PdfExamPaper = (function () {
         var k = _sectionReviewKey(section);
         var hit = Object.keys(o).filter(function (s) { return _sectionReviewKey(s) === k; })[0];
         return hit ? o[hit] : '';
+    }
+
+    function isSectionConfirmed(review, section) {
+        var map = (review && review.confirmed_sections) || {};
+        var k = _sectionReviewKey(section);
+        if (map[section] || map[k]) return true;
+        var hit = Object.keys(map).filter(function (s) { return _sectionReviewKey(s) === k; })[0];
+        return !!(hit && map[hit]);
+    }
+
+    function setSectionConfirmed(review, section, on) {
+        review = review || {};
+        if (!review.confirmed_sections) review.confirmed_sections = {};
+        var k = _sectionReviewKey(section);
+        if (on) {
+            review.confirmed_sections[section] = true;
+        } else {
+            delete review.confirmed_sections[section];
+            delete review.confirmed_sections[k];
+            Object.keys(review.confirmed_sections).forEach(function (s) {
+                if (_sectionReviewKey(s) === k) delete review.confirmed_sections[s];
+            });
+        }
+        return review;
+    }
+
+    function sectionConfirmButtonHtml(section, review, opts) {
+        opts = opts || {};
+        var on = isSectionConfirmed(review, section);
+        var cls = opts.btnClass || 'pdf-exam-confirm-section';
+        if (on) {
+            return '<span class="pdf-exam-confirmed-label" data-section="' + _escLocate(section)
+                + '" style="margin-left:8px; padding:2px 8px; font-size:0.72rem; font-weight:800; display:inline-block; background:#CCFBF1; color:#0F766E; border:1px solid #5EEAD4; border-radius:6px;">已確認</span>';
+        }
+        var clickAttr = '';
+        if (opts.pathStr) {
+            clickAttr = ' onclick="window.FeaturePdfExamJob.confirmSection(\'' + _escLocate(opts.pathStr) + '\', this.getAttribute(\'data-section\'))"';
+        }
+        var label = opts.confirmLabel || '確認並儲存';
+        return '<button type="button" class="' + cls + ' btn" data-section="' + _escLocate(section) + '"' + clickAttr
+            + ' style="margin-left:8px; padding:2px 8px; font-size:0.72rem; font-weight:800; cursor:pointer; height:auto; background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px;">'
+            + _escLocate(label) + '</button>';
+    }
+
+    function _isBankScroller(el) {
+        if (!el || !el.classList) return false;
+        if (el.classList.contains('mz-pdf-exam-bank')) return true;
+        var id = String(el.id || '');
+        return id.indexOf('pdf-exam-bank-') === 0;
+    }
+
+    function snapshotScroller(fromEl) {
+        var list = [];
+        var el = fromEl;
+        var first = true;
+        while (el && el !== document.documentElement) {
+            list.push({
+                el: el,
+                top: el.scrollTop || 0,
+                left: el.scrollLeft || 0,
+                wasBank: first && _isBankScroller(el)
+            });
+            first = false;
+            el = el.parentElement;
+        }
+        list.push({
+            win: true,
+            top: window.pageYOffset || document.documentElement.scrollTop || 0,
+            left: window.pageXOffset || 0
+        });
+        return list;
+    }
+
+    function restoreScroller(list, newBank) {
+        (list || []).forEach(function (s) {
+            if (s.win) {
+                window.scrollTo(s.left, s.top);
+                return;
+            }
+            if (s.el && s.el.isConnected) {
+                s.el.scrollTop = s.top;
+                s.el.scrollLeft = s.left;
+                return;
+            }
+            if (s.wasBank && newBank) newBank.scrollTop = s.top;
+        });
+    }
+
+    function revealBankAnchor(root, anchor) {
+        if (!root || !anchor) return;
+        var bank = (root.querySelector && (
+            root.querySelector('.mz-pdf-exam-bank')
+            || root.querySelector('[id^="pdf-exam-bank-"]')
+        )) || (_isBankScroller(root) ? root : null);
+        var scope = bank || root;
+        var node = null;
+        if (typeof anchor.idx === 'number' && !isNaN(anchor.idx)) {
+            node = scope.querySelector('.pdf-exam-bank-row[data-idx="' + String(anchor.idx) + '"]')
+                || scope.querySelector('[data-idx="' + String(anchor.idx) + '"]');
+        }
+        if (!node && anchor.section) {
+            var sec = String(anchor.section);
+            var nodes = scope.querySelectorAll('[data-section]');
+            var i;
+            for (i = 0; i < nodes.length; i++) {
+                if (nodes[i].getAttribute('data-section') === sec) {
+                    node = nodes[i];
+                    break;
+                }
+            }
+        }
+        if (!node) return;
+        var scroller = (node.closest && (node.closest('.mz-pdf-exam-bank') || node.closest('[id^="pdf-exam-bank-"]'))) || bank;
+        if (!scroller) return;
+        var s = scroller.getBoundingClientRect();
+        var n = node.getBoundingClientRect();
+        if (n.top < s.top) scroller.scrollTop += (n.top - s.top - 8);
+        else if (n.bottom > s.bottom) scroller.scrollTop += (n.bottom - s.bottom + 8);
+    }
+
+    function containBankWheel(e) {
+        var t = e.target;
+        if (!t || typeof t.closest !== 'function') return;
+        if (!t.closest('.mz-pdf-exam-bank')) return;
+        e.stopPropagation();
+    }
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wheel', containBankWheel, { capture: true, passive: true });
+        document.addEventListener('touchmove', containBankWheel, { capture: true, passive: true });
+    }
+
+    function afterBankRedraw(root, snap, anchor) {
+        function apply() {
+            var bank = root && root.querySelector
+                ? (root.querySelector('.mz-pdf-exam-bank') || (_isBankScroller(root) ? root : null))
+                : null;
+            restoreScroller(snap, bank);
+            revealBankAnchor(root, anchor);
+        }
+        apply();
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(function () {
+                apply();
+                requestAnimationFrame(apply);
+            });
+        }
+        setTimeout(apply, 0);
     }
 
     function teacherBoxesForSection(review, section) {
@@ -1938,13 +2498,19 @@ window.PdfExamPaper = (function () {
         opts = opts || {};
         var btnClass = opts.locateBtnClass || 'pdf-exam-use-locate';
         if (!review) return '';
-        var warnings = review.section_warnings || [];
+        var warnings = (review.section_warnings || []).filter(function (w) {
+            return w && !isSectionConfirmed(review, w.section);
+        });
         var flagged = review.flagged_keys || {};
         var flaggedReasons = [];
         Object.keys(flagged).forEach(function (k) {
             var r = flagged[k];
-            if (r && flaggedReasons.indexOf(r) === -1) flaggedReasons.push(r);
+            if (!r) return;
+            var bk = (opts.bank || []).filter(function (it) { return it && it.key === k; })[0];
+            if (bk && isSectionConfirmed(review, bk.section)) return;
+            if (flaggedReasons.indexOf(r) === -1) flaggedReasons.push(r);
         });
+        // 頂列只列大題組（Quiz／TEST）。題號格數對不上寫在該列紅字，不准在頂列假裝有「第 2 題」這種大題。
         var offerSeen = {};
         var offerBtns = [];
         function addOffer(sec) {
@@ -1962,7 +2528,10 @@ window.PdfExamPaper = (function () {
             offerBtns.push('<button type="button" class="' + btnClass + ' btn" data-section="' + _escLocate(sec) + '"' + clickAttr + ' style="margin:4px 4px 0 0; padding:4px 8px; background:#FFFFFF; color:#9A3412; border:1px solid #FDBA74; border-radius:6px; font-weight:800; cursor:pointer; height:auto;">' + _escLocate(label) + '</button>');
         }
         warnings.forEach(function (w) { addOffer(w && w.section); });
-        (review.missing_sections || []).forEach(function (m) { addOffer(m && m.section); });
+        (review.missing_sections || []).forEach(function (m) {
+            if (m && isSectionConfirmed(review, m.section)) return;
+            addOffer(m && m.section);
+        });
         if (opts.examTemplateKey === TPL_TEACHER_LOCATE) {
             _answerSectionOrder(opts.bank || []).forEach(function (sec) { addOffer(sec); });
         }
@@ -1977,12 +2546,46 @@ window.PdfExamPaper = (function () {
         var bg = hasProblem ? '#FEF2F2' : '#ECFDF5';
         var bd = hasProblem ? '#FECACA' : '#99F6E4';
         var col = hasProblem ? '#B91C1C' : '#0F766E';
-        var lines = warnings.map(function (w) { return '• ' + _escLocate(w.message); })
-            .concat(flaggedReasons.map(function (r) { return '• ' + _escLocate(r); }));
+        var lines = warnings.map(function (w) { return '• ' + _escLocate(w.message); });
         return '<div style="margin-bottom:6px; padding:8px 10px; background:' + bg + '; border:1px solid ' + bd + '; border-radius:6px; font-size:0.78rem; color:' + col + '; font-weight:800;">'
             + head
             + (lines.length ? ('<br>' + lines.join('<br>')) : '')
             + (offerBtns.length ? ('<div style="margin-top:6px;">' + offerBtns.join('') + '</div>') : '')
+            + '</div>';
+    }
+
+    function pickBankSection(groups, want) {
+        var w = String(want || '');
+        var i;
+        for (i = 0; i < (groups || []).length; i++) {
+            if (String((groups[i] && groups[i].section) || '') === w) return groups[i];
+        }
+        return (groups && groups[0]) || null;
+    }
+
+    function bankSectionTabsHtml(groups, activeSection, opts) {
+        opts = opts || {};
+        var tabClass = opts.tabClass || 'pdf-exam-quiz-tab';
+        var review = opts.review;
+        var warned = opts.warnedSections || {};
+        return '<div class="pdf-exam-quiz-tabs" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">'
+            + (groups || []).map(function (g) {
+                var sec = g.section || '(未分類)';
+                var on = String(g.section || '') === String(activeSection || '');
+                var confirmed = isSectionConfirmed(review, g.section);
+                var warn = !confirmed && (!!warned[g.section] || !!g.missing);
+                var bg = on ? (warn ? '#FEF2F2' : '#CCFBF1') : '#FFFFFF';
+                var bd = on ? (warn ? '#F87171' : '#0F766E') : '#CBD5E1';
+                var col = warn ? '#B91C1C' : (on ? '#0F766E' : '#334155');
+                var clickAttr = '';
+                if (opts.pathStr) {
+                    clickAttr = ' onclick="window.FeaturePdfExamJob.selectBankSection(\'' + _escLocate(opts.pathStr) + '\', this.getAttribute(\'data-section\'))"';
+                }
+                return '<button type="button" class="' + tabClass + ' btn" data-section="' + _escLocate(g.section || '') + '"' + clickAttr
+                    + ' style="padding:5px 12px; font-size:0.78rem; font-weight:800; cursor:pointer; height:auto; background:' + bg + '; color:' + col + '; border:1px solid ' + bd + '; border-radius:6px;">'
+                    + _escLocate(sec) + (warn ? ' ⚠' : '') + (confirmed ? ' ✓' : '')
+                    + '</button>';
+            }).join('')
             + '</div>';
     }
 
@@ -2014,8 +2617,25 @@ window.PdfExamPaper = (function () {
         sectionOverrideKey: sectionOverrideKey,
         teacherBoxesForSection: teacherBoxesForSection,
         setSectionTeacherLocate: setSectionTeacherLocate,
+        isSectionConfirmed: isSectionConfirmed,
+        setSectionConfirmed: setSectionConfirmed,
+        sectionConfirmButtonHtml: sectionConfirmButtonHtml,
+        snapshotScroller: snapshotScroller,
+        restoreScroller: restoreScroller,
+        revealBankAnchor: revealBankAnchor,
+        afterBankRedraw: afterBankRedraw,
+        applyAcceptedSplitsToItem: applyAcceptedSplitsToItem,
+        mergeParsedBankKeepingOrder: mergeParsedBankKeepingOrder,
+        applyItemNoToBankRow: applyItemNoToBankRow,
+        numberItemBlanks: numberItemBlanks,
+        normalizeAllItemBlanks: normalizeAllItemBlanks,
+        insertBlankRow: insertBlankRow,
+        insertManualBankRow: insertManualBankRow,
+        openAddManualBankRowModal: openAddManualBankRowModal,
         openTeacherLocateEditor: openTeacherLocateEditor,
         splitReviewPanelHtml: splitReviewPanelHtml,
+        pickBankSection: pickBankSection,
+        bankSectionTabsHtml: bankSectionTabsHtml,
         formatAcceptedAnswerList: formatAcceptedAnswerList,
         parseAcceptedAnswerList: parseAcceptedAnswerList
     };

@@ -18,6 +18,7 @@ window.FeatureMaterialPdfExam = (function () {
     var _assigns = [];
     var _loaded = false;
     var _loadPromise = null;
+    var _groupMemberTab = {};
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -53,7 +54,12 @@ window.FeatureMaterialPdfExam = (function () {
     }
 
     async function getCurrentUserId() {
-        if (!window.supabaseClient) return null;
+        if (!window.supabaseClient || !window.supabaseClient.auth) return null;
+        if (typeof window.supabaseClient.auth.getSession === 'function') {
+            var sess = await window.supabaseClient.auth.getSession();
+            var session = sess && sess.data && sess.data.session;
+            if (session && session.user && session.user.id) return session.user.id;
+        }
         var res = await window.supabaseClient.auth.getUser();
         return res && res.data && res.data.user ? res.data.user.id : null;
     }
@@ -65,7 +71,7 @@ window.FeatureMaterialPdfExam = (function () {
             var userId = await getCurrentUserId();
             if (!userId || !window.supabaseClient) {
                 _items = [];
-                _loaded = true;
+                _assigns = [];
                 return _items;
             }
             var res = await window.supabaseClient
@@ -95,6 +101,19 @@ window.FeatureMaterialPdfExam = (function () {
             return _items;
         })().finally(function () { _loadPromise = null; });
         return _loadPromise;
+    }
+
+    function folderNames() {
+        var seen = {};
+        var out = [];
+        _items.forEach(function (it) {
+            var n = String((it && it.folder_name) || '').trim();
+            var u = n.toUpperCase();
+            if (!n || seen[u]) return;
+            seen[u] = true;
+            out.push(n);
+        });
+        return out;
     }
 
     function itemsForFolder(folderName) {
@@ -209,6 +228,15 @@ window.FeatureMaterialPdfExam = (function () {
         return listAssignedForHomework(classId).filter(function (c) { return comboHasId(c, want); })[0] || null;
     }
 
+    function classAssignSummary(assignedIds) {
+        var ids = (assignedIds || []).map(String);
+        var names = allClasses().filter(function (c) { return ids.indexOf(String(c.id)) !== -1; })
+            .map(function (c) { return c.name || c.id; });
+        if (!names.length) return '採用班級　尚未勾選';
+        if (names.length <= 2) return '採用班級　' + names.join('、');
+        return '採用班級　' + names.slice(0, 2).join('、') + ' 等 ' + names.length + ' 班';
+    }
+
     function classChecksHtml(assignedIds) {
         var assigned = (assignedIds || []).map(String);
         var classes = allClasses();
@@ -224,13 +252,14 @@ window.FeatureMaterialPdfExam = (function () {
 
     function comboNameBlockHtml(item, assignedIds) {
         var named = comboLabelOf(item);
+        var ids = assignedIds || assignsForItem(item && item.id);
         return (
             '<label style="display:block; font-weight:800; color:#92400E; margin:8px 0 2px;">PDF 套餐（出作業下拉會顯示這個）</label>'
-            + '<input type="text" class="mz-pdf-exam-label" value="' + esc(named) + '" placeholder="例如 Quiz 考卷" style="font-weight:800; color:#78350F; margin-bottom:8px;">'
-            + '<div style="margin-top:8px;">'
-            + '<div style="font-weight:800; color:#15803D; margin-bottom:4px;">採用班級</div>'
-            + '<div class="mz-pdf-exam-class-box">' + classChecksHtml(assignedIds || assignsForItem(item && item.id)) + '</div>'
-            + '</div>'
+            + '<input type="text" class="mz-pdf-exam-label" value="' + esc(named) + '" placeholder="例如 Quiz 考卷" style="width:100%; box-sizing:border-box; font-weight:800; color:#78350F; margin-bottom:8px; padding:8px 10px; font-size:1rem;">'
+            + '<details class="mz-class-details" style="margin-top:8px;">'
+            + '<summary style="font-weight:800; color:#15803D; cursor:pointer;">' + esc(classAssignSummary(ids)) + '</summary>'
+            + '<div class="mz-pdf-exam-class-box" style="margin-top:6px;">' + classChecksHtml(ids) + '</div>'
+            + '</details>'
         );
     }
 
@@ -277,6 +306,9 @@ window.FeatureMaterialPdfExam = (function () {
     }
 
     function bankPreviewHtml(item) {
+        if (item && Array.isArray(item.parsed_bank) && window.PdfExamPaper && typeof window.PdfExamPaper.normalizeAllItemBlanks === 'function') {
+            window.PdfExamPaper.normalizeAllItemBlanks(item.parsed_bank);
+        }
         var bank = (item && Array.isArray(item.parsed_bank)) ? item.parsed_bank : [];
         if (!bank.length) {
             return '<div class="mz-pdf-exam-bank" style="font-weight:700; color:#0F766E;">尚未解析出題目。貼上 txt 後按「解析成答案清單」。</div>';
@@ -294,15 +326,23 @@ window.FeatureMaterialPdfExam = (function () {
             : (window.PdfExamPaper && typeof window.PdfExamPaper.groupItemsBySection === 'function')
                 ? window.PdfExamPaper.groupItemsBySection(bank)
                 : [{ section: '', items: bank }];
-        var body = groups.map(function (g) {
-            var secWarn = !!warnedSections[g.section] || !!g.missing;
-            var lastShownGroup = null;
-            var rowsHtml = (g.items || []).length
-                ? g.items.map(function (bk) {
+        var activeG = (window.PdfExamPaper && typeof window.PdfExamPaper.pickBankSection === 'function')
+            ? window.PdfExamPaper.pickBankSection(groups, item._bankSection)
+            : (groups[0] || null);
+        if (activeG) item._bankSection = activeG.section || '';
+        var g = activeG || { section: '', items: [] };
+        var confirmed = window.PdfExamPaper && typeof window.PdfExamPaper.isSectionConfirmed === 'function'
+            && window.PdfExamPaper.isSectionConfirmed(item.split_review, g.section);
+        var secWarn = !confirmed && (!!warnedSections[g.section] || !!g.missing);
+        var confirmBtn = (g.section && window.PdfExamPaper && typeof window.PdfExamPaper.sectionConfirmButtonHtml === 'function')
+            ? window.PdfExamPaper.sectionConfirmButtonHtml(g.section, item.split_review, { btnClass: 'mz-pdf-exam-confirm' })
+            : '';
+        var lastShownGroup = null;
+        var rowsHtml = (g.items || []).length
+            ? g.items.map(function (bk) {
                 var idx = bank.indexOf(bk);
-                var flagReason = flagged[bk.key] || '';
+                var flagReason = confirmed ? '' : (flagged[bk.key] || '');
                 var isFlag = !!flagReason || secWarn;
-                var label = (bk.group ? (bk.group + '-') : '') + (bk.item_no || '') + (bk.part ? ('-' + bk.part) : '') + (bk.blank_index ? ('-' + bk.blank_index) : '');
                 var groupHead = '';
                 if (bk.group && bk.group !== lastShownGroup) {
                     groupHead = '<div style="font-size:0.75rem; font-weight:800; color:#0F766E; margin:8px 0 2px;">' + esc(bk.group) + '</div>';
@@ -317,12 +357,17 @@ window.FeatureMaterialPdfExam = (function () {
                 var btnOff = btnBase + ' border:1px solid #E2E8F0; background:#F1F5F9; color:#94A3B8; cursor:not-allowed;';
                 var btnAdd = btnBase + ' border:1px solid #99F6E4; background:#CCFBF1; color:#0F766E;';
                 var btnDel = btnBase + ' border:1px solid #FECACA; background:#FEF2F2; color:#B91C1C;';
+                var suffix = (bk.part ? ('-' + bk.part) : '') + (bk.blank_index ? ('-' + bk.blank_index) : '');
                 return groupHead
-                    + '<div style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid ' + (isFlag ? '#FECACA' : '#CCFBF1') + '; background:' + (isFlag ? '#FEF2F2' : 'transparent') + ';"'
+                    + '<div class="pdf-exam-bank-row" data-idx="' + idx + '" data-section="' + esc(g.section || '') + '" style="display:flex; gap:6px; align-items:center; padding:4px 0; border-bottom:1px solid ' + (isFlag ? '#FECACA' : '#CCFBF1') + '; background:' + (isFlag ? '#FEF2F2' : 'transparent') + ';"'
                     + (flagReason ? ' title="' + esc(flagReason) + '"' : '') + '>'
-                    + '<span style="width:80px; flex-shrink:0; font-size:0.76rem; font-weight:800; color:' + (isFlag ? '#B91C1C' : '#0F766E') + ';" title="' + (bk.blank_index ? '這一題原本一格逗號答案被拆成多格，這是第 ' + esc(bk.blank_index) + ' 格' : '') + '">' + esc(label) + '</span>'
-                    + '<input type="text" class="mz-pdf-exam-ans" data-idx="' + idx + '" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:80px; padding:3px 6px; font-size:0.8rem; border:1px solid ' + (isFlag ? '#F87171' : '#99F6E4') + '; color:' + (isFlag ? '#B91C1C' : '#134E4A') + ';">'
-                    + '<input type="text" class="mz-pdf-exam-acc" data-idx="' + idx + '" value="' + esc(window.PdfExamPaper.formatAcceptedAnswerList(bk.accepted_answers)) + '" placeholder="其他可接受答案（用 || 分隔）" style="flex:1; min-width:90px; padding:3px 6px; font-size:0.8rem; border:1px solid ' + (isFlag ? '#F87171' : '#99F6E4') + ';">'
+                    + '<span style="display:inline-flex; align-items:center; gap:2px; width:88px; flex-shrink:0; font-size:0.76rem; font-weight:800; color:' + (isFlag ? '#B91C1C' : '#0F766E') + ';">'
+                    + (bk.group ? esc(bk.group) + '-' : '')
+                    + '<input type="text" class="mz-pdf-exam-itemno" data-idx="' + idx + '" value="' + esc(bk.item_no || '') + '" title="題號，解析錯了可以直接改" style="width:2.2em; padding:2px 3px; font-size:0.76rem; font-weight:800; text-align:center; border:1px solid ' + (isFlag ? '#F87171' : '#99F6E4') + '; color:' + (isFlag ? '#B91C1C' : '#0F766E') + ';">'
+                    + (suffix ? '<span>' + esc(suffix) + '</span>' : '')
+                    + '</span>'
+                    + '<input type="text" class="mz-pdf-exam-ans" data-idx="' + idx + '" value="' + esc(bk.answer_text) + '" placeholder="答案" style="flex:1; min-width:80px; padding:6px 8px; font-size:0.9rem; border:1px solid ' + (isFlag ? '#F87171' : '#99F6E4') + '; color:' + (isFlag ? '#B91C1C' : '#134E4A') + ';">'
+                    + '<input type="text" class="mz-pdf-exam-acc" data-idx="' + idx + '" value="' + esc(window.PdfExamPaper.formatAcceptedAnswerList(bk.accepted_answers)) + '" placeholder="其他可接受答案（用 || 分隔）" style="flex:1; min-width:90px; padding:6px 8px; font-size:0.9rem; border:1px solid ' + (isFlag ? '#F87171' : '#99F6E4') + ';">'
                     + '<span style="display:flex; gap:3px; flex-shrink:0; white-space:nowrap;">'
                     + '<button type="button" class="mz-pdf-exam-bank-btn" data-mz-bank-act="up" data-idx="' + idx + '" title="上移" style="' + (canUp ? btnOn : btnOff) + '" ' + (canUp ? '' : 'disabled') + '>↑</button>'
                     + '<button type="button" class="mz-pdf-exam-bank-btn" data-mz-bank-act="down" data-idx="' + idx + '" title="下移" style="' + (canDown ? btnOn : btnOff) + '" ' + (canDown ? '' : 'disabled') + '>↓</button>'
@@ -332,15 +377,22 @@ window.FeatureMaterialPdfExam = (function () {
                     + '</span>'
                     + '</div>';
             }).join('')
-                : '<div style="font-size:0.76rem; font-weight:700; color:#B91C1C; padding:6px 0;">這一組在解答裡沒有列出來的題（沒有捨棄）。請核對原文，或改用老師定位。</div>';
-            var secTitle = g.section
-                ? '<div style="font-weight:800; color:' + (secWarn ? '#B91C1C' : '#0F766E') + '; font-size:0.8rem; margin:6px 0 2px;">📘 ' + esc(g.section) + (secWarn ? ' ⚠' : '') + '</div>'
-                : '';
-            return '<div style="margin-bottom:8px;">' + secTitle + rowsHtml + '</div>';
-        }).join('');
+            : '<div style="font-size:0.76rem; font-weight:700; color:' + (secWarn ? '#B91C1C' : '#0F766E') + '; padding:6px 0;">這一組在解答裡沒有列出來的題（沒有捨棄）。請核對原文，或改用老師定位。</div>';
+        var tabs = (window.PdfExamPaper && typeof window.PdfExamPaper.bankSectionTabsHtml === 'function' && groups.length > 1)
+            ? window.PdfExamPaper.bankSectionTabsHtml(groups, g.section, {
+                tabClass: 'mz-pdf-exam-quiz-tab',
+                review: item.split_review,
+                warnedSections: warnedSections
+            })
+            : '';
+        var secTitle = g.section
+            ? '<div style="display:flex; align-items:center; flex-wrap:wrap; font-weight:800; color:' + (secWarn ? '#B91C1C' : '#0F766E') + '; font-size:0.8rem; margin:0 0 6px;">📘 ' + esc(g.section) + (secWarn ? ' ⚠' : '') + confirmBtn + '</div>'
+            : '';
         return splitReviewHtml(item)
-            + '<div class="mz-pdf-exam-bank" style="max-height:280px; overflow:auto; border:1px solid #99F6E4; border-radius:6px; padding:6px; background:#F0FDFA;">'
-            + body
+            + tabs
+            + secTitle
+            + '<div class="mz-pdf-exam-bank" style="border:1px solid #99F6E4; border-radius:6px; padding:10px; background:#F0FDFA;">'
+            + rowsHtml
             + '</div>';
     }
 
@@ -351,9 +403,10 @@ window.FeatureMaterialPdfExam = (function () {
             ? '<div style="font-weight:800; color:#134E4A;">📄 ' + esc(item.pdf_file_name || item.pdf_file_id) + '</div>'
             : ('<div style="font-weight:800; color:#134E4A;">📄 ' + esc(item.pdf_file_name || item.pdf_file_id) + '</div>'
                 + '<div style="font-weight:700; color:#0F766E; margin:4px 0 8px;">試卷範本　' + esc(templateName(item.exam_template_key)) + '</div>');
+        var vis = opts.hidden ? 'display:none;' : '';
         return (
             '<div class="mz-pdf-exam-member" data-item-id="' + esc(item.id) + '" data-file-id="' + esc(item.pdf_file_id) + '" data-tpl="' + esc(item.exam_template_key) + '"'
-            + (opts.insideGroup ? ' style="margin-top:10px; padding-top:10px; border-top:1px dashed #5EEAD4;"' : '') + '>'
+            + (opts.insideGroup ? ' style="' + vis + 'margin-top:10px; padding-top:10px; border-top:1px dashed #5EEAD4;"' : '') + '>'
             + head
             + '<label style="display:block; font-weight:800; color:#134E4A; margin:4px 0;">這份 PDF 自己的 txt 答案</label>'
             + '<textarea class="mz-pdf-exam-raw" rows="5" placeholder="直接貼上課本解答原文，例如：&#10;Quiz 1, p. 50&#10;2. been 10. stopped" '
@@ -388,11 +441,25 @@ window.FeatureMaterialPdfExam = (function () {
                 assigned.push(cid);
             });
         });
+        var groupKey = String(first.folder_name || '').trim().toUpperCase() + '|' + String(first.exam_template_key || '');
+        var selId = String(_groupMemberTab[groupKey] || (first && first.id) || '');
+        if (!(items || []).some(function (it) { return String(it.id) === selId; })) {
+            selId = String(first.id || '');
+        }
+        var tabs = (items || []).map(function (it) {
+            var on = String(it.id) === selId;
+            return '<button type="button" class="mz-pdf-exam-member-tab btn" data-item-id="' + esc(it.id) + '" data-group-key="' + esc(groupKey) + '" style="padding:5px 12px; font-size:0.78rem; font-weight:800; cursor:pointer; height:auto; background:' + (on ? '#CCFBF1' : '#FFFFFF') + '; color:' + (on ? '#0F766E' : '#334155') + '; border:1px solid ' + (on ? '#0F766E' : '#CBD5E1') + '; border-radius:6px;">'
+                + esc(it.pdf_file_name || it.pdf_file_id)
+                + '</button>';
+        }).join('');
         return (
-            '<div class="mz-card mz-pdf-exam-card mz-pdf-exam-grouped">'
+            '<div class="mz-card mz-pdf-exam-card mz-pdf-exam-grouped" data-group-key="' + esc(groupKey) + '">'
             + '<div style="font-weight:800; color:#0E7490;">群組　試卷範本　' + esc(templateName(first.exam_template_key)) + '</div>'
             + comboNameBlockHtml(first, assigned)
-            + items.map(function (it) { return appliedMemberHtml(it, { insideGroup: true }); }).join('')
+            + '<div class="mz-pdf-exam-member-tabs" style="display:flex; flex-wrap:wrap; gap:4px; margin:10px 0 4px;">' + tabs + '</div>'
+            + items.map(function (it) {
+                return appliedMemberHtml(it, { insideGroup: true, hidden: String(it.id) !== selId });
+            }).join('')
             + '</div>'
         );
     }
@@ -533,6 +600,7 @@ window.FeatureMaterialPdfExam = (function () {
     function renderCreatePanel() {
         var wrap = document.getElementById('pdf-exam-apply-container');
         if (!wrap) return;
+        try { paintCreatePanel(wrap); } catch (_e) {}
         ensureLoaded().then(function () {
             if (window.FeatureTimeline && typeof window.FeatureTimeline.ensureMetaCatalog === 'function') {
                 return window.FeatureTimeline.ensureMetaCatalog('', 'teacher', { force: false }).catch(function () {}).then(function () {
@@ -559,6 +627,18 @@ window.FeatureMaterialPdfExam = (function () {
             bank[idx].accepted_answers = window.PdfExamPaper.parseAcceptedAnswerList(input.value);
             bank[idx]._manuallyEdited = true;
         });
+        card.querySelectorAll('.mz-pdf-exam-itemno').forEach(function (input) {
+            var idx = Number(input.getAttribute('data-idx'));
+            if (!bank[idx]) return;
+            if (typeof window.PdfExamPaper.applyItemNoToBankRow === 'function') {
+                window.PdfExamPaper.applyItemNoToBankRow(bank, idx, input.value);
+            } else {
+                bank[idx].item_no = String(input.value || '').trim() || bank[idx].item_no;
+            }
+        });
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.applyAcceptedSplitsToItem === 'function') {
+            bank.forEach(function (b) { window.PdfExamPaper.applyAcceptedSplitsToItem(b); });
+        }
         return bank;
     }
 
@@ -579,100 +659,51 @@ window.FeatureMaterialPdfExam = (function () {
         return -1;
     }
 
-    function makeInsertedBankRow(item, template) {
-        var section = template.section || '(未分類)';
-        var itemNo = String(template.item_no || '').trim() || '?';
-        var part = template.part || null;
-        var group = template.group || null;
-        var blank = Number(template.blank_index) || 1;
-        var key = window.PdfExamPaper.makeKey(section, itemNo, part, blank, group);
-        var used = {};
-        (item.parsed_bank || []).forEach(function (b) { if (b && b.key) used[b.key] = true; });
-        while (used[key] && blank < 99) {
-            blank += 1;
-            key = window.PdfExamPaper.makeKey(section, itemNo, part, blank, group);
-        }
-        return {
-            key: key,
-            section: section,
-            item_no: itemNo,
-            part: part,
-            group: group,
-            blank_index: blank,
-            answer_text: '',
-            accepted_answers: [],
-            _manual: true
-        };
-    }
-
-    function refreshMemberBank(card, item) {
+    function refreshMemberBank(card, item, status) {
+        if (status && status.keepSection) item._bankSection = status.keepSection;
         var wrap = card.querySelector('.mz-pdf-exam-bank-wrap');
+        var bankEl = wrap && wrap.querySelector('.mz-pdf-exam-bank');
+        var snap = (status && status.snap) || ((window.PdfExamPaper && typeof window.PdfExamPaper.snapshotScroller === 'function')
+            ? window.PdfExamPaper.snapshotScroller(bankEl || wrap || card)
+            : []);
         if (wrap) wrap.innerHTML = bankPreviewHtml(item);
-        var msg = card.querySelector('.mz-pdf-exam-msg');
-        if (msg) {
-            msg.style.color = '#0F766E';
-            msg.textContent = '已確認答案 ' + ((item.parsed_bank || []).length) + ' 題（尚未儲存）';
+        var anchor = status && (status.keepIdx != null || status.keepSection)
+            ? { idx: status.keepIdx, section: status.keepSection }
+            : null;
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.afterBankRedraw === 'function') {
+            window.PdfExamPaper.afterBankRedraw(wrap || card, snap, anchor);
         }
+        var msg = card.querySelector('.mz-pdf-exam-msg');
+        if (!msg) return;
+        if (status && status.text) {
+            msg.style.color = status.error ? '#B91C1C' : '#0F766E';
+            msg.textContent = status.text;
+            return;
+        }
+        msg.style.color = '#0F766E';
+        msg.textContent = '已改答案 ' + ((item.parsed_bank || []).length) + ' 題（尚未儲存）';
     }
 
     function openAddRowModal(card, item) {
-        var dirty = false;
-        var modalId = 'mz-pdf-exam-add-row';
-        window.ModalOverlay.open({
-            id: modalId,
-            tier: 'B',
-            prompt: true,
-            isDirty: function () { return dirty; },
-            contentHtml: '<div style="background:white; padding:16px; border-radius:10px; min-width:320px; max-width:420px;">'
-                + '<div style="font-weight:800; color:#0F766E; margin-bottom:10px;">手動新增一題</div>'
-                + '<label style="display:block; font-weight:700; font-size:0.82rem; margin-bottom:8px;">大題（例如 Quiz 1；留空＝未分類）'
-                + '<input id="mz-pdf-add-sec" type="text" style="width:100%; margin-top:4px; padding:6px; box-sizing:border-box;"></label>'
-                + '<label style="display:block; font-weight:700; font-size:0.82rem; margin-bottom:8px;">題號（例如 12）'
-                + '<input id="mz-pdf-add-no" type="text" style="width:100%; margin-top:4px; padding:6px; box-sizing:border-box;"></label>'
-                + '<label style="display:block; font-weight:700; font-size:0.82rem; margin-bottom:8px;">子項（若這題有 A/B 兩格才填，否則留空）'
-                + '<input id="mz-pdf-add-part" type="text" style="width:100%; margin-top:4px; padding:6px; box-sizing:border-box;"></label>'
-                + '<div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">'
-                + '<button type="button" class="btn btn-primary" id="mz-pdf-add-ok" style="background:#0F766E; color:white; border:1px solid #0F766E; font-weight:800;">新增</button>'
-                + '<button type="button" class="btn" id="mz-pdf-add-cancel" style="background:white; color:#134E4A; border:1px solid #CBD5E1; font-weight:800;">取消</button>'
-                + '<span id="mz-pdf-add-err" style="font-weight:700; color:#B91C1C;"></span>'
-                + '</div></div>',
-            onMount: function (overlay) {
-                overlay.querySelectorAll('input').forEach(function (inp) {
-                    inp.addEventListener('input', function () { dirty = true; });
-                });
-                overlay.querySelector('#mz-pdf-add-cancel').addEventListener('click', function () {
-                    window.ModalOverlay.requestClose(modalId);
-                });
-                overlay.querySelector('#mz-pdf-add-ok').addEventListener('click', function () {
-                    var section = String((overlay.querySelector('#mz-pdf-add-sec') || {}).value || '(未分類)').replace(/\s+/g, ' ').trim() || '(未分類)';
-                    var itemNo = String((overlay.querySelector('#mz-pdf-add-no') || {}).value || '').trim();
-                    var err = overlay.querySelector('#mz-pdf-add-err');
-                    if (!itemNo) {
-                        if (err) err.textContent = '請填題號';
-                        return;
-                    }
-                    var part = String((overlay.querySelector('#mz-pdf-add-part') || {}).value || '').trim().toUpperCase() || null;
-                    var key = window.PdfExamPaper.makeKey(section, itemNo, part);
-                    if ((item.parsed_bank || []).some(function (b) { return b.key === key; })) {
-                        if (err) err.textContent = '這個題號已經存在，請改用清單裡的欄位直接修改';
-                        return;
-                    }
-                    item.parsed_bank = item.parsed_bank || [];
-                    item.parsed_bank.push({
-                        key: key,
-                        section: section,
-                        item_no: itemNo,
-                        part: part,
-                        answer_text: '',
-                        accepted_answers: [],
-                        _manual: true
-                    });
-                    dirty = false;
-                    window.ModalOverlay.close(modalId);
-                    refreshMemberBank(card, item);
-                });
+        if (!window.PdfExamPaper || typeof window.PdfExamPaper.openAddManualBankRowModal !== 'function') return;
+        window.PdfExamPaper.openAddManualBankRowModal({
+            getBank: function () {
+                item.parsed_bank = item.parsed_bank || [];
+                return item.parsed_bank;
+            },
+            onCommit: function (ins) {
+                var row = (ins && ins.row) || {};
+                clearSectionConfirmed(item, row.section);
+                refreshMemberBank(card, item, { keepIdx: ins.insertAt, keepSection: row.section });
             }
         });
+    }
+
+    function clearSectionConfirmed(item, section) {
+        if (!item || !section || !window.PdfExamPaper || typeof window.PdfExamPaper.setSectionConfirmed !== 'function') return;
+        if (!window.PdfExamPaper.isSectionConfirmed(item.split_review, section)) return;
+        item.split_review = item.split_review || {};
+        window.PdfExamPaper.setSectionConfirmed(item.split_review, section, false);
     }
 
     async function handleBankAct(act, idx, card, item) {
@@ -681,27 +712,42 @@ window.FeatureMaterialPdfExam = (function () {
             return;
         }
         var bank = item.parsed_bank || [];
+        var row = bank[idx];
+        if (row) clearSectionConfirmed(item, row.section);
         if (act === 'up' || act === 'down') {
             var otherIdx = siblingIndexInSection(bank, idx, act === 'up' ? -1 : 1);
             if (otherIdx < 0) return;
             var tmp = bank[idx];
             bank[idx] = bank[otherIdx];
             bank[otherIdx] = tmp;
-            refreshMemberBank(card, item);
+            if (window.PdfExamPaper && typeof window.PdfExamPaper.numberItemBlanks === 'function') {
+                window.PdfExamPaper.numberItemBlanks(bank, tmp);
+            }
+            refreshMemberBank(card, item, { keepIdx: otherIdx, keepSection: tmp && tmp.section });
             return;
         }
         if (act === 'ins-before' || act === 'ins-after') {
-            var template = bank[idx];
-            if (!template) return;
-            var row = makeInsertedBankRow(item, template);
-            bank.splice(Number(idx) + (act === 'ins-after' ? 1 : 0), 0, row);
-            refreshMemberBank(card, item);
+            if (!window.PdfExamPaper || typeof window.PdfExamPaper.insertBlankRow !== 'function') return;
+            var ins = window.PdfExamPaper.insertBlankRow(bank, idx, act === 'ins-after');
+            if (!ins || !ins.row) return;
+            refreshMemberBank(card, item, { keepIdx: ins.insertAt, keepSection: ins.row.section });
             return;
         }
         if (act === 'del') {
+            var bankEl = card.querySelector('.mz-pdf-exam-bank');
+            var snap = (window.PdfExamPaper && typeof window.PdfExamPaper.snapshotScroller === 'function')
+                ? window.PdfExamPaper.snapshotScroller(bankEl || card)
+                : [];
             if (!(await window.ModalOverlay.confirm('刪除這一題答案？若已經在 PDF 上畫框對應這一題，那個框不會自動刪除，會變成「未指定題目」。'))) return;
-            bank.splice(idx, 1);
-            refreshMemberBank(card, item);
+            var removed = bank.splice(idx, 1)[0];
+            if (window.PdfExamPaper && typeof window.PdfExamPaper.numberItemBlanks === 'function') {
+                window.PdfExamPaper.numberItemBlanks(bank, removed);
+            }
+            refreshMemberBank(card, item, {
+                keepIdx: Math.min(idx, Math.max(0, bank.length - 1)),
+                keepSection: removed && removed.section,
+                snap: snap
+            });
         }
     }
 
@@ -713,6 +759,9 @@ window.FeatureMaterialPdfExam = (function () {
             throw new Error('找不到解答解析。');
         }
         if (msg) { msg.style.color = '#0F766E'; msg.textContent = '解析中…'; }
+        if (item.parsed_bank && item.parsed_bank.length) {
+            item.parsed_bank = readBankEdits(card, item);
+        }
         var blankStats = null;
         var paperLabels = [];
         if (item.pdf_file_id && typeof window.PdfExamPaper.loadPdfDocumentFromDrive === 'function') {
@@ -735,48 +784,40 @@ window.FeatureMaterialPdfExam = (function () {
         }
         item.answer_text_raw = raw;
         item.section_page_hints = Object.assign({}, item.section_page_hints || {}, parsed.sectionPageHints || {});
-        var freshKeys = {};
-        parsed.forEach(function (b) { if (b && b.key) freshKeys[b.key] = true; });
-        var prevByKey = {};
-        (item.parsed_bank || []).forEach(function (b) { if (b && b.key) prevByKey[b.key] = b; });
-        var merged = parsed.map(function (b) {
-            var prev = prevByKey[b.key];
-            if (prev && prev._manuallyEdited) {
-                return {
-                    key: b.key,
-                    section: b.section,
-                    item_no: b.item_no,
-                    part: b.part,
-                    group: b.group,
-                    blank_index: b.blank_index,
-                    answer_text: prev.answer_text,
-                    accepted_answers: prev.accepted_answers,
-                    _manuallyEdited: true
-                };
-            }
-            return b;
-        });
-        var preservedManual = (item.parsed_bank || []).filter(function (b) { return b && !freshKeys[b.key] && b._manual; });
-        item.parsed_bank = merged.concat(preservedManual);
+        var prevBank = item.parsed_bank || [];
+        item.parsed_bank = (typeof window.PdfExamPaper.mergeParsedBankKeepingOrder === 'function')
+            ? window.PdfExamPaper.mergeParsedBankKeepingOrder(prevBank, parsed)
+            : parsed;
+        if (window.PdfExamPaper && typeof window.PdfExamPaper.applyAcceptedSplitsToItem === 'function') {
+            item.parsed_bank.forEach(function (b) { window.PdfExamPaper.applyAcceptedSplitsToItem(b); });
+        }
         if (window.PdfExamPaper.buildSplitReview) {
             var prevReview = item.split_review || {};
             item.split_review = window.PdfExamPaper.buildSplitReview(item.parsed_bank, blankStats, {
                 paperLabels: paperLabels,
                 reattachLog: parsed.column_reattach || [],
                 section_template_overrides: prevReview.section_template_overrides || {},
-                teacher_located_boxes: prevReview.teacher_located_boxes || {}
+                teacher_located_boxes: prevReview.teacher_located_boxes || {},
+                confirmed_sections: prevReview.confirmed_sections || {}
             });
         }
-        var wrap = card.querySelector('.mz-pdf-exam-bank-wrap');
-        if (wrap) wrap.innerHTML = bankPreviewHtml(item);
+        var parseStatus = null;
         if (msg && parsed.length) {
             var review = item.split_review || {};
-            var warnN = ((review.section_warnings || []).length) + Object.keys(review.flagged_keys || {}).length;
-            msg.style.color = warnN ? '#B45309' : '#0F766E';
-            msg.textContent = warnN
-                ? ('已解析 ' + parsed.length + ' 題，有 ' + warnN + ' 處警示（解答組數／格數跟題目對不上），請看紅色標示（尚未儲存）')
-                : ('已解析 ' + parsed.length + ' 題，請逐項確認（尚未儲存）');
+            var warnN = ((review.section_warnings || []).filter(function (w) {
+                return w && !(window.PdfExamPaper.isSectionConfirmed && window.PdfExamPaper.isSectionConfirmed(review, w.section));
+            }).length) + Object.keys(review.flagged_keys || {}).filter(function (k) {
+                var bk = (item.parsed_bank || []).filter(function (it) { return it && it.key === k; })[0];
+                return !(bk && window.PdfExamPaper.isSectionConfirmed && window.PdfExamPaper.isSectionConfirmed(review, bk.section));
+            }).length;
+            parseStatus = {
+                error: !!warnN,
+                text: warnN
+                    ? ('已解析 ' + parsed.length + ' 題，有 ' + warnN + ' 處警示。核對後可按該 Quiz 旁「確認並儲存」')
+                    : ('已解析 ' + parsed.length + ' 題，請逐項確認（尚未儲存）')
+            };
         }
+        refreshMemberBank(card, item, parseStatus);
     }
 
     async function saveClassLinks(itemIds, classIds) {
@@ -962,7 +1003,7 @@ window.FeatureMaterialPdfExam = (function () {
             boxes: existing,
             onSaved: function (boxes) {
                 item.split_review = window.PdfExamPaper.setSectionTeacherLocate(item.split_review || {}, section, boxes);
-                refreshMemberBank(card, item);
+                refreshMemberBank(card, item, { keepSection: section });
                 var msgEl = card.querySelector('.mz-pdf-exam-msg');
                 if (msgEl) {
                     msgEl.style.color = '#0F766E';
@@ -1117,11 +1158,11 @@ window.FeatureMaterialPdfExam = (function () {
                 btn.textContent = '儲存中…';
                 if (msg) { msg.style.color = '#0F766E'; msg.textContent = '儲存中…'; }
                 saveMemberCard(card, item).then(function (saved) {
+                    var latest = getItemById(saved && saved.id) || saved || item;
                     btn.textContent = '儲存';
-                    if (msg) { msg.style.color = '#0F766E'; msg.textContent = '已儲存（' + ((saved.parsed_bank || []).length) + ' 題）'; }
-                    if (window.FeatureClassMaterialCombinations && typeof window.FeatureClassMaterialCombinations.renderMaterialZone === 'function') {
-                        window.FeatureClassMaterialCombinations.renderMaterialZone();
-                    }
+                    refreshMemberBank(card, latest, {
+                        text: '已儲存（' + ((latest.parsed_bank || []).length) + ' 題）'
+                    });
                 }).catch(function (err) {
                     btn.textContent = '儲存';
                     if (msg) { msg.style.color = '#B91C1C'; msg.textContent = '儲存失敗：' + (err.message || err); }
@@ -1138,6 +1179,65 @@ window.FeatureMaterialPdfExam = (function () {
                 if (locateCard && locateItem) startTeacherLocate(locateCard, locateItem, locateBtn.getAttribute('data-section') || '');
                 return;
             }
+            var memberTab = ev.target.closest('.mz-pdf-exam-member-tab');
+            if (memberTab && wrap.contains(memberTab)) {
+                var host = memberTab.closest('.mz-pdf-exam-grouped');
+                var gid = memberTab.getAttribute('data-group-key') || '';
+                var pickId = memberTab.getAttribute('data-item-id') || '';
+                if (gid) _groupMemberTab[gid] = pickId;
+                if (!host) return;
+                host.querySelectorAll('.mz-pdf-exam-member-tab').forEach(function (t) {
+                    var on = t.getAttribute('data-item-id') === pickId;
+                    t.style.background = on ? '#CCFBF1' : '#FFFFFF';
+                    t.style.color = on ? '#0F766E' : '#334155';
+                    t.style.borderColor = on ? '#0F766E' : '#CBD5E1';
+                });
+                host.querySelectorAll('.mz-pdf-exam-member').forEach(function (el) {
+                    el.style.display = String(el.getAttribute('data-item-id')) === pickId ? '' : 'none';
+                });
+                return;
+            }
+            var quizTab = ev.target.closest('.mz-pdf-exam-quiz-tab');
+            if (quizTab && wrap.contains(quizTab)) {
+                var quizCard = quizTab.closest('.mz-pdf-exam-member');
+                var quizItem = getItemById(quizCard && quizCard.getAttribute('data-item-id'));
+                if (!quizCard || !quizItem) return;
+                quizItem.parsed_bank = readBankEdits(quizCard, quizItem);
+                quizItem._bankSection = quizTab.getAttribute('data-section') || '';
+                refreshMemberBank(quizCard, quizItem, { keepSection: quizItem._bankSection });
+                return;
+            }
+            var confirmBtn = ev.target.closest('.mz-pdf-exam-confirm');
+            if (confirmBtn && wrap.contains(confirmBtn)) {
+                var confirmCard = confirmBtn.closest('.mz-pdf-exam-member');
+                var confirmItem = _items.filter(function (it) { return String(it.id) === String(confirmCard && confirmCard.getAttribute('data-item-id')); })[0];
+                if (!confirmCard || !confirmItem) return;
+                var confirmMsg = confirmCard.querySelector('.mz-pdf-exam-msg');
+                var rawEl = confirmCard.querySelector('.mz-pdf-exam-raw');
+                confirmItem.answer_text_raw = rawEl ? rawEl.value : confirmItem.answer_text_raw;
+                confirmItem.parsed_bank = readBankEdits(confirmCard, confirmItem);
+                confirmItem.split_review = confirmItem.split_review || {};
+                var sec = confirmBtn.getAttribute('data-section') || '';
+                if (window.PdfExamPaper.isSectionConfirmed(confirmItem.split_review, sec)) return;
+                window.PdfExamPaper.setSectionConfirmed(confirmItem.split_review, sec, true);
+                confirmBtn.disabled = true;
+                confirmBtn.textContent = '儲存中…';
+                if (confirmMsg) { confirmMsg.style.color = '#0F766E'; confirmMsg.textContent = '儲存中…'; }
+                saveMemberCard(confirmCard, confirmItem).then(function (saved) {
+                    var latest = getItemById(saved && saved.id) || saved || confirmItem;
+                    refreshMemberBank(confirmCard, latest, {
+                        text: '「' + sec + '」已確認並儲存（' + ((latest.parsed_bank || []).length) + ' 題）',
+                        keepSection: sec
+                    });
+                }).catch(function (err) {
+                    window.PdfExamPaper.setSectionConfirmed(confirmItem.split_review, sec, false);
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = '確認並儲存';
+                    if (confirmMsg) { confirmMsg.style.color = '#B91C1C'; confirmMsg.textContent = '儲存失敗：' + (err.message || err); }
+                    refreshMemberBank(confirmCard, confirmItem, { error: true, text: '儲存失敗：' + (err.message || err) });
+                });
+                return;
+            }
             var btn = ev.target.closest('[data-mz-bank-act]');
             if (!btn || !wrap.contains(btn) || btn.disabled) return;
             var card = btn.closest('.mz-pdf-exam-member');
@@ -1148,6 +1248,25 @@ window.FeatureMaterialPdfExam = (function () {
             }
             var idx = Number(btn.getAttribute('data-idx'));
             handleBankAct(btn.getAttribute('data-mz-bank-act'), idx, card, item);
+        });
+        wrap.addEventListener('change', function (ev) {
+            var input = ev.target.closest('.mz-pdf-exam-ans, .mz-pdf-exam-acc, .mz-pdf-exam-itemno');
+            if (!input || !wrap.contains(input)) return;
+            var card = input.closest('.mz-pdf-exam-member');
+            var item = getItemById(card && card.getAttribute('data-item-id'));
+            if (!card || !item) return;
+            item.parsed_bank = readBankEdits(card, item);
+            var idx = Number(input.getAttribute('data-idx'));
+            var row = item.parsed_bank[idx];
+            if (!row) return;
+            var needRedraw = input.classList.contains('mz-pdf-exam-itemno');
+            if (window.PdfExamPaper.isSectionConfirmed(item.split_review, row.section)) {
+                clearSectionConfirmed(item, row.section);
+                needRedraw = true;
+            }
+            if (needRedraw) {
+                refreshMemberBank(card, item, { keepIdx: idx, keepSection: row.section });
+            }
         });
     }
 
@@ -1166,7 +1285,9 @@ window.FeatureMaterialPdfExam = (function () {
         getItem: function (fileId, templateKey) {
             return itemFor(fileId, templateKey || TPL_DETECT.key);
         },
-        getItemById: getItemById
+        getItemById: getItemById,
+        folderNames: folderNames,
+        isReady: function () { return _loaded; }
     };
 
     if (window.MaterialComboStrategies && typeof window.MaterialComboStrategies.register === 'function') {
@@ -1177,8 +1298,10 @@ window.FeatureMaterialPdfExam = (function () {
             usesMetaRange: false,
             showsExamStats: false,
             ensureLoaded: ensureLoaded,
+            isReady: function () { return _loaded; },
             listAssignedForHomework: listAssignedForHomework,
             getAssignedById: getAssignedById,
+            folderNames: folderNames,
             renderFolderHtml: renderFolderHtml,
             bind: bind,
             matches: function (combo) { return isPdfCombo(combo); },

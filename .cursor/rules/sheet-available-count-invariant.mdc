@@ -39,11 +39,12 @@ alwaysApply: false
   只有迄超出：迄＝最後一頁（頁碼）或最後題號（題號）
   起也超出、頁碼：起迄都＝最後一頁
   起也超出、題號：起＝最後一頁第一題，迄＝最後題號
+題數超過可用題＝popup 告知，並改成可用題數。不准留下超過的數字。
 產生線上卷仍讀 .meta.json 抽題；綠字不為了數字去打 Drive。
 ```
 
-共用入口：`020_js_core/sheet-range-bounds.js`（`countAvailable`／`clampRange`／`notifyOverflow`）。  
-範圍卡失焦、考試改起迄、按帶入，同一把。Popup 走 `ModalOverlay` tier A。
+共用入口：`020_js_core/sheet-range-bounds.js`（`countAvailable`／`clampRange`／`clampCount`／`notifyOverflow`）。  
+範圍卡失焦、考試改起迄、按帶入、題數失焦，同一把。Popup 走 `ModalOverlay` tier A。
 
 ## 不變量
 
