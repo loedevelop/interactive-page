@@ -244,6 +244,13 @@ window.FeatureProgress = (() => {
             a.actionableTasks.forEach((t, idx) => {
                 allTaskIds.push({ taskId: t.id, assignmentId: a.id });
                 let cleanTitle = t.title ? t.title.replace(/<[^>]*>?/gm, '') : '未命名';
+                if (t.type === 'audio_record' && window.TimelineTemplates
+                    && typeof window.TimelineTemplates.listTitleForPackChild === 'function') {
+                    cleanTitle = String(window.TimelineTemplates.listTitleForPackChild(t, null) || cleanTitle).replace(/<[^>]*>?/gm, '');
+                } else if (t.type === 'audio_record' && window.TimelineTemplates
+                    && typeof window.TimelineTemplates.listTitleForBookAudio === 'function') {
+                    cleanTitle = String(window.TimelineTemplates.listTitleForBookAudio(t, null) || cleanTitle).replace(/<[^>]*>?/gm, '');
+                }
                 let safeTitleAttr = cleanTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                 // 🌟 同一作業常見多個範圍文字幾乎相同的小項（例如錄音／考試都用同一段 pp. 範圍描述），
                 // 標題前加類型圖示分辨，避免老師看表頭猜不出哪欄是哪個作業類型（見雷區 00-pitfall-index）

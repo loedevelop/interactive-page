@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>班級管理 | 老師控制台 (SaaS 升級版)</title>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../010_css/style.css?v=69">
+    <link rel="stylesheet" href="../010_css/style.css?v=72">
     
     <!-- 🌟 安全注入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -237,7 +237,7 @@
                     </div>
                 </div>
                 
-                <button id="btn-save-class-dates" class="btn btn-primary btn-block">💾 儲存設定並自動鋪設排程</button>
+                <button type="button" id="btn-save-class-dates" class="btn btn-primary btn-block">💾 儲存設定並自動鋪設排程</button>
             </div>
 
             <!-- ⚠️ 成功搶救回來的表單：班級姓名顯示模式設定 -->
@@ -370,11 +370,11 @@
     <script src="../020_js_core/task-script-resolver.js?v=5"></script> <!-- v5：TASK_TYPE_ICON 補 pdf_exam: 📄 -->
     <script src="../020_js_core/material-snapshot.js?v=32"></script> <!-- v32：有標記的學生文稿只套公式，不准改寫 page title。 -->
     <script src="../020_js_core/material-name-map.js?v=5"></script> <!-- v5：活頁別稱跟活頁列走，按 sheet id 查 current_label。 -->
-    <script src="../020_js_core/material-file-names.js?v=23"></script> <!-- v23：活頁別名永遠有；沒改過＝別名就是活頁名。 -->
+    <script src="../020_js_core/material-file-names.js?v=24"></script> <!-- v24：匯出 sheetRangeHead，標題收活頁字母。 -->
     <script src="../020_js_core/material-pdf-page-map.js?v=1"></script> <!-- v1：課本頁／題號對 PDF 檔案頁；對不到不准猜。 -->
     <script src="../020_js_core/layout-fields-eval.js?v=10"></script> <!-- v10：資料項名 - 與 _ 當同一名字，fill-in-the-blank-question 才對得到。 -->
     <script src="../020_js_core/quiz-paper-builder.js?v=60"></script> <!-- v60：整卷亂序預設開。 -->
-    <script src="../020_js_core/pdf-exam-paper.js?v=32"></script> <!-- v32：do not / don't call 共用後面的動詞。 --> <!-- v31：TEST 是大題；頂列不准把題號寫成「第 2 題」大題。 --> <!-- v29：答案清單改 Quiz 活頁；編輯區加大。 --> <!-- v28：刪列只捲答案清單，不准 scrollIntoView 把整頁帶回 Quiz 1。 --> <!-- v27：手動新增一題加在該大題最後，不是整份清單最底。 --> <!-- v26：單獨一列不准 5-2；再解析不准把第 2 題接到最後。 --> <!-- v21：/ 兩邊有英文字就切成其他可接受答案（does not/doesn't eat）；每一 Quiz 可確認無誤消紅字。 --> <!-- v20：標頭同一行後面的答案、題號前面的字、A. 後面的正文一律收進清單，不准丟掉。 --> <!-- v19：沒有「1.」題號的答案行仍收進該組（Quiz 1 的 walk, are walking）；缺號的 Quiz 不准從畫面拿掉。 --> <!-- v16：斜線＝其他可接受答案；解答／題目 Quiz 組對帳警示；兩欄接續收進同一 Quiz；有問題可改用老師定位。 --> <!-- v15：同一頁上下兩大題一併記下標題列 yPct。 --> <!-- v14：可行答案只認解答裡的 OR；沒有 OR 的換行／問句／小題不准進 accepted_answers。 --> <!-- v13：Quiz 3 問句＋答句是同一題號底下的小題（2-A／2-B），禁止把問句塞進「其他可接受答案」。 --> <!-- v12：A/B 不一定是練習分組——1 下面的 A/B 當該題小題；A. Directions／A. 1. 才當分組。 --> <!-- v11：同一大題 A 練習 1~ 再 B 練習 1~，排序先依 A/B 分組再依題號，不再只看數字。 --> <!-- v10：逗號拆格改「句首語氣詞不拆＋空格線只做交叉檢查紅字提醒」，不再用空格線 hint 偷偷改拆或不拆。新增 detectBlankReviewStats／buildSplitReview。v9：新增 repairStaleCommaSplits——舊版曾把「haven't, have never done」收成單列＋替代答案，打開編輯器／重新批改時對照原始文字自動補拆成 1-B-1／1-B-2，避免後面作答框整批錯位。v8：新增用解答文字「Quiz N, p. NN」課本印刷頁碼輔助定位大題頁碼——跟掃 PDF 標題文字是獨立第二來源，任何一個被 OCR 讀壞都還有另一個可用（掃 PDF 頁尾印刷頁碼算出跟 PDF 頁碼的固定落差，換算 p.NN → PDF 頁碼；候選頁碼須落在前一個／下一個已確定大題頁碼之間才採信，避免抄錄錯誤的 p.NN 把後面大題順序推亂）。parseAnswerText 回傳陣列新增 sectionPageHints 附掛屬性，job.section_page_hints 是實際存進資料庫的欄位。已用真實 PDF 驗證兩側邊界檢查有效（Quiz 7 的錯誤 hint 正確被拒絕，改退回既有候選機制）。v7：修 detectSectionPageRanges 兩個新雷：①掃描 PDF 文字層偶爾把標題數字 OCR 壞掉（例如「QUIZ 7」變成「QUIZ?」，中間連空格都不見），完全配不到 Quiz\s*\d+，新增「關鍵字＋壞掉短符號」「行首只有關鍵字」兩層候選 + 依大題一定依序出現的順序補位；②候選收集規則本身寫太寬，連正常已比對成功的「QUIZ 5」也會混進候選清單，補位時反而搶走真正缺的大題該用的候選（實測 Quiz 7 被 Quiz 5 那筆候選頂替、補到錯的頁）——改成只在精確比對失敗時才收集候選。已用真實 PDF（pdfjs-dist 直接呼叫 production 程式碼）驗證 Quiz 1~18 對應頁碼全部正確才提交。v6：修正 detectSectionPageRanges 抓大題標題所在頁碼失敗的兩個根因：①之前自己另外兜一份「依 y 分行」，只照 PDF 內部文字流順序 join 字串，沒有像 _groupLines 一樣依 x 座標排序，改成共用 _pageItemsPct/_groupLines；②實測發現印刷標題常有 letter-spacing，PDF 文字圖層會把「QUIZ 16」存成 "Q U I Z"、"1 6" 這種字母/數字間各自帶空白的字串，join 完變成 "Q U I Z 1 6"，Quiz\s*\d+ 規則完全配不到，新增 _collapseLetterSpacedTokens 在比對前先復原黏合。這兩個根因合起來就是老師回報「大題8顯示大題5內容、大題14顯示大題12內容」的成因（找不到標題就 fallback 沿用前一個大題頁碼）。v5：解答文字逗號分隔沒寫OR時的拆格判斷改成混合式——預設當依序多格拆開，若上傳PDF且該題偵測到剛好1個空格線才改當替代答案；新增 detectBlankCountsByLabel（數空格線，不畫框）、buildSectionAnswersFromBoxes／buildAnswersFromBoxesBySection（學生作答框跟答案清單即時配對，重新批改一律靠這個、不吃繳交當時存的舊 key→文字表，答案清單改版也救得回學生原始作答）。v4：新增 computeSectionStats（依大題算對錯格數＋百分比，學生繳交／老師重新批改共用同一份邏輯，避免兩邊算法兜不起來）。v3：改版——空格位置不再用電腦視覺自動偵測（掃描稿常誤判標題/色塊當底線），改成 buildGradingPaper 讀 parsed_bank、新增 detectSectionPageRanges 自動掃大題標題找頁碼（供學生端知道該顯示哪頁）；舊的 CV 偵測函式保留但不再被呼叫。完全獨立於 quiz-paper-builder.js 的 meta 出題管線，只借用其 gradeAnswers 做字串比對 -->
+    <script src="../020_js_core/pdf-exam-paper.js?v=44"></script> <!-- v44：答案清單旁顯示這一組題目 PDF，不准盲改。 --> <!-- v32：do not / don't call 共用後面的動詞。 --> <!-- v31：TEST 是大題；頂列不准把題號寫成「第 2 題」大題。 --> <!-- v29：答案清單改 Quiz 活頁；編輯區加大。 --> <!-- v28：刪列只捲答案清單，不准 scrollIntoView 把整頁帶回 Quiz 1。 --> <!-- v27：手動新增一題加在該大題最後，不是整份清單最底。 --> <!-- v26：單獨一列不准 5-2；再解析不准把第 2 題接到最後。 --> <!-- v21：/ 兩邊有英文字就切成其他可接受答案（does not/doesn't eat）；每一 Quiz 可確認無誤消紅字。 --> <!-- v20：標頭同一行後面的答案、題號前面的字、A. 後面的正文一律收進清單，不准丟掉。 --> <!-- v19：沒有「1.」題號的答案行仍收進該組（Quiz 1 的 walk, are walking）；缺號的 Quiz 不准從畫面拿掉。 --> <!-- v16：斜線＝其他可接受答案；解答／題目 Quiz 組對帳警示；兩欄接續收進同一 Quiz；有問題可改用老師定位。 --> <!-- v15：同一頁上下兩大題一併記下標題列 yPct。 --> <!-- v14：可行答案只認解答裡的 OR；沒有 OR 的換行／問句／小題不准進 accepted_answers。 --> <!-- v13：Quiz 3 問句＋答句是同一題號底下的小題（2-A／2-B），禁止把問句塞進「其他可接受答案」。 --> <!-- v12：A/B 不一定是練習分組——1 下面的 A/B 當該題小題；A. Directions／A. 1. 才當分組。 --> <!-- v11：同一大題 A 練習 1~ 再 B 練習 1~，排序先依 A/B 分組再依題號，不再只看數字。 --> <!-- v10：逗號拆格改「句首語氣詞不拆＋空格線只做交叉檢查紅字提醒」，不再用空格線 hint 偷偷改拆或不拆。新增 detectBlankReviewStats／buildSplitReview。v9：新增 repairStaleCommaSplits——舊版曾把「haven't, have never done」收成單列＋替代答案，打開編輯器／重新批改時對照原始文字自動補拆成 1-B-1／1-B-2，避免後面作答框整批錯位。v8：新增用解答文字「Quiz N, p. NN」課本印刷頁碼輔助定位大題頁碼——跟掃 PDF 標題文字是獨立第二來源，任何一個被 OCR 讀壞都還有另一個可用（掃 PDF 頁尾印刷頁碼算出跟 PDF 頁碼的固定落差，換算 p.NN → PDF 頁碼；候選頁碼須落在前一個／下一個已確定大題頁碼之間才採信，避免抄錄錯誤的 p.NN 把後面大題順序推亂）。parseAnswerText 回傳陣列新增 sectionPageHints 附掛屬性，job.section_page_hints 是實際存進資料庫的欄位。已用真實 PDF 驗證兩側邊界檢查有效（Quiz 7 的錯誤 hint 正確被拒絕，改退回既有候選機制）。v7：修 detectSectionPageRanges 兩個新雷：①掃描 PDF 文字層偶爾把標題數字 OCR 壞掉（例如「QUIZ 7」變成「QUIZ?」，中間連空格都不見），完全配不到 Quiz\s*\d+，新增「關鍵字＋壞掉短符號」「行首只有關鍵字」兩層候選 + 依大題一定依序出現的順序補位；②候選收集規則本身寫太寬，連正常已比對成功的「QUIZ 5」也會混進候選清單，補位時反而搶走真正缺的大題該用的候選（實測 Quiz 7 被 Quiz 5 那筆候選頂替、補到錯的頁）——改成只在精確比對失敗時才收集候選。已用真實 PDF（pdfjs-dist 直接呼叫 production 程式碼）驗證 Quiz 1~18 對應頁碼全部正確才提交。v6：修正 detectSectionPageRanges 抓大題標題所在頁碼失敗的兩個根因：①之前自己另外兜一份「依 y 分行」，只照 PDF 內部文字流順序 join 字串，沒有像 _groupLines 一樣依 x 座標排序，改成共用 _pageItemsPct/_groupLines；②實測發現印刷標題常有 letter-spacing，PDF 文字圖層會把「QUIZ 16」存成 "Q U I Z"、"1 6" 這種字母/數字間各自帶空白的字串，join 完變成 "Q U I Z 1 6"，Quiz\s*\d+ 規則完全配不到，新增 _collapseLetterSpacedTokens 在比對前先復原黏合。這兩個根因合起來就是老師回報「大題8顯示大題5內容、大題14顯示大題12內容」的成因（找不到標題就 fallback 沿用前一個大題頁碼）。v5：解答文字逗號分隔沒寫OR時的拆格判斷改成混合式——預設當依序多格拆開，若上傳PDF且該題偵測到剛好1個空格線才改當替代答案；新增 detectBlankCountsByLabel（數空格線，不畫框）、buildSectionAnswersFromBoxes／buildAnswersFromBoxesBySection（學生作答框跟答案清單即時配對，重新批改一律靠這個、不吃繳交當時存的舊 key→文字表，答案清單改版也救得回學生原始作答）。v4：新增 computeSectionStats（依大題算對錯格數＋百分比，學生繳交／老師重新批改共用同一份邏輯，避免兩邊算法兜不起來）。v3：改版——空格位置不再用電腦視覺自動偵測（掃描稿常誤判標題/色塊當底線），改成 buildGradingPaper 讀 parsed_bank、新增 detectSectionPageRanges 自動掃大題標題找頁碼（供學生端知道該顯示哪頁）；舊的 CV 偵測函式保留但不再被呼叫。完全獨立於 quiz-paper-builder.js 的 meta 出題管線，只借用其 gradeAnswers 做字串比對 -->
     <script src="../020_js_core/modal-overlay.js?v=9"></script> <!-- v9：全螢幕時確認框掛在 fullscreen 節點裡，否則看不見。 -->
     <script src="../020_js_core/sheet-range-bounds.js?v=4"></script> <!-- v4：題數超過可用題改成可用題數。 -->
     <script src="../020_js_core/assignment-clone.js?v=5"></script> <!-- v5：複製作業帶 open_at。 --> <!-- v4：複製歷史作業只繼承輸入，舊卷／卷號／可用題／meta 快取不准跟走。 -->
@@ -386,9 +386,9 @@
     <script src="../110_teacher_core/api-gas-service.js?v=69"></script> <!-- v69：listMaterialMasters 含教材夾 PDF。 -->
     <script src="../110_teacher_core/ui-core.js?v=56"></script> <!-- v56：進教材範本管理立刻畫 PDF／目錄產生區塊，不等教材區。 --> <!-- v55 重整當下第一版側欄改用上次真正渲染的完整快取（含正確圖示，不再是預設 📘）畫，簽章對得起來就不會整個重繪，消除「先變沒選取樣子才跳到正確班級」的閃爍 -->
     <script src="../020_js_core/review-zone.js?v=4"></script> <!-- v4：資料夾鍵走對照中心。v3：教材以 folder|sheet meta 為鍵 -->
-    <script src="../110_teacher_core/ui-class-templates.js?v=50"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=156"></script> <!-- v156：目錄增加區段，口說／書寫跟著加空欄並對上範圍。 --> <!-- v154：目錄列主／次單元合成 13-2；頁碼／大題可下拉已有的；目錄文稿改單行。 --> <!-- v153：沒選套餐不畫文稿來源／文稿結果。 -->
-    <script src="../110_teacher_core/store-assignment-builder.js?v=97"></script> <!-- v97：目錄列讀主／次單元合成格與頁碼。 --> <!-- v96：目錄範圍存標題。 -->
+    <script src="../110_teacher_core/ui-class-templates.js?v=51"></script>
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=165"></script> <!-- v165：手動輸入走目錄表；錄音／考試／PDF 說明與活頁別名 dump 同一把。 -->
+    <script src="../110_teacher_core/store-assignment-builder.js?v=105"></script> <!-- v105：手動輸入 combo_label 讀教材格；活頁別名 dump 當自動標題重算。 -->
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
     <script src="../110_teacher_core/store-gradebook.js?v=19"></script>
@@ -397,33 +397,33 @@
     <script src="../110_teacher_core/feature-gradebook.js?v=26"></script>
 
     <!-- 🌟 110_teacher_core: 領域功能模組 (Features) -->
-    <script src="../110_teacher_core/feature-class.js?v=55"></script>
+    <script src="../110_teacher_core/feature-class.js?v=57"></script> <!-- v57：排程儲存鈕綁回 saveClassDates；結束日空白用當地日曆 +4 個月。 -->
     <script src="../110_teacher_core/feature-archived-classes.js?v=10"></script>
     <script src="../110_teacher_core/service-line-notify.js?v=37"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=9"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=32"></script>
     <script src="../110_teacher_core/feature-template-library.js?v=16"></script> <!-- v16：findTemplateByAnyId 給出作業現算用。 -->
-    <script src="../110_teacher_core/feature-exam-job.js?v=164"></script> <!-- v164：整卷洗牌正名整卷亂序、預設勾選；清掉畫面說明字。 -->
-    <script src="../110_teacher_core/feature-pdf-exam-job.js?v=32"></script> <!-- v32：已確認後題列不准再紅匡。 --> <!-- v31：答案清單自己捲。 --> <!-- v30：答案清單 Quiz 活頁；編輯區加大。 --> <!-- v29：刪列先記住捲動位置，確認框關掉後不准跳回 Quiz 1。 --> <!-- v28：手動新增一題走 ModalOverlay，加在該大題最後。 --> <!-- v27：格號只編相鄰的同一題。 --> <!-- v21：每一 Quiz 旁「確認無誤」。 --> <!-- v20：缺組仍顯示在清單。 --> <!-- v17：解析後對帳 Quiz 組並提供改用老師定位。 --> <!-- v16：PDF 考卷改走教材夾全域檔，不再上傳到 PDF考卷。 -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=166"></script> <!-- v166：獨立考試標題同一把 combine；區段一致才納入字母。 -->
+    <script src="../110_teacher_core/feature-pdf-exam-job.js?v=38"></script> <!-- v38：答案清單旁顯示這一組題目 PDF。 --> <!-- v32：已確認後題列不准再紅匡。 --> <!-- v31：答案清單自己捲。 --> <!-- v30：答案清單 Quiz 活頁；編輯區加大。 --> <!-- v29：刪列先記住捲動位置，確認框關掉後不准跳回 Quiz 1。 --> <!-- v28：手動新增一題走 ModalOverlay，加在該大題最後。 --> <!-- v27：格號只編相鄰的同一題。 --> <!-- v21：每一 Quiz 旁「確認無誤」。 --> <!-- v20：缺組仍顯示在清單。 --> <!-- v17：解析後對帳 Quiz 組並提供改用老師定位。 --> <!-- v16：PDF 考卷改走教材夾全域檔，不再上傳到 PDF考卷。 -->
 
     <script src="../110_teacher_core/feature-material-layout-pairing.js?v=162"></script> <!-- v162：教材範本管理畫完立刻帶出目錄／PDF 產生區塊。 --> <!-- v160：總覽列出資料夾裡真實 PDF，不只 meta。 -->
     <script src="../110_teacher_core/feature-exam-template-editor.js?v=15"></script> <!-- v15：學生文稿格不代填 _answer_combined_text。 -->
-    <script src="../110_teacher_core/material-combo-strategies.js?v=5"></script> <!-- v5：使用路徑同一就緒／同一清單／同一窗口；folderNames 三種併。 --> <!-- v4：三種套餐就緒才算出作業下拉完成。 --> <!-- v3：範圍表格子／長列／增加區段交給各套餐模組。 -->
-    <script src="../110_teacher_core/feature-material-pdf-exam.js?v=27"></script> <!-- v27：已確認後題列不准再紅匡。 --> <!-- v26：答案清單自己捲，不准跟主頁搶滾輪。 --> <!-- v25：PDF 產生區塊跟目錄同一時間畫，不准目錄搶先。 --> <!-- v24：採用班級收合；群組 PDF／Quiz 活頁；編輯區加大。 --> <!-- v23：刪列停在那一題，不准跳回 Quiz 1。 --> <!-- v22：改題號立刻重編格號（5-3 改成 6 不再留 -3）。 --> <!-- v20：單獨一列不准 5-2；底下多一個 2 不再當第 2 格。 --> <!-- v14：登入未就緒不准假裝 PDF 套餐已載入。 --> <!-- v13：Quiz 旁「確認並儲存」；題號可改；儲存後列順序不接到最後。 --> <!-- v12：每一 Quiz 旁「確認無誤」；解析會切開 /。 --> <!-- v11：出作業範圍表由本模組畫。 --> <!-- v9：PDF 套餐有名稱／採用班級，進出作業下拉。 --> <!-- v8：Quiz 1 沒題號的行仍列出；缺組不准拿掉。 --> <!-- v5：兩份 PDF 試卷範本（預設左到右上到下；警示後可改老師定位）。 --> <!-- v4：答案清單上移／下移／＋上＋下／刪／手動新增，跟 PDF 考同一套。 -->
-    <script src="../110_teacher_core/feature-material-book.js?v=20"></script> <!-- v20：口說格標籤＝上面那列範圍。 --> <!-- v18：圖一下拉這本已有的主／次單元、頁碼、大題；可新增。 --> <!-- v17：collectFromSavedAssignment 缺 async，整份腳本沒載入，目錄卡在載入中。 --> <!-- v16：採用班級改收合，不准整排攤開。 --> <!-- v15：目錄下拉跟 PDF 同一把教材夾清單，不准停在載入中。 --> <!-- v14：目錄產生區塊一進頁就畫，不准等資料庫載完才出現。 --> <!-- v12：目錄卡用 RLS 讀回，不准因 teacher_id 多濾一次就當沒有。 -->
-    <script src="../110_teacher_core/feature-class-material-combinations.js?v=172"></script> <!-- v172：採用班級改收合，不准整排攤開。 --> <!-- v171：教材區還沒畫完也先畫目錄／PDF 產生區塊。 --> <!-- v170：教材區窗口／出作業就緒三種同一開口，不准 Excel 宿主或只等目錄。 -->
+    <script src="../110_teacher_core/material-combo-strategies.js?v=7"></script> <!-- v7：出作業手動輸入走目錄表，不准改套 Excel 起迄。 -->
+    <script src="../110_teacher_core/feature-material-pdf-exam.js?v=35"></script> <!-- v35：答案清單旁顯示這一組題目 PDF。 --> <!-- v29：ownsComboId 讓出作業範圍表認這份 PDF，不准改套 Excel。 --> <!-- v28：每個 Quiz 旁「重新解析」，以 txt 覆寫這一組。 --> <!-- v27：已確認後題列不准再紅匡。 --> <!-- v26：答案清單自己捲，不准跟主頁搶滾輪。 --> <!-- v25：PDF 產生區塊跟目錄同一時間畫，不准目錄搶先。 --> <!-- v24：採用班級收合；群組 PDF／Quiz 活頁；編輯區加大。 --> <!-- v23：刪列停在那一題，不准跳回 Quiz 1。 --> <!-- v22：改題號立刻重編格號（5-3 改成 6 不再留 -3）。 --> <!-- v20：單獨一列不准 5-2；底下多一個 2 不再當第 2 格。 --> <!-- v14：登入未就緒不准假裝 PDF 套餐已載入。 --> <!-- v13：Quiz 旁「確認並儲存」；題號可改；儲存後列順序不接到最後。 --> <!-- v12：每一 Quiz 旁「確認無誤」；解析會切開 /。 --> <!-- v11：出作業範圍表由本模組畫。 --> <!-- v9：PDF 套餐有名稱／採用班級，進出作業下拉。 --> <!-- v8：Quiz 1 沒題號的行仍列出；缺組不准拿掉。 --> <!-- v5：兩份 PDF 試卷範本（預設左到右上到下；警示後可改老師定位）。 --> <!-- v4：答案清單上移／下移／＋上＋下／刪／手動新增，跟 PDF 考同一套。 -->
+    <script src="../110_teacher_core/feature-material-book.js?v=29"></script> <!-- v29：已收集範圍抓全（分頁＋目錄／收集文稿／已存作業），載完重畫教材區。 -->
+    <script src="../110_teacher_core/feature-class-material-combinations.js?v=174"></script> <!-- v174：combo_statistics 含三種套餐；Excel 畫卡／出作業 sheet 開口只認 kind=sheet。 -->
     <script src="../110_teacher_core/feature-script-collector.js?v=12"></script> <!-- v12：口說答案／書寫答案標出來，不是兩份沒標的同一格。 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=3"></script> <!-- v3：寫回 completion 時合併既有 quiz_appeals，不准空陣列蓋掉。 -->
     <script src="../110_teacher_core/feature-exam-review.js?v=31"></script> <!-- v31：全班重批按鈕兩行「重新批閱／整個班級」。 --> <!-- v30：再加一筆可繼續輸入其他寫法。 -->
-    <script src="../110_teacher_core/feature-timeline.js?v=195"></script> <!-- v195：目錄增加區段同步口說／書寫空欄。 --> <!-- v193：課程進度重整不再被套餐就緒閘門連帶重畫。 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=202"></script> <!-- v202：標題＝套餐名；區段以外一致才納入區段字母；很亂進說明。 --> <!-- v200：PDF 作業只在教材卡已有答案清單時才帶進作業。 --> <!-- v199：組合層標題已是套餐名時，下一層只留範圍。 -->
     <script src="../110_teacher_core/feature-resource.js?v=45"></script>
     <script src="../110_teacher_core/feature-profile.js?v=42"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=41"></script>
     <script src="../110_teacher_core/teacher-class-dataset.js?v=2"></script> <!-- v2：選 open_at。 -->
     <script src="../110_teacher_core/feature-review-catalog.js?v=8"></script> <!-- v8：出作業只用完整 meta_rows，不用 items 烘焙稿。 -->
     <script src="../110_teacher_core/feature-review-records.js?v=3"></script> <!-- v3：練習／測試紀錄顯示用時。 -->
-    <script src="../110_teacher_core/feature-progress.js?v=54"></script> <!-- v54：進度格顯示輸入練習用時。 -->
+    <script src="../110_teacher_core/feature-progress.js?v=56"></script> <!-- v56：進度表錄音標題走 listTitleForPackChild。 -->
     <script src="../110_teacher_core/feature-ai-backfill.js?v=13"></script>
     <script src="../110_teacher_core/feature-audio-split-upload.js?v=9"></script>
     <script src="../110_teacher_core/feature-material-publish.js?v=5"></script> <!-- 🛑 v5 起停用（舊 GAS 轉 Sheets 發布路徑），面板只顯示停用公告＋導引到 feature-material-layout-pairing.js -->

@@ -459,6 +459,7 @@ window.MaterialFileNames = (function () {
         currentAlias: currentAlias,
         applyFormula: applyFormula,
         setLiveName: setLiveName,
+        sheetRangeHead: sheetRangeHead,
         formatSheetNames: formatSheetNames,
         groupRoleTagItems: groupRoleTagItems,
         roleTagHtml: roleTagHtml,

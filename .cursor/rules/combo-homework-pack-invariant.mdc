@@ -44,18 +44,18 @@ PDF 試卷範本兩種：左到右、上到下（預設）；老師定位。不�
 A／B／C：勾群組 → 出現時一顆總套餐（已存套餐名）；選完再走區段。
 列出雲端檔名（配對／上傳）≠ 每個檔各一份套餐。
 有已存套餐名（label／combo_label）→ comboLabelText 讀這顆。一個開口。
-有 combo_statistics → 教材區讀 fetch_teacher_combo_stats。
+有 combo_statistics → 教材區讀 fetch_teacher_combo_stats（表含三種套餐；Excel 畫卡只認 kind=sheet）。
 下拉只列該班套餐名（死命綁死，註解永遠禁止刪除）：
-  讀 fetch_class_combo_stats（combo_statistics，這個班）
+  讀 fetch_class_combo_stats（combo_statistics，這個班；三種都在）
   文字＝combo_label／comboLabelText
-  寫入後 refresh_combo_statistics，再 fetch
+  寫入後 refresh_combo_statistics／refresh_pdf_combo_statistics／refresh_book_combo_statistics，再 fetch
   開口＝listAssignedCombosForHomework(classId)（MaterialComboStrategies，三種同層）
   產生 option＝renderPackComboOptions／buildExamComboOptionsHtml
   不准列別班、未指派、全庫、活頁名、檔名、預設檔名、舊 id
 範圍＋選題只准呼叫 TimelineTemplates.renderRangePackHtml。組合層／獨立錄音／獨立考試／獨立 PDF 考同一份。不准再各寫一張範圍表。
 is_group＝true → 結合顯示成一顆（教材區／出作業／出題同一張群組卡已存套餐名）；沒連活頁的空殼列併進這張。A／B／C 走區段。
 is_group＝false → 一本一份，各列各自己的已存名。
-組合：第一層套餐；同一套餐另一段＝增加區段；另一份＝增加套餐。區段＝這份自己的活頁。
+組合：第一層套餐；同一套餐另一段＝增加區段；另一份＝增加套餐。區段＝這份自己的活頁。目錄：增加區段＝同一張目錄表多一列空欄；刪除套餐連只剩一份也能刪。
 有起、有迄 → 進標題。區段考題數／套餐總題數／總計考題＝各列題數加總（選用為考題）。「增加區段」同行最右＝區段考題數（左為亂序）；「增加套餐」同行最右＝套餐總題數。表寬＝套餐欄寬。出作業／考試同一把 grid。
 有學生文稿三行標記 → 只套老師那三行公式。格子是空的 → 編輯框空。套用時格子是空的 → _answer_combined_text。
 ```

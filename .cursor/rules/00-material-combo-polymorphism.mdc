@@ -14,19 +14,19 @@ globs: *.js, *.mdc
 
 1. **Excel/JSON 套餐**（`kind: 'sheet'`）
    - 判斷/對應：活頁 + 擷取範本 + 試卷範本
-   - 資料庫儲存：`material_combinations` / `combo_statistics`
+   - 資料庫儲存：`material_combinations`；`combo_statistics`（kind=sheet）
    - 產生：教材範本管理「🧾 Excel/JSON 套餐：套用／設計範本」（`feature-material-layout-pairing.js`）
    - 相關檔案：`feature-class-material-combinations.js`, `combo-homework-pack-invariant.mdc`
 
 2. **PDF 套餐**（`kind: 'pdf'`）
    - 判斷/對應：PDF 來源檔 + 試卷範本
-   - 資料庫儲存：`material_pdf_exam_items`（獨立模組，不進 Excel 表）
+   - 資料庫儲存：`material_pdf_exam_items`（獨立模組，不進 Excel 表）；`combo_statistics`（kind=pdf）
    - 產生：同一頁獨立區塊「PDF 套餐」（勾夾裡已有的 PDF，套用試卷範本）
    - 相關檔案：`feature-material-pdf-exam.js`, `pdf-exam-global-material-invariant.mdc`
 
 3. **目錄套餐**（`kind: 'book'`；表名暫留 `material_book_combos`）
    - 判斷/對應：老師出作業填範圍，系統收集成書
-   - 資料庫儲存：`material_book_combos`（獨立模組，不進 Excel 表）
+   - 資料庫儲存：`material_book_combos`（獨立模組，不進 Excel 表）；`combo_statistics`（kind=book）
    - 產生：同一頁獨立區塊「目錄套餐」（選夾後＋新增；不是從夾裡檔自動產卡）
    - 相關檔案：`feature-material-book.js`, `material-book-combo-invariant.mdc`
 

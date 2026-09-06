@@ -146,6 +146,9 @@ button:disabled,
 .task-btn:hover {
     filter: brightness(0.92);
 }
+a.task-btn {
+    text-decoration: none;
+}
 .task-btn--ghost {
     background: #FFFFFF;
     color: #0F766E;
@@ -643,6 +646,86 @@ button:disabled,
     padding: 2px 6px;
 }
 
+#material-zone-container .mz-book-unit-word-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+#material-zone-container .mz-book-unit-word-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-weight: 800;
+    font-size: 0.82rem;
+    color: #1E3A8A;
+}
+#material-zone-container .mz-book-unit-word-row .mz-book-unit-word,
+#material-zone-container .mz-book-unit-word-row .mz-book-unit-word-manual {
+    min-width: 140px;
+    height: 36px;
+    padding: 4px 8px;
+    box-sizing: border-box;
+    border: 1px solid #93C5FD;
+    border-radius: 6px;
+    background: #FFFFFF;
+    font-weight: 800;
+    color: #1E3A8A;
+}
+
+.mz-book-sheets {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.mz-book-sheet {
+    border: 1px solid #93C5FD;
+    border-radius: 8px;
+    background: #EFF6FF;
+}
+.mz-book-sheet > summary {
+    cursor: pointer;
+    font-weight: 800;
+    color: #1E3A8A;
+    padding: 8px 10px;
+    list-style-position: inside;
+}
+.mz-book-sheet[open] > summary {
+    border-bottom: 1px dashed #93C5FD;
+}
+.mz-book-sheet > *:not(summary) {
+    padding: 6px 10px 10px 10px;
+}
+.mz-book-folder {
+    margin: 4px 0 4px 8px;
+    border: 1px solid #BFDBFE;
+    border-radius: 6px;
+    background: #F8FAFC;
+}
+.mz-book-folder > summary {
+    cursor: pointer;
+    font-weight: 800;
+    color: #334155;
+    padding: 6px 8px;
+    font-size: 0.84rem;
+    list-style-position: inside;
+}
+.mz-book-folder > *:not(summary) {
+    padding: 4px 8px 8px 8px;
+}
+.mz-book-line {
+    margin: 4px 0 2px 8px;
+    font-weight: 800;
+    color: #334155;
+    font-size: 0.82rem;
+}
+.mz-book-leaf {
+    margin: 2px 0 2px 20px;
+    font-size: 0.76rem;
+    color: #334155;
+}
+
 /* 答案清單自己捲，不准把滾輪交給 .view-section 主頁 */
 .mz-pdf-exam-bank {
     height: min(56vh, 560px);
@@ -651,6 +734,33 @@ button:disabled,
     overflow-y: scroll;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+}
+.pdf-exam-bank-with-paper {
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+    flex-wrap: wrap;
+}
+.pdf-exam-section-paper {
+    flex: 1 1 260px;
+    min-width: 220px;
+    max-height: min(56vh, 560px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid #99F6E4;
+    border-radius: 6px;
+    padding: 8px;
+    background: #F8FAFC;
+    box-sizing: border-box;
+}
+.pdf-exam-bank-with-paper > .mz-pdf-exam-bank {
+    flex: 1 1 320px;
+}
+.pdf-exam-section-paper-page canvas {
+    width: 100%;
+    height: auto;
+    display: block;
 }
 
 /* --- 學生端考試成績活頁 --- */

@@ -112,7 +112,7 @@ window.FeatureClass = (() => {
     // --- 核心班級邏輯 ---
     async function updateClassContent(classId) {
         if (!classId) return;
-        const cls = db.classes.find(c => c.id === classId);
+        const cls = (db.classes || []).find(function (c) { return String(c.id) === String(classId); });
         if (!cls) return;
         
         const titleEl = document.getElementById('current-class-title');
@@ -121,7 +121,8 @@ window.FeatureClass = (() => {
         if (document.getElementById('class-start-date')) document.getElementById('class-start-date').value = cls.startDate || cls.start_date || "";
         if (document.getElementById('class-end-date')) document.getElementById('class-end-date').value = cls.endDate || cls.end_date || "";
         
-        const mDays = cls.meetDays || cls.meet_days || [];
+        const mDays = Array.isArray(cls.meetDays) ? cls.meetDays
+            : (Array.isArray(cls.meet_days) ? cls.meet_days : []);
         document.querySelectorAll('#class-meet-days input').forEach(cb => { cb.checked = mDays.includes(parseInt(cb.value)); });
 
         const savedMode = cls.calcMode || cls.calc_mode || 'single';
@@ -137,6 +138,287 @@ window.FeatureClass = (() => {
         if (window.FeatureMaterialPublish && typeof window.FeatureMaterialPublish.mountIntoSettings === 'function') {
             window.FeatureMaterialPublish.mountIntoSettings(classId);
         }
+        bindScheduleSaveButton();
+    }
+
+    async function saveClassDates(e) {
+                if (e) e.preventDefault();
+
+                const cid = window.TeacherUI && typeof window.TeacherUI.getCurrentClassId === 'function'
+                    ? window.TeacherUI.getCurrentClassId()
+                    : '';
+                if (!cid) {
+                    window.showFlash('請先選左邊的班級，再儲存排程。', 'error');
+                    return;
+                }
+                const c = (db.classes || []).find(function (x) { return String(x.id) === String(cid); });
+                if (!c) {
+                    window.showFlash('找不到這個班，請重新點一次左邊的班級。', 'error');
+                    return;
+                }
+                
+                const startEl = document.getElementById('class-start-date');
+                const endEl = document.getElementById('class-end-date');
+                if (!startEl || !endEl) {
+                    window.showFlash('找不到日期欄位，請重整頁面。', 'error');
+                    return;
+                }
+                let sDate = normalizeDateString(startEl.value) || toLocalISODate(new Date());
+                let eDate = normalizeDateString(endEl.value) || '';
+
+                if (!eDate) {
+                    const parts = String(sDate).split('-');
+                    const endDt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                    endDt.setMonth(endDt.getMonth() + 4);
+                    eDate = toLocalISODate(endDt);
+                }
+                startEl.value = sDate;
+                endEl.value = eDate;
+
+                const meetDaysArr = Array.from(document.querySelectorAll('#class-meet-days input:checked')).map(cb => parseInt(cb.value));
+                const modeInput = document.querySelector('input[name="calc_mode"]:checked');
+                const calcModeVal = modeInput ? modeInput.value : 'single';
+
+                let weekStartVal = 'sunday';
+                const weekRadios = document.getElementsByName('week_start_day');
+                for (let i = 0; i < weekRadios.length; i++) { if (weekRadios[i].checked) { weekStartVal = weekRadios[i].value; break; } }
+
+                const btn = document.getElementById('btn-save-class-dates') || this;
+                if (!btn) {
+                    window.showFlash('找不到儲存按鈕，請重整頁面。', 'error');
+                    return;
+                }
+                const originalText = '💾 儲存設定並自動鋪設排程';
+                btn.innerHTML = '⏳ 智慧推演中...';
+                btn.disabled = true;
+
+                try {
+                    let safeRawDataForCheck = c.raw_data || c.rawData || {};
+                    if (typeof safeRawDataForCheck === 'string') { try { safeRawDataForCheck = JSON.parse(safeRawDataForCheck); } catch (ex) { safeRawDataForCheck = {}; } }
+                    
+                    const oldCalcMode = c.calcMode || c.calc_mode || 'single';
+                    const oldSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) ? safeRawDataForCheck.custom_sessions : (db.sessions[cid] || []);
+                    const classAssigns = (db.assignments || []).filter(function (a) {
+                        return String(a.class_id) === String(cid) && !a.deleted_at;
+                    });
+
+                    const newFullSessions = meetDaysArr.length > 0 ? generateDates(sDate, eDate, meetDaysArr) : [];
+                    const orphanAssigns = classAssigns.filter(a => !newFullSessions.includes(a.target_date));
+                    const isWeekToDay = (oldCalcMode === 'weekly' && calcModeVal === 'single' && classAssigns.length > 0);
+                    const todayStr = getTaiwanTodayString();
+
+                    const oldSDate = normalizeDateString(c.startDate || c.start_date || '');
+                    const oldEDate = normalizeDateString(c.endDate || c.end_date || '');
+                    const oldMeetSrc = Array.isArray(c.meetDays) ? c.meetDays
+                    : (Array.isArray(c.meet_days) ? c.meet_days : []);
+                const oldMeetDaysStr = oldMeetSrc.map(Number).sort().join(',');
+                    const newMeetDaysStr = meetDaysArr.sort().join(',');
+                    
+                    // 有舊上課日或已有作業才叫排程異動。建班時已有起始日 ≠ 有歷史要保護。
+                    const hasScheduleHistory = (oldSessions && oldSessions.length > 0) || classAssigns.length > 0;
+                    const isDatesChanged = (oldSDate !== sDate) || (oldEDate !== eDate) || (oldMeetDaysStr !== newMeetDaysStr);
+
+                    const executeSave = async (finalCustomSessions, assignUpdatesMap = new Map()) => {
+                        btn.innerHTML = assignUpdatesMap.size > 0 ? '⏳ 同步與批次對齊中...' : '⏳ 雲端同步中...';
+                        
+                        const finalAssignUpdates = Array.from(assignUpdatesMap.values());
+                        if (finalAssignUpdates.length > 0) {
+                            const promises = finalAssignUpdates.map(upd => window.supabaseClient.from('assignments').update(upd.payload).eq('id', upd.id));
+                            await Promise.all(promises);
+                            
+                            finalAssignUpdates.forEach(upd => { 
+                                const target = db.assignments.find(a => a.id === upd.id); 
+                                if (target) Object.assign(target, upd.payload); 
+                            });
+                            db.assignments = db.assignments.filter(a => !a.deleted_at);
+                        }
+
+                        // 每次儲存排程都依「班名 + 學期起始日」同步 Drive 名稱（舊班可一次改對）
+                        if (safeRawDataForCheck.drive_folder_id || safeRawDataForCheck.class_folder_id) {
+                            try {
+                                btn.innerHTML = '⏳ 同步 Drive 資料夾名稱...';
+                                await syncClassDriveFolderName(safeRawDataForCheck, c.name, sDate);
+                            } catch (driveErr) {
+                                console.warn('Drive 資料夾重新命名失敗:', driveErr);
+                                window.showFlash('排程已儲存，但 Drive 資料夾重新命名失敗：' + driveErr.message, 'error');
+                            }
+                        }
+
+                        const mergedRawData = Object.assign({}, safeRawDataForCheck, { week_start_day: weekStartVal, custom_sessions: finalCustomSessions });
+                        const payload = { start_date: sDate, end_date: eDate, meet_days: meetDaysArr, calc_mode: calcModeVal, raw_data: mergedRawData };
+                        
+                        const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('classes').update(payload).eq('id', cid).select();
+                        if (updateErr || !updatedRows || updatedRows.length === 0) throw new Error("資料庫寫入失敗。");
+
+                        if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') db.classes = await window.ApiService.fetchClasses();
+                        else { c.startDate = sDate; c.endDate = eDate; c.meetDays = meetDaysArr; c.calcMode = calcModeVal; c.raw_data = mergedRawData; c.rawData = mergedRawData; }
+
+                        if (!db.sessions) db.sessions = {};
+                        db.sessions[cid] = finalCustomSessions;
+                        if (typeof db.save === 'function') db.save();
+
+                        updateClassContent(cid);
+                        
+                        btn.innerHTML = '✅ 儲存成功！'; btn.style.backgroundColor = '#10B981'; btn.style.color = '#fff'; btn.style.borderColor = '#10B981';
+                        if (window.FeatureTimeline && typeof window.FeatureTimeline.renderTimeline === 'function') window.FeatureTimeline.renderTimeline(cid, 'none'); 
+                        
+                        setTimeout(() => { 
+                            btn.innerHTML = originalText; btn.removeAttribute('style'); btn.disabled = false; 
+                            if (window.TeacherUI && typeof window.TeacherUI.switchTab === 'function') return window.TeacherUI.switchTab('timeline');
+                        }, 1200);
+                    };
+
+                    if (orphanAssigns.length > 0) {
+                        const uniqueOrphanDates = [...new Set(orphanAssigns.map(a => a.target_date))].length;
+                        const orphanRes = await askOrphanResolution(orphanAssigns.length, uniqueOrphanDates, todayStr);
+                        if (!orphanRes) { btn.innerHTML = originalText; btn.disabled = false; return; }
+                        
+                        let finalSessions = [...newFullSessions];
+                        let assignUpdatesMap = new Map();
+
+                        if (orphanRes.action === 'future') {
+                            const pastSessions = oldSessions.filter(date => date < orphanRes.anchorDate);
+                            const calcStart = (orphanRes.anchorDate > sDate) ? orphanRes.anchorDate : sDate;
+                            const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
+                            finalSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
+                            
+                            orphanAssigns.forEach(a => {
+                                if (a.target_date >= orphanRes.anchorDate) {
+                                    const candidates = finalSessions.filter(d => d >= a.target_date);
+                                    let newTarget = candidates.length > 0 ? candidates[0] : finalSessions[finalSessions.length - 1];
+                                    if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
+                                }
+                            });
+                        } else if (orphanRes.action === 'prev' || orphanRes.action === 'next') {
+                            orphanAssigns.forEach(a => {
+                                let newTarget = null;
+                                if (orphanRes.action === 'prev') {
+                                    const candidates = newFullSessions.filter(d => d < a.target_date);
+                                    newTarget = candidates.length > 0 ? candidates[candidates.length - 1] : newFullSessions[0];
+                                } else {
+                                    const candidates = newFullSessions.filter(d => d > a.target_date);
+                                    newTarget = candidates.length > 0 ? candidates[0] : newFullSessions[newFullSessions.length - 1];
+                                }
+                                if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
+                            });
+                        } else if (orphanRes.action === 'drop') {
+                            const delTime = new Date().toISOString();
+                            orphanAssigns.forEach(a => assignUpdatesMap.set(a.id, { id: a.id, payload: { deleted_at: delTime } }));
+                        }
+
+                        if (isWeekToDay) {
+                            const survivingCount = classAssigns.filter(a => !(assignUpdatesMap.has(a.id) && assignUpdatesMap.get(a.id).payload.deleted_at)).length;
+                            if (survivingCount > 0) {
+                                const unpackStrategy = await askWeeklyToDailyResolution(survivingCount);
+                                if (!unpackStrategy) { btn.innerHTML = originalText; btn.disabled = false; return; }
+                                
+                                const weeksMap = new Map();
+                                finalSessions.forEach(d => { 
+                                    const ws = getWeekStartStr(d, weekStartVal); 
+                                    if (!weeksMap.has(ws)) weeksMap.set(ws, []); 
+                                    weeksMap.get(ws).push(d); 
+                                });
+                                
+                                classAssigns.forEach(a => {
+                                    if (assignUpdatesMap.has(a.id) && assignUpdatesMap.get(a.id).payload.deleted_at) return;
+                                    
+                                    const currentTarget = assignUpdatesMap.has(a.id) ? assignUpdatesMap.get(a.id).payload.target_date : a.target_date;
+                                    const ws = getWeekStartStr(currentTarget, weekStartVal);
+                                    const weekDays = weeksMap.get(ws) || [];
+                                    let newTargetD = currentTarget;
+                                    
+                                    if (weekDays.length > 0) {
+                                        if (unpackStrategy === 'smart') {
+                                            let effectiveDue = a.due_date;
+                                            if (!effectiveDue && a.tasks && a.tasks.length > 0) { 
+                                                const explicitDates = a.tasks.map(t => t.due_date).filter(d => d); 
+                                                if (explicitDates.length > 0) effectiveDue = explicitDates[0]; 
+                                            }
+                                            if (effectiveDue) { 
+                                                const validDays = weekDays.filter(d => d <= effectiveDue); 
+                                                newTargetD = validDays.length > 0 ? validDays[validDays.length - 1] : weekDays[0];
+                                            } else { 
+                                                newTargetD = weekDays[weekDays.length - 1]; 
+                                            }
+                                        } else if (unpackStrategy === 'first') newTargetD = weekDays[0]; 
+                                        else if (unpackStrategy === 'last') newTargetD = weekDays[weekDays.length - 1]; 
+                                    }
+                                    
+                                    if (newTargetD !== a.target_date) {
+                                        if (assignUpdatesMap.has(a.id)) assignUpdatesMap.get(a.id).payload.target_date = newTargetD; 
+                                        else assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
+                                    }
+                                });
+                            }
+                        }
+                        await executeSave(finalSessions, assignUpdatesMap);
+                    } else {
+                        let finalSessions = [...newFullSessions];
+                        if (!hasScheduleHistory) {
+                            finalSessions = [...newFullSessions];
+                        } else if (isDatesChanged) {
+                            const safeRes = await askSafeScheduleChange(todayStr);
+                            if (!safeRes) { btn.innerHTML = originalText; btn.disabled = false; return; }
+
+                            if (safeRes.action === 'future') {
+                                const pastSessions = oldSessions.filter(date => date < safeRes.anchorDate);
+                                const calcStart = (safeRes.anchorDate > sDate) ? safeRes.anchorDate : sDate;
+                                const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
+                                finalSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
+                            } else finalSessions = [...newFullSessions];
+                        } else finalSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) ? safeRawDataForCheck.custom_sessions : [...newFullSessions];
+
+                        if (isWeekToDay) {
+                            const unpackStrategy = await askWeeklyToDailyResolution(classAssigns.length);
+                            if (!unpackStrategy) { btn.innerHTML = originalText; btn.disabled = false; return; }
+                            
+                            let assignUpdatesMap = new Map();
+                            const weeksMap = new Map();
+                            finalSessions.forEach(d => { 
+                                const ws = getWeekStartStr(d, weekStartVal); 
+                                if (!weeksMap.has(ws)) weeksMap.set(ws, []); 
+                                weeksMap.get(ws).push(d); 
+                            });
+                            
+                            classAssigns.forEach(a => {
+                                const ws = getWeekStartStr(a.target_date, weekStartVal);
+                                const weekDays = weeksMap.get(ws) || [];
+                                let newTargetD = a.target_date;
+                                
+                                if (weekDays.length > 0) {
+                                    if (unpackStrategy === 'smart') {
+                                        let effectiveDue = a.due_date;
+                                        if (!effectiveDue && a.tasks && a.tasks.length > 0) { 
+                                            const explicitDates = a.tasks.map(t => t.due_date).filter(d => d); 
+                                            if (explicitDates.length > 0) effectiveDue = explicitDates[0]; 
+                                        }
+                                        if (effectiveDue) { 
+                                            const validDays = weekDays.filter(d => d <= effectiveDue); 
+                                            newTargetD = validDays.length > 0 ? validDays[validDays.length - 1] : weekDays[0];
+                                        } else newTargetD = weekDays[weekDays.length - 1]; 
+                                    } else if (unpackStrategy === 'first') newTargetD = weekDays[0]; 
+                                    else if (unpackStrategy === 'last') newTargetD = weekDays[weekDays.length - 1]; 
+                                }
+                                if (newTargetD !== a.target_date) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
+                            });
+                            await executeSave(finalSessions, assignUpdatesMap);
+                        } else await executeSave(finalSessions, new Map());
+                    }
+                } catch (err) {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    console.error(err);
+                    window.showFlash('推演或儲存失敗：' + (err && err.message ? err.message : err), 'error');
+                }
+    }
+
+    function bindScheduleSaveButton() {
+        const btnSaveDates = document.getElementById('btn-save-class-dates');
+        if (!btnSaveDates) return;
+        btnSaveDates.type = 'button';
+        btnSaveDates.disabled = false;
+        btnSaveDates.removeAttribute('data-saving');
+        btnSaveDates.onclick = saveClassDates;
     }
 
     function renderActiveClassList() {
@@ -597,247 +879,7 @@ window.FeatureClass = (() => {
             };
         }
 
-        const btnSaveDates = document.getElementById('btn-save-class-dates');
-        if (btnSaveDates) {
-            btnSaveDates.onclick = async function(e) {
-                if(e) e.preventDefault(); 
-                
-                const cid = window.TeacherUI.getCurrentClassId();
-                if (!cid) return;
-                const c = db.classes.find(x => x.id === cid);
-                if (!c) return;
-                
-                let sDate = normalizeDateString(document.getElementById('class-start-date').value) || toLocalISODate(new Date());
-                let eDate = normalizeDateString(document.getElementById('class-end-date').value) || '';
-                
-                if (!eDate) { const endDt = new Date(sDate); endDt.setMonth(endDt.getMonth() + 4); eDate = toLocalISODate(endDt); }
-                document.getElementById('class-start-date').value = sDate;
-                document.getElementById('class-end-date').value = eDate;
-
-                const meetDaysArr = Array.from(document.querySelectorAll('#class-meet-days input:checked')).map(cb => parseInt(cb.value));
-                const modeInput = document.querySelector('input[name="calc_mode"]:checked');
-                const calcModeVal = modeInput ? modeInput.value : 'single';
-
-                let weekStartVal = 'sunday';
-                const weekRadios = document.getElementsByName('week_start_day');
-                for (let i = 0; i < weekRadios.length; i++) { if (weekRadios[i].checked) { weekStartVal = weekRadios[i].value; break; } }
-
-                if (this.disabled) return; 
-                
-                const btn = this; const originalText = btn.innerHTML; 
-                btn.innerHTML = '⏳ 智慧推演中...'; btn.disabled = true;
-
-                try {
-                    let safeRawDataForCheck = c.raw_data || c.rawData || {};
-                    if (typeof safeRawDataForCheck === 'string') { try { safeRawDataForCheck = JSON.parse(safeRawDataForCheck); } catch (ex) { safeRawDataForCheck = {}; } }
-                    
-                    const oldCalcMode = c.calcMode || c.calc_mode || 'single';
-                    const oldSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) ? safeRawDataForCheck.custom_sessions : (db.sessions[cid] || []);
-                    const classAssigns = (db.assignments || []).filter(a => a.class_id === cid && !a.deleted_at);
-
-                    const newFullSessions = meetDaysArr.length > 0 ? generateDates(sDate, eDate, meetDaysArr) : [];
-                    const orphanAssigns = classAssigns.filter(a => !newFullSessions.includes(a.target_date));
-                    const isWeekToDay = (oldCalcMode === 'weekly' && calcModeVal === 'single' && classAssigns.length > 0);
-                    const todayStr = getTaiwanTodayString();
-
-                    const oldSDate = normalizeDateString(c.startDate || c.start_date || '');
-                    const oldEDate = normalizeDateString(c.endDate || c.end_date || '');
-                    const oldMeetDaysStr = (c.meetDays || c.meet_days || []).map(Number).sort().join(',');
-                    const newMeetDaysStr = meetDaysArr.sort().join(',');
-                    
-                    const isNewClassSetup = (!oldSDate && !oldEDate);
-                    const isDatesChanged = (oldSDate !== sDate) || (oldEDate !== eDate) || (oldMeetDaysStr !== newMeetDaysStr);
-
-                    const executeSave = async (finalCustomSessions, assignUpdatesMap = new Map()) => {
-                        btn.innerHTML = assignUpdatesMap.size > 0 ? '⏳ 同步與批次對齊中...' : '⏳ 雲端同步中...';
-                        
-                        const finalAssignUpdates = Array.from(assignUpdatesMap.values());
-                        if (finalAssignUpdates.length > 0) {
-                            const promises = finalAssignUpdates.map(upd => window.supabaseClient.from('assignments').update(upd.payload).eq('id', upd.id));
-                            await Promise.all(promises);
-                            
-                            finalAssignUpdates.forEach(upd => { 
-                                const target = db.assignments.find(a => a.id === upd.id); 
-                                if (target) Object.assign(target, upd.payload); 
-                            });
-                            db.assignments = db.assignments.filter(a => !a.deleted_at);
-                        }
-
-                        // 每次儲存排程都依「班名 + 學期起始日」同步 Drive 名稱（舊班可一次改對）
-                        if (safeRawDataForCheck.drive_folder_id || safeRawDataForCheck.class_folder_id) {
-                            try {
-                                btn.innerHTML = '⏳ 同步 Drive 資料夾名稱...';
-                                await syncClassDriveFolderName(safeRawDataForCheck, c.name, sDate);
-                            } catch (driveErr) {
-                                console.warn('Drive 資料夾重新命名失敗:', driveErr);
-                                window.showFlash('排程已儲存，但 Drive 資料夾重新命名失敗：' + driveErr.message, 'error');
-                            }
-                        }
-
-                        const mergedRawData = Object.assign({}, safeRawDataForCheck, { week_start_day: weekStartVal, custom_sessions: finalCustomSessions });
-                        const payload = { start_date: sDate, end_date: eDate, meet_days: meetDaysArr, calc_mode: calcModeVal, raw_data: mergedRawData };
-                        
-                        const { data: updatedRows, error: updateErr } = await window.supabaseClient.from('classes').update(payload).eq('id', cid).select();
-                        if (updateErr || !updatedRows || updatedRows.length === 0) throw new Error("資料庫寫入失敗。");
-
-                        if (window.ApiService && typeof window.ApiService.fetchClasses === 'function') db.classes = await window.ApiService.fetchClasses();
-                        else { c.startDate = sDate; c.endDate = eDate; c.meetDays = meetDaysArr; c.calcMode = calcModeVal; c.raw_data = mergedRawData; c.rawData = mergedRawData; }
-
-                        if (!db.sessions) db.sessions = {};
-                        db.sessions[cid] = finalCustomSessions;
-                        if (typeof db.save === 'function') db.save();
-
-                        updateClassContent(cid);
-                        
-                        btn.innerHTML = '✅ 儲存成功！'; btn.style.backgroundColor = '#10B981'; btn.style.color = '#fff'; btn.style.borderColor = '#10B981';
-                        if (window.FeatureTimeline && typeof window.FeatureTimeline.renderTimeline === 'function') window.FeatureTimeline.renderTimeline(cid, 'none'); 
-                        
-                        setTimeout(() => { 
-                            btn.innerHTML = originalText; btn.removeAttribute('style'); btn.disabled = false; 
-                            if (window.TeacherUI && typeof window.TeacherUI.switchTab === 'function') return window.TeacherUI.switchTab('timeline');
-                        }, 1200);
-                    };
-
-                    if (orphanAssigns.length > 0) {
-                        const uniqueOrphanDates = [...new Set(orphanAssigns.map(a => a.target_date))].length;
-                        const orphanRes = await askOrphanResolution(orphanAssigns.length, uniqueOrphanDates, todayStr);
-                        if (!orphanRes) { btn.innerHTML = originalText; btn.disabled = false; return; }
-                        
-                        let finalSessions = [...newFullSessions];
-                        let assignUpdatesMap = new Map();
-
-                        if (orphanRes.action === 'future') {
-                            const pastSessions = oldSessions.filter(date => date < orphanRes.anchorDate);
-                            const calcStart = (orphanRes.anchorDate > sDate) ? orphanRes.anchorDate : sDate;
-                            const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
-                            finalSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
-                            
-                            orphanAssigns.forEach(a => {
-                                if (a.target_date >= orphanRes.anchorDate) {
-                                    const candidates = finalSessions.filter(d => d >= a.target_date);
-                                    let newTarget = candidates.length > 0 ? candidates[0] : finalSessions[finalSessions.length - 1];
-                                    if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
-                                }
-                            });
-                        } else if (orphanRes.action === 'prev' || orphanRes.action === 'next') {
-                            orphanAssigns.forEach(a => {
-                                let newTarget = null;
-                                if (orphanRes.action === 'prev') {
-                                    const candidates = newFullSessions.filter(d => d < a.target_date);
-                                    newTarget = candidates.length > 0 ? candidates[candidates.length - 1] : newFullSessions[0];
-                                } else {
-                                    const candidates = newFullSessions.filter(d => d > a.target_date);
-                                    newTarget = candidates.length > 0 ? candidates[0] : newFullSessions[newFullSessions.length - 1];
-                                }
-                                if (newTarget) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTarget } });
-                            });
-                        } else if (orphanRes.action === 'drop') {
-                            const delTime = new Date().toISOString();
-                            orphanAssigns.forEach(a => assignUpdatesMap.set(a.id, { id: a.id, payload: { deleted_at: delTime } }));
-                        }
-
-                        if (isWeekToDay) {
-                            const survivingCount = classAssigns.filter(a => !(assignUpdatesMap.has(a.id) && assignUpdatesMap.get(a.id).payload.deleted_at)).length;
-                            if (survivingCount > 0) {
-                                const unpackStrategy = await askWeeklyToDailyResolution(survivingCount);
-                                if (!unpackStrategy) { btn.innerHTML = originalText; btn.disabled = false; return; }
-                                
-                                const weeksMap = new Map();
-                                finalSessions.forEach(d => { 
-                                    const ws = getWeekStartStr(d, weekStartVal); 
-                                    if (!weeksMap.has(ws)) weeksMap.set(ws, []); 
-                                    weeksMap.get(ws).push(d); 
-                                });
-                                
-                                classAssigns.forEach(a => {
-                                    if (assignUpdatesMap.has(a.id) && assignUpdatesMap.get(a.id).payload.deleted_at) return;
-                                    
-                                    const currentTarget = assignUpdatesMap.has(a.id) ? assignUpdatesMap.get(a.id).payload.target_date : a.target_date;
-                                    const ws = getWeekStartStr(currentTarget, weekStartVal);
-                                    const weekDays = weeksMap.get(ws) || [];
-                                    let newTargetD = currentTarget;
-                                    
-                                    if (weekDays.length > 0) {
-                                        if (unpackStrategy === 'smart') {
-                                            let effectiveDue = a.due_date;
-                                            if (!effectiveDue && a.tasks && a.tasks.length > 0) { 
-                                                const explicitDates = a.tasks.map(t => t.due_date).filter(d => d); 
-                                                if (explicitDates.length > 0) effectiveDue = explicitDates[0]; 
-                                            }
-                                            if (effectiveDue) { 
-                                                const validDays = weekDays.filter(d => d <= effectiveDue); 
-                                                newTargetD = validDays.length > 0 ? validDays[validDays.length - 1] : weekDays[0];
-                                            } else { 
-                                                newTargetD = weekDays[weekDays.length - 1]; 
-                                            }
-                                        } else if (unpackStrategy === 'first') newTargetD = weekDays[0]; 
-                                        else if (unpackStrategy === 'last') newTargetD = weekDays[weekDays.length - 1]; 
-                                    }
-                                    
-                                    if (newTargetD !== a.target_date) {
-                                        if (assignUpdatesMap.has(a.id)) assignUpdatesMap.get(a.id).payload.target_date = newTargetD; 
-                                        else assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
-                                    }
-                                });
-                            }
-                        }
-                        await executeSave(finalSessions, assignUpdatesMap);
-                    } else {
-                        let finalSessions = [...newFullSessions];
-                        if (isNewClassSetup) {
-                            console.log('💡 [排程引擎] 偵測到為新建課程第一次設定排程，Bypass 異動對話框，靜默放行。');
-                            finalSessions = [...newFullSessions];
-                        } else if (isDatesChanged) {
-                            const safeRes = await askSafeScheduleChange(todayStr);
-                            if (!safeRes) { btn.innerHTML = originalText; btn.disabled = false; return; }
-
-                            if (safeRes.action === 'future') {
-                                const pastSessions = oldSessions.filter(date => date < safeRes.anchorDate);
-                                const calcStart = (safeRes.anchorDate > sDate) ? safeRes.anchorDate : sDate;
-                                const futureSessions = meetDaysArr.length > 0 ? generateDates(calcStart, eDate, meetDaysArr) : [];
-                                finalSessions = [...new Set([...pastSessions, ...futureSessions])].sort();
-                            } else finalSessions = [...newFullSessions];
-                        } else finalSessions = (safeRawDataForCheck.custom_sessions && Array.isArray(safeRawDataForCheck.custom_sessions)) ? safeRawDataForCheck.custom_sessions : [...newFullSessions];
-
-                        if (isWeekToDay) {
-                            const unpackStrategy = await askWeeklyToDailyResolution(classAssigns.length);
-                            if (!unpackStrategy) { btn.innerHTML = originalText; btn.disabled = false; return; }
-                            
-                            let assignUpdatesMap = new Map();
-                            const weeksMap = new Map();
-                            finalSessions.forEach(d => { 
-                                const ws = getWeekStartStr(d, weekStartVal); 
-                                if (!weeksMap.has(ws)) weeksMap.set(ws, []); 
-                                weeksMap.get(ws).push(d); 
-                            });
-                            
-                            classAssigns.forEach(a => {
-                                const ws = getWeekStartStr(a.target_date, weekStartVal);
-                                const weekDays = weeksMap.get(ws) || [];
-                                let newTargetD = a.target_date;
-                                
-                                if (weekDays.length > 0) {
-                                    if (unpackStrategy === 'smart') {
-                                        let effectiveDue = a.due_date;
-                                        if (!effectiveDue && a.tasks && a.tasks.length > 0) { 
-                                            const explicitDates = a.tasks.map(t => t.due_date).filter(d => d); 
-                                            if (explicitDates.length > 0) effectiveDue = explicitDates[0]; 
-                                        }
-                                        if (effectiveDue) { 
-                                            const validDays = weekDays.filter(d => d <= effectiveDue); 
-                                            newTargetD = validDays.length > 0 ? validDays[validDays.length - 1] : weekDays[0];
-                                        } else newTargetD = weekDays[weekDays.length - 1]; 
-                                    } else if (unpackStrategy === 'first') newTargetD = weekDays[0]; 
-                                    else if (unpackStrategy === 'last') newTargetD = weekDays[weekDays.length - 1]; 
-                                }
-                                if (newTargetD !== a.target_date) assignUpdatesMap.set(a.id, { id: a.id, payload: { target_date: newTargetD } }); 
-                            });
-                            await executeSave(finalSessions, assignUpdatesMap);
-                        } else await executeSave(finalSessions, new Map());
-                    }
-                } catch (err) { btn.innerHTML = originalText; btn.disabled = false; console.error(err); window.showFlash('推演或儲存失敗：' + err.message, 'error'); }
-            };
-        }
+        bindScheduleSaveButton();
 
         if (window.TeacherUI) window.TeacherUI.renderSidebar();
         renderClassManager();
@@ -894,7 +936,9 @@ window.FeatureClass = (() => {
     }
 
     return { 
-        updateClassContent, renderClassManager, editClass: openClassSettings, openClassSettings, saveClassSettings, closeClassSettings,
+        updateClassContent, renderClassManager, bindScheduleSaveButton,
+        renderSettings: updateClassContent,
+        editClass: openClassSettings, openClassSettings, saveClassSettings, closeClassSettings,
         refreshReviewCatalog, syncPracticeZoneLock,
         openArchiveConfirm, closeArchiveConfirm,
         executeDelete: async (classId) => {

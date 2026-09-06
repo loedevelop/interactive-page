@@ -28,6 +28,16 @@ window.BuilderStore = (() => {
         return String(base || '').trim();
     }
 
+    function isManualOptionLabel(lab) {
+        return /其他（手動輸入教材）/.test(String(lab || ''));
+    }
+
+    function titleLooksLikeSheetAliasDump(text) {
+        const FT = window.FeatureTimeline;
+        return !!(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function'
+            && FT.titleLooksLikeSheetAliasDump(text));
+    }
+
     /**
      * 範圍層組標題＝套餐名稱。空白才帶入。不准把活頁名黏上去。
      * 舊作業沒有 pack_combo_id → 才退回錄音 material_range（相容舊資料）
@@ -42,10 +52,11 @@ window.BuilderStore = (() => {
         packRows.forEach(function (r) {
             const lab = String((r && r.combo_label) || '').trim();
             const id = String((r && r.combo_id) || '').trim();
+            if (id === '__manual__' && isManualOptionLabel(lab)) return;
             const key = id || lab;
             if (!key || seenCombo[key]) return;
             seenCombo[key] = true;
-            if (lab) comboLabels.push(lab);
+            if (lab && !isManualOptionLabel(lab)) comboLabels.push(lab);
         });
         const packId = String(gRaw.pack_combo_id || (packRows[0] && packRows[0].combo_id) || '').trim();
         const packLabel = comboLabels.length
@@ -84,11 +95,23 @@ window.BuilderStore = (() => {
 
     function syncRangePackFieldsFromDom(t, pathStr) {
         if (!t || !t.raw_data) return;
+        const packRows = Array.isArray(t.raw_data.pack_rows) ? t.raw_data.pack_rows : [];
         const isHost = t.raw_data.group_role === 'range'
-            || t.type === 'audio_record' || t.type === 'exam' || t.type === 'pdf_exam';
+            || t.type === 'audio_record' || t.type === 'exam' || t.type === 'pdf_exam'
+            || (t.type === 'group' && (String(t.raw_data.pack_combo_id || '').trim() || packRows.length));
         if (!isHost) return;
         const panel = document.querySelector('.range-pack-panel[data-range-pack="' + pathStr + '"]');
         const blockEls = panel ? panel.querySelectorAll('.range-pack-block') : [];
+        if (blockEls.length) {
+            const loading = Array.prototype.some.call(blockEls, function (blockEl) {
+                const comboEl = blockEl.querySelector('.range-pack-combo');
+                if (!comboEl || !comboEl.options) return false;
+                return Array.prototype.some.call(comboEl.options, function (o) {
+                    return o.disabled && String(o.textContent || '').indexOf('載入套餐') !== -1;
+                });
+            });
+            if (loading) return;
+        }
         if (blockEls.length) {
             const rows = [];
             Array.prototype.forEach.call(blockEls, function (blockEl, bi) {
@@ -96,13 +119,13 @@ window.BuilderStore = (() => {
                     || (blockEl && blockEl.querySelector('.range-pack-combo'));
                 const comboId = comboEl ? String(comboEl.value || '').trim() : '';
                 const opt = comboEl && comboEl.options[comboEl.selectedIndex];
-                const comboLabel = (comboId && opt) ? String(opt.text || '').trim() : '';
+                const optLabel = (comboId && opt) ? String(opt.text || '').trim() : '';
                 const shuffleEl = document.getElementById('range-pack-shuffle-' + pathStr + '-' + bi)
                     || (blockEl && blockEl.querySelector('.range-pack-shuffle'));
                 const shuffleOn = shuffleEl ? !!shuffleEl.checked : true;
                 const rowEls = blockEl.querySelectorAll('.range-pack-row');
                 if (!rowEls.length) {
-                    rows.push({ combo_id: comboId, combo_label: comboLabel, meta_file: '', range_type: 'page', start: '', end: '', primary_unit: '', secondary_unit: '', heading: '', major: '', secondary: '', minor: '', page: '', book_script: '', pdf_file_id: '', shuffle: shuffleOn });
+                    rows.push({ combo_id: comboId, combo_label: (comboId === '__manual__' ? '' : optLabel), meta_file: '', range_type: 'page', start: '', end: '', primary_unit: '', secondary_unit: '', heading: '', major: '', secondary: '', minor: '', page: '', book_script: '', pdf_file_id: '', shuffle: shuffleOn });
                     return;
                 }
                 Array.prototype.forEach.call(rowEls, function (rowEl) {
@@ -128,6 +151,11 @@ window.BuilderStore = (() => {
                     const scriptEl = idx != null ? document.getElementById('range-pack-book-script-' + pathStr + '-' + idx) : null;
                     const pdfEl = (idx != null ? document.getElementById('range-pack-pdf-file-' + pathStr + '-' + idx) : null)
                         || (rowEl && rowEl.querySelector('.range-pack-pdf-file'));
+                    const manualEl = (idx != null ? document.getElementById('range-pack-manual-' + pathStr + '-' + idx) : null)
+                        || (rowEl && rowEl.querySelector('.range-pack-manual'));
+                    const comboLabel = (comboId === '__manual__')
+                        ? String((manualEl && manualEl.value) || '').trim()
+                        : optLabel;
                     const parsedPair = (pairEl && window.FeatureMaterialBook && typeof window.FeatureMaterialBook.parseUnitPair === 'function')
                         ? window.FeatureMaterialBook.parseUnitPair(pairEl.value)
                         : null;
@@ -195,6 +223,30 @@ window.BuilderStore = (() => {
         });
     }
 
+    function syncInheritedPackDescription(t, pathStr, descEl) {
+        if (!t || !descEl) return;
+        const FT = window.FeatureTimeline;
+        if (!FT || typeof FT.packRangeDescriptionHtml !== 'function') return;
+        if (!(t.type === 'audio_record' || t.type === 'exam' || t.type === 'pdf_exam')) return;
+        if (!t.raw_data) t.raw_data = {};
+        if (descEl.getAttribute('data-desc-auto') === '0') {
+            t.raw_data.desc_auto_from_range = false;
+            return;
+        }
+        const rows = (typeof FT.packRowsForHostPath === 'function')
+            ? (FT.packRowsForHostPath(pathStr) || [])
+            : ((typeof FT.packRowsForAudioPath === 'function') ? (FT.packRowsForAudioPath(pathStr) || []) : []);
+        const generated = FT.packRangeDescriptionHtml(rows, (bState && bState.classId) || '');
+        const generatedPlain = (typeof FT.packRangeDescriptionPlain === 'function')
+            ? FT.packRangeDescriptionPlain(rows, (bState && bState.classId) || '')
+            : '';
+        t.description = generated || '';
+        t.raw_data.desc_auto_from_range = true;
+        descEl.innerHTML = generated || '';
+        descEl.setAttribute('data-desc-auto', '1');
+        descEl.setAttribute('data-desc-from-range', generatedPlain);
+    }
+
     function applyComboInheritTitleOnSync(t, pathStr, titleEl) {
         const FT = window.FeatureTimeline;
         if (!t || !FT || typeof FT.parentRangeGroupPathOf !== 'function') return;
@@ -203,8 +255,11 @@ window.BuilderStore = (() => {
             || t.type === 'exam' || t.type === 'pdf_exam' || t.type === 'drive';
         if (!inherit) return;
         if (typeof FT.packRangeLabelForAudio !== 'function') return;
-        const packLabel = FT.packRangeLabelForAudio(pathStr) || '';
-        if (!packLabel) return;
+        const packLabel = (t.type === 'audio_record' && typeof FT.packTitleForAudio === 'function')
+            ? (FT.packTitleForAudio(pathStr) || '')
+            : (FT.packRangeLabelForAudio(pathStr) || '');
+        const omitCombo = typeof FT.childTitleOmitsComboName === 'function' && FT.childTitleOmitsComboName(pathStr);
+        if (!packLabel && !omitCombo) return;
         if (!t.raw_data) t.raw_data = {};
         const titlePlain = titleEl
             ? String(titleEl.textContent || '').trim()
@@ -214,8 +269,20 @@ window.BuilderStore = (() => {
             ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
             : '';
         const wasAuto = t.raw_data.title_auto_from_range === true;
+        const looksBookConcat = window.TimelineTemplates
+            && typeof window.TimelineTemplates.comboNameFromBookConcatTitle === 'function'
+            && !!window.TimelineTemplates.comboNameFromBookConcatTitle(titlePlain);
+        const looksOldFull = packLabel && titlePlain
+            && (titlePlain === packLabel
+                || titlePlain.slice(-(packLabel.length + 1)) === (' ' + packLabel)
+                || (window.TimelineTemplates
+                    && typeof window.TimelineTemplates.rangeTailFromTitle === 'function'
+                    && window.TimelineTemplates.rangeTailFromTitle(titlePlain) === packLabel));
         const shouldAuto = !titlePlain || autoFlag === '1' || wasAuto
-            || (prevFrom && titlePlain === prevFrom);
+            || (prevFrom && titlePlain === prevFrom)
+            || looksBookConcat
+            || looksOldFull
+            || titleLooksLikeSheetAliasDump(titlePlain);
         if (!shouldAuto) return;
         t.title = packLabel;
         t.raw_data.title_auto_from_range = true;
@@ -302,6 +369,7 @@ window.BuilderStore = (() => {
                 if (descEl) {
                     let text = descEl.textContent.trim();
                     t.description = (text === '') ? '' : descEl.innerHTML;
+                    syncInheritedPackDescription(t, pathStr, descEl);
                 }
 
                 if (t.type === 'audio_record') {
@@ -340,25 +408,38 @@ window.BuilderStore = (() => {
                     if (scriptSource === 'skeleton' && materialRangeManualEl) {
                         t.raw_data.skeleton_range_auto = (materialRangeManualEl.getAttribute('data-range-auto') !== '0');
                     }
-                    // 標題空白或仍為「自動繼承」時，跟 base 範圍同步
-                    if (t.raw_data.material_range) {
+                    // 標題空白或仍為「自動繼承」時，跟套餐範圍同步。舊活頁別名 dump 當自動重算。
+                    {
                         const titlePlain = titleEl
                             ? String(titleEl.textContent || '').trim()
                             : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                        if (t.raw_data.material_range || titleLooksLikeSheetAliasDump(titlePlain)) {
                         const autoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
                         const prevFrom = titleEl
                             ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
                             : '';
                         const shouldAuto = !titlePlain || autoFlag === '1'
-                            || (prevFrom && titlePlain === prevFrom);
+                            || (prevFrom && titlePlain === prevFrom)
+                            || titlePlain === String(t.raw_data.material_range || '').trim()
+                            || (window.TimelineTemplates && typeof window.TimelineTemplates.comboNameFromBookConcatTitle === 'function'
+                                && !!window.TimelineTemplates.comboNameFromBookConcatTitle(titlePlain))
+                            || titleLooksLikeSheetAliasDump(titlePlain);
                         if (shouldAuto) {
-                            t.title = t.raw_data.material_range;
+                            const packTitle = (window.FeatureTimeline && typeof window.FeatureTimeline.packTitleForAudio === 'function')
+                                ? (window.FeatureTimeline.packTitleForAudio(pathStr) || '')
+                                : '';
+                            const omitCombo = window.FeatureTimeline
+                                && typeof window.FeatureTimeline.childTitleOmitsComboName === 'function'
+                                && window.FeatureTimeline.childTitleOmitsComboName(pathStr);
+                            const inherited = omitCombo ? packTitle : (packTitle || t.raw_data.material_range);
+                            t.title = inherited;
                             t.raw_data.title_auto_from_range = true;
                             if (titleEl) {
-                                titleEl.textContent = t.raw_data.material_range;
+                                titleEl.textContent = inherited;
                                 titleEl.setAttribute('data-title-auto', '1');
-                                titleEl.setAttribute('data-title-from-range', t.raw_data.material_range);
+                                titleEl.setAttribute('data-title-from-range', inherited);
                             }
+                        }
                         }
                     }
 
@@ -418,6 +499,15 @@ window.BuilderStore = (() => {
                         t.raw_data.student_text = displayText;
                         t.raw_data.student_display = displayText;
                         t.raw_data.student_display_text = displayText;
+                        if (window.FeatureTimeline
+                            && typeof window.FeatureTimeline.audioUsesBookRangePack === 'function'
+                            && window.FeatureTimeline.audioUsesBookRangePack(pathStr)
+                            && typeof window.FeatureTimeline.gradingUnitsFromBookPack === 'function') {
+                            const bookRows = (typeof window.FeatureTimeline.packRowsForAudioPath === 'function')
+                                ? (window.FeatureTimeline.packRowsForAudioPath(pathStr) || [])
+                                : [];
+                            t.raw_data.grading_units = window.FeatureTimeline.gradingUnitsFromBookPack(bookRows, pasteWindows);
+                        }
                         if (scriptEl) scriptEl.value = t.raw_data.original_script;
                         if (studentTextEl) studentTextEl.value = displayText;
                     } else if (scriptSource === 'range_only') {
@@ -653,8 +743,9 @@ window.BuilderStore = (() => {
                         : '';
                     const wasAuto = t.raw_data.title_auto_from_range === true;
                     const shouldAuto = !titlePlain || autoFlag === '1' || wasAuto
-                        || (prevFrom && titlePlain === prevFrom);
-                    if (shouldAuto && examRange) {
+                        || (prevFrom && titlePlain === prevFrom)
+                        || titleLooksLikeSheetAliasDump(titlePlain);
+                    if (shouldAuto && (examRange || titleLooksLikeSheetAliasDump(titlePlain))) {
                         t.title = examRange;
                         t.raw_data.title_auto_from_range = true;
                         t.raw_data.exam_title = examRange;
@@ -674,8 +765,35 @@ window.BuilderStore = (() => {
 
                 // 🆕 PDF 考卷：只把畫面上的解答文字 textarea 同步回 raw_data，其餘（上傳的 PDF、
                 // 答案清單、已畫的框）都是直接 mutate task.raw_data.pdf_exam_job，不靠這裡同步。
-                if (t.type === 'pdf_exam' && window.FeaturePdfExamJob && typeof window.FeaturePdfExamJob.syncInlineEditor === 'function') {
-                    window.FeaturePdfExamJob.syncInlineEditor(pathStr, t);
+                if (t.type === 'pdf_exam') {
+                    const FT = window.FeatureTimeline;
+                    const pdfRange = (FT && typeof FT.packRangeLabelForAudio === 'function')
+                        ? (FT.packRangeLabelForAudio(pathStr) || '')
+                        : '';
+                    const pdfTitlePlain = titleEl
+                        ? String(titleEl.textContent || '').trim()
+                        : String(t.title || '').replace(/<[^>]*>/g, '').trim();
+                    if (!t.raw_data) t.raw_data = {};
+                    const pdfAutoFlag = titleEl ? titleEl.getAttribute('data-title-auto') : null;
+                    const pdfPrevFrom = titleEl
+                        ? String(titleEl.getAttribute('data-title-from-range') || '').trim()
+                        : '';
+                    const pdfWasAuto = t.raw_data.title_auto_from_range === true;
+                    const pdfShouldAuto = !pdfTitlePlain || pdfAutoFlag === '1' || pdfWasAuto
+                        || (pdfPrevFrom && pdfTitlePlain === pdfPrevFrom)
+                        || titleLooksLikeSheetAliasDump(pdfTitlePlain);
+                    if (pdfShouldAuto && (pdfRange || titleLooksLikeSheetAliasDump(pdfTitlePlain))) {
+                        t.title = pdfRange;
+                        t.raw_data.title_auto_from_range = true;
+                        if (titleEl) {
+                            titleEl.textContent = pdfRange;
+                            titleEl.setAttribute('data-title-auto', '1');
+                            titleEl.setAttribute('data-title-from-range', pdfRange);
+                        }
+                    }
+                    if (window.FeaturePdfExamJob && typeof window.FeaturePdfExamJob.syncInlineEditor === 'function') {
+                        window.FeaturePdfExamJob.syncInlineEditor(pathStr, t);
+                    }
                 }
             }
         });

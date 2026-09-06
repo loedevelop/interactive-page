@@ -177,6 +177,39 @@ window.FeatureStudentTimeline = (() => {
         return foundTask;
     }
 
+    function findParentRangeGroup(assignmentId, taskId) {
+        const assignRecord = assignments.find(a => String(a.id) === String(assignmentId));
+        if (!assignRecord) return null;
+        let parsedTasks = [];
+        if (typeof assignRecord.tasks === 'string') {
+            try { parsedTasks = JSON.parse(assignRecord.tasks); } catch (e) { parsedTasks = []; }
+        } else if (Array.isArray(assignRecord.tasks)) {
+            parsedTasks = assignRecord.tasks;
+        }
+        let foundParent = null;
+        const walk = (taskList, parentRange) => {
+            if (!taskList || !Array.isArray(taskList) || foundParent) return;
+            for (let i = 0; i < taskList.length; i++) {
+                const t = taskList[i];
+                if (String(t.id) === String(taskId)) {
+                    foundParent = parentRange;
+                    return;
+                }
+                if (t.type === 'group' && t.subTasks) {
+                    const isPack = (window.UIStudentTimelineTemplates
+                        && typeof window.UIStudentTimelineTemplates.groupIsRangePack === 'function')
+                        ? window.UIStudentTimelineTemplates.groupIsRangePack(t)
+                        : !!(t.raw_data && (t.raw_data.group_role === 'range' || t.raw_data.pack_combo_id));
+                    const next = isPack ? t : parentRange;
+                    walk(t.subTasks, next);
+                    if (foundParent) return;
+                }
+            }
+        };
+        walk(parsedTasks, null);
+        return foundParent;
+    }
+
     function taskSupportsAIGrading(task, assignmentId) {
         if (!task) return false;
         if (window.TaskScriptResolver && typeof window.TaskScriptResolver.taskSupportsAIGrading === 'function') {
@@ -277,8 +310,13 @@ window.FeatureStudentTimeline = (() => {
         }
     }
 
-    function getTaskGradingUnits(taskConfig) {
+    function getTaskGradingUnits(taskConfig, assignmentId, taskId) {
         const raw = (taskConfig && taskConfig.raw_data) ? taskConfig.raw_data : {};
+        const parent = (assignmentId && taskId) ? findParentRangeGroup(assignmentId, taskId) : null;
+        if (window.UIStudentTimelineTemplates && typeof window.UIStudentTimelineTemplates.recordingUnitsFromBook === 'function') {
+            const bookUnits = window.UIStudentTimelineTemplates.recordingUnitsFromBook(taskConfig, parent);
+            if (bookUnits && bookUnits.length) return bookUnits;
+        }
         const units = (Array.isArray(raw.grading_units) && raw.grading_units.length)
             ? raw.grading_units.slice()
             : [];
@@ -356,7 +394,11 @@ window.FeatureStudentTimeline = (() => {
             return String(c.assignment_id) === String(assignmentId) && String(c.task_id) === String(taskId);
         });
         if (window.UIStudentTimelineTemplates && typeof window.UIStudentTimelineTemplates.getRecordingBoard === 'function') {
-            return window.UIStudentTimelineTemplates.getRecordingBoard(taskConfig, rec && rec.raw_data);
+            return window.UIStudentTimelineTemplates.getRecordingBoard(
+                taskConfig,
+                rec && rec.raw_data,
+                findParentRangeGroup(assignmentId, taskId)
+            );
         }
         return { pages: [], expectedCount: 0, submittedCount: 0, submittedKeys: {}, players: [] };
     }
@@ -398,7 +440,7 @@ window.FeatureStudentTimeline = (() => {
     async function submitAudioSegmentsToAIGrading(assignmentId, taskId, segments) {
         assertAssignmentUuid(assignmentId, '作業 ID');
         const taskConfig = findTaskConfig(assignmentId, taskId);
-        const units = getTaskGradingUnits(taskConfig);
+        const units = getTaskGradingUnits(taskConfig, assignmentId, taskId);
         const hasAnyScript = segments.some(s => String(s.original_script || '').trim())
             || !!resolveTaskScriptText(assignmentId, taskId, taskConfig)
             || units.length > 0;
@@ -525,7 +567,7 @@ window.FeatureStudentTimeline = (() => {
             assertAssignmentUuid(assignmentId, '作業 ID');
             const taskConfig = findTaskConfig(assignmentId, taskId);
             const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-            const gradingUnits = getTaskGradingUnits(taskConfig);
+            const gradingUnits = getTaskGradingUnits(taskConfig, assignmentId, taskId);
             const hasScript = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim())
                 || !!(targetUnit && String(targetUnit.original_script || '').trim());
             // 💣 雷區：這裡曾只看「有沒有文稿」決定 canSendAI，完全沒檢查老師有沒有勾選
@@ -569,11 +611,13 @@ window.FeatureStudentTimeline = (() => {
                 ? Math.min(pairs.length, effectiveUnits.length)
                 : pairs.length;
             if (!targetUnit && effectiveUnits.length && items.length !== effectiveUnits.length) {
+                const isBookUnits = !!(gradingUnits[0] && String(gradingUnits[0].unit_key || '').indexOf('book:') === 0);
+                const unitWord = isBookUnits ? '段' : '頁';
                 window.showFlash(
-                    `已選 ${items.length} 檔；此作業共 ${gradingUnits.length} 個錄音頁單位`
-                    + (alreadyDoneCount > 0 ? `（其中 ${alreadyDoneCount} 頁先前已提交，將接續補上剩下的頁）` : '')
+                    `已選 ${items.length} 檔；此作業共 ${gradingUnits.length} 個錄音${unitWord}單位`
+                    + (alreadyDoneCount > 0 ? `（其中 ${alreadyDoneCount} ${unitWord}先前已提交，將接續補上剩下的${unitWord}）` : '')
                     + (mappedByName ? `，其中 ${mappedByName} 檔已依檔名對到頁碼` : '')
-                    + `，其餘依選取順序對尚未提交的頁。`,
+                    + `，其餘依選取順序對尚未提交的${unitWord}。`,
                     'warning'
                 );
             }
@@ -583,7 +627,13 @@ window.FeatureStudentTimeline = (() => {
             // 卻沒有跑過 meta／骨架流程產生 grading_units，學生選錯檔數時完全沒有提示，
             // 只會默默少收幾頁（2026-08-09 使用者回報「為什只有一個檔案」）。
             // 沒有 grading_units 時改用展開 base 範圍文字算出的頁數比對，非阻擋式提醒。
-            if (!effectiveUnits.length) {
+            // 目錄套餐不准走這條：範圍字串裡的 13／8／407 不是錄音頁數。
+            const parentForBook = findParentRangeGroup(assignmentId, taskId);
+            const bookUnitsNow = (window.UIStudentTimelineTemplates
+                && typeof window.UIStudentTimelineTemplates.recordingUnitsFromBook === 'function')
+                ? window.UIStudentTimelineTemplates.recordingUnitsFromBook(taskConfig, parentForBook)
+                : null;
+            if (!effectiveUnits.length && !(bookUnitsNow && bookUnitsNow.length)) {
                 const rawMaterialRangeText = (taskConfig && taskConfig.raw_data && taskConfig.raw_data.material_range)
                     ? String(taskConfig.raw_data.material_range).trim()
                     : '';
@@ -1600,7 +1650,7 @@ window.FeatureStudentTimeline = (() => {
                 const rawTitle = String((taskConfig && taskConfig.title) || '任務').replace(/<[^>]*>/g, '');
                 const safeTitleForJS = rawTitle.replace(/[\\/:*?"<>|]/g, '_') || '任務';
                 const scriptText = resolveTaskScriptText(assignmentId, taskId, taskConfig);
-                const gradingUnits = getTaskGradingUnits(taskConfig);
+                const gradingUnits = getTaskGradingUnits(taskConfig, assignmentId, taskId);
                 const unitKey = ds.unitKey ? String(ds.unitKey).trim() : '';
                 const hasScript = !!scriptText || gradingUnits.some(u => String(u.original_script || '').trim()) || !!unitKey;
                 const canSendAI = hasScript && taskSupportsAIGrading(taskConfig, assignmentId);

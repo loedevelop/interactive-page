@@ -16,8 +16,10 @@ alwaysApply: false
 - 當成班級 01 資源，Mason Shen 與 Ava 勾同一本卻變成兩本
 - 出作業下拉出現沒勾的班、或目錄被摺進 Excel 畫卡
 - 選目錄後範圍表仍是起迄／活頁，或另開第二張表
+- 增加區段長出第二張 Excel 起迄表、新列 combo_id 空掉
+- 刪除套餐按了沒反應（只剩一份就沒有 ×，或寫回舊 DOM）
 - 選目錄卻走 Snapshot／`.script.txt`／「跟範圍走」假裝有 meta
-- 為了目錄去改 `ensureCombination`／`pickComboForCard`／`combo_statistics`
+- 為了目錄去改 `ensureCombination`／`pickComboForCard`／Excel 畫卡
 - 在教材區資料夾窗口裡＋新增（產生應在同一頁獨立區塊）
 
 ## 根因
@@ -35,14 +37,17 @@ AI 把「夾裡有檔＝套餐」套到目錄。舊套餐確實由夾裡的檔�
 全域＝這位老師的教材。Mason Shen 與 Ava 勾同一本 Our World 2。不是班級 01。
 出作業下拉：同一開口 listAssignedCombosForHomework，只列該班已勾。三種套餐走 MaterialComboStrategies，不准 Excel 主檔 concat。
 範圍六層：主單元 → 次單元 → 標題 → 大題 → 次題 → 小題。六欄都提供，這次填到哪由老師定。錄音作業的範圍標籤以這六層組字。
+這本主單元單位（Unit／Ch／Lesson，或手打）跟這張目錄卡走。沒填＝畫面上仍用「主單元」。已收集範圍收成活頁（主單元一頁，預設合上），不准整棵樹敞開。
 目錄文稿（book_script）與這次錄音口說答案（original_script／paste_windows）是兩把鑰匙。可以不一樣。不准互抄、不准空的那格去借另一格。
-規格化：每一欄可選這本已出過的紀錄（選了次單元，標題只列該次單元底下已有的；選了標題，大題只列該標題底下已有的）。沒有才手打；手打的進這本目錄。不借別本書的名字。
+規格化：每一欄可選這本已出過的紀錄（選了次單元，標題／頁碼只列該次單元底下已有的；選了頁碼，標題／大題只列該頁已有的；選了標題，大題只列該標題底下已有的）。有選才限這一欄。沒選標題＝大題仍列該主／次／頁已有的，不准把空標題當成「只准沒標題的列」。沒有才手打；手打的進這本目錄。不借別本書的名字。
 text 存在該教材資料夾（Drive）。有目錄文稿才寫 txt；空＝這列沒有正文，範圍仍留下。
 出作業選書＋填範圍＝收集。沒有第二道「搬入」。
 範圍卡仍只呼叫 renderRangePackHtml。選目錄時列改主單元／次單元／標題／大題／次題／小題／目錄文稿，不准另開第二張表。
+增加區段＝同一張目錄表多一列空欄，combo_id 跟上面那列走。增加套餐才另開一塊。刪除套餐＝拿掉那一塊；只剩一份也可以刪，回到請選擇。不准寫回舊 DOM 把剛刪的加回來。
 選目錄不准走 Snapshot／.script.txt／「跟範圍走」假裝有 meta。選目錄時錄音不出現文稿來源／手貼文稿收集窗；口說答案／書寫答案是這份作業自己的，不是第二個目錄文稿窗。
 __manual__ 仍是打一次名字、不進任何書。
 獨立模組 feature-material-book.js。不准改 Excel／JSON：ensureCombination／pickComboForCard／combo_statistics 畫卡。
+combo_statistics 含三種套餐（kind=sheet／pdf／book）。Excel 畫卡／出作業 sheet 開口只認 kind=sheet。目錄列由 trigger 寫入，不准拿來走 Excel 畫卡。
 小標題＝combinePackRangeLabel。目錄列用 主單元 / 次單元 / 標題 / 大題 / 次題 / 小題 組字。
 ```
 
@@ -72,10 +77,10 @@ FeatureMaterialBook.renderCreatePanel(); // 同一頁獨立區塊，不在教材
 
 1. 教材範本管理獨立區塊能＋新增目錄套餐；教材區該夾窗口有卡、沒有＋鈕；不是從夾裡 txt 自動冒出來。
 2. 勾 Mason Shen 與 Ava → 兩班出作業下拉都有這本；沒勾的班沒有。
-3. 選這本後範圍卡是主單元／次單元／標題／大題／次題／小題／目錄文稿，不是起迄。
-4. 存檔後教材區已收集範圍出現這段；有目錄文稿才在夾裡看到 txt。口說答案不進目錄 txt。
+3. 選這本後範圍卡是主單元／次單元／標題／大題／次題／小題／目錄文稿，不是起迄。增加區段＝同一張表多一列空欄；刪除套餐（含只剩一份）拿掉那一塊，不准另開 Excel 表、不准按了沒動。
+4. 存檔後教材區已收集範圍出現這段；有目錄文稿才在夾裡看到 txt。口說答案不進目錄 txt。已收集範圍是活頁（主單元合上），不是整棵樹敞開。主單元單位可選 Unit／Ch／Lesson 或手打，跟這張卡走。
 5. 選目錄後錄音沒有自動 Snapshot、沒有去抓 .script.txt，也不出現文稿來源／手貼文稿收集窗。
-6. Excel／JSON 套餐卡與 combo_statistics 畫卡沒被改。
+6. Excel／JSON 套餐卡與 combo_statistics 畫卡沒被改。目錄／PDF 進 statistics 表，但不走 Excel 畫卡。
 
 ## 改動前自問
 

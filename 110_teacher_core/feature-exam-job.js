@@ -3785,15 +3785,13 @@ window.FeatureExamJob = (function () {
 
     function getExamRangeLabel(examPathStr, task) {
         const node = task || getBuilderTaskByPath(examPathStr);
+        const FT = window.FeatureTimeline;
         if (isExamUnderComboPack(examPathStr, node)) {
-            const FT = window.FeatureTimeline;
-            const parentPath = (FT && typeof FT.parentRangeGroupPathOf === 'function')
-                ? FT.parentRangeGroupPathOf(examPathStr)
-                : '';
-            const packLabel = (parentPath && FT && typeof FT.packRangeLabelForAudio === 'function')
-                ? FT.packRangeLabelForAudio(parentPath)
+            const packLabel = (FT && typeof FT.packRangeLabelForAudio === 'function')
+                ? FT.packRangeLabelForAudio(examPathStr)
                 : '';
             if (packLabel) return packLabel;
+            if (FT && typeof FT.childTitleOmitsComboName === 'function' && FT.childTitleOmitsComboName(examPathStr)) return '';
         }
         const own = buildExamRangeLabelFromTask(node);
         if (own) return own;
@@ -3802,16 +3800,18 @@ window.FeatureExamJob = (function () {
 
     function applyExamTitleFromRange(pathStr, task) {
         const label = getExamRangeLabel(pathStr, task);
-        if (!label) return;
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.applyInheritedTitleFromRange === 'function') {
-            window.FeatureTimeline.applyInheritedTitleFromRange(pathStr, label);
+        const FT = window.FeatureTimeline;
+        const omit = !!(FT && typeof FT.childTitleOmitsComboName === 'function' && FT.childTitleOmitsComboName(pathStr));
+        if (!label && !omit) return;
+        if (FT && typeof FT.applyInheritedTitleFromRange === 'function') {
+            FT.applyInheritedTitleFromRange(pathStr, label || '');
         }
         const titleEl = document.getElementById('node-title-' + pathStr);
         if (task && titleEl && titleEl.getAttribute('data-title-auto') === '1') {
-            task.title = label;
+            task.title = label || '';
             if (!task.raw_data) task.raw_data = {};
             task.raw_data.title_auto_from_range = true;
-            task.raw_data.exam_title = label;
+            task.raw_data.exam_title = label || '';
         }
     }
 

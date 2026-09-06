@@ -32,9 +32,9 @@ alwaysApply: true
 | `extraction-formula-live-apply-invariant.mdc` | 出作業書寫／學生文稿不套公式、只剩頁標題、一直自動套用、畫面是舊凍結 snapshot | `feature-timeline.js`, `material-snapshot.js`, `layout-fields-eval.js`, `feature-review-catalog.js`, `feature-template-library.js`, `ui-timeline-templates.js` |
 | `no-invented-fallback-invariant.mdc` | 退路未提出／未同意就黑箱施作／消去法沒A就B | 全站（alwaysApply） |
 | `uniform-apply-invariant.mdc` | 規則要全面套用／禁止只修例子、同類列走第二套邏輯／每個 popup 處理方式不一樣 | 全站（alwaysApply）；`material-file-names.js`；`material-pdf-page-map.js` |
-| `title-range-label-invariant.mdc` | 小標題消去法／pp. 1~2 ; p. 3／中括號包範圍／獨立考試另組字串／錄音考試標題用了活頁名 | `feature-timeline.js`, `feature-exam-job.js`, `ui-timeline-templates.js`, `store-assignment-builder.js` |
+| `title-range-label-invariant.mdc` | 小標題消去法／pp. 1~2 ; p. 3／中括號包範圍／獨立考試另組字串／錄音考試標題用了活頁名／組合層底下重複套餐名／區段一致納入標題／手動輸入卻出現 Excel 起迄表 | `feature-timeline.js`, `feature-exam-job.js`, `ui-timeline-templates.js`, `store-assignment-builder.js` |
 | `00-material-combo-polymorphism.mdc` | 把三種套餐分主從／Excel 當宿主 concat／把 Excel JSON 拆成兩個兄弟／教材卡或出作業下拉漏 PDF／目錄 | `material-combo-strategies.js`, `feature-class-material-combinations.js`, `feature-material-pdf-exam.js`, `feature-material-book.js`, `feature-timeline.js`, `ui-timeline-templates.js` |
 | `pdf-exam-global-material-invariant.mdc` | PDF 當附件不當套餐來源／又上傳到班級 PDF考卷夾／因為都是 PDF 就同一套餐／拿套餐 student_pdf 當考卷／解析後缺 Quiz 當沒有／消去法跳過 | `feature-pdf-exam-job.js`, `feature-material-pdf-exam.js`, `feature-timeline.js`, `gas/Code.gs`, `api-gas-service.js`, `pdf-exam-paper.js` |
-| `material-book-combo-invariant.mdc` | 目錄套餐沒卡／拿夾裡檔自動產卡／當班級 01／下拉出現沒勾的／範圍另開第二張表／走 Snapshot 假裝有 meta／為了目錄改 Excel 畫卡 | `feature-material-book.js`, `feature-class-material-combinations.js`, `feature-timeline.js`, `ui-timeline-templates.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
+| `material-book-combo-invariant.mdc` | 目錄套餐沒卡／拿夾裡檔自動產卡／當班級 01／下拉出現沒勾的／範圍另開第二張表／增加區段長出 Excel 表／刪除套餐按了沒動／走 Snapshot 假裝有 meta／為了目錄改 Excel 畫卡 | `feature-material-book.js`, `feature-class-material-combinations.js`, `feature-timeline.js`, `ui-timeline-templates.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
 
 新增雷區規則時：同步在此加一行；撰寫規範見 [docs/雷區撰寫規範.md](../../docs/雷區撰寫規範.md)。

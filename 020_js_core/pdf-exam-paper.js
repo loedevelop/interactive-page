@@ -84,12 +84,21 @@ window.PdfExamPaper = (function () {
         });
     }
 
+    var _pdfDocById = {};
+
     function loadPdfDocumentFromDrive(fileId) {
-        return ensurePdfJsLoaded().then(function (pdfjsLib) {
-            return downloadDriveFileAsArrayBuffer(fileId).then(function (file) {
+        var id = String(fileId || '').trim();
+        if (!id) return Promise.reject(new Error('缺少 fileId'));
+        if (_pdfDocById[id]) return _pdfDocById[id];
+        _pdfDocById[id] = ensurePdfJsLoaded().then(function (pdfjsLib) {
+            return downloadDriveFileAsArrayBuffer(id).then(function (file) {
                 return pdfjsLib.getDocument({ data: file.arrayBuffer }).promise;
             });
+        }).catch(function (err) {
+            delete _pdfDocById[id];
+            throw err;
         });
+        return _pdfDocById[id];
     }
 
     // ------------------------------------------------------------------
@@ -449,74 +458,89 @@ window.PdfExamPaper = (function () {
         return m ? parseInt(m[1], 10) : null;
     }
 
+    function _isTopLevelSectionFamily(fam) {
+        return fam === 'quiz' || fam === 'test' || fam === 'chapter' || fam === 'unit' || fam === 'lesson';
+    }
+
     /**
-     * 解答兩欄接續：右欄最上沒有 Quiz 標頭、下方是 Quiz N+1、題號接上 Quiz N
-     * → 那串題號屬 Quiz N。
-     * 鑰匙＝較早的大題裡同一題號出現第二次（左欄自己的題 + 右欄接續），且接上 Quiz N 最後一題。
-     * 有第二次才搬；不是去別組「借」唯一的那題。
+     * 整份 txt 切成各單元。Quiz／TEST／Chapter／Unit／Lesson 各成一段；
+     * Part 留在所屬 TEST 那段裡。禁止跨段共用解析狀態。
      */
-    function reattachColumnContinuations(items) {
-        var log = [];
-        if (!items || !items.length) return log;
-        var quizNums = [];
-        var labelByNum = {};
-        items.forEach(function (it) {
-            var n = _quizNumberOfLabel(it.section);
-            if (n == null) return;
-            if (quizNums.indexOf(n) === -1) quizNums.push(n);
-            if (!labelByNum[n]) labelByNum[n] = it.section;
-        });
-        quizNums.sort(function (a, b) { return a - b; });
-        quizNums.forEach(function (n, qi) {
-            var next = quizNums[qi + 1];
-            if (next !== n + 1) return;
-            var ofN = items.filter(function (it) { return _quizNumberOfLabel(it.section) === n; });
-            var lastNo = -1;
-            ofN.forEach(function (it) {
-                var no = parseInt(it.itemNo, 10);
-                if (!isNaN(no) && no > lastNo) lastNo = no;
+    function splitAnswerTextIntoTopUnits(raw) {
+        var lines = String(raw || '').split(/\r?\n/);
+        var units = [];
+        var buf = [];
+        function flush() {
+            var text = buf.join('\n');
+            buf = [];
+            if (String(text).trim()) units.push(text);
+        }
+        var i;
+        for (i = 0; i < lines.length; i++) {
+            var original = lines[i];
+            var line = original.trim();
+            var secMatch = line.match(SECTION_HEADER_RE);
+            if (secMatch && !/^\d+\./.test(line) && _isTopLevelSectionFamily(sectionFamily(secMatch[1]))) {
+                flush();
+                buf.push(original);
+            } else {
+                buf.push(original);
+            }
+        }
+        flush();
+        return units;
+    }
+
+    /**
+     * 一個單元只抓該單元原文：從這個大題標頭到下一個大題標頭（不含）。
+     * 禁止拿別組的行來補這一組。對不到這個標頭＝這一組沒有原文。
+     */
+    function sliceAnswerTextForSection(raw, sectionWant) {
+        var want = _sectionReviewKey(sectionWant);
+        if (!want) return '';
+        var units = splitAnswerTextIntoTopUnits(raw);
+        var ui;
+        for (ui = 0; ui < units.length; ui++) {
+            var unit = units[ui];
+            var first = '';
+            String(unit).split(/\r?\n/).some(function (ln) {
+                if (String(ln).trim()) { first = String(ln).trim(); return true; }
+                return false;
             });
-            if (lastNo < 0) return;
-            var movedNos = [];
-            var need = lastNo + 1;
-            while (true) {
-                var extras = [];
-                items.forEach(function (it) {
-                    var q = _quizNumberOfLabel(it.section);
-                    if (q == null || q >= n) return;
-                    if (parseInt(it.itemNo, 10) !== need) return;
-                    extras.push(it);
-                });
-                var byBucket = {};
-                extras.forEach(function (it) {
-                    var gk = String(it.section) + '|' + String(it.group || '') + '|' + String(it.part || '');
-                    (byBucket[gk] = byBucket[gk] || []).push(it);
-                });
-                var bucketKeys = Object.keys(byBucket).sort(function (a, b) {
-                    var qa = _quizNumberOfLabel(byBucket[a][0].section) || 0;
-                    var qb = _quizNumberOfLabel(byBucket[b][0].section) || 0;
-                    return qa - qb;
-                });
-                var picked = null;
-                bucketKeys.forEach(function (gk) {
-                    if (picked) return;
-                    if (byBucket[gk].length >= 2) picked = byBucket[gk][byBucket[gk].length - 1];
-                });
-                if (!picked) break;
-                picked.section = labelByNum[n];
-                picked.group = ofN[0] ? ofN[0].group : picked.group;
-                movedNos.push(need);
-                need += 1;
+            var top = first.match(SECTION_HEADER_RE);
+            if (top && !/^\d+\./.test(first) && _isTopLevelSectionFamily(sectionFamily(top[1]))) {
+                var composedTop = _composeSectionLabel(null, top[1]);
+                var topLabel = composedTop.isTestHeader ? (composedTop.label || composedTop.testCtx) : composedTop.label;
+                if (_sectionReviewKey(topLabel) === want) return unit;
             }
-            if (movedNos.length) {
-                log.push({
-                    to: labelByNum[n],
-                    next: labelByNum[next],
-                    itemNos: movedNos
-                });
+        }
+        var lines = String(raw || '').split(/\r?\n/);
+        var testCtx = null;
+        var collecting = false;
+        var out = [];
+        var li;
+        for (li = 0; li < lines.length; li++) {
+            var original = lines[li];
+            var line = original.trim();
+            var secMatch = line.match(SECTION_HEADER_RE);
+            if (secMatch && !/^\d+\./.test(line)) {
+                var composed = _composeSectionLabel(testCtx, secMatch[1]);
+                testCtx = composed.testCtx;
+                var label = composed.isTestHeader ? (composed.label || composed.testCtx) : composed.label;
+                var key = _sectionReviewKey(label);
+                if (collecting && key && key !== want) break;
+                if (key === want) collecting = true;
             }
-        });
-        return log;
+            if (collecting) out.push(original);
+        }
+        return out.join('\n');
+    }
+
+    /**
+     * 已停用。跨大題搬題＝張冠李戴。一個單元只准該單元原文，不准把別組的題搬過來。
+     */
+    function reattachColumnContinuations(/* items */) {
+        return [];
     }
 
     function _answerSectionOrder(bank) {
@@ -937,18 +961,35 @@ window.PdfExamPaper = (function () {
     var AB_LINE_RE = /^([A-Za-z]):\s*(.*)$/;
     var OR_LEAD_RE = /^OR\b[\s:]*\s*(.*)$/i;
     // 💣 A/B 有兩層，不能一律當大題：
-    // ① 練習分組（大題裡先 A 再 1~，後 B 再 1~）：「A.」「B. Directions」「A. 1. xxx」
-    // ② 同一題底下的小題／對白（1 下面的 A/B）：「1. A: …」「B: …」或「A. 答案文字」
+    // ① 練習分組：字母. ＋（空／說明標題／直接接 1.）。標題文字不准收成題。
+    // ② 同一題底下的小題／對白：「1. A: …」「B: …」或「A. 答案文字」
     var SUBSECTION_DOTTED_RE = /^([A-Z])\.\s*(.*)$/;
     var SUBSECTION_BARE_RE = /^([A-Z])$/;
     var SUBSECTION_SKIP_REST_RE = /^(directions|example|examples|exercise)\b/i;
+
+    /** 整段以冒號作結＝說明標題，不是答案。不准數幾個詞、不准寫死某一句。 */
+    function _isColonHeading(text) {
+        var s = String(text || '').trim();
+        if (!s) return false;
+        if (/^\d+\./.test(s)) return false;
+        if (OR_LEAD_RE.test(s)) return false;
+        return /:\s*$/.test(s);
+    }
+
+    function _isPracticeGroupTitle(text) {
+        var s = String(text || '').trim();
+        if (!s) return true;
+        if (SUBSECTION_SKIP_REST_RE.test(s)) return true;
+        if (_isColonHeading(s)) return true;
+        return false;
+    }
 
     function _peelAbPart(text) {
         var raw = String(text || '').trim();
         var colon = raw.match(AB_LINE_RE);
         if (colon) return { part: colon[1].toUpperCase(), text: colon[2] };
         var dotted = raw.match(/^([A-Za-z])\.\s+(.*)$/);
-        if (dotted && !SUBSECTION_SKIP_REST_RE.test(dotted[2]) && !/^\d+\.\s*/.test(dotted[2])) {
+        if (dotted && !_isPracticeGroupTitle(dotted[2]) && !/^\d+\.\s*/.test(dotted[2])) {
             return { part: dotted[1].toUpperCase(), text: dotted[2] };
         }
         return { part: null, text: raw };
@@ -967,7 +1008,7 @@ window.PdfExamPaper = (function () {
         if (dotted) {
             var letter = dotted[1].toUpperCase();
             var rest = String(dotted[2] || '').trim();
-            if (!rest || SUBSECTION_SKIP_REST_RE.test(rest)) {
+            if (_isPracticeGroupTitle(rest)) {
                 return { kind: 'group', letter: letter, rest: '' };
             }
             if (/^\d+\.\s*/.test(rest)) {
@@ -1292,20 +1333,9 @@ window.PdfExamPaper = (function () {
     var SECTION_PAGE_HINT_RE = /pp?\.?\s*(\d{1,4})/i;
 
     /**
-     * 寬鬆解析老師貼的解答原始文字，回傳扁平陣列：
-     * [{ key, section, item_no, part, group, blank_index, answer_text, accepted_answers[] }]
-     * key = "section::group::item_no::part::blankIndex"（group／part／blankIndex 可省略）
-     *
-     * 💣 同一大題裡常有 A 練習 1~n、接著 B 練習又從 1 開始（Azar：A. Directions… 然後 B. Directions…）。
-     * 若只依題號數字排序，A 的 1 會跟 B 的 1 排在一起，答案順序就錯了。必須先依練習分組（A／B），
-     * 組內再依題號排。group（練習分組 A／B）跟同一題底下的 A:／B:（part）不是同一層：
-     * 有「Directions／後面接著 1.」才當練習分組；已經在某一題底下、後面是答案文字，就當該題小題。
-     *
-     * 回傳的陣列另外附掛一個 sectionPageHints 屬性（{ section -> 課本印刷頁碼 }），從「Quiz N, p. NN」
-     * 這種標頭旁的頁碼擷取而來；呼叫端要自己在存檔時把它複製到 job.section_page_hints（陣列的額外
-     * 屬性存進資料庫 JSONB 會被 JSON.stringify 丟掉，只有陣列本身的索引元素會留下）。
+     * 單一段原文（一個 Quiz／TEST…）解析成清單。整份 txt 由 parseAnswerText 切段後逐段呼叫。
      */
-    function parseAnswerText(raw) {
+    function parseAnswerTextBlock(raw) {
         var lines = String(raw || '').split(/\r?\n/);
         var items = [];
         var currentSection = '(未分類)';
@@ -1452,9 +1482,7 @@ window.PdfExamPaper = (function () {
                 }
             }
 
-            if (/^(directions|example|examples)\s*:?\s*$/i.test(line)) return;
-            var dirLead = line.match(/^(directions|example|examples)\s*:\s*(.+)$/i);
-            if (dirLead) line = String(dirLead[2] || '').trim();
+            if (!/\d+\./.test(line) && (SUBSECTION_SKIP_REST_RE.test(line) || _isColonHeading(line))) return;
             if (!line) return;
 
             ITEM_MARKER_RE.lastIndex = 0;
@@ -1534,6 +1562,56 @@ window.PdfExamPaper = (function () {
     }
 
     /**
+     * 整份 txt：先切成各單元（Quiz／TEST／Chapter…），每單元單獨解析再接起來。
+     * 一個單元只抓該單元原文。不准跨單元共用 last／group，不准搬別組的題。
+     * 單一段（重新解析切出來的那塊）也走這裡；只有一段時就是解析那一段。
+     *
+     * 回傳扁平陣列，並附掛 sectionPageHints（{ section -> 課本印刷頁碼 }）。
+     */
+    function parseAnswerText(raw) {
+        var units = splitAnswerTextIntoTopUnits(raw);
+        if (!units.length) {
+            var empty = [];
+            empty.sectionPageHints = {};
+            empty.column_reattach = [];
+            return empty;
+        }
+        var combined = [];
+        var hints = {};
+        units.forEach(function (unit) {
+            var part = parseAnswerTextBlock(unit);
+            (part || []).forEach(function (it) { combined.push(it); });
+            Object.keys(part.sectionPageHints || {}).forEach(function (k) {
+                if (hints[k] == null) hints[k] = part.sectionPageHints[k];
+            });
+        });
+        var sectionOrder = [];
+        var groupOrderBySection = {};
+        combined.forEach(function (it) {
+            if (sectionOrder.indexOf(it.section) === -1) sectionOrder.push(it.section);
+            if (!groupOrderBySection[it.section]) groupOrderBySection[it.section] = [];
+            var g = it.group || '';
+            if (groupOrderBySection[it.section].indexOf(g) === -1) groupOrderBySection[it.section].push(g);
+        });
+        combined.sort(function (a, b) {
+            var sa = sectionOrder.indexOf(a.section), sb = sectionOrder.indexOf(b.section);
+            if (sa !== sb) return sa - sb;
+            var ga = groupOrderBySection[a.section].indexOf(a.group || '');
+            var gb = groupOrderBySection[b.section].indexOf(b.group || '');
+            if (ga !== gb) return ga - gb;
+            var na = parseInt(a.item_no, 10), nb = parseInt(b.item_no, 10);
+            if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+            if (a.item_no !== b.item_no) return String(a.item_no).localeCompare(String(b.item_no));
+            var pa = String(a.part || ''), pb = String(b.part || '');
+            if (pa !== pb) return pa.localeCompare(pb);
+            return (a.blank_index || 0) - (b.blank_index || 0);
+        });
+        combined.sectionPageHints = hints;
+        combined.column_reattach = [];
+        return combined;
+    }
+
+    /**
      * 把「舊版混合式拆格」存進資料庫的清單，對照目前的 parseAnswerText 結果補拆。
      * 實測事故：Quiz 2 第1題 B: "haven't, have never done" 被舊邏輯收成單列
      * （answer_text=haven't、accepted_answers=["have never done"]），後面每一格作答框全部錯位。
@@ -1545,7 +1623,10 @@ window.PdfExamPaper = (function () {
         var fresh = parseAnswerText(job.answer_text_raw);
         if (!fresh.length) return false;
         var prev = Array.isArray(job.parsed_bank) ? job.parsed_bank : [];
-        var next = mergeParsedBankKeepingOrder(prev, fresh);
+        var next = mergeParsedBankKeepingOrder(prev, fresh, {
+            keepConfirmed: true,
+            review: job.split_review || {}
+        });
         var sig = function (bank) {
             return (bank || []).map(function (b) {
                 return [b.key, b.answer_text || '', (b.accepted_answers || []).join('|')].join('\t');
@@ -1554,7 +1635,12 @@ window.PdfExamPaper = (function () {
         if (sig(next) === sig(prev)) return false;
         job.parsed_bank = next;
         if (fresh.sectionPageHints) {
-            job.section_page_hints = Object.assign({}, job.section_page_hints || {}, fresh.sectionPageHints);
+            var review = job.split_review || {};
+            job.section_page_hints = job.section_page_hints || {};
+            Object.keys(fresh.sectionPageHints).forEach(function (sec) {
+                if (isSectionConfirmed(review, sec)) return;
+                job.section_page_hints[sec] = fresh.sectionPageHints[sec];
+            });
         }
         return true;
     }
@@ -1748,13 +1834,75 @@ window.PdfExamPaper = (function () {
     }
 
     /**
-     * 再解析時維持畫面上的列順序。手動加的列留在原位，不准接到最後。
-     * 第一次解析（清單還是空的）才用解析器排出來的順序。
+     * 全部解析（keepConfirmed）：已確認的單元整組鎖定。未確認的先清再填這次 txt。
+     * 單獨 Quiz「重新解析」（txtWins + section）：這一組先清再解析，已確認的也清。其他組原樣。
      */
-    function mergeParsedBankKeepingOrder(prev, fresh) {
+    function mergeParsedBankKeepingOrder(prev, fresh, opts) {
         prev = prev || [];
         fresh = fresh || [];
+        opts = opts || {};
         if (!prev.length) return fresh.slice();
+        var sectionKey = opts.section ? _sectionReviewKey(opts.section) : '';
+        var txtWins = !!opts.txtWins;
+        function inTargetSection(row) {
+            if (!sectionKey) return true;
+            return _sectionReviewKey(row && row.section) === sectionKey;
+        }
+        if (opts.keepConfirmed) {
+            var review = opts.review || {};
+            var prevBySec = {};
+            var prevOrder = [];
+            prev.forEach(function (old) {
+                if (!old) return;
+                var k = _sectionReviewKey(old.section);
+                if (!prevBySec[k]) {
+                    prevBySec[k] = [];
+                    prevOrder.push(old.section);
+                }
+                prevBySec[k].push(old);
+            });
+            var freshBySec = {};
+            var freshOrder = [];
+            fresh.forEach(function (b) {
+                if (!b) return;
+                var k = _sectionReviewKey(b.section);
+                if (!freshBySec[k]) {
+                    freshBySec[k] = [];
+                    freshOrder.push(b.section);
+                }
+                freshBySec[k].push(b);
+            });
+            var locked = [];
+            var seen = {};
+            prevOrder.forEach(function (sec) {
+                var k = _sectionReviewKey(sec);
+                seen[k] = true;
+                if (isSectionConfirmed(review, sec)) {
+                    (prevBySec[k] || []).forEach(function (row) { locked.push(row); });
+                    return;
+                }
+                (freshBySec[k] || []).forEach(function (row) { locked.push(row); });
+            });
+            freshOrder.forEach(function (sec) {
+                var k = _sectionReviewKey(sec);
+                if (seen[k]) return;
+                if (isSectionConfirmed(review, sec)) return;
+                (freshBySec[k] || []).forEach(function (row) { locked.push(row); });
+            });
+            normalizeAllItemBlanks(locked);
+            return locked;
+        }
+        if (txtWins && sectionKey) {
+            var kept = [];
+            prev.forEach(function (old) {
+                if (old && !inTargetSection(old)) kept.push(old);
+            });
+            fresh.forEach(function (b) {
+                if (b && inTargetSection(b)) kept.push(b);
+            });
+            normalizeAllItemBlanks(kept);
+            return kept;
+        }
         var freshByKey = {};
         fresh.forEach(function (b) { if (b && b.key) freshByKey[b.key] = b; });
         var used = {};
@@ -2099,6 +2247,10 @@ window.PdfExamPaper = (function () {
                 });
                 if (hit && hit.yPct != null) foundYPct[sec] = hit.yPct;
             });
+            var titleFound = {};
+            sectionOrder.forEach(function (sec) {
+                titleFound[sec] = foundPage[sec] != null;
+            });
             var lastKnown = 1;
             var starts = sectionOrder.map(function (sec) {
                 if (foundPage[sec] != null) { lastKnown = foundPage[sec]; return foundPage[sec]; }
@@ -2113,7 +2265,8 @@ window.PdfExamPaper = (function () {
                     section: sec,
                     startPage: start,
                     endPage: Math.min(end, numPages),
-                    startYPct: (yPct != null && isFinite(yPct)) ? yPct : 0
+                    startYPct: (yPct != null && isFinite(yPct)) ? yPct : 0,
+                    titleFound: !!titleFound[sec]
                 };
             });
         });
@@ -2208,22 +2361,187 @@ window.PdfExamPaper = (function () {
         return review;
     }
 
+    function parseUnconfirmedAnswersLabelHtml() {
+        return '解析<span style="color:#FDE68A">未確定</span>的答案';
+    }
+
+    var _sectionPageRangeCache = {};
+
+    function sectionPaperPreviewHtml(opts) {
+        opts = opts || {};
+        var sec = opts.section || '';
+        return (
+            '<div class="pdf-exam-section-paper" data-section="' + _escLocate(sec) + '">'
+            + '<div class="pdf-exam-section-paper-cap" style="font-size:0.76rem; font-weight:800; color:#0F766E; margin-bottom:6px;">題目 PDF</div>'
+            + '<div class="pdf-exam-section-paper-nav" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">'
+            + '<button type="button" class="btn pdf-exam-section-paper-prev" style="background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px; font-weight:800; cursor:pointer; height:auto; padding:2px 8px;">上一頁</button>'
+            + '<span class="pdf-exam-section-paper-num" style="font-size:0.76rem; font-weight:800; color:#334155;"></span>'
+            + '<button type="button" class="btn pdf-exam-section-paper-next" style="background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px; font-weight:800; cursor:pointer; height:auto; padding:2px 8px;">下一頁</button>'
+            + '</div>'
+            + '<div class="pdf-exam-section-paper-page">載入題目 PDF…</div>'
+            + '</div>'
+        );
+    }
+
+    function _rangesForPaper(pdfDoc, fileId, bank, hints) {
+        var key = String(fileId || '');
+        var sig = [];
+        var seen = {};
+        (bank || []).forEach(function (b) {
+            var s = b && b.section;
+            var k = _sectionReviewKey(s);
+            if (!k || seen[k]) return;
+            seen[k] = true;
+            sig.push(k);
+        });
+        sig = sig.join('\n');
+        var hit = _sectionPageRangeCache[key];
+        if (hit && hit.sig === sig) return Promise.resolve(hit.ranges);
+        return detectSectionPageRanges(pdfDoc, bank, hints).then(function (ranges) {
+            _sectionPageRangeCache[key] = { sig: sig, ranges: ranges };
+            return ranges;
+        });
+    }
+
+    function mountSectionPaperPreview(rootEl, opts) {
+        opts = opts || {};
+        var paper = rootEl && rootEl.querySelector('.pdf-exam-section-paper');
+        if (!paper) return;
+        var fileId = String(opts.pdfFileId || '').trim();
+        var section = opts.section || '';
+        var cap = paper.querySelector('.pdf-exam-section-paper-cap');
+        var pageHold = paper.querySelector('.pdf-exam-section-paper-page');
+        var numEl = paper.querySelector('.pdf-exam-section-paper-num');
+        var prevBtn = paper.querySelector('.pdf-exam-section-paper-prev');
+        var nextBtn = paper.querySelector('.pdf-exam-section-paper-next');
+        if (!fileId) {
+            if (cap) cap.textContent = '還沒有這份考卷 PDF，無法核對題目。';
+            if (pageHold) pageHold.textContent = '';
+            if (numEl) numEl.textContent = '';
+            return;
+        }
+        var gen = Number(paper.getAttribute('data-gen') || 0) + 1;
+        paper.setAttribute('data-gen', String(gen));
+        var state = { pdfDoc: null, page: 1, numPages: 1, titleFound: false, startYPct: 0 };
+
+        function paintPage() {
+            if (Number(paper.getAttribute('data-gen')) !== gen) return;
+            if (!state.pdfDoc) return;
+            var pageNum = state.page;
+            if (pageNum < 1) pageNum = 1;
+            if (pageNum > state.numPages) pageNum = state.numPages;
+            state.page = pageNum;
+            if (numEl) numEl.textContent = pageNum + ' / ' + state.numPages;
+            if (prevBtn) prevBtn.disabled = pageNum <= 1;
+            if (nextBtn) nextBtn.disabled = pageNum >= state.numPages;
+            if (pageHold) pageHold.textContent = '繪製第 ' + pageNum + ' 頁…';
+            state.pdfDoc.getPage(pageNum).then(function (page) {
+                if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                var viewport = page.getViewport({ scale: 1.2 });
+                var canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.width = '100%';
+                canvas.style.height = 'auto';
+                canvas.style.display = 'block';
+                return page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise.then(function () {
+                    if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                    pageHold.innerHTML = '';
+                    pageHold.appendChild(canvas);
+                    if (state.titleFound && state.startYPct > 0) {
+                        paper.scrollTop = Math.round((state.startYPct / 100) * canvas.getBoundingClientRect().height);
+                    }
+                });
+            }).catch(function (err) {
+                if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                if (pageHold) pageHold.textContent = '這一頁畫不出來：' + (err.message || err);
+            });
+        }
+
+        if (!paper._paperNavBound) {
+            paper._paperNavBound = true;
+            if (prevBtn) prevBtn.addEventListener('click', function () {
+                var st = paper._paperState;
+                if (!st || st.page <= 1) return;
+                st.page -= 1;
+                if (typeof paper._paperPaint === 'function') paper._paperPaint();
+            });
+            if (nextBtn) nextBtn.addEventListener('click', function () {
+                var st = paper._paperState;
+                if (!st || st.page >= st.numPages) return;
+                st.page += 1;
+                if (typeof paper._paperPaint === 'function') paper._paperPaint();
+            });
+        }
+        paper._paperPaint = paintPage;
+        paper._paperState = state;
+
+        loadPdfDocumentFromDrive(fileId).then(function (pdfDoc) {
+            if (Number(paper.getAttribute('data-gen')) !== gen) return;
+            state.pdfDoc = pdfDoc;
+            state.numPages = pdfDoc.numPages || 1;
+            return _rangesForPaper(pdfDoc, fileId, opts.bank || [], opts.sectionPageHints).then(function (ranges) {
+                if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                var hit = (ranges || []).filter(function (r) {
+                    return _sectionReviewKey(r && r.section) === _sectionReviewKey(section);
+                })[0];
+                if (hit && hit.titleFound) {
+                    state.titleFound = true;
+                    state.page = hit.startPage || 1;
+                    state.startYPct = hit.startYPct || 0;
+                    if (cap) {
+                        cap.style.color = '#0F766E';
+                        cap.textContent = '題目 PDF　「' + section + '」掃到第 ' + state.page + ' 頁。請對著題目核對答案。';
+                    }
+                } else {
+                    state.titleFound = false;
+                    state.page = 1;
+                    state.startYPct = 0;
+                    if (cap) {
+                        cap.style.color = '#B91C1C';
+                        cap.textContent = '題目沒掃到「' + section + '」這一組標題。請翻頁看題目，不要盲改答案。';
+                    }
+                }
+                paintPage();
+            });
+        }).catch(function (err) {
+            if (Number(paper.getAttribute('data-gen')) !== gen) return;
+            if (cap) {
+                cap.style.color = '#B91C1C';
+                cap.textContent = '題目 PDF 載入失敗：' + (err.message || err);
+            }
+            if (pageHold) pageHold.textContent = '';
+        });
+    }
+
     function sectionConfirmButtonHtml(section, review, opts) {
         opts = opts || {};
         var on = isSectionConfirmed(review, section);
         var cls = opts.btnClass || 'pdf-exam-confirm-section';
+        var confirmHtml;
         if (on) {
-            return '<span class="pdf-exam-confirmed-label" data-section="' + _escLocate(section)
+            confirmHtml = '<span class="pdf-exam-confirmed-label" data-section="' + _escLocate(section)
                 + '" style="margin-left:8px; padding:2px 8px; font-size:0.72rem; font-weight:800; display:inline-block; background:#CCFBF1; color:#0F766E; border:1px solid #5EEAD4; border-radius:6px;">已確認</span>';
+        } else {
+            var clickAttr = '';
+            if (opts.pathStr) {
+                clickAttr = ' onclick="window.FeaturePdfExamJob.confirmSection(\'' + _escLocate(opts.pathStr) + '\', this.getAttribute(\'data-section\'))"';
+            }
+            var label = opts.confirmLabel || '確認並儲存';
+            confirmHtml = '<button type="button" class="' + cls + ' btn" data-section="' + _escLocate(section) + '"' + clickAttr
+                + ' style="margin-left:8px; padding:2px 8px; font-size:0.72rem; font-weight:800; cursor:pointer; height:auto; background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px;">'
+                + _escLocate(label) + '</button>';
         }
-        var clickAttr = '';
+        if (!opts.reparseClass) return confirmHtml;
+        var reparseClick = '';
         if (opts.pathStr) {
-            clickAttr = ' onclick="window.FeaturePdfExamJob.confirmSection(\'' + _escLocate(opts.pathStr) + '\', this.getAttribute(\'data-section\'))"';
+            reparseClick = ' onclick="window.FeaturePdfExamJob.reparseSection(\'' + _escLocate(opts.pathStr) + '\', this.getAttribute(\'data-section\'))"';
         }
-        var label = opts.confirmLabel || '確認並儲存';
-        return '<button type="button" class="' + cls + ' btn" data-section="' + _escLocate(section) + '"' + clickAttr
-            + ' style="margin-left:8px; padding:2px 8px; font-size:0.72rem; font-weight:800; cursor:pointer; height:auto; background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px;">'
-            + _escLocate(label) + '</button>';
+        var reparseLabel = opts.reparseLabel || '重新解析';
+        var reparseHtml = '<button type="button" class="' + opts.reparseClass + ' btn" data-section="' + _escLocate(section) + '"' + reparseClick
+            + ' style="margin-left:8px; padding:2px 8px; font-size:0.72rem; font-weight:800; cursor:pointer; height:auto; background:#FFFFFF; color:#B45309; border:1px solid #F59E0B; border-radius:6px;">'
+            + _escLocate(reparseLabel) + '</button>';
+        return confirmHtml + reparseHtml;
     }
 
     function _isBankScroller(el) {
@@ -2604,6 +2922,7 @@ window.PdfExamPaper = (function () {
         autoAssignBoxesInOrder: autoAssignBoxesInOrder,
         detectSectionPageRanges: detectSectionPageRanges,
         parseAnswerText: parseAnswerText,
+        sliceAnswerTextForSection: sliceAnswerTextForSection,
         repairStaleCommaSplits: repairStaleCommaSplits,
         makeKey: makeKey,
         itemLabel: itemLabel,
@@ -2617,6 +2936,9 @@ window.PdfExamPaper = (function () {
         sectionOverrideKey: sectionOverrideKey,
         teacherBoxesForSection: teacherBoxesForSection,
         setSectionTeacherLocate: setSectionTeacherLocate,
+        parseUnconfirmedAnswersLabelHtml: parseUnconfirmedAnswersLabelHtml,
+        sectionPaperPreviewHtml: sectionPaperPreviewHtml,
+        mountSectionPaperPreview: mountSectionPaperPreview,
         isSectionConfirmed: isSectionConfirmed,
         setSectionConfirmed: setSectionConfirmed,
         sectionConfirmButtonHtml: sectionConfirmButtonHtml,

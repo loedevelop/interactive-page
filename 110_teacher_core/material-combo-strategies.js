@@ -137,10 +137,24 @@ window.MaterialComboStrategies = (function () {
         return packModeOf(combo) === 'sheet';
     }
 
-    /** 出作業範圍表：已選套餐走該模組；手動輸入／尚未選＝Excel/JSON 那張表。 */
+    /** 這份 id 是哪個模組的套餐。有這把鑰匙才認，不准對不到就改套 Excel 表。 */
+    function strategyOwningId(comboId) {
+        var want = String(comboId || '').trim();
+        if (!want || want === '__manual__') return null;
+        var list = byOrder();
+        var i;
+        for (i = 0; i < list.length; i++) {
+            if (typeof list[i].ownsComboId === 'function' && list[i].ownsComboId(want)) return list[i];
+        }
+        return null;
+    }
+
+    /** 出作業範圍表：已選套餐走該模組；手動輸入＝目錄表；尚未選＝Excel/JSON 那張表。 */
     function strategyForPack(combo, comboId) {
-        if (String(comboId || '') === '__manual__') return forKind('sheet');
+        if (String(comboId || '') === '__manual__') return forKind('book');
         var s = forCombo(combo);
+        if (s) return s;
+        s = strategyOwningId(comboId);
         if (s) return s;
         return forKind('sheet');
     }
@@ -163,12 +177,19 @@ window.MaterialComboStrategies = (function () {
     }
 
     function nextSectionRow(combo, last, helpers) {
-        var s = strategyForPack(combo, last && last.combo_id);
+        var comboId = (combo && (combo.id || combo.combo_id)) || (last && last.combo_id);
+        var s = strategyForPack(combo, comboId);
         if ((!combo || !s || s.kind === 'sheet') && last) {
             var book = forKind('book');
-            if (book && typeof book.rowLooksLike === 'function' && book.rowLooksLike(last)) s = book;
+            if (book && (
+                (typeof book.ownsComboId === 'function' && book.ownsComboId(last.combo_id))
+                || (typeof book.rowLooksLike === 'function' && book.rowLooksLike(last))
+            )) s = book;
             var pdf = forKind('pdf');
-            if (pdf && typeof pdf.rowLooksLike === 'function' && pdf.rowLooksLike(last)) s = pdf;
+            if (pdf && (
+                (typeof pdf.ownsComboId === 'function' && pdf.ownsComboId(last.combo_id))
+                || (typeof pdf.rowLooksLike === 'function' && pdf.rowLooksLike(last))
+            )) s = pdf;
         }
         if (s && typeof s.nextSectionRow === 'function') return s.nextSectionRow(combo, last, helpers);
         return null;

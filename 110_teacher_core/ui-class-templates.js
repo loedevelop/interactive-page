@@ -72,8 +72,8 @@ window.ClassTemplates = (() => {
                 </label>
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #FEE2E2; padding-top: 20px;">
-                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="window.FeatureClass.closeArchiveConfirm()">取消</button>
-                    <button id="btn-confirm-archive-${cls.id}" class="btn-danger" style="background:#EF4444; color:white; padding:8px 20px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="window.FeatureClass.executeDelete('${cls.id}')">✔️ 確認封存「${safeName}」</button>
+                    <button type="button" class="btn" onclick="window.FeatureClass.closeArchiveConfirm()">取消</button>
+                    <button type="button" id="btn-confirm-archive-${cls.id}" class="btn btn-danger" onclick="window.FeatureClass.executeDelete('${cls.id}')">確認封存「${safeName}」</button>
                 </div>
             </div>
         `;
@@ -256,8 +256,8 @@ window.ClassTemplates = (() => {
                 ${getReviewZoneSettingsHtml(cls, reviewZone)}
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #E2E8F0; padding-top: 20px;">
-                    <button class="btn" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;" onclick="window.FeatureClass.closeClassSettings()">取消</button>
-                    <button id="btn-save-class-settings" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;" onclick="window.FeatureClass.saveClassSettings('${cls.id}')">💾 儲存變更</button>
+                    <button type="button" class="btn" onclick="window.FeatureClass.closeClassSettings()">取消</button>
+                    <button type="button" id="btn-save-class-settings" class="btn btn-primary" onclick="window.FeatureClass.saveClassSettings('${cls.id}')">儲存變更</button>
                 </div>
             </div>
         `;
@@ -291,8 +291,8 @@ window.ClassTemplates = (() => {
                 </div>
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button class="btn" id="btn-cancel-safe" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                    <button id="btn-confirm-safe" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 確認並儲存</button>
+                    <button type="button" class="btn" id="btn-cancel-safe">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-safe">確認並儲存</button>
                 </div>
             </div>
         `;
@@ -342,8 +342,8 @@ window.ClassTemplates = (() => {
                 </div>
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button class="btn" id="btn-cancel-orphan" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                    <button id="btn-confirm-orphan" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold;">💾 執行修復並儲存</button>
+                    <button type="button" class="btn" id="btn-cancel-orphan">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-orphan">執行修復並儲存</button>
                 </div>
             </div>
         `;
@@ -379,8 +379,8 @@ window.ClassTemplates = (() => {
                 </div>
 
                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button class="btn" id="btn-cancel-unpack" style="background: #F1F5F9; color: #475569; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">取消</button>
-                    <button id="btn-confirm-unpack" class="btn btn-primary" style="padding: 8px 20px; font-weight: bold; background: #8B5CF6; border: none;">✨ 執行對齊並儲存</button>
+                    <button type="button" class="btn" id="btn-cancel-unpack">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-unpack">執行對齊並儲存</button>
                 </div>
             </div>
         `;

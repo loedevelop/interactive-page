@@ -1106,8 +1106,7 @@ window.FeatureClassMaterialCombinations = (function () {
 
     // 【死命註解｜永遠禁止刪除｜2026-08-27 老師命令綁死】
     // 開口仍是這一個函式。三種套餐同層：Excel/JSON／PDF／目錄都走 MaterialComboStrategies。
-    // 使用＝同一清單。Excel／JSON 只讀這個班的 statistics：fetch_class_combo_stats。文字＝combo_label。
-    // PDF／目錄走獨立表，不准寫進 combo_statistics。
+    // 使用＝同一清單。Excel／JSON 讀這個班的 statistics（kind=sheet）。PDF／目錄也進 combo_statistics，但畫卡／出作業 Excel 開口仍只認 sheet，避免當成活頁套餐。
     // 就緒閘門＝這個班 Excel 統計已到 且 三種策略都載完。不准 Excel 先到就當整份清單完成，也不准只等其中一種。
     function listAssignedSheetCombosForHomework(classId) {
         ensureComboStatsLoading(classId);
@@ -2059,6 +2058,22 @@ window.FeatureClassMaterialCombinations = (function () {
             return window.MaterialComboStrategies.folderNames() || [];
         }
         return [];
+    }
+
+    /** 教材區已出現過的夾名（含 Excel 統計）。給目錄／PDF 產生區塊選夾，不准只認 Drive 老師個人清單。 */
+    function zoneFolderNames() {
+        const seen = {};
+        const out = [];
+        function add(name) {
+            const n = String(name || '').trim();
+            const u = n.toUpperCase();
+            if (!n || seen[u]) return;
+            seen[u] = true;
+            out.push(n);
+        }
+        (_materialZoneRowsCache || []).forEach(function (r) { add(r && r.folderName); });
+        (_teacherComboStatsRows || []).forEach(function (r) { add(r && r.folder_name); });
+        return out;
     }
 
     function assembleMaterialZoneRows(statRows, driveFolders) {
@@ -4509,6 +4524,11 @@ window.FeatureClassMaterialCombinations = (function () {
         return Object.keys(statsClassAssignments(row));
     }
 
+    function isSheetStatisticsRow(row) {
+        var k = String((row && row.kind) || 'sheet').toLowerCase();
+        return k === 'sheet';
+    }
+
     /** 教材區／官方配對只讀 combo_statistics。不准再 join 來源表。 */
     async function loadTeacherComboStatistics(force) {
         if (!force && _teacherComboStatsRows) return _teacherComboStatsRows;
@@ -4826,7 +4846,7 @@ window.FeatureClassMaterialCombinations = (function () {
 
     /** 教材區卡只從 combo_statistics 組。有勾群組 → 結合顯示成一顆。 */
     function buildMaterialZoneRowsFromStats(statRows) {
-        const grouped = bucketStatsByGroupDisplay(statRows);
+        const grouped = bucketStatsByGroupDisplay((statRows || []).filter(isSheetStatisticsRow));
         const rows = [];
         grouped.order.forEach(function (key) {
             const list = grouped.byKey[key] || [];
@@ -4885,7 +4905,7 @@ window.FeatureClassMaterialCombinations = (function () {
         allClasses().forEach(function (cls) {
             byClass[String(cls.id)] = { cls: cls, materials: [] };
         });
-        (statRows || []).forEach(function (row) {
+        (statRows || []).filter(isSheetStatisticsRow).forEach(function (row) {
             const folderName = String((row && row.folder_name) || '').trim();
             const folderKey = folderKeyOf(folderName);
             const stem = String((row && row.sheet_stem) || '').trim();
@@ -4991,7 +5011,7 @@ window.FeatureClassMaterialCombinations = (function () {
     // 有勾群組 → 跟教材區同一顆（資料夾＋擷取＋來源）。文字＝那顆 combo_label。
     // A／B／C 不准當套餐列出來。
     function applyHomeworkCombosFromStats(classId, rows) {
-        const grouped = bucketStatsByGroupDisplay(rows);
+        const grouped = bucketStatsByGroupDisplay((rows || []).filter(isSheetStatisticsRow));
         const byCombo = {};
         grouped.order.forEach(function (key) {
             const list = grouped.byKey[key] || [];
@@ -5543,6 +5563,7 @@ window.FeatureClassMaterialCombinations = (function () {
             ensureLoaded: function () { return Promise.resolve(); },
             listAssignedForHomework: listAssignedSheetCombosForHomework,
             getAssignedById: getAssignedSheetById,
+            folderNames: zoneFolderNames,
             renderFolderHtml: function (_folderName, ctx) {
                 return ((ctx && ctx.zoneRows) || []).map(renderMaterialZoneChildHtml).join('');
             },
@@ -5610,6 +5631,7 @@ window.FeatureClassMaterialCombinations = (function () {
         renderTemplateUsageHtml: renderTemplateUsageHtml,
         bindUsageSheetToggles: bindUsageSheetToggles,
         listMaterialZoneRows: listMaterialZoneRows,
+        zoneFolderNames: zoneFolderNames,
         updateMaterialZoneLabel: updateMaterialZoneLabel,
         renderMaterialZone: renderMaterialZone,
         prefetchForClass: prefetchForClass,

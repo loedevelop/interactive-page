@@ -40,11 +40,14 @@ window.TimelineTemplates = (() => {
             || type === 'exam' || type === 'pdf_exam' || type === 'drive';
     }
 
-    /** 組合層底下：小標題只讀上方 pack。不是組合層＝空。 */
-    function comboPackTitleForPath(pathStr) {
+    /** 組合層底下：小標題只讀上方 pack。不是組合層＝空。目錄錄音＝套餐名。 */
+    function comboPackTitleForPath(pathStr, nodeType) {
         const FT = window.FeatureTimeline;
         if (!FT || typeof FT.parentRangeGroupPathOf !== 'function') return '';
         if (!FT.parentRangeGroupPathOf(pathStr)) return '';
+        if (nodeType === 'audio_record' && typeof FT.packTitleForAudio === 'function') {
+            return FT.packTitleForAudio(pathStr) || '';
+        }
         if (typeof FT.packRangeLabelForAudio !== 'function') return '';
         return FT.packRangeLabelForAudio(pathStr) || '';
     }
@@ -259,8 +262,7 @@ window.TimelineTemplates = (() => {
             + '</div>';
     }
 
-    function packComboDeleteBtn(onclickAttr, canDelete) {
-        if (!canDelete) return '';
+    function packComboDeleteBtn(onclickAttr) {
         return '<button type="button" class="btn range-pack-combo-del" title="刪這份套餐"'
             + ' style="width:36px; height:36px; padding:0; border:none; border-radius:10px; background:#FECACA; color:#B91C1C; font-size:22px; font-weight:800; line-height:36px; cursor:pointer;"'
             + ' onclick="' + onclickAttr + '">×</button>';
@@ -348,8 +350,11 @@ window.TimelineTemplates = (() => {
         };
     }
 
-    /** Excel/JSON 套餐自己的範圍表（含手動輸入）。由 sheet 策略呼叫，出作業宿主不准再 if 三種套餐。 */
+    /** Excel/JSON 套餐自己的範圍表。手動輸入＝目錄表，不准再走這張。 */
     function renderSheetPackTableHtml(ctx) {
+        if (ctx && ctx.isManual && window.FeatureMaterialBook && typeof window.FeatureMaterialBook.renderPackTableHtml === 'function') {
+            return window.FeatureMaterialBook.renderPackTableHtml(ctx);
+        }
         const packUi = (ctx && ctx.packUi) || rangePackUi();
         const pathStr = (ctx && ctx.pathStr) || '';
         const rows = (ctx && ctx.block && ctx.block.rows) || [];
@@ -540,8 +545,7 @@ window.TimelineTemplates = (() => {
             }
             const comboOpts = renderPackComboOptions(combos, block.combo_id, block.combo_label, cacheReady);
             const delBlock = packComboDeleteBtn(
-                'window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')',
-                blocks.length > 1
+                'window.FeatureTimeline && window.FeatureTimeline.removeRangePackCombo && window.FeatureTimeline.removeRangePackCombo(\'' + pathStr + '\', ' + bi + ')'
             );
             const comboOrder = packComboOrderControls(pathStr, bi, blocks.length);
             const isManual = String(block.combo_id) === '__manual__';
@@ -720,6 +724,7 @@ window.TimelineTemplates = (() => {
                 }
                 .range-pack-panel { max-width: 100%; }
                 .exam-seg-table, .range-pack-table { margin-top:8px; overflow-x:auto; width:100%; max-width:100% !important; }
+                .range-pack-table:has(.range-pack-row--book) { overflow: visible; }
                 .range-pack-table-inner { width:100%; min-width:0; max-width:100% !important; }
                 .timeline-node .range-pack-table-inner { max-width:100% !important; }
                 .exam-seg-head, .exam-inline-row {
@@ -741,8 +746,11 @@ window.TimelineTemplates = (() => {
                 .range-pack-head--book, .range-pack-row--book {
                     grid-template-columns: 28px minmax(88px, 1.1fr) minmax(64px, 0.7fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 1.2fr) 36px;
                 }
+                .range-pack-head--book-manual, .range-pack-row--book-manual {
+                    grid-template-columns: 28px minmax(88px, 1fr) minmax(88px, 1.1fr) minmax(64px, 0.7fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 1.2fr) 36px;
+                }
                 .range-pack-row--book { align-items:start; }
-                .range-pack-book-combo { display:flex; flex-direction:column; gap:4px; min-width:0; }
+                .range-pack-book-combo { display:flex; flex-direction:column; gap:4px; min-width:0; overflow:visible; }
                 .range-pack-book-pick {
                     width:100%;
                     min-height:36px;
@@ -750,6 +758,8 @@ window.TimelineTemplates = (() => {
                     -webkit-appearance: menulist;
                     background-color:#FFFFFF;
                     padding-right:22px;
+                    position:relative;
+                    z-index:2;
                 }
                 .range-pack-book-manual { width:100%; }
                 .range-pack-book-script {
@@ -924,7 +934,198 @@ window.TimelineTemplates = (() => {
         };
     }
 
-    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt) {
+    function groupIsRangePack(group) {
+        if (!group || group.type !== 'group' || !group.raw_data) return false;
+        if (group.raw_data.group_role === 'range') return true;
+        if (String(group.raw_data.pack_combo_id || '').trim()) return true;
+        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
+        return rows.some(function (r) {
+            return !!(String((r && (r.combo_id || r.comboId)) || '').trim()
+                || String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+                || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+                || String((r && r.page) || '').trim()
+                || String((r && (r.meta_file || r.metaFile)) || '').trim());
+        });
+    }
+
+    /**
+     * 目錄小標題曾被 combinePackRangeLabel 寫成
+     * 「Azar-1-4th 13 / 8 / … ; Azar-1-4th 13 / 3 / …」。套餐名就是每段開頭重複的那串。
+     */
+    function comboNameFromBookConcatTitle(text) {
+        const s = String(text || '').replace(/<[^>]*>/g, '').trim();
+        if (!s) return '';
+        const segs = s.split(/\s*[;；]\s*/).filter(Boolean);
+        if (!segs.length) return '';
+        const m = segs[0].match(/^(.+?)\s+\d+\s*\/\s*/);
+        if (!m) return '';
+        const name = String(m[1] || '').trim();
+        if (!name) return '';
+        const ok = segs.every(function (seg) {
+            return seg === name || seg.indexOf(name + ' ') === 0;
+        });
+        return ok ? name : '';
+    }
+
+    function packComboNamesFromGroup(group) {
+        if (!group || !group.raw_data) return '';
+        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
+        const names = [];
+        const seen = {};
+        rows.forEach(function (r) {
+            const lab = String((r && (r.combo_label || r.comboLabel)) || '').trim();
+            const k = lab.toUpperCase();
+            if (!lab || seen[k]) return;
+            seen[k] = true;
+            names.push(lab);
+        });
+        return names.join('；') || String(group.raw_data.pack_combo_label || '').trim();
+    }
+
+    function rangeGroupTitleIsComboNameLocal(group) {
+        const names = packComboNamesFromGroup(group);
+        if (!names) return false;
+        const title = String((group && group.title) || '').replace(/<[^>]*>/g, '').trim();
+        if (!title) return true;
+        const norm = function (s) {
+            return String(s || '').replace(/[／;；]/g, '|').replace(/\s+/g, '').toUpperCase();
+        };
+        return norm(title) === norm(names);
+    }
+
+    function stripLeadingComboNames(title, namesStr) {
+        let t = String(title || '').replace(/<[^>]*>/g, '').trim();
+        const names = String(namesStr || '').split(/[；;／]/).map(function (n) { return n.trim(); }).filter(Boolean);
+        names.sort(function (a, b) { return b.length - a.length; });
+        names.forEach(function (n) {
+            if (!n || !t) return;
+            if (t.toUpperCase() === n.toUpperCase()) {
+                t = '';
+                return;
+            }
+            const re = new RegExp('(^|[；;]\\s*)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+', 'gi');
+            t = t.replace(re, '$1');
+        });
+        return t.replace(/^[；;]\s*/, '').replace(/\s+/g, ' ').trim();
+    }
+
+    function rangeTailFromTitle(title) {
+        const s = String(title || '').replace(/<[^>]*>/g, '').trim();
+        const idx = s.search(/\bpp\.\s|\bp\.\s|#/i);
+        if (idx < 0) return '';
+        return s.slice(idx).trim();
+    }
+
+    function listTitleForPackChild(t, parentRangeGroup) {
+        const title = String((t && t.title) || '').replace(/<[^>]*>/g, '').trim();
+        if (t && t.type === 'audio_record' && bookComboNameFromRangeGroup(packHostForBookAudio(t, parentRangeGroup))) {
+            return listTitleForBookAudio(t, parentRangeGroup);
+        }
+        if (!rangeGroupTitleIsComboNameLocal(parentRangeGroup)) return title;
+        const raw = (t && t.raw_data) || {};
+        const dump = !!(window.FeatureTimeline
+            && typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
+            && window.FeatureTimeline.titleLooksLikeSheetAliasDump(title));
+        if (dump) {
+            const bits = String(title || '').match(/\b(?:pp?\.\s[^;；]+|#\S+)/gi) || [];
+            const seen = {};
+            const uniq = [];
+            bits.forEach(function (b) {
+                const k = String(b || '').replace(/\s+/g, ' ').trim();
+                if (!k || seen[k]) return;
+                seen[k] = true;
+                uniq.push(k);
+            });
+            if (uniq.length) return uniq.join('；');
+        }
+        const tail = rangeTailFromTitle(title);
+        if (raw.title_auto_from_range === false && title && !tail && !dump) return title;
+        if (tail) return tail;
+        return stripLeadingComboNames(title, packComboNamesFromGroup(parentRangeGroup));
+    }
+
+    function packHostForBookAudio(task, parentRangeGroup) {
+        if (groupIsRangePack(parentRangeGroup)) return parentRangeGroup;
+        if (parentRangeGroup && parentRangeGroup.raw_data && Array.isArray(parentRangeGroup.raw_data.pack_rows)
+            && parentRangeGroup.raw_data.pack_rows.length) {
+            return parentRangeGroup;
+        }
+        if (task && task.raw_data && Array.isArray(task.raw_data.pack_rows) && task.raw_data.pack_rows.length) {
+            return task;
+        }
+        return parentRangeGroup || null;
+    }
+
+    function bookComboNameFromRangeGroup(group) {
+        if (!group || !group.raw_data) return '';
+        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
+        const cid = String(group.raw_data.pack_combo_id || (rows[0] && (rows[0].combo_id || rows[0].comboId)) || '').trim();
+        const Book = window.FeatureMaterialBook;
+        const fromBookTable = !!(Book && typeof Book.getCombo === 'function' && cid && Book.getCombo(cid));
+        const looksBook = rows.some(function (r) {
+            return !!(String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+                || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+                || String((r && (r.heading || r.range_heading)) || '').trim()
+                || String((r && r.major) || '').trim()
+                || String((r && r.page) || '').trim());
+        });
+        if (!fromBookTable && !looksBook) return '';
+        const fromCombo = (fromBookTable && Book.getCombo(cid))
+            ? String(Book.getCombo(cid).label || Book.getCombo(cid).combo_label || Book.getCombo(cid).name || '').trim()
+            : '';
+        return String(group.raw_data.pack_combo_label
+            || (rows[0] && (rows[0].combo_label || rows[0].comboLabel))
+            || fromCombo
+            || '').trim();
+    }
+
+    function listTitleForBookAudio(t, parentRangeGroup) {
+        const raw = (t && t.raw_data) || {};
+        const title = String((t && t.title) || '').replace(/<[^>]*>/g, '').trim();
+        const range = String(raw.material_range || '').trim();
+        const host = packHostForBookAudio(t, parentRangeGroup);
+        let bookName = bookComboNameFromRangeGroup(host);
+        if (!bookName) bookName = comboNameFromBookConcatTitle(range) || comboNameFromBookConcatTitle(title);
+        if (!bookName) return String((t && t.title) || '');
+        if (raw.title_auto_from_range === false && title && title !== range && title !== bookName
+            && title.indexOf(bookName + ' ') !== 0) {
+            return title;
+        }
+        if (rangeGroupTitleIsComboNameLocal(parentRangeGroup)) return '';
+        return bookName;
+    }
+
+    function listDescForPackChild(t, parentRangeGroup) {
+        const raw = (t && t.raw_data) || {};
+        const host = packHostForBookAudio(t, parentRangeGroup);
+        const rows = (host && host.raw_data && Array.isArray(host.raw_data.pack_rows))
+            ? host.raw_data.pack_rows
+            : [];
+        const FT = window.FeatureTimeline;
+        const generated = (FT && typeof FT.packRangeDescriptionHtml === 'function')
+            ? FT.packRangeDescriptionHtml(rows)
+            : ((FT && typeof FT.bookPackDescriptionHtml === 'function')
+                ? FT.bookPackDescriptionHtml(rows)
+                : '');
+        const generatedPlain = (FT && typeof FT.packRangeDescriptionPlain === 'function')
+            ? FT.packRangeDescriptionPlain(rows)
+            : ((FT && typeof FT.bookPackDescriptionPlain === 'function')
+                ? FT.bookPackDescriptionPlain(rows)
+                : '');
+        if (raw.desc_auto_from_range === false && t && t.description) return t.description;
+        const current = String((t && t.description) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
+        if (generated && (raw.desc_auto_from_range === true || !current || current === genNorm)) {
+            return generated;
+        }
+        return (t && t.description) || '';
+    }
+
+    function listDescForBookAudio(t, parentRangeGroup) {
+        return listDescForPackChild(t, parentRangeGroup);
+    }
+
+    function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt, parentRangeGroup) {
         let iconStr = window.TaskScriptResolver
             ? window.TaskScriptResolver.getTaskTypeIcon(t.type)
             : (t.type === 'check' ? '📌'
@@ -975,7 +1176,10 @@ window.TimelineTemplates = (() => {
 
         if (t.type === 'link') {
             let actualUrlText = (t.url_text || '').trim();
-            let actualTitle = (t.title || '').trim();
+            let actualTitle = listTitleForPackChild(t, parentRangeGroup);
+            if (!actualTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) {
+                actualTitle = (t.title || '').trim();
+            }
 
             if (actualUrlText !== '') {
                 taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${actualTitle || '未命名任務'}</span>`;
@@ -989,11 +1193,20 @@ window.TimelineTemplates = (() => {
                 }
             }
         } else {
-            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${t.title || '未命名任務'}</span>`;
+            const omitParent = rangeGroupTitleIsComboNameLocal(parentRangeGroup);
+            const shownTitle = listTitleForPackChild(t, parentRangeGroup)
+                || (omitParent ? '' : (t.title || '未命名任務'));
+            taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${shownTitle || (omitParent ? '' : '未命名任務')}</span>`;
         }
 
-        let cleanTaskDesc = t.description ? t.description.replace(/<[^>]*>?/gm, '').trim() : '';
-        let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${t.description}</div>` : '';
+        let cleanTaskDesc = '';
+        let descHtml = t.description || '';
+        if (t.type === 'audio_record' || t.type === 'exam' || t.type === 'pdf_exam') {
+            const autoDesc = listDescForPackChild(t, parentRangeGroup);
+            if (autoDesc) descHtml = autoDesc;
+        }
+        cleanTaskDesc = descHtml ? String(descHtml).replace(/<[^>]*>?/gm, '').trim() : '';
+        let taskDescHtml = cleanTaskDesc !== '' ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px; white-space:pre-line;">${descHtml}</div>` : '';
         
         let showTaskDue = t.due_date && t.due_date !== effectiveBlockDueDate;
         let dueBadge = showTaskDue ? `<span style="font-size:0.9rem; color:#64748B; margin-left:8px; font-weight:bold;">⏰ 期限: ${stampLabel(t.due_date)}</span>` : '';
@@ -1022,7 +1235,7 @@ window.TimelineTemplates = (() => {
         `;
     }
 
-    function renderReadOnlyTree(tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, depth = 0, effectiveBlockOpenAt) {
+    function renderReadOnlyTree(tasks, effectiveBlockDueDate, effectiveBlockLatePolicy, depth = 0, effectiveBlockOpenAt, parentRangeGroup) {
         if (!tasks || tasks.length === 0) return '';
         let html = '';
         tasks.forEach((t, idx) => {
@@ -1043,7 +1256,7 @@ window.TimelineTemplates = (() => {
                 let gOpenBadge = (t.open_at && t.open_at !== effectiveBlockOpenAt) ? `<span style="font-size:0.9rem; color:#0369A1; margin-left:8px; font-weight:bold;">開放: ${stampLabel(t.open_at)}</span>` : '';
 
                 const marginStyle = depth > 0 ? 'margin-top:5px;' : 'margin-top:10px;';
-                const isRangeGroup = !!(t.raw_data && t.raw_data.group_role === 'range');
+                const isRangeGroup = groupIsRangePack(t);
                 let groupTitleText = t.title || '';
                 if (isRangeGroup && !String(groupTitleText).replace(/<[^>]*>?/gm, '').trim()
                     && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
@@ -1065,14 +1278,14 @@ window.TimelineTemplates = (() => {
                 
                 if (t.subTasks && t.subTasks.length > 0) {
                     html += `<div style="display:flex; flex-direction:column;">`;
-                    html += renderReadOnlyTree(t.subTasks, groupDueDate, groupPolicy, depth + 1, groupOpenAt);
+                    html += renderReadOnlyTree(t.subTasks, groupDueDate, groupPolicy, depth + 1, groupOpenAt, isRangeGroup ? t : parentRangeGroup);
                     html += `</div>`;
                 } else {
                     html += `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top: 5px;">(此群組作業尚無內容)</div>`;
                 }
                 html += `</div>`;
             } else {
-                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt);
+                html += renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt, parentRangeGroup);
             }
         });
         return html;
@@ -1166,7 +1379,7 @@ window.TimelineTemplates = (() => {
             const arrowHtml = getArrowButtonsHtml(pathStr, idx, tasks.length, depth, hasPrevSiblingGroup);
 
             if (t.type === 'group') {
-                const isRangeGroup = !!(t.raw_data && t.raw_data.group_role === 'range');
+                const isRangeGroup = groupIsRangePack(t);
                 let displayGroupTitle = t.title || '';
                 // 💣 雷區：不能只看「標題目前是否為空」──自動填過一次存檔後 t.title 就非空了，
                 // 之後老師怎麼改 base 範圍都不會再更新（見 title_auto_from_range 說明）。
@@ -1362,14 +1575,35 @@ window.TimelineTemplates = (() => {
                     if (!resolvedMaterialRange && window.FeatureTimeline && typeof window.FeatureTimeline.buildMaterialRangeLabelFromRows === 'function') {
                         resolvedMaterialRange = window.FeatureTimeline.buildMaterialRangeLabelFromRows(materialRefs) || '';
                     }
-                    const titleFromRange = String(resolvedMaterialRange || '').trim();
+                    const concatName = comboNameFromBookConcatTitle(plainTaskTitle)
+                        || comboNameFromBookConcatTitle(raw.material_range);
+                    const omitComboTitle = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.childTitleOmitsComboName === 'function'
+                        && window.FeatureTimeline.childTitleOmitsComboName(pathStr));
+                    let titleFromRange = (window.FeatureTimeline && typeof window.FeatureTimeline.packTitleForAudio === 'function')
+                        ? String(window.FeatureTimeline.packTitleForAudio(pathStr) || '').trim()
+                        : '';
+                    if (!omitComboTitle) {
+                        if (!titleFromRange) titleFromRange = concatName;
+                        if (!titleFromRange) titleFromRange = String(resolvedMaterialRange || '').trim();
+                    }
                     // 💣 雷區：不能只靠「標題目前是否為空」判斷是否自動繼承──自動填過一次存檔後
                     // t.title 就非空了，之後老師怎麼改 base 範圍，標題都會卡死在第一次算出來的值
                     // （例："Unit 10"，不管之後範圍換成哪一冊都不會再更新）。改用獨立存檔的旗標
                     // raw_data.title_auto_from_range 判斷，只要旗標仍是 true 就繼續追蹤最新範圍，
                     // 直到老師真的手動打過字（onNodeTitleInput 會把旗標關掉）才凍結。
+                    // 目錄舊標題＝套餐名＋範圍長字串，那也是自動算出來的，不准當成老師手打。
                     const wasAudioTitleAuto = raw.title_auto_from_range === true;
-                    audioTitleIsAuto = (wasAudioTitleAuto || !plainTaskTitle) && !!titleFromRange;
+                    const looksBookConcat = !!concatName
+                        || (!!plainTaskTitle && plainTaskTitle === String(raw.material_range || '').trim() && !!comboNameFromBookConcatTitle(plainTaskTitle));
+                    const looksOldFullChild = omitComboTitle && titleFromRange && plainTaskTitle
+                        && (plainTaskTitle === titleFromRange
+                            || plainTaskTitle.slice(-(titleFromRange.length + 1)) === (' ' + titleFromRange));
+                    const looksSheetDump = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
+                        && window.FeatureTimeline.titleLooksLikeSheetAliasDump(plainTaskTitle));
+                    audioTitleIsAuto = (wasAudioTitleAuto || !plainTaskTitle || looksBookConcat || looksOldFullChild || looksSheetDump);
+                    if (!omitComboTitle) audioTitleIsAuto = audioTitleIsAuto && (!!titleFromRange || looksSheetDump);
                     audioDisplayTitle = audioTitleIsAuto ? titleFromRange : (plainTaskTitle || titleFromRange || '');
                     audioTitleFromRangeAttr = titleFromRange.replace(/"/g, '&quot;');
                     const safeMaterialRange = String(resolvedMaterialRange || '').replace(/"/g, '&quot;');
@@ -1668,32 +1902,57 @@ window.TimelineTemplates = (() => {
                         : '<div style="margin-top:8px; color:#B91C1C;">FeaturePdfExamJob 未載入</div>';
                 }
 
-                // 小標題：組合層底下＝上方套餐名＋範圍。不是組合層：錄音／考試各自原路。
+                // 小標題：組合層標題已是套餐名 → 只留範圍。不是組合層：錄音／考試各自原路。
                 let leafTitleHtml = String(t.title || '');
                 let leafTitleAuto = '0';
                 let leafTitleFromRange = '';
-                const comboPackTitle = comboPackTitleForPath(pathStr);
+                const comboPackTitle = comboPackTitleForPath(pathStr, t.type);
                 const leafPlainTitle = String(t.title || '').replace(/<[^>]*>?/gm, '').trim();
                 const leafWasAuto = (t.raw_data || {}).title_auto_from_range === true;
-                if (comboPackTitle && isComboInheritType(t.type) && (leafWasAuto || !leafPlainTitle)) {
-                    leafTitleHtml = comboPackTitle.replace(/</g, '&lt;');
+                const leafBookName = t.type === 'audio_record'
+                    ? (comboNameFromBookConcatTitle(leafPlainTitle) || comboNameFromBookConcatTitle((t.raw_data || {}).material_range))
+                    : '';
+                const FTLeaf = window.FeatureTimeline;
+                const underCombo = !!(FTLeaf && typeof FTLeaf.parentRangeGroupPathOf === 'function'
+                    && FTLeaf.parentRangeGroupPathOf(pathStr));
+                const omitComboLeaf = underCombo && typeof FTLeaf.childTitleOmitsComboName === 'function'
+                    && FTLeaf.childTitleOmitsComboName(pathStr);
+                const looksOldFullLeaf = omitComboLeaf && comboPackTitle && leafPlainTitle
+                    && (leafPlainTitle === comboPackTitle
+                        || leafPlainTitle.slice(-(comboPackTitle.length + 1)) === (' ' + comboPackTitle));
+                const looksSheetDumpLeaf = !!(FTLeaf && typeof FTLeaf.titleLooksLikeSheetAliasDump === 'function'
+                    && FTLeaf.titleLooksLikeSheetAliasDump(leafPlainTitle));
+                const shouldInheritCombo = underCombo && isComboInheritType(t.type)
+                    && (leafWasAuto || !leafPlainTitle || looksOldFullLeaf || looksSheetDumpLeaf
+                        || (t.type === 'audio_record' && leafBookName));
+                if (shouldInheritCombo) {
+                    let shown = comboPackTitle;
+                    if (t.type === 'audio_record' && leafBookName && !omitComboLeaf) {
+                        shown = (comboPackTitle && comboPackTitle.indexOf(' / ') === -1) ? comboPackTitle : leafBookName;
+                    }
+                    leafTitleHtml = String(shown || '').replace(/</g, '&lt;');
                     leafTitleAuto = '1';
-                    leafTitleFromRange = comboPackTitle.replace(/"/g, '&quot;');
+                    leafTitleFromRange = String(shown || '').replace(/"/g, '&quot;');
                 } else if (t.type === 'audio_record') {
                     leafTitleHtml = String(audioDisplayTitle || '').replace(/</g, '&lt;');
                     leafTitleAuto = audioTitleIsAuto ? '1' : '0';
                     leafTitleFromRange = audioTitleFromRangeAttr;
-                } else if (t.type === 'exam') {
+                } else if (t.type === 'exam' || t.type === 'pdf_exam') {
                     const examRaw = t.raw_data || {};
                     const plainExamTitle = leafPlainTitle;
                     let examRangeHint = '';
-                    if (window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
+                    if (t.type === 'exam' && window.FeatureExamJob && typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getExamRangeLabel(pathStr, t) || '';
-                    } else if (window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
+                    } else if (t.type === 'exam' && window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
+                    } else if (t.type === 'pdf_exam' && FTLeaf && typeof FTLeaf.packRangeLabelForAudio === 'function') {
+                        examRangeHint = FTLeaf.packRangeLabelForAudio(pathStr) || '';
                     }
                     const wasExamTitleAuto = examRaw.title_auto_from_range === true;
-                    const examTitleIsAuto = (wasExamTitleAuto || !plainExamTitle) && !!examRangeHint;
+                    const looksSheetDumpExam = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
+                        && window.FeatureTimeline.titleLooksLikeSheetAliasDump(plainExamTitle));
+                    const examTitleIsAuto = (wasExamTitleAuto || !plainExamTitle || looksSheetDumpExam) && (!!examRangeHint || looksSheetDumpExam);
                     if (examTitleIsAuto) {
                         leafTitleHtml = examRangeHint.replace(/</g, '&lt;');
                         leafTitleAuto = '1';
@@ -1705,6 +1964,37 @@ window.TimelineTemplates = (() => {
                 }
 
                 const tLateUi = lateModeBuilderControlsHtml(pathStr, t, inheritedLate, true);
+
+                let leafDescHtml = t.description || '';
+                let leafDescAuto = '0';
+                let leafDescFromRange = '';
+                if (isComboInheritType(t.type)
+                    && window.FeatureTimeline
+                    && typeof window.FeatureTimeline.packRangeDescriptionHtml === 'function') {
+                    const descRows = (typeof window.FeatureTimeline.packRowsForHostPath === 'function')
+                        ? (window.FeatureTimeline.packRowsForHostPath(pathStr) || [])
+                        : ((typeof window.FeatureTimeline.packRowsForAudioPath === 'function')
+                            ? (window.FeatureTimeline.packRowsForAudioPath(pathStr) || [])
+                            : []);
+                    const generatedHtml = window.FeatureTimeline.packRangeDescriptionHtml(descRows)
+                        || ((t.type === 'audio_record' && typeof window.FeatureTimeline.bookPackDescriptionHtml === 'function')
+                            ? window.FeatureTimeline.bookPackDescriptionHtml(descRows)
+                            : '');
+                    const generatedPlain = (typeof window.FeatureTimeline.packRangeDescriptionPlain === 'function')
+                        ? window.FeatureTimeline.packRangeDescriptionPlain(descRows)
+                        : '';
+                    const descRaw = t.raw_data || {};
+                    const descPlain = String(t.description || '').replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
+                    const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
+                    if (descRaw.desc_auto_from_range === false) {
+                        leafDescHtml = t.description || '';
+                        leafDescAuto = '0';
+                    } else if (descRaw.desc_auto_from_range === true || !descPlain || descPlain === genNorm) {
+                        leafDescHtml = generatedHtml;
+                        leafDescAuto = '1';
+                        leafDescFromRange = String(generatedPlain || '').replace(/"/g, '&quot;');
+                    }
+                }
 
                 return `
                     <div id="node-block-${pathStr}"
@@ -1739,7 +2029,7 @@ window.TimelineTemplates = (() => {
                         ${examInputHtml}
                         ${pdfExamInputHtml}
                         <div style="margin-top:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
-                            <div id="node-desc-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${t.description || ''}</div>
+                            <div id="node-desc-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="📝 說明..." data-desc-auto="${leafDescAuto}" data-desc-from-range="${leafDescFromRange}" oninput="window.FeatureTimeline && window.FeatureTimeline.onNodeDescInput && window.FeatureTimeline.onNodeDescInput('${pathStr}', this)" style="width:100%; min-height: 40px; font-size:0.85rem; padding:8px 12px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; outline:none;">${leafDescHtml}</div>
                         </div>
                     </div>
                 `;
@@ -1792,7 +2082,7 @@ window.TimelineTemplates = (() => {
         ` : `<button type="button" class="btn" style="background:#F1F5F9; color:#94A3B8; border:1px dashed #CBD5E1; cursor:not-allowed; font-size:1rem;" title="請先至資源管理新增並派發資源">+ 📚 尚無任何可用資源</button>`;
 
         return `
-            <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:hidden;">
+            <div id="${bState.containerId}-editor" style="border: 2px dashed #10B981; padding: 20px; border-radius: 12px; margin-top: 20px; background: #FFFDF8; overflow:visible;">
                 ${historyHtml}
                 ${rteToolbarHtml}
                 <div style="background: white; border: 1px solid #CBD5E1; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -2047,6 +2337,11 @@ window.TimelineTemplates = (() => {
         renderPasteWindowRowHtml,
         renderRangePackHtml,
         renderSheetPackTableHtml,
+        listTitleForBookAudio,
+        listTitleForPackChild,
+        rangeTailFromTitle,
+        comboNameFromBookConcatTitle,
+        groupIsRangePack,
         packSelectedCountSum
     };
 })();

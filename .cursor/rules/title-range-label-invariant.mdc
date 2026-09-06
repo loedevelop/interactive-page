@@ -1,5 +1,5 @@
 ---
-description: 小標題消去法／pp. 1~2 分號 p. 3／中括號包範圍／獨立考試另組字串／錄音考試標題用了活頁名
+description: 小標題消去法／pp. 1~2 分號 p. 3／中括號包範圍／獨立考試另組字串／錄音考試標題用了活頁名／組合層底下重複套餐名
 globs: 110_teacher_core/feature-timeline.js,110_teacher_core/feature-exam-job.js,110_teacher_core/ui-timeline-templates.js,110_teacher_core/store-assignment-builder.js
 alwaysApply: false
 ---
@@ -14,27 +14,33 @@ alwaysApply: false
 - 斷層被收成一段，或被中括號包成兩塊
 - 獨立考試標題走另一套 join，跟組合層不一樣
 - 沒填迄也被當成單頁帶進標題
-- 組標題黏了活頁名；錄音／考試小標題用了活頁別名（例：`AvaLiu-vBK-2 pp. 6~10`，套餐名是 `vBK-2`）
+- 組標題黏了活頁名；錄音／考試小標題用了活頁別名（例：`J.sentence-translation pp. 1~2 ; K.sentence-translation pp. 1~2`，套餐名是 `GEPT-2-整句翻譯`）
+- 出作業選「其他（手動輸入教材）」卻出現 Excel 起迄表
 
 ## 根因
 
 組合層已走 FeatureTimeline.combinePackRangeLabel（挑選、分匣、排序融合）。
 獨立考試 buildExamRangeLabelFromTask、錄音 refs 的 buildMaterialRangeLabelFromRows 曾各自 join 分號，沒填迄還當單頁。同類列第二套邏輯。
-小標題曾誤用 pickPackSheetLabel（活頁別名）。老師定案：錄音／考試名字＝套餐名＋範圍。活頁別名只給區段欄。
+小標題曾誤用 pickPackSheetLabel（活頁別名）當整段標題。老師定案：標題＝套餐名；區段以外一致才把區段字母納入標題；很亂＝標題只留套餐名，明細進說明。
+手動輸入曾走 sheet 策略，畫成教材／基準／起迄表。作業這邊新增教材＝目錄型，`__manual__` 走目錄欄。
 
 ## 不變量
 
 ```
-大標題＝套餐名。空白才帶入。不准黏活頁名。
-小標題＝套餐名＋範圍。匣＝套餐 × 模式（頁碼／題號）。活頁別名不准進錄音／考試標題。
-區段欄仍用活頁別名（pickPackSheetLabel）。標題不准借用區段欄。
-只准 combinePackRangeLabel 組字串。獨立考試、錄音 Snapshot、material_refs 摘要同一把。
-課本列同一把：套餐名＋空格＋主單元 / 次單元 / 標題 / 大題 / 次題 / 小題。
+大標題＝套餐名。空白才帶入。不准黏活頁名。不准把下拉「其他（手動輸入教材）」寫成套餐名。
+小標題：組合層標題已是套餐名 → 只留範圍（例：pp. 6~10, 221~230）。獨立作業（不在組合層底下）→ 套餐名＋範圍。匣＝套餐 × 模式（頁碼／題號）。
+Excel 多區段：區段以外（基準／起迄／每頁行數／難度／必考／排除／題數）同一把鑰匙 → 標題納入區段字母（J.sentence-translation → J，連續收成 J~K）。很亂 → 標題只留套餐名，明細進說明（J.sentence-translation pp. 1~2 ; K.sentence-translation pp. 1~2）。一致時說明不准再倒區段別名。
+舊標題長得像活頁別名 dump → 當自動繼承重算。錄音／考試／PDF 考／組合層底下同一把 combinePackRangeLabel。
+目錄套餐錄音標題：組合層已是套餐名 → 空白（範圍在說明）。獨立作業 → 套餐名。Excel／PDF 組合層已是套餐名 → 只留範圍（一致時可含區段字母）。
+區段欄仍用活頁別名（pickPackSheetLabel）。標題只收活頁字母／數字，不准把完整別名當標題。
+出作業 `__manual__`＝目錄表（教材＋主／次單元／頁碼／標題／大題／次題／小題／目錄文稿）。已選 Excel 套餐仍走起迄表。
+只准 combinePackRangeLabel 組字串。omitComboName 只在父層標題已是套餐名時打開。獨立考試、錄音 Snapshot、material_refs 摘要同一把（獨立考試不准省略套餐名）。
+課本列同一把：套餐名＋空格＋主單元 / 次單元 / 標題 / 大題 / 次題 / 小題（omitComboName 時不加套餐名）。
 有起、有迄、有套餐名 → 進匣。
 有頁碼或題號 → 進對應模式。
 匣內排序後，相連或重疊才融；斷層維持兩筆，一個 pp. 或一個 # 加逗號。
 有 FeatureTimeline.combinePackRangeLabel → 用它組字。
-學生頁只讀已存 title／material_range。
+學生頁只讀已存 title／material_range；列表顯示時若父層已是套餐名，小標題從 p./pp./# 起（舊標題前綴是套餐名或活頁別名都一樣）。
 ```
 
 ## 禁止
@@ -66,18 +72,23 @@ if (!FT || typeof FT.combinePackRangeLabel !== 'function') return '';
 
 ## 實測
 
-1. 套餐 vBK-2、兩段 6～10 與 221～230 → `vBK-2 pp. 6~10, 221~230`（不是活頁別名）
-2. 同一套餐 1～2 與 3 → 套餐名 pp. 1~3
-3. 同一套餐 1～5 與 8～10 → 套餐名 pp. 1~5, 8~10
-4. 兩份套餐 → 套餐名 pp. …；另一套餐名 pp. …
-5. 獨立考試兩個區塊同一套餐相連起迄 → 與組合層同一串，不是兩段分號
+1. 組合層標題 vBK-2、兩段 6～10 與 221～230 → 錄音小標題 `pp. 6~10, 221~230`（不再重複套餐名）。獨立考試同一範圍 → `vBK-2 pp. 6~10, 221~230`
+2. 同一套餐 1～2 與 3 → 獨立作業／匣內仍是套餐名 pp. 1~3；組合層底下只留 pp. 1~3
+3. 同一套餐 1～5 與 8～10 → 獨立作業套餐名 pp. 1~5, 8~10；組合層底下只留範圍
+4. 兩份套餐 → 獨立作業：套餐名 pp. …；另一套餐名 pp. …。組合層標題已是兩套餐名時，底下只留範圍段
+5. 獨立考試兩個區塊同一套餐相連起迄 → 與 combinePackRangeLabel 未省略時同一串，不是兩段分號
 6. 沒填迄的列不進標題
 7. 區段欄仍顯示活頁別名（例：AvaLiu-vBK-2）
+8. 老師把組合層標題改成不是套餐名（例：Week 3）→ 底下恢復套餐名＋範圍
+9. 獨立考試 GEPT-2-整句翻譯、J／K 都是頁碼 1～2、每頁行數 10 → 標題 `GEPT-2-整句翻譯 J~K pp. 1~2`；起迄不同 → 標題只套餐名、說明放各區段明細
+10. 獨立錄音舊標題 `J.sentence-translation pp. 1~2 ; K.sentence-translation pp. 1~2` → 打開編輯器後改成套餐名（一致時加區段字母＋範圍）
+11. 出作業選「其他（手動輸入教材）」→ 目錄欄，不是 Excel 起迄表
 
 ## 改動前自問
 
 1. 小標題是不是只走 combinePackRangeLabel？有沒有第二套 join？
 2. 進匣的列是不是有起、有迄、有套餐名？組字是不是只走 combinePackRangeLabel？
-3. 獨立考試與組合層同一套餐、同一組起迄，字串是否相同？
-4. 錄音／考試標題是不是套餐名＋範圍，而不是活頁別名？
+3. 獨立考試是否仍是套餐名＋範圍（未省略）？區段以外一致時是否把區段字母納入標題？很亂時標題是否只留套餐名、明細是否進說明？
+4. 標題是不是套餐名而不是活頁別名 dump？錄音／考試／PDF 考／組合層底下是否同一把？
+5. 出作業「其他（手動輸入教材）」是不是目錄欄，而不是 Excel 起迄表？
 任一否 → 停。

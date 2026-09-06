@@ -849,18 +849,70 @@ window.FeatureTimeline = (() => {
         return combinePackRangeLabel(packRowsFromMaterialRows(rows), builderClassId());
     }
 
-    /** 錄音／考試小標題＝套餐名＋範圍（挑選：起迄都填才進）。 */
-    function packRangeLabelForAudio(audioPathStr) {
-        const hostPath = parentRangeGroupPathOf(audioPathStr)
-            || (isPackHostNode(getTaskNodeByPathStr(audioPathStr)) ? audioPathStr : '');
-        if (!hostPath) return '';
+    function packRowsForHostPath(pathStr) {
+        const hostPath = parentRangeGroupPathOf(pathStr)
+            || (isPackHostNode(getTaskNodeByPathStr(pathStr)) ? pathStr : '');
+        if (!hostPath) return [];
         const group = getTaskNodeByPathStr(hostPath);
-        if (!group) return '';
+        if (!group) return [];
         const fromDom = readRangePackFromDom(hostPath);
         const domRows = ((fromDom && fromDom.rows) || []).map(packRowFromRaw);
         const stateRows = normalizePackRows((group.raw_data) || {}).map(packRowFromRaw);
-        const source = domRows.some(packRowHasContent) ? domRows : stateRows;
-        return combinePackRangeLabel(source, builderClassId());
+        return domRows.some(packRowHasContent) ? domRows : stateRows;
+    }
+
+    /** 組合層標題已是套餐名時，下一層不准再寫一次套餐名。 */
+    function rangeGroupTitleIsComboName(group, groupPathStr) {
+        if (!group || !group.raw_data) return false;
+        const names = uniquePackComboNames(normalizePackRows(group.raw_data).map(packRowFromRaw), builderClassId())
+            || String(group.raw_data.pack_combo_label || '').trim();
+        if (!names) return false;
+        let title = String(group.title || '').replace(/<[^>]*>/g, '').trim();
+        if (groupPathStr) {
+            const el = document.getElementById('node-title-' + groupPathStr);
+            if (el) title = String(el.textContent || '').replace(/<[^>]*>/g, '').trim();
+        }
+        if (!title) return group.raw_data.title_auto_from_range !== false;
+        const norm = function (s) {
+            return String(s || '').replace(/[／;；]/g, '|').replace(/\s+/g, '').toUpperCase();
+        };
+        return norm(title) === norm(names);
+    }
+
+    function childTitleOmitsComboName(pathStr) {
+        const parent = parentRangeGroupOf(pathStr);
+        if (!parent) return false;
+        return rangeGroupTitleIsComboName(parent, parentRangeGroupPathOf(pathStr));
+    }
+
+    /** 錄音／考試小標題。組合層已是套餐名 → 只留範圍。獨立作業 → 套餐名＋範圍。 */
+    function packRangeLabelForAudio(audioPathStr) {
+        return combinePackRangeLabel(
+            packRowsForHostPath(audioPathStr),
+            builderClassId(),
+            childTitleOmitsComboName(audioPathStr)
+        );
+    }
+
+    function uniquePackComboNames(rows, classId) {
+        const seen = {};
+        const names = [];
+        (rows || []).forEach(function (r) {
+            const name = pickPackComboName(classId, r);
+            const k = name.toUpperCase();
+            if (!name || seen[k]) return;
+            seen[k] = true;
+            names.push(name);
+        });
+        return names.join('；');
+    }
+
+    /** 目錄套餐錄音標題：組合層已是套餐名 → 空白（範圍在說明）。Excel／PDF：組合層已是套餐名 → 只留範圍。 */
+    function packTitleForAudio(audioPathStr) {
+        const source = packRowsForHostPath(audioPathStr);
+        const omit = childTitleOmitsComboName(audioPathStr);
+        if (packRowsAreOnlyBook(source)) return omit ? '' : uniquePackComboNames(source, builderClassId());
+        return combinePackRangeLabel(source, builderClassId(), omit);
     }
 
     function currentPackRangeSpecs(audioPathStr) {
@@ -1134,10 +1186,16 @@ window.FeatureTimeline = (() => {
             rangeEl.value = label;
         }
         const rangeText = (rangeEl && String(rangeEl.value || '').trim()) || label || '';
-        if (!incomplete && rangeText) {
-            applyInheritedTitleFromRange(pathStr, rangeText);
-            // 同層考試標題若仍為自動繼承，一併更新
-            syncSiblingExamTitleFromRange(pathStr, rangeText);
+        if (!incomplete) {
+            const titleForInherit = parentRangeGroupPathOf(pathStr)
+                ? packTitleForAudio(pathStr)
+                : rangeText;
+            if (titleForInherit || childTitleOmitsComboName(pathStr)) {
+                applyInheritedTitleFromRange(pathStr, titleForInherit);
+            }
+            if (rangeText || titleForInherit) {
+                syncSiblingExamTitleFromRange(pathStr, rangeText);
+            }
         }
         return label;
     }
@@ -1148,23 +1206,35 @@ window.FeatureTimeline = (() => {
      */
     function applyInheritedTitleFromRange(pathStr, rangeText) {
         const titleEl = document.getElementById('node-title-' + pathStr);
-        if (!titleEl || !rangeText) return;
+        if (!titleEl) return;
+        const next = String(rangeText || '');
+        if (!next && !childTitleOmitsComboName(pathStr)) return;
         const current = String(titleEl.textContent || '').trim();
         const autoFlag = titleEl.getAttribute('data-title-auto');
         const prevFrom = String(titleEl.getAttribute('data-title-from-range') || '').trim();
-        const shouldAuto = !current || autoFlag === '1' || (prevFrom && current === prevFrom);
+        const shouldAuto = !current || autoFlag === '1'
+            || (prevFrom && current === prevFrom)
+            || titleLooksLikeSheetAliasDump(current);
         if (!shouldAuto) return;
-        titleEl.textContent = rangeText;
+        titleEl.textContent = next;
         titleEl.setAttribute('data-title-auto', '1');
-        titleEl.setAttribute('data-title-from-range', rangeText);
+        titleEl.setAttribute('data-title-from-range', next);
     }
 
     function parentRangeGroupOf(pathStr) {
         const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
         if (arr.length < 2) return null;
         const parent = getTaskNodeByPathStr(arr.slice(0, -1).join('-'));
-        if (parent && parent.type === 'group' && parent.raw_data && parent.raw_data.group_role === 'range') {
-            return parent;
+        if (parent && parent.type === 'group' && parent.raw_data) {
+            if (parent.raw_data.group_role === 'range') return parent;
+            if (String(parent.raw_data.pack_combo_id || '').trim()) return parent;
+            const rows = Array.isArray(parent.raw_data.pack_rows) ? parent.raw_data.pack_rows : [];
+            const hasPack = rows.some(function (r) {
+                return !!(String((r && (r.combo_id || r.comboId)) || '').trim()
+                    || String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+                    || String((r && r.page) || '').trim());
+            });
+            if (hasPack) return parent;
         }
         return null;
     }
@@ -1209,6 +1279,63 @@ window.FeatureTimeline = (() => {
             return window.FeatureMaterialBook.pasteWindowLabel(row, idx);
         }
         return '區段 ' + (Number(idx) + 1);
+    }
+
+    /** 這一列有填範圍（主／次／頁／標題／大題…）。只有套餐名、還沒填範圍＝還沒有這一檔。 */
+    function bookRangeRowFilled(r) {
+        return !!(String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+            || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+            || String((r && (r.heading || r.range_heading)) || '').trim()
+            || String((r && r.major) || '').trim()
+            || String((r && r.secondary) || '').trim()
+            || String((r && r.minor) || '').trim()
+            || String((r && r.page) || '').trim()
+            || String((r && r.book_script) || '').trim());
+    }
+
+    function bookPackDescriptionLines(rows) {
+        const out = [];
+        (rows || []).forEach(function (r, i) {
+            if (!bookRangeRowFilled(r)) return;
+            out.push(bookPasteWindowLabel(r, i));
+        });
+        return out;
+    }
+
+    function bookPackDescriptionPlain(rows) {
+        return bookPackDescriptionLines(rows).join('\n');
+    }
+
+    function bookPackDescriptionHtml(rows) {
+        return bookPackDescriptionLines(rows).map(function (line) {
+            return String(line)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }).join('<br>');
+    }
+
+    /** 目錄錄音單位＝範圍表有填的列。一口說對一列，不准拿標題數字當頁碼。 */
+    function gradingUnitsFromBookPack(rows, wins) {
+        const windows = Array.isArray(wins) ? wins : [];
+        const out = [];
+        (rows || []).forEach(function (r, i) {
+            if (!bookRangeRowFilled(r)) return;
+            const label = bookPasteWindowLabel(r, i);
+            const pageRaw = String((r && r.page) || '').trim();
+            const pageNum = pageRaw ? Number(pageRaw) : NaN;
+            const win = windows[i] || {};
+            out.push({
+                unit_key: 'book:' + i,
+                stem: '',
+                page: (pageRaw && !isNaN(pageNum)) ? pageNum : null,
+                path_label: label,
+                label: label,
+                original_script: String((win && win.script) || ''),
+                item_count: 1
+            });
+        });
+        return out;
     }
 
     function readAudioPasteWindows(audio) {
@@ -1266,6 +1393,7 @@ window.FeatureTimeline = (() => {
         });
         audio.raw_data.paste_windows = wins;
         audio.raw_data.script_source = 'paste';
+        audio.raw_data.grading_units = gradingUnitsFromBookPack(rows, wins);
     }
 
     function refreshBookPasteWindowLabelsDom(pathStr) {
@@ -1395,7 +1523,12 @@ window.FeatureTimeline = (() => {
                 const item = (window.FeatureMaterialPdfExam && typeof window.FeatureMaterialPdfExam.getItem === 'function')
                     ? window.FeatureMaterialPdfExam.getItem(fileIds[0], combo && combo.examTemplateKey)
                     : null;
-                if (item && Array.isArray(item.parsed_bank)) job.parsed_bank = item.parsed_bank;
+                if (item && Array.isArray(item.parsed_bank) && item.parsed_bank.length) {
+                    job.parsed_bank = item.parsed_bank;
+                    if (item.split_review) job.split_review = item.split_review;
+                    if (item.answer_text_raw) job.answer_text_raw = item.answer_text_raw;
+                    if (item.section_page_hints) job.section_page_hints = item.section_page_hints;
+                }
             }
             task.raw_data.pdf_exam_job = job;
             return;
@@ -1439,7 +1572,15 @@ window.FeatureTimeline = (() => {
 
     function isPackHostNode(node) {
         if (!node) return false;
-        if (node.type === 'group' && node.raw_data && node.raw_data.group_role === 'range') return true;
+        if (node.type === 'group' && node.raw_data) {
+            if (node.raw_data.group_role === 'range') return true;
+            if (String(node.raw_data.pack_combo_id || '').trim()) return true;
+            const rows = Array.isArray(node.raw_data.pack_rows) ? node.raw_data.pack_rows : [];
+            if (rows.some(function (r) {
+                return !!(String((r && (r.combo_id || r.comboId)) || '').trim()
+                    || String((r && (r.primary_unit || r.primaryUnit)) || '').trim());
+            })) return true;
+        }
         return node.type === 'audio_record' || node.type === 'exam' || node.type === 'pdf_exam';
     }
 
@@ -1511,7 +1652,12 @@ window.FeatureTimeline = (() => {
         titleEl.setAttribute('data-title-auto', '1');
         let rangeText = '';
         if (parentRangeGroupPathOf(pathStr)) {
-            rangeText = packRangeLabelForAudio(pathStr) || '';
+            const node = getTaskNodeByPathStr(pathStr);
+            rangeText = (node && node.type === 'audio_record')
+                ? (packTitleForAudio(pathStr) || '')
+                : (packRangeLabelForAudio(pathStr) || '');
+            applyInheritedTitleFromRange(pathStr, rangeText);
+            return;
         }
         const rangeEl = document.getElementById('node-material-range-' + pathStr)
             || document.getElementById('node-material-range-manual-' + pathStr);
@@ -1527,6 +1673,30 @@ window.FeatureTimeline = (() => {
             }
         }
         if (rangeText) applyInheritedTitleFromRange(pathStr, rangeText);
+    }
+
+    function onNodeDescInput(pathStr, el) {
+        const descEl = el || document.getElementById('node-desc-' + pathStr);
+        if (!descEl) return;
+        const node = getTaskNodeByPathStr(pathStr);
+        if (!node || !isComboInheritType(node.type)) return;
+        const rows = packRowsForHostPath(pathStr);
+        const generatedHtml = packRangeDescriptionHtml(rows, builderClassId());
+        const generatedPlain = packRangeDescriptionPlain(rows, builderClassId());
+        const current = String(descEl.textContent || '').replace(/\s+/g, ' ').trim();
+        const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
+        if (!current) {
+            descEl.setAttribute('data-desc-auto', '1');
+            if (generatedHtml) descEl.innerHTML = generatedHtml;
+            descEl.setAttribute('data-desc-from-range', generatedPlain);
+            return;
+        }
+        if (current === genNorm) {
+            descEl.setAttribute('data-desc-auto', '1');
+            descEl.setAttribute('data-desc-from-range', generatedPlain);
+            return;
+        }
+        descEl.setAttribute('data-desc-auto', '0');
     }
 
     function isScriptOrTextFileName(name) {
@@ -1739,13 +1909,160 @@ window.FeatureTimeline = (() => {
         return run[0].label;
     }
 
+    function packRowExamKey(r) {
+        return [
+            ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page',
+            String((r && r.start) || '').trim(),
+            String((r && r.end) || '').trim(),
+            String((r && r.lines_per_page) || '').trim(),
+            String((r && r.difficulty) || '').trim(),
+            String((r && (r.include_nums || r.includeNums)) || '').trim(),
+            String((r && (r.exclude_nums || r.excludeNums)) || '').trim(),
+            String((r && r.count) || '').trim()
+        ].join('\t');
+    }
+
+    function packRowsHaveStartEnd(r) {
+        return !!(String((r && r.start) || '').trim() && String((r && r.end) || '').trim());
+    }
+
+    /** 區段以外（基準／起迄／每頁行數／難度／必考／排除／題數）同一把鑰匙。 */
+    function packRowsConsistentExceptSheet(rows) {
+        const filled = (rows || []).filter(packRowsHaveStartEnd);
+        if (!filled.length) return false;
+        const key0 = packRowExamKey(filled[0]);
+        return filled.every(function (r) { return packRowExamKey(r) === key0; });
+    }
+
+    function collapseSheetLabelList(labels) {
+        const items = (labels || []).map(function (lab) {
+            return { label: lab, info: pickNameCollapseInfo(lab) };
+        });
+        const parts = [];
+        let run = [];
+        function flush() {
+            if (!run.length) return;
+            parts.push(pickCollapsedSheetName(run));
+            run = [];
+        }
+        items.forEach(function (item) {
+            if (!run.length) {
+                run.push(item);
+                return;
+            }
+            const prev = run[run.length - 1];
+            const want = pickSuccessorLabel(prev.info);
+            if (item.info && want && want === item.label) {
+                run.push(item);
+                return;
+            }
+            flush();
+            run.push(item);
+        });
+        flush();
+        return parts.join('、');
+    }
+
+    function uniqueSheetLabelsForRows(rows, classId) {
+        const seen = {};
+        const labels = [];
+        (rows || []).forEach(function (r) {
+            const lab = pickPackSheetLabel(classId, r);
+            const k = String(lab || '').trim().toUpperCase();
+            if (!k || seen[k]) return;
+            seen[k] = true;
+            labels.push(lab);
+        });
+        return labels;
+    }
+
+    /** 標題用活頁字母／數字：A.sentence-translation → A。說明仍用完整別名。 */
+    function sheetHeadForTitle(label) {
+        const FN = window.MaterialFileNames;
+        if (FN && typeof FN.sheetRangeHead === 'function') return FN.sheetRangeHead(label);
+        const s = String(label || '').trim().replace(/\.meta\.json$/i, '');
+        if (!s) return '';
+        const dot = s.indexOf('.');
+        return dot > 0 ? s.slice(0, dot) : s;
+    }
+
+    function uniqueSheetHeadsForRows(rows, classId) {
+        const seen = {};
+        const heads = [];
+        uniqueSheetLabelsForRows(rows, classId).forEach(function (lab) {
+            const head = sheetHeadForTitle(lab);
+            const k = String(head || '').trim().toUpperCase();
+            if (!k || seen[k]) return;
+            seen[k] = true;
+            heads.push(head);
+        });
+        return heads;
+    }
+
+    function formatOneRowRange(r) {
+        const startRaw = String((r && r.start) || '').trim();
+        const endRaw = String((r && r.end) || '').trim();
+        if (!startRaw || !endRaw) return '';
+        const startN = Number(startRaw);
+        const endN = Number(endRaw);
+        if (isNaN(startN) || isNaN(endN)) return '';
+        const lo = Math.min(startN, endN);
+        const hi = Math.max(startN, endN);
+        if (((r && (r.rangeType || r.range_type)) === 'qnum')) {
+            return formatPickedQnumIntervals([{ start: lo, end: hi }]);
+        }
+        return formatPickedPageIntervals([{ start: lo, end: hi }]);
+    }
+
+    function sheetPackDescriptionLines(rows, classId) {
+        const out = [];
+        (rows || []).forEach(function (r) {
+            if (isBookPackRow(r)) return;
+            const range = formatOneRowRange(r);
+            if (!range) return;
+            const sheet = pickPackSheetLabel(classId, r);
+            out.push(sheet ? (sheet + ' ' + range) : range);
+        });
+        return out;
+    }
+
+    function packRangeDescriptionPlain(rows, classId) {
+        const book = bookPackDescriptionPlain(rows);
+        const sheetRows = (rows || []).filter(function (r) { return !isBookPackRow(r); });
+        if (!sheetRows.length) return book;
+        if (packRowsConsistentExceptSheet(sheetRows)) return book;
+        const sheet = sheetPackDescriptionLines(sheetRows, classId).join(' ; ');
+        return [book, sheet].filter(Boolean).join('\n');
+    }
+
+    function packRangeDescriptionHtml(rows, classId) {
+        const bookHtml = bookPackDescriptionHtml(rows);
+        const sheetRows = (rows || []).filter(function (r) { return !isBookPackRow(r); });
+        if (!sheetRows.length) return bookHtml;
+        if (packRowsConsistentExceptSheet(sheetRows)) return bookHtml;
+        const sheetHtml = sheetPackDescriptionLines(sheetRows, classId).map(function (line) {
+            return String(line)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }).join(' ; <br>');
+        return [bookHtml, sheetHtml].filter(Boolean).join('<br>');
+    }
+
+    /** 舊標題把活頁別名當標題（J.sentence-translation pp. 1~2 ; …）。那不是套餐名，要當自動繼承重算。 */
+    function titleLooksLikeSheetAliasDump(text) {
+        const s = String(text || '').replace(/<[^>]*>/g, '').trim();
+        if (!s) return false;
+        if (/[A-Za-z0-9]+\.[A-Za-z0-9_-]+\s*pp?\./i.test(s)) return true;
+        if (/[A-Za-z0-9]+\.[A-Za-z0-9_-]+\s*#/i.test(s)) return true;
+        return false;
+    }
+
     /**
-     * 小標題＝套餐名＋範圍。起迄都填才進。同一套餐匣內排序＋相連／重疊才融。
-     * vBK-2 pp. 6~10, 221~230；WORD p. 1, #31~50
-     * 活頁別名只給區段欄，不准進錄音／考試標題。
-     * 全站只准這支組字串。規格：docs/標題範圍處理規則.md
+     * 獨立作業小標題＝套餐名＋（區段以外一致時納入區段）＋範圍。
+     * 區段以外很亂＝標題只留套餐名，明細進說明。組合層標題已是套餐名時 omitComboName＝不重複套餐名。
      */
-    function combinePackRangeLabel(rows, classId) {
+    function combinePackRangeLabel(rows, classId, omitComboName) {
         const bookParts = [];
         const pageRows = [];
         (rows || []).forEach(function (r) {
@@ -1755,45 +2072,51 @@ window.FeatureTimeline = (() => {
                     : [String((r && (r.primary_unit || r.primaryUnit)) || '').trim(), String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim(), String((r && (r.heading || r.range_heading)) || '').trim(), String((r && r.major) || '').trim(), String((r && r.secondary) || '').trim(), String((r && r.minor) || '').trim()]
                         .filter(Boolean).join(' / ');
                 const comboName = pickPackComboName(classId, r);
-                if (lab && comboName) bookParts.push(comboName + ' ' + lab);
+                if (lab && comboName && !omitComboName) bookParts.push(comboName + ' ' + lab);
                 else if (lab) bookParts.push(lab);
                 return;
             }
             pageRows.push(r);
         });
-        const boxes = [];
-        const boxIndex = {};
+        const groups = [];
+        const groupIndex = {};
         pageRows.forEach(function (r) {
-            const startRaw = String((r && r.start) || '').trim();
-            const endRaw = String((r && r.end) || '').trim();
-            if (!startRaw || !endRaw) return;
-            const startN = Number(startRaw);
-            const endN = Number(endRaw);
-            if (isNaN(startN) || isNaN(endN)) return;
             const label = pickPackComboName(classId, r);
-            if (!label) return;
             const comboId = String((r && (r.comboId || r.combo_id)) || '').trim();
-            const key = comboId ? ('combo:' + comboId) : ('name:' + label.toUpperCase());
-            if (boxIndex[key] == null) {
-                boxIndex[key] = boxes.length;
-                boxes.push({ label: label, page: [], qnum: [] });
+            const key = comboId ? ('combo:' + comboId) : ('name:' + String(label || '').toUpperCase());
+            if (groupIndex[key] == null) {
+                groupIndex[key] = groups.length;
+                groups.push({ label: label, rows: [] });
             }
-            const mode = ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page';
-            boxes[boxIndex[key]][mode].push({
-                start: Math.min(startN, endN),
-                end: Math.max(startN, endN)
+            groups[groupIndex[key]].rows.push(r);
+        });
+        const parts = groups.map(function (g) {
+            const filled = g.rows.filter(packRowsHaveStartEnd);
+            const page = [];
+            const qnum = [];
+            filled.forEach(function (r) {
+                const startN = Number(r.start);
+                const endN = Number(r.end);
+                if (isNaN(startN) || isNaN(endN)) return;
+                const rec = { start: Math.min(startN, endN), end: Math.max(startN, endN) };
+                if ((r.rangeType || r.range_type) === 'qnum') qnum.push(rec);
+                else page.push(rec);
             });
-        });
-        const sheets = boxes.map(function (box) {
             const rangeStr = [
-                formatPickedPageIntervals(mergePickedIntervals(box.page)),
-                formatPickedQnumIntervals(mergePickedIntervals(box.qnum))
+                formatPickedPageIntervals(mergePickedIntervals(page)),
+                formatPickedQnumIntervals(mergePickedIntervals(qnum))
             ].filter(Boolean).join(', ');
-            return { label: box.label, rangeStr: rangeStr };
-        }).filter(function (s) { return !!s.rangeStr; });
-        const parts = sheets.map(function (s) {
-            return s.label + ' ' + s.rangeStr;
-        });
+            const consistent = packRowsConsistentExceptSheet(filled);
+            const sheetStr = consistent ? collapseSheetLabelList(uniqueSheetHeadsForRows(filled, classId)) : '';
+            if (consistent && rangeStr) {
+                const bits = omitComboName
+                    ? [sheetStr, rangeStr]
+                    : [g.label, sheetStr, rangeStr];
+                return bits.filter(Boolean).join(' ');
+            }
+            if (omitComboName) return '';
+            return g.label || '';
+        }).filter(Boolean);
         return bookParts.concat(parts).join('；');
     }
 
@@ -1963,11 +2286,15 @@ window.FeatureTimeline = (() => {
         }, blankPackExamFields(), copyKindRangeFields(raw))];
     }
 
+    function emptyStoredPackRow() {
+        return Object.assign({
+            combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: ''
+        }, blankPackExamFields(), copyKindRangeFields(null));
+    }
+
     function writePackRowsToGroup(group, rows) {
         if (!group.raw_data) group.raw_data = {};
-        const list = (rows && rows.length) ? rows : [Object.assign({
-            combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: ''
-        }, blankPackExamFields(), copyKindRangeFields(null))];
+        const list = (rows && rows.length) ? rows : [emptyStoredPackRow()];
         group.raw_data.pack_rows = list;
         group.raw_data.pack_combo_id = list[0].combo_id || '';
         group.raw_data.pack_combo_label = list[0].combo_label || '';
@@ -1975,6 +2302,31 @@ window.FeatureTimeline = (() => {
         group.raw_data.pack_range_type = list[0].range_type;
         group.raw_data.pack_start = list[0].start;
         group.raw_data.pack_end = list[0].end;
+    }
+
+    function packBlocksFromStoredRows(rows) {
+        const blocks = [];
+        (rows || []).forEach(function (r) {
+            const id = String((r && r.combo_id) || '').trim();
+            const last = blocks[blocks.length - 1];
+            if (!last || String(last.combo_id || '') !== id) {
+                blocks.push({
+                    combo_id: id,
+                    combo_label: String((r && r.combo_label) || '').trim(),
+                    rows: [r]
+                });
+                return;
+            }
+            last.rows.push(r);
+        });
+        return blocks;
+    }
+
+    function refreshPackAfterWrite(pathStr) {
+        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
+            window.FeatureTimeline.refreshBuilder({ skipSync: true });
+        }
+        onRangePackChange(pathStr, { rerender: false, skipSync: true });
     }
 
     function readRangePackFromDom(pathStr) {
@@ -2148,7 +2500,10 @@ window.FeatureTimeline = (() => {
 
     function expandPackRowsForCombo(classId, combo, prevRows) {
         if (!combo) {
-            return [Object.assign({ combo_id: '', combo_label: '', meta_file: '', range_type: 'page', start: '', end: '' }, blankPackExamFields(), copyKindRangeFields(null))];
+            const id = String((prevRows && prevRows[0] && (prevRows[0].comboId || prevRows[0].combo_id)) || '').trim();
+            const recovered = id ? resolvePackCombo(classId, id) : null;
+            if (recovered) return expandPackRowsForCombo(classId, recovered, prevRows);
+            return [emptyStoredPackRow()];
         }
         const MCS = window.MaterialComboStrategies;
         if (MCS && typeof MCS.forCombo === 'function' && typeof MCS.expandPackRows === 'function') {
@@ -2257,6 +2612,7 @@ window.FeatureTimeline = (() => {
             raw.material_refs = [];
             raw.material_ref = null;
             raw.material_range = combinePackRangeLabel(packRows, builderClassId());
+            raw.grading_units = gradingUnitsFromBookPack(packRows, readAudioPasteWindows(audioTask));
             return String(raw.material_range || '').trim();
         }
         const metaRows = packRows.filter(function (row) {
@@ -2350,10 +2706,21 @@ window.FeatureTimeline = (() => {
                 renderMaterialMetaRows(audioPath, _materialMetaOptionsCache[audioPath] || [], refsToSavedRows(refs));
             }
             const audioTitleEl = document.getElementById('node-title-' + audioPath);
-            if (audioTitleEl && coverage && audioTitleEl.getAttribute('data-title-auto') !== '0') {
-                audioTitleEl.textContent = coverage;
+            const audioTitle = packTitleForAudio(audioPath);
+            if (audioTitleEl && audioTitleEl.getAttribute('data-title-auto') !== '0'
+                && (audioTitle || childTitleOmitsComboName(audioPath))) {
+                audioTitleEl.textContent = audioTitle || '';
                 audioTitleEl.setAttribute('data-title-auto', '1');
-                audioTitleEl.setAttribute('data-title-from-range', coverage);
+                audioTitleEl.setAttribute('data-title-from-range', audioTitle || '');
+            }
+            const packRowsForDesc = Array.isArray(pack.rows) ? pack.rows : [];
+            const descEl = document.getElementById('node-desc-' + audioPath);
+            const descHtml = packRangeDescriptionHtml(packRowsForDesc, builderClassId());
+            const descPlain = packRangeDescriptionPlain(packRowsForDesc, builderClassId());
+            if (descEl && descEl.getAttribute('data-desc-auto') !== '0') {
+                descEl.innerHTML = descHtml || '';
+                descEl.setAttribute('data-desc-auto', '1');
+                descEl.setAttribute('data-desc-from-range', descPlain);
             }
         }
         if (examIdx >= 0) {
@@ -2385,20 +2752,41 @@ window.FeatureTimeline = (() => {
                 });
             });
             const examTitleEl = document.getElementById('node-title-' + examPath);
-            if (examTitleEl && coverage && examTitleEl.getAttribute('data-title-auto') !== '0') {
-                examTitleEl.textContent = coverage;
+            const examTitle = packRangeLabelForAudio(examPath);
+            if (examTitleEl && examTitleEl.getAttribute('data-title-auto') !== '0'
+                && (examTitle || childTitleOmitsComboName(examPath) || titleLooksLikeSheetAliasDump(examTitleEl.textContent))) {
+                examTitleEl.textContent = examTitle || '';
                 examTitleEl.setAttribute('data-title-auto', '1');
-                examTitleEl.setAttribute('data-title-from-range', coverage);
+                examTitleEl.setAttribute('data-title-from-range', examTitle || '');
+            }
+            const examDescEl = document.getElementById('node-desc-' + examPath);
+            const examDescHtml = packRangeDescriptionHtml(packRows, builderClassId());
+            const examDescPlain = packRangeDescriptionPlain(packRows, builderClassId());
+            if (examDescEl && examDescEl.getAttribute('data-desc-auto') !== '0') {
+                examDescEl.innerHTML = examDescHtml || '';
+                examDescEl.setAttribute('data-desc-auto', '1');
+                examDescEl.setAttribute('data-desc-from-range', examDescPlain);
             }
         }
         (group.subTasks || []).forEach(function (t, i) {
             if (!t || !isComboInheritType(t.type) || t.type === 'audio_record' || t.type === 'exam') return;
             const childPath = groupPathStr + '-' + i;
             const titleEl = document.getElementById('node-title-' + childPath);
-            if (titleEl && coverage && titleEl.getAttribute('data-title-auto') !== '0') {
-                titleEl.textContent = coverage;
+            const childTitle = packRangeLabelForAudio(childPath);
+            if (titleEl && titleEl.getAttribute('data-title-auto') !== '0'
+                && (childTitle || childTitleOmitsComboName(childPath) || titleLooksLikeSheetAliasDump(titleEl.textContent))) {
+                titleEl.textContent = childTitle || '';
                 titleEl.setAttribute('data-title-auto', '1');
-                titleEl.setAttribute('data-title-from-range', coverage);
+                titleEl.setAttribute('data-title-from-range', childTitle || '');
+            }
+            const childDescEl = document.getElementById('node-desc-' + childPath);
+            const childRows = packRowsForHostPath(childPath);
+            const childDescHtml = packRangeDescriptionHtml(childRows, builderClassId());
+            const childDescPlain = packRangeDescriptionPlain(childRows, builderClassId());
+            if (childDescEl && childDescEl.getAttribute('data-desc-auto') !== '0') {
+                childDescEl.innerHTML = childDescHtml || '';
+                childDescEl.setAttribute('data-desc-auto', '1');
+                childDescEl.setAttribute('data-desc-from-range', childDescPlain);
             }
             if (t.type === 'pdf_exam') {
                 const statusEl = document.getElementById('pdf-exam-pack-status-' + childPath);
@@ -2814,18 +3202,9 @@ window.FeatureTimeline = (() => {
         if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
         const rows = normalizePackRows(group.raw_data);
-        rows.push(Object.assign({
-            combo_id: '',
-            combo_label: '',
-            meta_file: '',
-            range_type: 'page',
-            start: '',
-            end: ''
-        }, blankPackExamFields()));
+        rows.push(emptyStoredPackRow());
         writePackRowsToGroup(group, rows);
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
+        refreshPackAfterWrite(pathStr);
     }
 
     function addRangePackRow(pathStr) {
@@ -2857,16 +3236,7 @@ window.FeatureTimeline = (() => {
         if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
         const rows = normalizePackRows(group.raw_data);
-        const blocks = [];
-        rows.forEach(function (r) {
-            const id = String(r.combo_id || '').trim();
-            const last = blocks[blocks.length - 1];
-            if (!last || String(last.combo_id || '') !== id) {
-                blocks.push({ combo_id: id, combo_label: r.combo_label || '', rows: [r] });
-                return;
-            }
-            last.rows.push(r);
-        });
+        const blocks = packBlocksFromStoredRows(rows);
         const bi = Number(blockIdx);
         const block = blocks[bi];
         if (!block) return;
@@ -2896,18 +3266,17 @@ window.FeatureTimeline = (() => {
                 lines_per_page: last.lines_per_page != null && last.lines_per_page !== ''
                     ? String(last.lines_per_page) : '',
                 shuffle: packShuffleOn(last)
-            }), copyKindRangeFields(last));
+            }), copyKindRangeFields(null));
         }
+        newRow.combo_id = String(block.combo_id || last.combo_id || (blockCombo && blockCombo.id) || newRow.combo_id || '').trim();
+        newRow.combo_label = String(block.combo_label || last.combo_label || newRow.combo_label || '').trim();
         let insertAt = 0;
         for (let i = 0; i < bi; i++) insertAt += blocks[i].rows.length;
         insertAt += block.rows.length;
-        rows.splice(insertAt, 0, newRow);
+        rows.splice(insertAt, 0, storedPackRowFromAny(newRow));
         writePackRowsToGroup(group, rows);
         alignBookPasteWindowsToRows(pathStr, { insertAt: insertAt });
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
-        onRangePackChange(pathStr, { rerender: false, skipSync: true });
+        refreshPackAfterWrite(pathStr);
     }
 
     function inheritRangePackRowFromAbove(pathStr, idx) {
@@ -2932,10 +3301,7 @@ window.FeatureTimeline = (() => {
             end: inherited.end
         });
         writePackRowsToGroup(group, rows);
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
-        onRangePackChange(pathStr, { rerender: false, skipSync: true });
+        refreshPackAfterWrite(pathStr);
     }
 
     function onRangePackComboChange(pathStr, blockIdx) {
@@ -2969,6 +3335,12 @@ window.FeatureTimeline = (() => {
         } else {
             const combo = resolvePackCombo(classId, comboId);
             expanded = expandPackRowsForCombo(classId, combo, block.rows || []);
+            if (comboId && expanded && expanded[0] && !String(expanded[0].combo_id || '').trim()) {
+                expanded.forEach(function (r) {
+                    r.combo_id = comboId;
+                    r.combo_label = block.comboLabel || r.combo_label || '';
+                });
+            }
         }
         const next = [];
         blocks.forEach(function (b, i) {
@@ -2993,31 +3365,20 @@ window.FeatureTimeline = (() => {
         if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
         const rows = normalizePackRows(group.raw_data);
-        const blocks = [];
-        rows.forEach(function (r) {
-            const id = String(r.combo_id || '').trim();
-            const last = blocks[blocks.length - 1];
-            if (!last || String(last.combo_id || '') !== id) {
-                blocks.push({ combo_id: id, rows: [r] });
-                return;
-            }
-            last.rows.push(r);
-        });
-        if (blocks.length <= 1) return;
+        const blocks = packBlocksFromStoredRows(rows);
+        const bi = Number(blockIdx);
+        if (isNaN(bi) || bi < 0 || bi >= blocks.length) return;
         let removeAt = 0;
-        for (let i = 0; i < Number(blockIdx); i++) removeAt += blocks[i].rows.length;
-        const removeCount = blocks[Number(blockIdx)].rows.length;
-        blocks.splice(Number(blockIdx), 1);
+        for (let i = 0; i < bi; i++) removeAt += blocks[i].rows.length;
+        const removeCount = blocks[bi].rows.length;
+        blocks.splice(bi, 1);
         const next = [];
         blocks.forEach(function (b) {
             b.rows.forEach(function (r) { next.push(r); });
         });
-        writePackRowsToGroup(group, next);
+        writePackRowsToGroup(group, next.length ? next : [emptyStoredPackRow()]);
         alignBookPasteWindowsToRows(pathStr, { removeAt: removeAt, removeCount: removeCount });
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
-        onRangePackChange(pathStr, { rerender: false });
+        refreshPackAfterWrite(pathStr);
     }
 
     function moveRangePackCombo(pathStr, blockIdx, delta) {
@@ -3028,16 +3389,7 @@ window.FeatureTimeline = (() => {
         if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
         const rows = normalizePackRows(group.raw_data);
-        const blocks = [];
-        rows.forEach(function (r) {
-            const id = String(r.combo_id || '').trim();
-            const last = blocks[blocks.length - 1];
-            if (!last || String(last.combo_id || '') !== id) {
-                blocks.push({ combo_id: id, rows: [r] });
-                return;
-            }
-            last.rows.push(r);
-        });
+        const blocks = packBlocksFromStoredRows(rows);
         const from = Number(blockIdx);
         const to = from + Number(delta);
         if (blocks.length <= 1) return;
@@ -3050,10 +3402,7 @@ window.FeatureTimeline = (() => {
             b.rows.forEach(function (r) { next.push(r); });
         });
         writePackRowsToGroup(group, next);
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
-        onRangePackChange(pathStr, { rerender: false, skipSync: true });
+        refreshPackAfterWrite(pathStr);
     }
 
     function removeRangePackRow(pathStr, idx) {
@@ -3068,10 +3417,7 @@ window.FeatureTimeline = (() => {
         rows.splice(Number(idx), 1);
         writePackRowsToGroup(group, rows);
         alignBookPasteWindowsToRows(pathStr, { removeAt: Number(idx) });
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
-        onRangePackChange(pathStr, { rerender: false });
+        refreshPackAfterWrite(pathStr);
     }
 
     /** 同一套餐塊內調整區段列順序。不准跨套餐。 */
@@ -3094,10 +3440,7 @@ window.FeatureTimeline = (() => {
         rows.splice(to, 0, item);
         writePackRowsToGroup(group, rows);
         alignBookPasteWindowsToRows(pathStr, { moveFrom: from, moveTo: to });
-        if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
-            window.FeatureTimeline.refreshBuilder({ skipSync: true });
-        }
-        onRangePackChange(pathStr, { rerender: false, skipSync: true });
+        refreshPackAfterWrite(pathStr);
     }
 
     function moveRangePackRow(pathStr, fromIdx, delta) {
@@ -3147,29 +3490,44 @@ window.FeatureTimeline = (() => {
      * 套餐名稱（舊作業則從錄音範圍）繼承。跟 onNodeTitleInput 分開一支，因為範圍層的來源是
      * deriveRangeTitleFromGroup（讀整個 group 節點）。
      */
+    function refreshRangePackChildTitles(groupPathStr) {
+        const group = getTaskNodeByPathStr(groupPathStr);
+        if (!group || !Array.isArray(group.subTasks)) return;
+        group.subTasks.forEach(function (t, i) {
+            if (!t || !isComboInheritType(t.type)) return;
+            const childPath = groupPathStr + '-' + i;
+            const label = (t.type === 'audio_record')
+                ? packTitleForAudio(childPath)
+                : packRangeLabelForAudio(childPath);
+            applyInheritedTitleFromRange(childPath, label);
+        });
+    }
+
     function onGroupTitleInput(pathStr, el) {
         const titleEl = el || document.getElementById('node-title-' + pathStr);
         if (!titleEl) return;
         const current = String(titleEl.textContent || '').trim();
         if (current) {
             titleEl.setAttribute('data-title-auto', '0');
-            return;
+        } else {
+            titleEl.setAttribute('data-title-auto', '1');
+            const bStateObj = window.BuilderStore && window.BuilderStore.getState();
+            if (bStateObj && Array.isArray(bStateObj.tasks)) {
+                const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
+                let list = bStateObj.tasks;
+                let node = null;
+                for (let i = 0; i < arr.length; i++) {
+                    node = list[arr[i]];
+                    if (!node) break;
+                    list = node.subTasks || [];
+                }
+                if (node && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
+                    const derived = window.BuilderStore.deriveRangeTitleFromGroup(node);
+                    if (derived) titleEl.textContent = derived;
+                }
+            }
         }
-        titleEl.setAttribute('data-title-auto', '1');
-        const bStateObj = window.BuilderStore && window.BuilderStore.getState();
-        if (!bStateObj || !Array.isArray(bStateObj.tasks)) return;
-        const arr = String(pathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
-        let list = bStateObj.tasks;
-        let node = null;
-        for (let i = 0; i < arr.length; i++) {
-            node = list[arr[i]];
-            if (!node) return;
-            list = node.subTasks || [];
-        }
-        if (node && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
-            const derived = window.BuilderStore.deriveRangeTitleFromGroup(node);
-            if (derived) titleEl.textContent = derived;
-        }
+        refreshRangePackChildTitles(pathStr);
     }
 
     function syncSiblingExamTitleFromRange(audioPathStr, rangeText) {
@@ -4784,7 +5142,13 @@ window.FeatureTimeline = (() => {
         uniqueStemsFromGradingUnits: uniqueStemsFromGradingUnits,
         buildMaterialRangeLabelFromRows: buildMaterialRangeLabelFromRows,
         packRangeLabelForAudio: packRangeLabelForAudio,
+        packTitleForAudio: packTitleForAudio,
+        childTitleOmitsComboName: childTitleOmitsComboName,
         combinePackRangeLabel: combinePackRangeLabel,
+        packRangeDescriptionHtml: packRangeDescriptionHtml,
+        packRangeDescriptionPlain: packRangeDescriptionPlain,
+        titleLooksLikeSheetAliasDump: titleLooksLikeSheetAliasDump,
+        packRowsForHostPath: packRowsForHostPath,
         isComboInheritType: isComboInheritType,
         packPdfStatusForChildPath: packPdfStatusForChildPath,
         applyRangePackToPdfExam: applyRangePackToPdfExam,
@@ -4919,6 +5283,10 @@ window.FeatureTimeline = (() => {
         },
 
         onNodeTitleInput: onNodeTitleInput,
+        onNodeDescInput: onNodeDescInput,
+        bookPackDescriptionHtml: bookPackDescriptionHtml,
+        bookPackDescriptionPlain: bookPackDescriptionPlain,
+        gradingUnitsFromBookPack: gradingUnitsFromBookPack,
         applyInheritedTitleFromRange: applyInheritedTitleFromRange,
         onGroupTitleInput: onGroupTitleInput,
         parentRangeGroupOf: parentRangeGroupOf,

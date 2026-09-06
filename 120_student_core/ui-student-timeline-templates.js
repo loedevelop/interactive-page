@@ -73,9 +73,15 @@ window.UIStudentTimelineTemplates = (() => {
         ghost: 'task-btn task-btn--ghost',
         done: 'task-btn task-btn--done'
     };
-    const taskBtn = (label, onclick, variant) => {
+    const taskBtn = (label, onclick, variant, title) => {
         const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.solid;
-        return `<button type="button" class="${cls}" onclick="${onclick}">${label}</button>`;
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<button type="button" class="${cls}" onclick="${onclick}"${titleAttr}>${label}</button>`;
+    };
+    const taskLink = (label, href, variant, title, extraAttrs) => {
+        const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.ghost;
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<a href="${escapeAttr(href)}" target="_blank" rel="noopener" class="${cls}"${titleAttr}${extraAttrs || ''}>${escapeAttr(label)}</a>`;
     };
 
     const resolveStreamUrl = (fileId) => {
@@ -126,8 +132,7 @@ window.UIStudentTimelineTemplates = (() => {
                 data-label="${escapeAttr(label)}"
                 data-script-b64="${escapeAttr(scriptB64)}"
                 onchange="window.FeatureStudentTimeline.handleReplaceFile(this, '${escapeJsSingleQuoted(courseId)}', '${escapeJsSingleQuoted(taskId)}', '${escapeJsSingleQuoted(statusId)}')">
-            <button type="button" onclick="document.getElementById('${escapeAttr(inputId)}').click()" class="btn-action" title="取代這一個檔案"
-                style="flex:0 0 auto; border:1px solid #FDE68A; background:#FFFBEB; color:#B45309; font-size:0.72rem; padding:3px 8px; border-radius:6px; font-weight:800; cursor:pointer;">🔁 取代</button>`;
+            <button type="button" onclick="document.getElementById('${escapeAttr(inputId)}').click()" class="task-btn task-btn--ghost" title="取代這一個檔案">🔁 取代</button>`;
     };
 
     /**
@@ -226,6 +231,232 @@ window.UIStudentTimelineTemplates = (() => {
         });
     };
 
+    const groupIsRangePack = (group) => {
+        if (!group || group.type !== 'group' || !group.raw_data) return false;
+        if (group.raw_data.group_role === 'range') return true;
+        if (String(group.raw_data.pack_combo_id || '').trim()) return true;
+        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
+        return rows.some(function (r) {
+            return !!(String((r && (r.combo_id || r.comboId)) || '').trim()
+                || String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+                || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+                || String((r && r.page) || '').trim());
+        });
+    };
+
+    const comboNameFromBookConcatTitle = (text) => {
+        const s = String(text || '').replace(/<[^>]*>/g, '').trim();
+        if (!s) return '';
+        const segs = s.split(/\s*[;；]\s*/).filter(Boolean);
+        if (!segs.length) return '';
+        const m = segs[0].match(/^(.+?)\s+\d+\s*\/\s*/);
+        if (!m) return '';
+        const name = String(m[1] || '').trim();
+        if (!name) return '';
+        const ok = segs.every(function (seg) {
+            return seg === name || seg.indexOf(name + ' ') === 0;
+        });
+        return ok ? name : '';
+    };
+
+    const packComboNamesFromGroup = (group) => {
+        if (!group || !group.raw_data) return '';
+        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
+        const names = [];
+        const seen = {};
+        rows.forEach(function (r) {
+            const lab = String((r && (r.combo_label || r.comboLabel)) || '').trim();
+            const k = lab.toUpperCase();
+            if (!lab || seen[k]) return;
+            seen[k] = true;
+            names.push(lab);
+        });
+        return names.join('；') || String(group.raw_data.pack_combo_label || '').trim();
+    };
+
+    const rangeGroupTitleIsComboNameLocal = (group) => {
+        const names = packComboNamesFromGroup(group);
+        if (!names) return false;
+        const title = String((group && group.title) || '').replace(/<[^>]*>/g, '').trim();
+        if (!title) return true;
+        const norm = function (s) {
+            return String(s || '').replace(/[／;；]/g, '|').replace(/\s+/g, '').toUpperCase();
+        };
+        return norm(title) === norm(names);
+    };
+
+    const stripLeadingComboNames = (title, namesStr) => {
+        let t = String(title || '').replace(/<[^>]*>/g, '').trim();
+        const names = String(namesStr || '').split(/[；;／]/).map(function (n) { return n.trim(); }).filter(Boolean);
+        names.sort(function (a, b) { return b.length - a.length; });
+        names.forEach(function (n) {
+            if (!n || !t) return;
+            if (t.toUpperCase() === n.toUpperCase()) {
+                t = '';
+                return;
+            }
+            const re = new RegExp('(^|[；;]\\s*)' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+', 'gi');
+            t = t.replace(re, '$1');
+        });
+        return t.replace(/^[；;]\s*/, '').replace(/\s+/g, ' ').trim();
+    };
+
+    const packHostForBookAudio = (task, parentRangeGroup) => {
+        if (groupIsRangePack(parentRangeGroup)) return parentRangeGroup;
+        if (parentRangeGroup && parentRangeGroup.raw_data && Array.isArray(parentRangeGroup.raw_data.pack_rows)
+            && parentRangeGroup.raw_data.pack_rows.length) {
+            return parentRangeGroup;
+        }
+        if (task && task.raw_data && Array.isArray(task.raw_data.pack_rows) && task.raw_data.pack_rows.length) {
+            return task;
+        }
+        return parentRangeGroup || null;
+    };
+
+    const bookComboNameFromRangeGroup = (group) => {
+        if (!group || !group.raw_data) return '';
+        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
+        const looksBook = rows.some(function (r) {
+            return !!(String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+                || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+                || String((r && (r.heading || r.range_heading)) || '').trim()
+                || String((r && r.major) || '').trim()
+                || String((r && r.page) || '').trim());
+        });
+        if (!looksBook) return '';
+        return String(group.raw_data.pack_combo_label
+            || (rows[0] && (rows[0].combo_label || rows[0].comboLabel))
+            || '').trim();
+    };
+
+    const listTitleForBookAudio = (task, parentRangeGroup) => {
+        const raw = (task && task.raw_data) || {};
+        const title = String((task && task.title) || '').replace(/<[^>]*>/g, '').trim();
+        const range = String(raw.material_range || '').trim();
+        const host = packHostForBookAudio(task, parentRangeGroup);
+        let bookName = bookComboNameFromRangeGroup(host);
+        if (!bookName) bookName = comboNameFromBookConcatTitle(range) || comboNameFromBookConcatTitle(title);
+        if (!bookName) return String((task && task.title) || '');
+        if (raw.title_auto_from_range === false && title && title !== range && title !== bookName
+            && title.indexOf(bookName + ' ') !== 0) {
+            return title;
+        }
+        if (rangeGroupTitleIsComboNameLocal(parentRangeGroup)) return '';
+        return bookName;
+    };
+
+    const rangeTailFromTitle = (title) => {
+        const s = String(title || '').replace(/<[^>]*>/g, '').trim();
+        const idx = s.search(/\bpp\.\s|\bp\.\s|#/i);
+        if (idx < 0) return '';
+        return s.slice(idx).trim();
+    };
+
+    const listTitleForPackChild = (task, parentRangeGroup) => {
+        const title = String((task && task.title) || '').replace(/<[^>]*>/g, '').trim();
+        if (task && task.type === 'audio_record' && bookComboNameFromRangeGroup(packHostForBookAudio(task, parentRangeGroup))) {
+            return listTitleForBookAudio(task, parentRangeGroup);
+        }
+        if (!rangeGroupTitleIsComboNameLocal(parentRangeGroup)) return title;
+        const raw = (task && task.raw_data) || {};
+        const dump = /[A-Za-z0-9]+\.[A-Za-z0-9_-]+\s*(?:pp?\.|#)/i.test(title);
+        if (dump) {
+            const bits = String(title || '').match(/\b(?:pp?\.\s[^;；]+|#\S+)/gi) || [];
+            const seen = {};
+            const uniq = [];
+            bits.forEach((b) => {
+                const k = String(b || '').replace(/\s+/g, ' ').trim();
+                if (!k || seen[k]) return;
+                seen[k] = true;
+                uniq.push(k);
+            });
+            if (uniq.length) return uniq.join('；');
+        }
+        const tail = rangeTailFromTitle(title);
+        if (raw.title_auto_from_range === false && title && !tail && !dump) return title;
+        if (tail) return tail;
+        return stripLeadingComboNames(title, packComboNamesFromGroup(parentRangeGroup));
+    };
+
+    const bookRangeRowFilled = (r) => {
+        return !!(String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
+            || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
+            || String((r && (r.heading || r.range_heading)) || '').trim()
+            || String((r && r.major) || '').trim()
+            || String((r && r.secondary) || '').trim()
+            || String((r && r.minor) || '').trim()
+            || String((r && r.page) || '').trim()
+            || String((r && r.book_script) || '').trim());
+    };
+
+    const bookPasteWindowLabelLocal = (row, idx) => {
+        const trim = function (s) { return String(s == null ? '' : s).trim(); };
+        const a = trim(row && (row.primary_unit || row.primaryUnit));
+        const b = trim(row && (row.secondary_unit || row.secondaryUnit));
+        const pair = (a && b) ? (a + '-' + b) : (a || b);
+        const page = trim(row && row.page);
+        const heading = trim(row && (row.heading || row.range_heading));
+        const major = trim(row && row.major);
+        const secondary = trim(row && row.secondary);
+        const minor = trim(row && row.minor);
+        const mid = [];
+        if (page) mid.push('p. ' + page);
+        if (major) mid.push(major);
+        if (secondary) mid.push(secondary);
+        if (minor) mid.push(minor);
+        let body = mid.join(' ');
+        if (heading) body = body ? (body + ' - ' + heading) : heading;
+        if (pair && body) return pair + ': ' + body;
+        if (pair) return pair;
+        if (body) return body;
+        return '區段 ' + (Number(idx) + 1);
+    };
+
+    const recordingUnitsFromBook = (task, parentRangeGroup) => {
+        const host = packHostForBookAudio(task, parentRangeGroup);
+        if (!host || !host.raw_data) return null;
+        const rows = Array.isArray(host.raw_data.pack_rows) ? host.raw_data.pack_rows : [];
+        const filled = [];
+        rows.forEach(function (r, i) {
+            if (bookRangeRowFilled(r)) filled.push({ row: r, idx: i });
+        });
+        if (!filled.length) return null;
+        const wins = (task && task.raw_data && Array.isArray(task.raw_data.paste_windows))
+            ? task.raw_data.paste_windows
+            : [];
+        return filled.map(function (item) {
+            const r = item.row;
+            const i = item.idx;
+            const pageRaw = String((r && r.page) || '').trim();
+            const pageNum = pageRaw ? Number(pageRaw) : NaN;
+            const win = wins[i] || {};
+            return {
+                unit_key: 'book:' + i,
+                stem: '',
+                page: (pageRaw && !isNaN(pageNum)) ? pageNum : null,
+                label: bookPasteWindowLabelLocal(r, i),
+                original_script: String((win && win.script) || '')
+            };
+        });
+    };
+
+    const listDescForBookAudio = (task, parentRangeGroup) => {
+        const raw = (task && task.raw_data) || {};
+        const units = recordingUnitsFromBook(task, parentRangeGroup);
+        const lines = (units || []).map(function (u) { return String((u && u.label) || '').trim(); }).filter(Boolean);
+        const generatedPlain = lines.join('\n');
+        const generatedHtml = lines.map(function (line) {
+            return String(line).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }).join('<br>');
+        if (raw.desc_auto_from_range === false && task && task.description) return task.description;
+        const current = String((task && task.description) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
+        if (generatedHtml && (raw.desc_auto_from_range === true || !current || current === genNorm)) {
+            return generatedHtml;
+        }
+        return (task && task.description) || '';
+    };
+
     /**
      * 學生看得到的範圍。標題若已是 pp. 1~3，以標題為準（Snapshot 殘列不得多出第 4 頁）。
      * material_range 若是「A pp. 1~2；B pp. 1~2」多活頁，維持原字。
@@ -287,7 +518,7 @@ window.UIStudentTimelineTemplates = (() => {
         return String(fallbackText || '').trim();
     };
 
-    const countRecordingUnits = (task) => getRecordingBoard(task, null).expectedCount;
+    const countRecordingUnits = (task, parentRangeGroup) => getRecordingBoard(task, null, parentRangeGroup).expectedCount;
 
     const pageFromMeta = (meta) => {
         if (!meta) return null;
@@ -316,13 +547,17 @@ window.UIStudentTimelineTemplates = (() => {
      * 進度表播放器與錄音艙「已繳」共用：只認真正寫在檔／段上的頁碼，
      * 禁止用「第幾個檔 = 範圍第幾頁」去猜（會出現艙內 1 已繳、外面卻 p.1＋p.3 兩個播放器）。
      */
-    const collectSubmittedRecordingFiles = (raw, task) => {
+    const collectSubmittedRecordingFiles = (raw, task, parentRangeGroup) => {
         const data = raw || {};
         const expected = {};
-        alignUnitsToVisibleRange(
-            (task && task.raw_data && task.raw_data.grading_units) || [],
-            visibleRecordingRange(task)
-        ).forEach(function (u) {
+        const bookUnits = recordingUnitsFromBook(task, parentRangeGroup);
+        const unitList = bookUnits
+            ? bookUnits
+            : alignUnitsToVisibleRange(
+                (task && task.raw_data && task.raw_data.grading_units) || [],
+                visibleRecordingRange(task)
+            );
+        unitList.forEach(function (u) {
             if (u && u.page != null && u.page !== '') expected[Number(u.page)] = true;
         });
         const byId = {};
@@ -368,12 +603,16 @@ window.UIStudentTimelineTemplates = (() => {
      * 錄音進度唯一真相：進度表徽章／播放器、錄音艙頁選單都只讀這份。
      * pages[] = 標題範圍展開的每一頁；submitted／fileId 來自同一份 collect。
      */
-    const getRecordingBoard = (task, raw) => {
-        const units = alignUnitsToVisibleRange(
-            (task && task.raw_data && Array.isArray(task.raw_data.grading_units)) ? task.raw_data.grading_units : [],
-            visibleRecordingRange(task)
-        );
-        const collected = collectSubmittedRecordingFiles(raw, task);
+    const getRecordingBoard = (task, raw, parentRangeGroup) => {
+        const bookUnits = recordingUnitsFromBook(task, parentRangeGroup);
+        const units = bookUnits
+            ? bookUnits
+            : alignUnitsToVisibleRange(
+                (task && task.raw_data && Array.isArray(task.raw_data.grading_units)) ? task.raw_data.grading_units : [],
+                visibleRecordingRange(task)
+            );
+        const isBook = !!(bookUnits && bookUnits.length);
+        const collected = collectSubmittedRecordingFiles(raw, task, parentRangeGroup);
         const fileByPage = {};
         collected.files.forEach(function (f) {
             if (f && f.page != null && !fileByPage[Number(f.page)]) fileByPage[Number(f.page)] = f;
@@ -385,7 +624,7 @@ window.UIStudentTimelineTemplates = (() => {
                 unit_key: String((u && u.unit_key) || '').trim() || (pageNum != null ? ('range:' + pageNum) : ('unit:' + i)),
                 stem: (u && u.stem) || '',
                 page: pageNum,
-                label: (u && u.label) || (pageNum != null ? ('p. ' + pageNum) : ('第' + (i + 1) + '頁')),
+                label: (u && u.label) || (pageNum != null ? ('p. ' + pageNum) : (isBook ? ('第' + (i + 1) + '段') : ('第' + (i + 1) + '頁'))),
                 original_script: String((u && u.original_script) || '').trim(),
                 submitted: !!hit,
                 fileId: hit ? String(hit.id) : '',
@@ -469,7 +708,7 @@ window.UIStudentTimelineTemplates = (() => {
                     </a>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         ${labelChip}
-                        <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800;">開啟圖片</a>
+                        ${taskLink('開啟圖片', viewUrl, 'ghost')}
                         ${replaceBtnHtml}
                     </div>
                 </div>`;
@@ -479,7 +718,7 @@ window.UIStudentTimelineTemplates = (() => {
                 const fileName = meta && meta.name ? String(meta.name) : (kind === 'pdf' ? '已繳交 PDF' : '已繳交檔案');
                 html += `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     ${labelChip}
-                    <a href="${escapeAttr(viewUrl)}" target="_blank" rel="noopener" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#334155; text-decoration:none; font-size:0.8rem; padding:4px 10px; border-radius:6px; font-weight:800; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(fileName)}">📄 ${escapeAttr(fileName)}</a>
+                    ${taskLink('📄 ' + fileName, viewUrl, 'ghost', fileName)}
                     ${replaceBtnHtml}
                 </div>`;
             }
@@ -1261,6 +1500,8 @@ window.UIStudentTimelineTemplates = (() => {
         parseRecordingPageFromName,
         collectSubmittedRecordingFiles,
         getRecordingBoard,
+        recordingUnitsFromBook,
+        groupIsRangePack,
 
         // 供「學習分析」頁籤（feature-student-analytics.js）重用，不必複製一份邏輯。
         getScoresFromAi,
@@ -1283,7 +1524,7 @@ window.UIStudentTimelineTemplates = (() => {
 
                 const reversedNodes = safeTimelineNodes.map((node, index) => ({ node, weekIndex: index + 1 })).reverse();
 
-                const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf) => {
+                const renderTaskItem = (task, course, effectiveBlockDueDate, isLateUpload, allowLateFlag, node, depth, isFirstLeaf, isLastLeaf, parentRangeGroup) => {
                     let canUpload = true;
                     if (isLateUpload) {
                         if (!allowLateFlag) {
@@ -1298,7 +1539,7 @@ window.UIStudentTimelineTemplates = (() => {
                         return String(c.assignment_id) === String(course.id) && String(c.task_id) === String(task.id);
                     });
                     const recordingBoard = (task.type === 'audio_record')
-                        ? getRecordingBoard(task, recForBoard && recForBoard.raw_data)
+                        ? getRecordingBoard(task, recForBoard && recForBoard.raw_data, parentRangeGroup)
                         : null;
                     
                     let aiFeedbackHtml = '';
@@ -1573,12 +1814,17 @@ window.UIStudentTimelineTemplates = (() => {
                     if (task.type === 'link') {
                         let safeUrlText = task.url_text ? task.url_text : '';
                         let actualUrlText = stripHtml(safeUrlText);
-                        let actualTitle = stripHtml(task.title ? task.title : '');
+                        let actualTitle = stripHtml(listTitleForPackChild(task, parentRangeGroup) || '');
+                        if (!actualTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) {
+                            actualTitle = stripHtml(task.title ? task.title : '');
+                        }
 
                         if (actualUrlText !== '') {
                             let displayTitle = actualTitle ? actualTitle : '未命名任務';
                             taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
-                            linkContent = formattedTaskUrl ? `<a href="${escapeAttr(formattedTaskUrl)}" target="_blank" class="btn-action" style="font-size:0.85rem; background:#EEF2FF; color:#4F46E5; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:800;" onclick="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', true)">${escapeAttr(actualUrlText)}</a>` : '';
+                            linkContent = formattedTaskUrl
+                                ? taskLink(actualUrlText, formattedTaskUrl, 'ghost', '', ` onclick="window.FeatureStudentTimeline.updateProgress('${safeCourseId}', '${safeTaskId}', true)"`)
+                                : '';
                         } else {
                             let fallbackText = actualTitle ? actualTitle : '未命名連結';
                             if (formattedTaskUrl) {
@@ -1603,12 +1849,14 @@ window.UIStudentTimelineTemplates = (() => {
                             if (task.raw_data.material_range) materialRange = String(task.raw_data.material_range);
                         }
 
-                        let displayTitle = stripHtml(task.title ? task.title : '').trim();
-                        // 標題（麥克風右側）空白時，改用 base 範圍
-                        if (!displayTitle && materialRange) {
-                            displayTitle = String(materialRange).trim();
+                        let displayTitle = stripHtml(listTitleForPackChild(task, parentRangeGroup) || '').trim();
+                        const omitParent = rangeGroupTitleIsComboNameLocal(parentRangeGroup);
+                        const bookNameNow = bookComboNameFromRangeGroup(parentRangeGroup);
+                        if (!displayTitle && !omitParent) {
+                            if (materialRange && !bookNameNow) displayTitle = String(materialRange).trim();
+                            if (!displayTitle && bookNameNow) displayTitle = bookNameNow;
+                            if (!displayTitle) displayTitle = '語音錄製任務';
                         }
-                        if (!displayTitle) displayTitle = '語音錄製任務';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem; vertical-align:middle;">${escapeAttr(displayTitle)}</span>`;
 
                         const captureStudio = !(task.raw_data && task.raw_data.capture_studio === false);
@@ -1635,16 +1883,15 @@ window.UIStudentTimelineTemplates = (() => {
                             const studioPageCount = recordingBoard ? recordingBoard.expectedCount : 0;
                             const submittedPageCount = recordingBoard ? recordingBoard.submittedCount : 0;
                             const studioPartial = studioPageCount > 1 && submittedPageCount > 0 && submittedPageCount < studioPageCount;
+                            const bookAudioUnits = recordingUnitsFromBook(task, parentRangeGroup);
+                            const unitWord = (bookAudioUnits && bookAudioUnits.length) ? '段' : '頁';
                             if (studioPartial) {
-                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🎙️ 已交 ${submittedPageCount}/${studioPageCount} 頁</span>`;
-                                checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" onclick="return false;" tabindex="-1" title="還沒交齊所有頁，不會打勾">`;
+                                statusBadgeHtml = `<span style="font-size:0.75rem; background:#FEF3C7; color:#B45309; padding:2px 6px; border-radius:4px; font-weight:bold; box-shadow: 0 0 0 1px #FDE68A;">🎙️ 已交 ${submittedPageCount}/${studioPageCount} ${unitWord}</span>`;
+                                checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" onclick="return false;" tabindex="-1" title="還沒交齊所有${unitWord}，不會打勾">`;
                             }
                             const recordBtnText = studioPartial
                                 ? ('🎙️ 繼續錄音（' + submittedPageCount + '/' + studioPageCount + '）')
                                 : (hasValidAudioFile ? '重新錄製' : '🎙️ 開啟錄音艙');
-                            const recordBtnStyle = (hasValidAudioFile && !studioPartial) ?
-                                'background:white; color:#94A3B8; border:1px solid #CBD5E1;' : 
-                                'background:#EF4444; color:white; border:none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);';
 
                             const audioUploadId = `audio-upload-input-${course.id}-${task.id}`;
 
@@ -1672,36 +1919,31 @@ window.UIStudentTimelineTemplates = (() => {
                                 );
                             }
 
-                            const btnBaseStyle = 'font-size:0.82rem; padding:6px 12px; border-radius:8px; font-weight:800; cursor:pointer;';
-
-                            // 🌟 依老師要求拿掉「📂 繳交檔」按鈕：已有音檔時上面的 inline 播放器已足夠，
-                            // 沒有音檔時才需要一個入口讓學生自己去 Drive 資料夾確認。
                             const openFileBtnHtml = (hasValidAudioFile && retryAudioId)
                                 ? ''
-                                : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="${btnBaseStyle} border:1px solid #E2E8F0; background:white; color:#64748B;">📁 Drive</button>`;
+                                : taskBtn('📁 Drive', 'window.FeatureStudentTimeline.openDriveAndCheck()', 'ghost');
 
                             const studioBtnHtml = captureStudio
-                                ? `<button onclick="window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}')" class="btn-action" style="${recordBtnStyle} ${btnBaseStyle}">${recordBtnText}</button>`
+                                ? taskBtn(recordBtnText, `window.FeatureStudentTimeline.openAudioStudio('${safeCourseId}', '${safeTaskId}')`, (hasValidAudioFile && !studioPartial) ? 'ghost' : 'solid')
                                 : '';
                             const uploadBtnHtml = captureUpload
-                                ? `<input type="file" id="${audioUploadId}" multiple accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${statusId}')">
-                                    <button onclick="document.getElementById('${audioUploadId}').click()" class="btn-action" style="${btnBaseStyle} background:#10B981; color:white; border:none;" title="可複選多檔；請依頁面順序點選">📤 上傳音檔（可複選）</button>`
+                                ? `<input type="file" id="${audioUploadId}" multiple accept="audio/*,.mp3,.wav,.m4a,.ogg,.aac,.webm,.flac,.amr,.3gp,.wma,.mp4" style="display:none;" onchange="window.FeatureStudentTimeline.handleAudioFileUpload(this, '${safeCourseId}', '${safeTaskId}', '${statusId}')">`
+                                    + taskBtn('📤 上傳音檔（可複選）', `document.getElementById('${audioUploadId}').click()`, 'solid', '可複選多檔；請依頁面順序點選')
                                 : '';
 
                             btn = `
-                                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:8px 10px;">
+                                <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${audioPlayerHtml}
-                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                        ${studioBtnHtml}
-                                        ${uploadBtnHtml}
-                                        ${openFileBtnHtml}
-                                    </div>
+                                    ${studioBtnHtml}
+                                    ${uploadBtnHtml}
+                                    ${openFileBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
                             `;
                         }
                     } else if (task.type === 'exam') {
-                        let displayTitle = stripHtml(task.title ? task.title : '線上考試');
+                        let displayTitle = stripHtml(listTitleForPackChild(task, parentRangeGroup) || '').trim();
+                        if (!displayTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) displayTitle = '線上考試';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
                         const paper = task.raw_data && task.raw_data.quiz_paper;
                         const itemN = paper && Array.isArray(paper.items) ? paper.items.length : 0;
@@ -1772,7 +2014,7 @@ window.UIStudentTimelineTemplates = (() => {
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
-                                    ${taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')`, 'solid')}
+                                    ${taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz ? window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')}
                                     ${reviewBtn}
                                     ${retakeBtn}
                                     ${correctionBtn}
@@ -1783,7 +2025,8 @@ window.UIStudentTimelineTemplates = (() => {
                     } else if (task.type === 'pdf_exam') {
                         // 🆕 PDF 考卷：獨立於上面的 exam（meta 出題）分支，直接用 pdf_exam_job.parsed_bank 判斷是否已設定完成
                         // （改版後老師端不再畫框，作答位置由學生自己點，見 feature-student-pdf-quiz.js）
-                        let displayTitle = stripHtml(task.title ? task.title : 'PDF 考卷');
+                        let displayTitle = stripHtml(listTitleForPackChild(task, parentRangeGroup) || '').trim();
+                        if (!displayTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) displayTitle = 'PDF 考卷';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
                         const pdfJob = task.raw_data && task.raw_data.pdf_exam_job;
                         const pdfItemN = (pdfJob && Array.isArray(pdfJob.parsed_bank)) ? pdfJob.parsed_bank.filter(it => it.key).length : 0;
@@ -1811,14 +2054,15 @@ window.UIStudentTimelineTemplates = (() => {
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${pdfScoreHtml}
-                                    ${taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}')`, 'solid')}
+                                    ${taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz ? window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')}
                                     ${pdfReviewBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pdfItemN} 題</span>
                                 </div>
                             `;
                         }
                     } else if (task.type === 'drive') {
-                        let displayTitle = stripHtml(task.title ? task.title : '未命名任務');
+                        let displayTitle = stripHtml(listTitleForPackChild(task, parentRangeGroup) || '').trim();
+                        if (!displayTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) displayTitle = '未命名任務';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
 
                         if (!canUpload) {
@@ -1851,52 +2095,66 @@ window.UIStudentTimelineTemplates = (() => {
                             // 🌟 依老師要求拿掉「📂 繳交檔」按鈕，理由同錄音任務：已有檔案時不需要重複入口。
                             const driveOpenBtnHtml = (hasValidAudioFile && (retryAudioId || submittedFileIds[0]))
                                 ? ''
-                                : `<button onclick="window.FeatureStudentTimeline.openDriveAndCheck()" class="btn-action" style="border:1px solid #CBD5E1; background:white; color:#64748B; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📁 Drive</button>`;
+                                : taskBtn('📁 Drive', 'window.FeatureStudentTimeline.openDriveAndCheck()', 'ghost');
 
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${drivePreviewHtml}
                                     <input type="file" id="${uniqueId}" multiple style="display:none;" onchange="window.FeatureStudentTimeline.handleFileSelect(this, '${safeCourseId}', '${safeTaskId}', '${safeTitleForJS}', '${statusId}', '${safeNodeTitle}',${isLateUpload})">
-                                    <button onclick="document.getElementById('${uniqueId}').click()" class="btn-action" style="background:#10B981; color:white; border:none; cursor:pointer; font-size:0.85rem; padding:4px 10px; border-radius:6px; font-weight:800;">📤 上傳檔案</button>
+                                    ${taskBtn('📤 上傳檔案', `document.getElementById('${uniqueId}').click()`, 'solid')}
                                     ${driveOpenBtnHtml}
                                     <span id="${statusId}" style="font-size:0.75rem; font-weight:bold; color:#64748B;"></span>
                                 </div>
                             `;
                         }
                     } else {
-                        let displayTitle = stripHtml(task.title ? task.title : '未命名任務');
+                        let displayTitle = stripHtml(listTitleForPackChild(task, parentRangeGroup) || '').trim();
+                        if (!displayTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) displayTitle = '未命名任務';
                         taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${escapeAttr(displayTitle)}</span>`;
                     }
 
-                    let cleanTaskDesc = '';
-                    if (task.description) {
-                        cleanTaskDesc = String(task.description).replace(/<[^>]*>?/gm, '').trim();
+                    let descHtml = '';
+                    if (task.type === 'audio_record') {
+                        descHtml = listDescForBookAudio(task, parentRangeGroup) || '';
+                    } else if (task.description) {
+                        descHtml = String(task.description);
                     }
+                    let cleanTaskDesc = descHtml ? String(descHtml).replace(/<[^>]*>?/gm, '').trim() : '';
                     if (task.type === 'audio_record' && cleanTaskDesc) {
-                        cleanTaskDesc = cleanTaskDesc.split(/\n/).filter(function (line) {
+                        const kept = String(descHtml).split(/\n/).filter(function (line) {
                             return !/每一頁請錄成一支音檔|本作業共|依「?頁面順序」?點選|可複選多檔|請上傳\s*\d+\s*檔/.test(line);
                         }).join('\n').trim();
+                        descHtml = kept;
+                        cleanTaskDesc = kept.replace(/<[^>]*>?/gm, '').trim();
                     }
                     
-                    // 不再顯示灰色「(範圍：...)」——標題（或標題空白時的 base 範圍 fallback）已有相同內容。
-                    let finalDescText = cleanTaskDesc;
+                    let finalDescText = descHtml;
                     let recordingUnitHintHtml = '';
                     if (task.type === 'audio_record') {
-                        const unitCount = countRecordingUnits(task);
+                        const bookAudioUnits = recordingUnitsFromBook(task, parentRangeGroup);
+                        const isBookAudio = !!(bookAudioUnits && bookAudioUnits.length);
+                        const unitCount = countRecordingUnits(task, parentRangeGroup);
+                        const unitWord = isBookAudio ? '段' : '頁';
                         const uploadLine = unitCount > 0
-                            ? `繳交時，可複選多檔一次上傳（本作業共 <strong>${unitCount}</strong> 頁 → 請上傳 <strong>${unitCount}</strong> 檔）`
+                            ? `繳交時，可複選多檔一次上傳（本作業共 <strong>${unitCount}</strong> ${unitWord} → 請上傳 <strong>${unitCount}</strong> 檔）`
                             : '繳交時，可複選多檔一次上傳';
+                        const cabinLine = isBookAudio
+                            ? '🎙️ 錄音艙可一段一段錄：繳交這一段後，接著錄下一段（也可從選單改段／重錄已繳段）'
+                            : '🎙️ 錄音艙可一頁一頁錄：繳交這一頁後，接著錄下一頁（也可從選單改頁／重錄已繳頁）';
+                        const fileHint = isBookAudio
+                            ? '📎 檔名含頁碼（如 p.407）會自動對到該段；沒有頁碼才依選取順序對剩下的段'
+                            : '📎 檔名含頁碼（如 p.2、第2頁）會自動對到該頁；沒有頁碼才依選取順序對剩下的頁';
                         recordingUnitHintHtml = `
                             <ul class="rt-normalize" style="margin:6px 0 0; padding-left:34px; font-size:0.78rem; color:#64748B; line-height:1.65; list-style:none;">
-                                <li>🎙️ 錄音艙可一頁一頁錄：繳交這一頁後，接著錄下一頁（也可從選單改頁／重錄已繳頁）</li>
+                                <li>${cabinLine}</li>
                                 <li>📤 ${uploadLine}</li>
-                                <li>📎 檔名含頁碼（如 p.2、第2頁）會自動對到該頁；沒有頁碼才依選取順序對剩下的頁</li>
+                                <li>${fileHint}</li>
                             </ul>`;
                     }
 
                     let taskDescHtml = '';
-                    if (finalDescText !== '') {
-                        taskDescHtml = `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px;">${finalDescText}</div>`;
+                    if (finalDescText !== '' && cleanTaskDesc !== '') {
+                        taskDescHtml = `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:6px; padding-left:36px; white-space:pre-line;">${finalDescText}</div>`;
                     }
                     taskDescHtml += recordingUnitHintHtml;
                     
@@ -2022,7 +2280,7 @@ window.UIStudentTimelineTemplates = (() => {
                             let lateBadgeText = (isLateUpload && allowLateFlag) ? ' (接受遲交)' : '';
                             let dueHtml = effectiveBlockDueDate ? `<span style="font-size:0.8rem; color:#EF4444; border:1px solid #FECACA; padding:2px 8px; border-radius:4px; margin-left:10px;">⏰ 期限: ${DateUtils && DateUtils.formatStampLabel ? DateUtils.formatStampLabel(effectiveBlockDueDate) : effectiveBlockDueDate}${lateBadgeText}</span>` : '';
 
-                            const renderTaskTree = (tasksList, depth, parentOpenAt, parentLatePolicy) => {
+                            const renderTaskTree = (tasksList, depth, parentOpenAt, parentLatePolicy, parentRangeGroup) => {
                                 if (!Array.isArray(tasksList)) return '';
                                 if (tasksList.length === 0) return '';
                                 const parentLate = parentLatePolicy || blockLatePolicy;
@@ -2048,7 +2306,7 @@ window.UIStudentTimelineTemplates = (() => {
                                     if (!isLastLeaf && tasksList[idx + 1] && tasksList[idx + 1].type === 'group') isLastLeaf = true;
                                     
                                     if (task.type === 'group') {
-                                        const isRangeGroup = !!(task.raw_data && task.raw_data.group_role === 'range');
+                                        const isRangeGroup = groupIsRangePack(task);
                                         let groupTitle = String(task.title ? task.title : '');
                                         if (isRangeGroup && !groupTitle.replace(/<[^>]*>?/gm, '').trim()
                                             && window.BuilderStore && typeof window.BuilderStore.deriveRangeTitleFromGroup === 'function') {
@@ -2059,7 +2317,7 @@ window.UIStudentTimelineTemplates = (() => {
                                         
                                         if (Array.isArray(task.subTasks) && task.subTasks.length > 0) {
                                             subTasksHtml = `<div style="display:flex; flex-direction:column;">` +
-                                                renderTaskTree(task.subTasks, depth + 1, effOpen, taskLate) +
+                                                renderTaskTree(task.subTasks, depth + 1, effOpen, taskLate, isRangeGroup ? task : parentRangeGroup) +
                                                 `</div>`;
                                         } else {
                                             subTasksHtml = `<div style="color:#94A3B8; font-size: 0.9rem; font-style: italic; padding-left: 20px; margin-top:5px;">(此作業群組尚無內容)</div>`;
@@ -2077,7 +2335,7 @@ window.UIStudentTimelineTemplates = (() => {
                                             </div>
                                         `;
                                     } else {
-                                        return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, taskAllowLate, node, depth, isFirstLeaf, isLastLeaf);
+                                        return renderTaskItem(task, course, effectiveBlockDueDate, isLateUpload, taskAllowLate, node, depth, isFirstLeaf, isLastLeaf, parentRangeGroup);
                                     }
                                 }).join('');
                             };
