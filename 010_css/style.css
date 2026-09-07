@@ -674,56 +674,69 @@ a.task-btn {
     color: #1E3A8A;
 }
 
-.mz-book-sheets {
+.mz-book-tabs {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0 0 8px 0;
 }
-.mz-book-sheet {
-    border: 1px solid #93C5FD;
-    border-radius: 8px;
-    background: #EFF6FF;
+.mz-book-tabs-secondary {
+    margin-top: 2px;
 }
-.mz-book-sheet > summary {
-    cursor: pointer;
+.mz-book-tree-panel {
+    min-height: 0;
+}
+.mz-book-entry {
+    margin: 6px 0 0 0;
+    padding: 6px 8px;
+    border: 1px solid #E2E8F0;
+    border-radius: 6px;
+    background: #FFFFFF;
+}
+.mz-book-entry-meta {
     font-weight: 800;
     color: #1E3A8A;
-    padding: 8px 10px;
-    list-style-position: inside;
-}
-.mz-book-sheet[open] > summary {
-    border-bottom: 1px dashed #93C5FD;
-}
-.mz-book-sheet > *:not(summary) {
-    padding: 6px 10px 10px 10px;
-}
-.mz-book-folder {
-    margin: 4px 0 4px 8px;
-    border: 1px solid #BFDBFE;
-    border-radius: 6px;
-    background: #F8FAFC;
-}
-.mz-book-folder > summary {
-    cursor: pointer;
-    font-weight: 800;
-    color: #334155;
-    padding: 6px 8px;
-    font-size: 0.84rem;
-    list-style-position: inside;
-}
-.mz-book-folder > *:not(summary) {
-    padding: 4px 8px 8px 8px;
-}
-.mz-book-line {
-    margin: 4px 0 2px 8px;
-    font-weight: 800;
-    color: #334155;
     font-size: 0.82rem;
+    line-height: 1.4;
 }
-.mz-book-leaf {
-    margin: 2px 0 2px 20px;
-    font-size: 0.76rem;
+.mz-book-field {
+    margin-top: 8px;
+}
+.mz-book-field:first-of-type {
+    margin-top: 6px;
+}
+.mz-book-field-label {
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    margin-bottom: 2px;
+}
+.mz-book-field-label--speak {
+    color: #4338CA;
+}
+.mz-book-field-label--written {
+    color: #065F46;
+}
+.mz-book-field-label--script {
+    color: #9A3412;
+}
+.mz-book-script {
+    margin-top: 0;
+    white-space: pre-wrap;
+    font-weight: 700;
     color: #334155;
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+.mz-book-script--empty {
+    color: #94A3B8;
+    font-weight: 700;
+}
+.mz-book-file {
+    margin-top: 2px;
+    font-size: 0.74rem;
+    color: #64748B;
+    font-weight: 700;
 }
 
 /* 答案清單自己捲，不准把滾輪交給 .view-section 主頁 */
@@ -757,10 +770,57 @@ a.task-btn {
 .pdf-exam-bank-with-paper > .mz-pdf-exam-bank {
     flex: 1 1 320px;
 }
+.pdf-exam-section-paper-page {
+    position: relative;
+}
 .pdf-exam-section-paper-page canvas {
     width: 100%;
     height: auto;
     display: block;
+}
+.pdf-exam-section-paper-page.is-anchoring canvas {
+    cursor: crosshair;
+}
+.pdf-exam-section-paper-pin {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: #DC2626;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 2;
+}
+.pdf-exam-section-paper-pin span {
+    position: absolute;
+    left: 0;
+    top: 3px;
+    background: #DC2626;
+    color: #FFFFFF;
+    font-size: 0.7rem;
+    font-weight: 800;
+    padding: 1px 6px;
+    border-radius: 0 0 4px 0;
+}
+.pdf-exam-section-paper-anchor {
+    background: #FFFFFF;
+    color: #B91C1C;
+    border: 1px solid #DC2626;
+    border-radius: 6px;
+    font-weight: 800;
+    cursor: pointer;
+    height: auto;
+    padding: 2px 8px;
+}
+.pdf-exam-section-paper-anchor.is-armed {
+    background: #FEF3C7;
+    color: #92400E;
+    border-color: #F59E0B;
+}
+.pdf-exam-section-paper-anchor.is-set {
+    background: #FEE2E2;
+    color: #B91C1C;
+    border-color: #DC2626;
 }
 
 /* --- 學生端考試成績活頁 --- */

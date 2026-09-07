@@ -2,7 +2,8 @@
  * 目錄套餐。跟 Excel/JSON／PDF 同階層、在教材資料夾裡有卡。
  * 產生在教材範本管理獨立區塊（選夾後＋新增）；教材區窗口只顯示已有卡。
  * 範圍由老師出作業提供（主單元／次單元／標題／大題／次題／小題），系統收集成書。
- * 目錄文稿與這次錄音口說答案是兩把鑰匙，不准互抄。
+ * 目錄文稿與這次錄音口說答案、書寫答案是三把鑰匙，不准互抄。
+ * 套餐卡要分開顯示口說答案、書寫答案、目錄文稿。
  * 不碰 ensureCombination／pickComboForCard／Excel 畫卡。
  * combo_statistics 含三種套餐；目錄列由 trigger 寫入，不准拿來走 Excel 畫卡。
  */
@@ -15,6 +16,7 @@ window.FeatureMaterialBook = (function () {
     var _hintsByFolder = {};
     var _loaded = false;
     var _loadPromise = null;
+    var _treeSelByCombo = {};
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -262,6 +264,71 @@ window.FeatureMaterialBook = (function () {
         return out;
     }
 
+    function samePackRange(row, rec) {
+        return sameText(trim(row && (row.primary_unit || row.primaryUnit)), rec && rec.primary_unit)
+            && sameText(trim(row && (row.secondary_unit || row.secondaryUnit)), rec && rec.secondary_unit)
+            && sameText(trim(row && (row.heading || row.range_heading)), rec && rec.heading)
+            && sameText(trim(row && row.major), rec && rec.major)
+            && sameText(trim(row && row.secondary), rec && rec.secondary)
+            && sameText(trim(row && row.minor), rec && rec.minor)
+            && sameText(trim(row && row.page), rec && rec.page);
+    }
+
+    function audioOfPackHost(host) {
+        if (host && host.type === 'audio_record') return host;
+        var list = (host && host.subTasks) || [];
+        var i;
+        for (i = 0; i < list.length; i++) {
+            if (list[i] && list[i].type === 'audio_record') return list[i];
+        }
+        return null;
+    }
+
+    /** 這一列自己的貼上視窗。有 paste_windows[j] 才讀。不准拿別列、不准借口說當書寫。 */
+    function pasteWindowAt(host, rowIdx) {
+        var audio = audioOfPackHost(host);
+        var raw = (audio && audio.raw_data) || {};
+        var wins = raw.paste_windows;
+        if (Array.isArray(wins) && wins.length) {
+            if (wins[rowIdx]) {
+                return {
+                    speak: trim(wins[rowIdx].script),
+                    written: trim(wins[rowIdx].student)
+                };
+            }
+            return { speak: '', written: '' };
+        }
+        if (rowIdx === 0) {
+            return {
+                speak: trim(raw.original_script),
+                written: trim(raw.student_display_text || raw.student_display || raw.student_text)
+            };
+        }
+        return { speak: '', written: '' };
+    }
+
+    /** 這一列範圍在已存作業裡最後一次出現的那格口說／書寫。 */
+    function speakWrittenFromSavedPacks(comboId, rec) {
+        var found = { speak: '', written: '' };
+        var want = String(comboId || '');
+        if (!want) return found;
+        function walk(nodes) {
+            (nodes || []).forEach(function (n) {
+                var rows = (n && n.raw_data && n.raw_data.pack_rows) || [];
+                rows.forEach(function (r, j) {
+                    if (String((r && (r.combo_id || r.comboId)) || '') !== want) return;
+                    if (!samePackRange(r, rec)) return;
+                    found = pasteWindowAt(n, j);
+                });
+                walk(n.subTasks);
+            });
+        }
+        ((window.TeacherDB && window.TeacherDB.assignments) || []).forEach(function (a) {
+            walk(a && a.tasks);
+        });
+        return found;
+    }
+
     function treeSourceItems(combo) {
         var db = itemsForCombo(combo && combo.id);
         return catalogRows(combo).map(function (rec) {
@@ -273,6 +340,11 @@ window.FeatureMaterialBook = (function () {
                     && sameText(it.secondary, rec.secondary)
                     && sameText(it.minor, rec.minor);
             })[0];
+            var live = speakWrittenFromSavedPacks(combo && combo.id, rec);
+            var speak = trim(hit && hit.speak_script);
+            var written = trim(hit && hit.written_script);
+            if (!speak) speak = live.speak;
+            if (!written) written = live.written;
             return {
                 primary_unit: rec.primary_unit,
                 secondary_unit: rec.secondary_unit,
@@ -280,7 +352,10 @@ window.FeatureMaterialBook = (function () {
                 major: rec.major,
                 secondary: rec.secondary,
                 minor: rec.minor,
+                page: rec.page,
                 script: hit ? hit.script : '',
+                speak_script: speak,
+                written_script: written,
                 drive_file_name: hit ? hit.drive_file_name : ''
             };
         });
@@ -682,10 +757,15 @@ window.FeatureMaterialBook = (function () {
     function loadRangeItemsInBackground() {
         if (!window.supabaseClient) return;
         var comboIds = _combos.map(function (c) { return c && c.id; }).filter(Boolean);
+        var speakSelect = 'id, book_combo_id, teacher_id, primary_unit, secondary_unit, heading, major, secondary, minor, script, speak_script, written_script, source_assignment_id, source_task_id, progress_date, drive_file_id, drive_file_name, updated_at';
         var fullSelect = 'id, book_combo_id, teacher_id, primary_unit, secondary_unit, heading, major, secondary, minor, script, source_assignment_id, source_task_id, progress_date, drive_file_id, drive_file_name, updated_at';
         var slimSelect = 'id, book_combo_id, teacher_id, major, secondary, minor, script, source_assignment_id, source_task_id, progress_date, drive_file_id, drive_file_name, updated_at';
         (async function () {
-            var res = await fetchRangeItemPages(fullSelect, comboIds);
+            var res = await fetchRangeItemPages(speakSelect, comboIds);
+            if (res.error) {
+                console.warn('[FeatureMaterialBook] 範圍列載入（含口說／書寫）失敗，改讀舊欄', res.error);
+                res = await fetchRangeItemPages(fullSelect, comboIds);
+            }
             if (res.error) {
                 console.warn('[FeatureMaterialBook] 範圍列載入（含主／次／標題）失敗，改讀舊欄', res.error);
                 res = await fetchRangeItemPages(slimSelect, comboIds);
@@ -746,6 +826,20 @@ window.FeatureMaterialBook = (function () {
         return '主單元　' + num;
     }
 
+    function secondarySheetLabel(pu, su) {
+        var num = trim(su);
+        var primary = trim(pu);
+        if (!num || num === '（未填次單元）') return '（未填次單元）';
+        if (!primary || primary === '（未填主單元）') return num;
+        return primary + '-' + num;
+    }
+
+    function pageSheetLabel(page) {
+        var p = trim(page);
+        if (!p || p === '（未填頁碼）') return '（未填頁碼）';
+        return 'p. ' + p;
+    }
+
     function unitWordPickerHtml(combo) {
         var current = comboUnitWord(combo);
         var known = knownUnitWords();
@@ -789,57 +883,144 @@ window.FeatureMaterialBook = (function () {
         });
     }
 
+    function treeSel(comboId) {
+        var id = String(comboId || '');
+        if (!_treeSelByCombo[id]) _treeSelByCombo[id] = { primary: '', secondary: '', page: '' };
+        return _treeSelByCombo[id];
+    }
+
+    function bookTabBtn(kind, value, label, on) {
+        return '<button type="button" class="mz-book-tab btn" data-tree-kind="' + esc(kind) + '" data-tree-value="' + esc(value) + '"'
+            + ' onclick="window.FeatureMaterialBook.onTreeTab(this)"'
+            + ' style="padding:5px 12px; font-size:0.78rem; font-weight:800; cursor:pointer; height:auto; background:'
+            + (on ? '#CCFBF1' : '#FFFFFF') + '; color:' + (on ? '#0F766E' : '#334155')
+            + '; border:1px solid ' + (on ? '#0F766E' : '#CBD5E1') + '; border-radius:6px;">'
+            + esc(label)
+            + '</button>';
+    }
+
+    function compareTreeItems(a, b) {
+        var keys = ['heading', 'major', 'secondary', 'minor', 'page'];
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            var c = compareMenuDesc(trim(b && b[keys[i]]), trim(a && a[keys[i]]));
+            if (c) return c;
+        }
+        return 0;
+    }
+
+    function treeFieldHtml(kind, label, text, emptyText) {
+        var t = trim(text);
+        var body = t
+            ? '<div class="mz-book-script">' + esc(t) + '</div>'
+            : '<div class="mz-book-script mz-book-script--empty">' + esc(emptyText) + '</div>';
+        return '<div class="mz-book-field">'
+            + '<div class="mz-book-field-label mz-book-field-label--' + kind + '">' + esc(label) + '</div>'
+            + body
+            + '</div>';
+    }
+
+    function treeEntryHtml(it) {
+        var meta = [];
+        if (trim(it && it.heading)) meta.push('標題　' + trim(it.heading));
+        if (trim(it && it.major)) meta.push('大題　' + trim(it.major));
+        if (trim(it && it.secondary)) meta.push('次題　' + trim(it.secondary));
+        if (trim(it && it.minor)) meta.push('小題　' + trim(it.minor));
+        var metaHtml = meta.length
+            ? '<div class="mz-book-entry-meta">' + esc(meta.join('　')) + '</div>'
+            : '';
+        var file = trim(it && it.drive_file_name);
+        var fileHtml = file ? '<div class="mz-book-file">' + esc(file) + '</div>' : '';
+        return '<div class="mz-book-entry">'
+            + metaHtml
+            + treeFieldHtml('speak', '口說答案', it && it.speak_script, '口說空')
+            + treeFieldHtml('written', '書寫答案', it && it.written_script, '書寫空')
+            + treeFieldHtml('script', '目錄文稿', it && it.script, '目錄文稿空')
+            + fileHtml
+            + '</div>';
+    }
+
+    function renderSheetEntries(items) {
+        return (items || []).slice().sort(compareTreeItems).map(treeEntryHtml).join('');
+    }
+
     function treeHtml(combo) {
         var items = treeSourceItems(combo);
         if (!items.length) {
             return '<div style="font-size:0.78rem; color:#64748B; font-weight:700;">尚未收集範圍。出作業選這張卡、填主單元／次單元／標題／大題／次題／小題後會出現在這裡。</div>';
         }
+        var sel = treeSel(combo.id);
         var primaries = uniqueUnitValues(items.map(function (it) { return it.primary_unit || '（未填主單元）'; }));
-        return '<div class="mz-book-sheets">' + primaries.map(function (pu) {
-            var puItems = items.filter(function (it) {
-                return (trim(it.primary_unit) || '（未填主單元）') === pu;
-            });
-            var sus = uniqueValues(puItems.map(function (it) { return it.secondary_unit || '（未填次單元）'; }));
-            var suHtml = sus.map(function (su) {
-                var suItems = puItems.filter(function (it) {
-                    return (trim(it.secondary_unit) || '（未填次單元）') === su;
-                });
-                var headings = uniqueValues(suItems.map(function (it) { return it.heading || '（未填標題）'; }));
-                var headHtml = headings.map(function (hd) {
-                    var hdItems = suItems.filter(function (it) {
-                        return (trim(it.heading) || '（未填標題）') === hd;
-                    });
-                    var majors = uniqueValues(hdItems.map(function (it) { return it.major || '（未填大題）'; }));
-                    var majHtml = majors.map(function (maj) {
-                        var majItems = hdItems.filter(function (it) {
-                            return (trim(it.major) || '（未填大題）') === maj;
-                        });
-                        var secs = uniqueValues(majItems.map(function (it) { return it.secondary || '（未填次題）'; }));
-                        var secHtml = secs.map(function (sec) {
-                            var secItems = majItems.filter(function (it) {
-                                return (trim(it.secondary) || '（未填次題）') === sec;
-                            });
-                            var leaves = secItems.map(function (it) {
-                                var lab = trim(it.minor) ? ('小題 ' + it.minor) : '（未填小題）';
-                                var file = trim(it.drive_file_name) ? ('　' + it.drive_file_name) : '';
-                                var hasScript = !!trim(it.script);
-                                return '<div class="mz-book-leaf">▫️ '
-                                    + esc(lab) + (hasScript ? '　有文稿' : '　文稿空') + esc(file) + '</div>';
-                            }).join('');
-                            return '<div class="mz-book-line">次題　' + esc(sec) + '</div>' + leaves;
-                        }).join('');
-                        return '<details class="mz-book-folder"><summary>大題　' + esc(maj) + '</summary>'
-                            + secHtml + '</details>';
-                    }).join('');
-                    return '<div class="mz-book-line">標題　' + esc(hd) + '</div>' + majHtml;
-                }).join('');
-                return '<details class="mz-book-folder"><summary>次單元　' + esc(su) + '</summary>'
-                    + headHtml + '</details>';
-            }).join('');
-            return '<details class="mz-book-sheet" data-primary="' + esc(pu) + '">'
-                + '<summary>' + esc(primarySheetLabel(combo, pu)) + '</summary>'
-                + suHtml + '</details>';
+        if (sel.primary && !primaries.some(function (pu) { return sameText(pu, sel.primary); })) {
+            sel.primary = '';
+            sel.secondary = '';
+            sel.page = '';
+        }
+        var puItems = sel.primary ? items.filter(function (it) {
+            return sameText(trim(it.primary_unit) || '（未填主單元）', sel.primary);
+        }) : [];
+        var sus = uniqueUnitValues(puItems.map(function (it) {
+            return trim(it.secondary_unit) || '（未填次單元）';
+        }));
+        if (sel.secondary && !sus.some(function (su) { return sameText(su, sel.secondary); })) {
+            sel.secondary = '';
+            sel.page = '';
+        }
+        var suItems = sel.secondary ? puItems.filter(function (it) {
+            return sameText(trim(it.secondary_unit) || '（未填次單元）', sel.secondary);
+        }) : [];
+        var pages = uniqueUnitValues(suItems.map(function (it) {
+            return trim(it.page) || '（未填頁碼）';
+        }));
+        if (sel.page && !pages.some(function (pg) { return sameText(pg, sel.page); })) {
+            sel.page = '';
+        }
+        var pageItems = sel.page ? suItems.filter(function (it) {
+            return sameText(trim(it.page) || '（未填頁碼）', sel.page);
+        }) : [];
+        var primaryTabs = '<div class="mz-book-tabs">' + primaries.map(function (pu) {
+            return bookTabBtn('primary', pu, primarySheetLabel(combo, pu), sameText(pu, sel.primary));
         }).join('') + '</div>';
+        var panel = '';
+        if (sel.primary) {
+            panel += '<div class="mz-book-tabs mz-book-tabs-secondary">' + sus.map(function (su) {
+                return bookTabBtn('secondary', su, secondarySheetLabel(sel.primary, su), sameText(su, sel.secondary));
+            }).join('') + '</div>';
+            if (sel.secondary) {
+                panel += '<div class="mz-book-tabs mz-book-tabs-page">' + pages.map(function (pg) {
+                    return bookTabBtn('page', pg, pageSheetLabel(pg), sameText(pg, sel.page));
+                }).join('') + '</div>';
+                panel += '<div class="mz-book-tree-entries">' + renderSheetEntries(sel.page ? pageItems : suItems) + '</div>';
+            }
+        }
+        return '<div class="mz-book-tree" data-book-id="' + esc(combo.id) + '">'
+            + primaryTabs
+            + '<div class="mz-book-tree-panel">' + panel + '</div>'
+            + '</div>';
+    }
+
+    function onTreeTab(btn) {
+        if (!btn) return;
+        var tree = btn.closest('.mz-book-tree');
+        var id = tree && tree.getAttribute('data-book-id');
+        var combo = _combos.filter(function (c) { return String(c.id) === String(id || ''); })[0];
+        if (!combo || !tree) return;
+        var kind = btn.getAttribute('data-tree-kind') || '';
+        var value = btn.getAttribute('data-tree-value') || '';
+        var sel = treeSel(combo.id);
+        if (kind === 'primary') {
+            if (!sameText(sel.primary, value)) {
+                sel.secondary = '';
+                sel.page = '';
+            }
+            sel.primary = value;
+        }
+        if (kind === 'secondary') {
+            if (!sameText(sel.secondary, value)) sel.page = '';
+            sel.secondary = value;
+        }
+        if (kind === 'page') sel.page = value;
+        tree.outerHTML = treeHtml(combo);
     }
 
     function cardHtml(combo) {
@@ -1122,6 +1303,7 @@ window.FeatureMaterialBook = (function () {
                 var minor = trim(row.minor);
                 if (!primaryUnit && !secondaryUnit && !heading && !major && !secondary && !minor) continue;
                 var script = trim(row.book_script);
+                var pair = pasteWindowAt(host, j);
                 var taskId = String((host && host.id) || '') + '|' + j;
                 var existing = _items.filter(function (it) {
                     return String(it.book_combo_id) === String(combo.id)
@@ -1155,6 +1337,8 @@ window.FeatureMaterialBook = (function () {
                     secondary: secondary,
                     minor: minor,
                     script: script,
+                    speak_script: pair.speak,
+                    written_script: pair.written,
                     source_assignment_id: assignmentId,
                     source_task_id: taskId,
                     progress_date: progressDate,
@@ -1436,6 +1620,7 @@ window.FeatureMaterialBook = (function () {
         pasteWindowLabel: pasteWindowLabel,
         parseUnitPair: parseUnitPair,
         onBookPickChange: onBookPickChange,
+        onTreeTab: onTreeTab,
         bookRowInputsHtml: bookRowInputsHtml,
         copyRangeFields: copyRangeFields,
         readRowFields: readRowFields,

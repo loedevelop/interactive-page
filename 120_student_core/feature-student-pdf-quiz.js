@@ -1166,8 +1166,20 @@ window.FeatureStudentPdfQuiz = (function () {
         var rangeBySection = {};
         (pageRanges || []).forEach(function (r) { rangeBySection[r.section] = r; });
         st.pageRanges = st.sections.map(function (s) {
+            var saved = (window.PdfExamPaper && typeof window.PdfExamPaper.sectionPageAnchor === 'function')
+                ? window.PdfExamPaper.sectionPageAnchor(st.job && st.job.split_review, s.section)
+                : null;
+            if (saved && saved.startPage) {
+                return {
+                    startPage: saved.startPage,
+                    endPage: saved.startPage,
+                    startYPct: saved.startYPct || 0,
+                    titleFound: true
+                };
+            }
             var r = rangeBySection[s.section];
-            return r || { startPage: 1, endPage: st.pdfDoc.numPages, startYPct: 0 };
+            if (r && r.titleFound) return r;
+            return { startPage: 1, endPage: st.pdfDoc.numPages, startYPct: 0, titleFound: false };
         });
         _renderSectionTabs();
         _jumpToSection(st.currentIdx, true);
@@ -1183,8 +1195,19 @@ window.FeatureStudentPdfQuiz = (function () {
             var pdfDoc = await window.PdfExamPaper.loadPdfDocumentFromDrive(job.pdf_file_id);
             if (_quizState !== st) return;
             st.pdfDoc = pdfDoc;
-            st.pageRanges = st.sections.map(function () {
-                return { startPage: 1, endPage: pdfDoc.numPages };
+            st.pageRanges = st.sections.map(function (s) {
+                var saved = (window.PdfExamPaper && typeof window.PdfExamPaper.sectionPageAnchor === 'function')
+                    ? window.PdfExamPaper.sectionPageAnchor(job.split_review, s.section)
+                    : null;
+                if (saved && saved.startPage) {
+                    return {
+                        startPage: saved.startPage,
+                        endPage: saved.startPage,
+                        startYPct: saved.startYPct || 0,
+                        titleFound: true
+                    };
+                }
+                return { startPage: 1, endPage: pdfDoc.numPages, titleFound: false };
             });
             st.loading = false;
             _renderAllPages();

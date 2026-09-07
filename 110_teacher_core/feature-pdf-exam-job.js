@@ -565,7 +565,10 @@ window.FeaturePdfExamJob = (function () {
                 pdfFileId: job.pdf_file_id,
                 section: job._bankSection || '',
                 bank: job.parsed_bank,
-                sectionPageHints: job.section_page_hints
+                sectionPageHints: job.section_page_hints,
+                savedAnchor: window.PdfExamPaper.sectionPageAnchor
+                    ? window.PdfExamPaper.sectionPageAnchor(job.split_review, job._bankSection || '')
+                    : null
             });
         }
         var reviewEl = document.getElementById('pdf-exam-split-review-' + pathStr);
@@ -659,7 +662,8 @@ window.FeaturePdfExamJob = (function () {
             reattachLog: parsed.column_reattach || [],
             section_template_overrides: prevReview.section_template_overrides || {},
             teacher_located_boxes: prevReview.teacher_located_boxes || {},
-            confirmed_sections: prevReview.confirmed_sections || {}
+            confirmed_sections: prevReview.confirmed_sections || {},
+            section_page_anchors: prevReview.section_page_anchors || {}
         });
         if (section && window.PdfExamPaper.setSectionConfirmed) {
             window.PdfExamPaper.setSectionConfirmed(job.split_review, section, false);
@@ -693,9 +697,30 @@ window.FeaturePdfExamJob = (function () {
         var job = ensureJob(task);
         job.split_review = job.split_review || {};
         if (window.PdfExamPaper.isSectionConfirmed(job.split_review, section)) return;
-        window.PdfExamPaper.setSectionConfirmed(job.split_review, section, true);
-        refreshBankTable(pathStr, job, { section: section });
-        window.showFlash('「' + section + '」已確認無誤，請儲存作業', 'success');
+        var bankEl = document.getElementById('pdf-exam-bank-' + pathStr);
+        Promise.resolve()
+            .then(function () {
+                if (typeof window.PdfExamPaper.readSectionPaperAnchor === 'function') {
+                    return window.PdfExamPaper.readSectionPaperAnchor(bankEl);
+                }
+                return null;
+            })
+            .then(function (paperAnchor) {
+                window.PdfExamPaper.setSectionConfirmed(job.split_review, section, true);
+                if (typeof window.PdfExamPaper.setSectionPageAnchor === 'function') {
+                    window.PdfExamPaper.setSectionPageAnchor(job.split_review, section, paperAnchor);
+                }
+                refreshBankTable(pathStr, job, { section: section });
+                var note = (window.PdfExamPaper.formatSectionPageAnchorNote
+                    ? window.PdfExamPaper.formatSectionPageAnchorNote(paperAnchor)
+                    : '');
+                window.showFlash(
+                    note
+                        ? ('「' + section + '」已確認無誤，' + note + '。請儲存作業')
+                        : ('「' + section + '」已確認無誤。題目頁還沒記下，請翻到這一組標題再按一次確認，並儲存作業'),
+                    note ? 'success' : 'warning'
+                );
+            });
     }
 
     function useTeacherLocate(pathStr, section) {
@@ -894,7 +919,10 @@ window.FeaturePdfExamJob = (function () {
                         pdfFileId: lateJob.pdf_file_id,
                         section: lateJob._bankSection || '',
                         bank: lateJob.parsed_bank,
-                        sectionPageHints: lateJob.section_page_hints
+                        sectionPageHints: lateJob.section_page_hints,
+                        savedAnchor: window.PdfExamPaper.sectionPageAnchor
+                            ? window.PdfExamPaper.sectionPageAnchor(lateJob.split_review, lateJob._bankSection || '')
+                            : null
                     });
                 }
             }

@@ -690,7 +690,10 @@ window.FeatureMaterialPdfExam = (function () {
                 pdfFileId: item.pdf_file_id,
                 section: item._bankSection || '',
                 bank: item.parsed_bank,
-                sectionPageHints: item.section_page_hints
+                sectionPageHints: item.section_page_hints,
+                savedAnchor: window.PdfExamPaper.sectionPageAnchor
+                    ? window.PdfExamPaper.sectionPageAnchor(item.split_review, item._bankSection || '')
+                    : null
             });
         }
         var msg = card.querySelector('.mz-pdf-exam-msg');
@@ -841,7 +844,8 @@ window.FeatureMaterialPdfExam = (function () {
                 reattachLog: parsed.column_reattach || [],
                 section_template_overrides: prevReview.section_template_overrides || {},
                 teacher_located_boxes: prevReview.teacher_located_boxes || {},
-                confirmed_sections: prevReview.confirmed_sections || {}
+                confirmed_sections: prevReview.confirmed_sections || {},
+                section_page_anchors: prevReview.section_page_anchors || {}
             });
         }
         if (opts.section && opts.txtWins && window.PdfExamPaper.setSectionConfirmed) {
@@ -1287,23 +1291,46 @@ window.FeatureMaterialPdfExam = (function () {
                 confirmItem.split_review = confirmItem.split_review || {};
                 var sec = confirmBtn.getAttribute('data-section') || '';
                 if (window.PdfExamPaper.isSectionConfirmed(confirmItem.split_review, sec)) return;
-                window.PdfExamPaper.setSectionConfirmed(confirmItem.split_review, sec, true);
                 confirmBtn.disabled = true;
                 confirmBtn.textContent = '儲存中…';
                 if (confirmMsg) { confirmMsg.style.color = '#0F766E'; confirmMsg.textContent = '儲存中…'; }
-                saveMemberCard(confirmCard, confirmItem).then(function (saved) {
-                    var latest = getItemById(saved && saved.id) || saved || confirmItem;
+                var paperRoot = confirmCard.querySelector('.mz-pdf-exam-bank-wrap') || confirmCard;
+                Promise.resolve()
+                    .then(function () {
+                        if (typeof window.PdfExamPaper.readSectionPaperAnchor === 'function') {
+                            return window.PdfExamPaper.readSectionPaperAnchor(paperRoot);
+                        }
+                        return null;
+                    })
+                    .then(function (paperAnchor) {
+                        window.PdfExamPaper.setSectionConfirmed(confirmItem.split_review, sec, true);
+                        if (typeof window.PdfExamPaper.setSectionPageAnchor === 'function') {
+                            window.PdfExamPaper.setSectionPageAnchor(confirmItem.split_review, sec, paperAnchor);
+                        }
+                        return saveMemberCard(confirmCard, confirmItem).then(function (saved) {
+                            return { saved: saved, paperAnchor: paperAnchor };
+                        });
+                    })
+                    .then(function (pack) {
+                    var latest = getItemById(pack.saved && pack.saved.id) || pack.saved || confirmItem;
+                    var note = (window.PdfExamPaper.formatSectionPageAnchorNote
+                        ? window.PdfExamPaper.formatSectionPageAnchorNote(pack.paperAnchor)
+                        : '');
+                    var pageNote = note
+                        ? ('，' + note)
+                        : '。題目頁還沒記下，請翻到這一組標題再按一次確認';
                     refreshMemberBank(confirmCard, latest, {
-                        text: '「' + sec + '」已確認並儲存（' + ((latest.parsed_bank || []).length) + ' 題）',
+                        text: '「' + sec + '」已確認並儲存（' + ((latest.parsed_bank || []).length) + ' 題）' + pageNote,
                         keepSection: sec
                     });
-                }).catch(function (err) {
+                    })
+                    .catch(function (err) {
                     window.PdfExamPaper.setSectionConfirmed(confirmItem.split_review, sec, false);
                     confirmBtn.disabled = false;
                     confirmBtn.textContent = '確認並儲存';
                     if (confirmMsg) { confirmMsg.style.color = '#B91C1C'; confirmMsg.textContent = '儲存失敗：' + (err.message || err); }
                     refreshMemberBank(confirmCard, confirmItem, { error: true, text: '儲存失敗：' + (err.message || err) });
-                });
+                    });
                 return;
             }
             var btn = ev.target.closest('[data-mz-bank-act]');
@@ -1344,7 +1371,10 @@ window.FeatureMaterialPdfExam = (function () {
                     pdfFileId: item.pdf_file_id,
                     section: item._bankSection || '',
                     bank: item.parsed_bank,
-                    sectionPageHints: item.section_page_hints
+                    sectionPageHints: item.section_page_hints,
+                    savedAnchor: window.PdfExamPaper.sectionPageAnchor
+                        ? window.PdfExamPaper.sectionPageAnchor(item.split_review, item._bankSection || '')
+                        : null
                 });
             }
         });

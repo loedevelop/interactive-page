@@ -781,7 +781,8 @@ window.PdfExamPaper = (function () {
             flagged_keys: flagged,
             section_template_overrides: extra.section_template_overrides || {},
             teacher_located_boxes: extra.teacher_located_boxes || {},
-            confirmed_sections: extra.confirmed_sections || {}
+            confirmed_sections: extra.confirmed_sections || {},
+            section_page_anchors: extra.section_page_anchors || {}
         };
     }
 
@@ -2345,6 +2346,36 @@ window.PdfExamPaper = (function () {
         return !!(hit && map[hit]);
     }
 
+    function setSectionPageAnchor(review, section, anchor) {
+        review = review || {};
+        if (!review.section_page_anchors) review.section_page_anchors = {};
+        var k = _sectionReviewKey(section);
+        var page = anchor && Number(anchor.startPage);
+        if (!anchor || !isFinite(page) || page < 1) {
+            delete review.section_page_anchors[section];
+            delete review.section_page_anchors[k];
+            Object.keys(review.section_page_anchors).forEach(function (s) {
+                if (_sectionReviewKey(s) === k) delete review.section_page_anchors[s];
+            });
+            return review;
+        }
+        review.section_page_anchors[section] = {
+            startPage: page,
+            startYPct: Number(anchor.startYPct) || 0,
+            teacherSet: !!anchor.teacherSet
+        };
+        return review;
+    }
+
+    function sectionPageAnchor(review, section) {
+        var map = (review && review.section_page_anchors) || {};
+        if (map[section] && map[section].startPage) return map[section];
+        var k = _sectionReviewKey(section);
+        if (map[k] && map[k].startPage) return map[k];
+        var hit = Object.keys(map).filter(function (s) { return _sectionReviewKey(s) === k; })[0];
+        return (hit && map[hit] && map[hit].startPage) ? map[hit] : null;
+    }
+
     function setSectionConfirmed(review, section, on) {
         review = review || {};
         if (!review.confirmed_sections) review.confirmed_sections = {};
@@ -2357,6 +2388,7 @@ window.PdfExamPaper = (function () {
             Object.keys(review.confirmed_sections).forEach(function (s) {
                 if (_sectionReviewKey(s) === k) delete review.confirmed_sections[s];
             });
+            setSectionPageAnchor(review, section, null);
         }
         return review;
     }
@@ -2366,6 +2398,7 @@ window.PdfExamPaper = (function () {
     }
 
     var _sectionPageRangeCache = {};
+    var _sectionPageRangePending = {};
 
     function sectionPaperPreviewHtml(opts) {
         opts = opts || {};
@@ -2377,10 +2410,41 @@ window.PdfExamPaper = (function () {
             + '<button type="button" class="btn pdf-exam-section-paper-prev" style="background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px; font-weight:800; cursor:pointer; height:auto; padding:2px 8px;">上一頁</button>'
             + '<span class="pdf-exam-section-paper-num" style="font-size:0.76rem; font-weight:800; color:#334155;"></span>'
             + '<button type="button" class="btn pdf-exam-section-paper-next" style="background:#FFFFFF; color:#0F766E; border:1px solid #0F766E; border-radius:6px; font-weight:800; cursor:pointer; height:auto; padding:2px 8px;">下一頁</button>'
+            + '<button type="button" class="btn pdf-exam-section-paper-anchor" title="翻到這一組，按設錨後點標題位置。考試會捲到這個錨。">設錨</button>'
             + '</div>'
             + '<div class="pdf-exam-section-paper-page">載入題目 PDF…</div>'
             + '</div>'
         );
+    }
+
+    function findSectionTitleYPctOnPage(pdfDoc, pageNum, section) {
+        var want = _sectionReviewKey(section);
+        var n = Number(pageNum);
+        if (!pdfDoc || !want || !isFinite(n) || n < 1) return Promise.resolve(null);
+        return pdfDoc.getPage(n).then(function (page) {
+            return _pageItemsPct(page).then(function (items) {
+                var found = null;
+                _groupLines(items).forEach(function (line) {
+                    if (found != null) return;
+                    var lineText = line.items.map(function (it) { return it.str; }).join(' ').replace(/\s+/g, ' ').trim();
+                    var collapsed = _collapseLetterSpacedTokens(lineText);
+                    var secMatch = collapsed.match(SECTION_HEADER_ANYWHERE_RE) || lineText.match(SECTION_HEADER_ANYWHERE_RE);
+                    var candidate = secMatch ? normalizeSectionLabel(secMatch[1]) : null;
+                    if (candidate && _sectionReviewKey(candidate) === want) found = line.yPct;
+                });
+                return found;
+            });
+        }).catch(function () { return null; });
+    }
+
+    function formatSectionPageAnchorNote(anchor) {
+        if (!anchor || !anchor.startPage) return '';
+        var y = Number(anchor.startYPct) || 0;
+        var where = (y >= 20)
+            ? ('第 ' + anchor.startPage + ' 頁下半')
+            : ('第 ' + anchor.startPage + ' 頁');
+        if (anchor.teacherSet) return '考試捲到老師設的錨（' + where + '）';
+        return '考試捲到' + where;
     }
 
     function _rangesForPaper(pdfDoc, fileId, bank, hints) {
@@ -2397,10 +2461,20 @@ window.PdfExamPaper = (function () {
         sig = sig.join('\n');
         var hit = _sectionPageRangeCache[key];
         if (hit && hit.sig === sig) return Promise.resolve(hit.ranges);
-        return detectSectionPageRanges(pdfDoc, bank, hints).then(function (ranges) {
-            _sectionPageRangeCache[key] = { sig: sig, ranges: ranges };
+        var pendKey = key + '\0' + sig;
+        if (_sectionPageRangePending[pendKey]) return _sectionPageRangePending[pendKey];
+        _sectionPageRangePending[pendKey] = detectSectionPageRanges(pdfDoc, bank, hints).then(function (ranges) {
+            var cur = _sectionPageRangeCache[key];
+            if (!cur || cur.sig === sig) {
+                _sectionPageRangeCache[key] = { sig: sig, ranges: ranges };
+            }
+            delete _sectionPageRangePending[pendKey];
             return ranges;
+        }).catch(function (err) {
+            delete _sectionPageRangePending[pendKey];
+            throw err;
         });
+        return _sectionPageRangePending[pendKey];
     }
 
     function mountSectionPaperPreview(rootEl, opts) {
@@ -2422,7 +2496,43 @@ window.PdfExamPaper = (function () {
         }
         var gen = Number(paper.getAttribute('data-gen') || 0) + 1;
         paper.setAttribute('data-gen', String(gen));
-        var state = { pdfDoc: null, page: 1, numPages: 1, titleFound: false, startYPct: 0 };
+        var saved = opts.savedAnchor && Number(opts.savedAnchor.startPage) >= 1 ? opts.savedAnchor : null;
+        var state = {
+            pdfDoc: null,
+            page: saved ? Number(saved.startPage) : 1,
+            numPages: 1,
+            titleFound: false,
+            startYPct: saved ? (Number(saved.startYPct) || 0) : 0,
+            teacherAnchor: !!saved,
+            anchorPage: saved ? Number(saved.startPage) : null,
+            anchorArmed: false
+        };
+        var anchorBtn = paper.querySelector('.pdf-exam-section-paper-anchor');
+
+        function syncAnchorBtn() {
+            if (!anchorBtn) return;
+            anchorBtn.classList.toggle('is-armed', !!state.anchorArmed);
+            anchorBtn.classList.toggle('is-set', !!state.teacherAnchor && !state.anchorArmed);
+            if (pageHold) pageHold.classList.toggle('is-anchoring', !!state.anchorArmed);
+            if (state.anchorArmed) {
+                anchorBtn.textContent = '點標題…';
+            } else if (state.teacherAnchor) {
+                anchorBtn.textContent = '已設錨';
+            } else {
+                anchorBtn.textContent = '設錨';
+            }
+        }
+
+        function drawPin() {
+            var old = pageHold && pageHold.querySelector('.pdf-exam-section-paper-pin');
+            if (old) old.remove();
+            if (!pageHold || !state.teacherAnchor || Number(state.anchorPage) !== Number(state.page)) return;
+            var pin = document.createElement('div');
+            pin.className = 'pdf-exam-section-paper-pin';
+            pin.style.top = (Number(state.startYPct) || 0) + '%';
+            pin.innerHTML = '<span>錨</span>';
+            pageHold.appendChild(pin);
+        }
 
         function paintPage() {
             if (Number(paper.getAttribute('data-gen')) !== gen) return;
@@ -2448,9 +2558,34 @@ window.PdfExamPaper = (function () {
                     if (Number(paper.getAttribute('data-gen')) !== gen) return;
                     pageHold.innerHTML = '';
                     pageHold.appendChild(canvas);
-                    if (state.titleFound && state.startYPct > 0) {
-                        paper.scrollTop = Math.round((state.startYPct / 100) * canvas.getBoundingClientRect().height);
+                    function scrollToY(yPct) {
+                        var y = Number(yPct) || 0;
+                        paper.scrollTop = y > 0
+                            ? Math.round((y / 100) * canvas.getBoundingClientRect().height)
+                            : 0;
                     }
+                    if (state.teacherAnchor) {
+                        if (Number(state.anchorPage) === Number(pageNum)) scrollToY(state.startYPct);
+                        else paper.scrollTop = 0;
+                        drawPin();
+                        syncAnchorBtn();
+                        return;
+                    }
+                    paper.scrollTop = 0;
+                    return findSectionTitleYPctOnPage(state.pdfDoc, pageNum, section).then(function (yPct) {
+                        if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                        if (state.teacherAnchor) {
+                            drawPin();
+                            return;
+                        }
+                        if (yPct != null && isFinite(yPct) && yPct > 0) {
+                            state.startYPct = yPct;
+                            scrollToY(yPct);
+                            return;
+                        }
+                        state.startYPct = 0;
+                        paper.scrollTop = 0;
+                    });
                 });
             }).catch(function (err) {
                 if (Number(paper.getAttribute('data-gen')) !== gen) return;
@@ -2472,37 +2607,100 @@ window.PdfExamPaper = (function () {
                 st.page += 1;
                 if (typeof paper._paperPaint === 'function') paper._paperPaint();
             });
+            if (anchorBtn) anchorBtn.addEventListener('click', function () {
+                var st = paper._paperState;
+                if (!st || !st.pdfDoc) return;
+                st.anchorArmed = !st.anchorArmed;
+                if (typeof paper._syncAnchorBtn === 'function') paper._syncAnchorBtn();
+                if (cap) {
+                    cap.style.color = st.anchorArmed ? '#B45309' : '#0F766E';
+                    cap.textContent = st.anchorArmed
+                        ? ('請點「' + (paper.getAttribute('data-section') || '') + '」標題列設錨')
+                        : (st.teacherAnchor
+                            ? ('題目 PDF　老師已設錨：第 ' + st.anchorPage + ' 頁。請確認並儲存。')
+                            : '題目 PDF');
+                }
+            });
+            paper.addEventListener('click', function (ev) {
+                var st = paper._paperState;
+                if (!st || !st.anchorArmed) return;
+                var canvas = paper.querySelector('.pdf-exam-section-paper-page canvas');
+                if (!canvas || ev.target !== canvas) return;
+                var rect = canvas.getBoundingClientRect();
+                var yPct = ((ev.clientY - rect.top) / rect.height) * 100;
+                if (!isFinite(yPct)) return;
+                if (yPct < 0) yPct = 0;
+                if (yPct > 100) yPct = 100;
+                st.teacherAnchor = true;
+                st.anchorArmed = false;
+                st.anchorPage = st.page;
+                st.startYPct = yPct;
+                if (typeof paper._drawPin === 'function') paper._drawPin();
+                if (typeof paper._syncAnchorBtn === 'function') paper._syncAnchorBtn();
+                if (cap) {
+                    cap.style.color = '#0F766E';
+                    cap.textContent = '題目 PDF　錨在第 ' + st.page + ' 頁。請按確認並儲存。';
+                }
+            });
         }
         paper._paperPaint = paintPage;
         paper._paperState = state;
+        paper._drawPin = drawPin;
+        paper._syncAnchorBtn = syncAnchorBtn;
+        syncAnchorBtn();
 
+        // 畫頁不准等整本掃完標題。課本 PDF 一頁一頁抽文字很慢，等掃完才畫＝左側永遠停在「載入題目 PDF…」。
+        // 檔一進來先畫第 1 頁；標題掃到再跳，掃不到就留在第 1 頁並紅字。不准拿前一個 Quiz 的頁冒充這一組。
+        // 老師設的錨優先：有錨就停在錨，不准掃標題再蓋掉。
         loadPdfDocumentFromDrive(fileId).then(function (pdfDoc) {
             if (Number(paper.getAttribute('data-gen')) !== gen) return;
             state.pdfDoc = pdfDoc;
             state.numPages = pdfDoc.numPages || 1;
+            if (state.teacherAnchor && state.anchorPage) {
+                state.page = state.anchorPage;
+                if (cap) {
+                    cap.style.color = '#0F766E';
+                    cap.textContent = '題目 PDF　老師已設錨：第 ' + state.anchorPage + ' 頁。考試捲到這裡。';
+                }
+            } else if (cap) {
+                cap.style.color = '#0F766E';
+                cap.textContent = '題目 PDF　正在找「' + section + '」標題…';
+            }
+            paintPage();
             return _rangesForPaper(pdfDoc, fileId, opts.bank || [], opts.sectionPageHints).then(function (ranges) {
                 if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                if (state.teacherAnchor) return;
                 var hit = (ranges || []).filter(function (r) {
                     return _sectionReviewKey(r && r.section) === _sectionReviewKey(section);
                 })[0];
-                if (hit && hit.titleFound) {
-                    state.titleFound = true;
-                    state.page = hit.startPage || 1;
-                    state.startYPct = hit.startYPct || 0;
+                var destPage = 1;
+                var destY = 0;
+                var found = !!(hit && hit.titleFound);
+                if (found) {
+                    destPage = hit.startPage || 1;
+                    destY = hit.startYPct || 0;
                     if (cap) {
                         cap.style.color = '#0F766E';
-                        cap.textContent = '題目 PDF　「' + section + '」掃到第 ' + state.page + ' 頁。請對著題目核對答案。';
+                        cap.textContent = '題目 PDF　「' + section + '」掃到第 ' + destPage + ' 頁。請對著題目核對答案。';
                     }
                 } else {
-                    state.titleFound = false;
-                    state.page = 1;
-                    state.startYPct = 0;
                     if (cap) {
                         cap.style.color = '#B91C1C';
-                        cap.textContent = '題目沒掃到「' + section + '」這一組標題。請翻頁看題目，不要盲改答案。';
+                        cap.textContent = '題目沒掃到「' + section + '」這一組標題。請翻頁，按「設錨」再點標題位置。';
                     }
                 }
-                paintPage();
+                var needPaint = state.page !== destPage || destY > 0;
+                state.titleFound = found;
+                state.page = destPage;
+                state.startYPct = destY;
+                if (needPaint) paintPage();
+            }).catch(function (err) {
+                if (Number(paper.getAttribute('data-gen')) !== gen) return;
+                if (state.teacherAnchor) return;
+                if (cap) {
+                    cap.style.color = '#B91C1C';
+                    cap.textContent = '標題還沒掃完：' + (err.message || err) + '　請翻頁，按「設錨」再點標題位置。';
+                }
             });
         }).catch(function (err) {
             if (Number(paper.getAttribute('data-gen')) !== gen) return;
@@ -2511,6 +2709,35 @@ window.PdfExamPaper = (function () {
                 cap.textContent = '題目 PDF 載入失敗：' + (err.message || err);
             }
             if (pageHold) pageHold.textContent = '';
+        });
+    }
+
+    function readSectionPaperAnchor(rootEl) {
+        var paper = rootEl && (rootEl.classList && rootEl.classList.contains('pdf-exam-section-paper')
+            ? rootEl
+            : rootEl.querySelector('.pdf-exam-section-paper'));
+        if (!paper || !paper._paperState || !paper._paperState.pdfDoc) return Promise.resolve(null);
+        var st = paper._paperState;
+        if (st.teacherAnchor && Number(st.anchorPage) >= 1) {
+            return Promise.resolve({
+                startPage: Number(st.anchorPage),
+                startYPct: Number(st.startYPct) || 0,
+                teacherSet: true
+            });
+        }
+        var page = Number(st.page);
+        if (!isFinite(page) || page < 1) return Promise.resolve(null);
+        var sectionLabel = paper.getAttribute('data-section') || '';
+        var scrollY = 0;
+        var canvas = paper.querySelector('.pdf-exam-section-paper-page canvas');
+        if (canvas && paper.scrollTop > 0) {
+            var h = canvas.getBoundingClientRect().height;
+            if (h > 0) scrollY = (paper.scrollTop / h) * 100;
+        }
+        var fallbackY = scrollY || Number(st.startYPct) || 0;
+        return findSectionTitleYPctOnPage(st.pdfDoc, page, sectionLabel).then(function (titleY) {
+            var yPct = (titleY != null && isFinite(titleY)) ? titleY : fallbackY;
+            return { startPage: page, startYPct: yPct, teacherSet: false };
         });
     }
 
@@ -2941,6 +3168,10 @@ window.PdfExamPaper = (function () {
         mountSectionPaperPreview: mountSectionPaperPreview,
         isSectionConfirmed: isSectionConfirmed,
         setSectionConfirmed: setSectionConfirmed,
+        setSectionPageAnchor: setSectionPageAnchor,
+        sectionPageAnchor: sectionPageAnchor,
+        readSectionPaperAnchor: readSectionPaperAnchor,
+        formatSectionPageAnchorNote: formatSectionPageAnchorNote,
         sectionConfirmButtonHtml: sectionConfirmButtonHtml,
         snapshotScroller: snapshotScroller,
         restoreScroller: restoreScroller,
