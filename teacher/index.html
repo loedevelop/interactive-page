@@ -405,7 +405,7 @@
     <script src="../110_teacher_core/feature-message-layout-editor.js?v=9"></script>
     <script src="../110_teacher_core/feature-reminder-image.js?v=32"></script>
     <script src="../110_teacher_core/feature-template-library.js?v=16"></script> <!-- v16：findTemplateByAnyId 給出作業現算用。 -->
-    <script src="../110_teacher_core/feature-exam-job.js?v=168"></script> <!-- v168：listExamTasks 補上每個考試任務自己（含繼承）的 open_at／due_date，不再只回 id/title/jobId。 --> <!-- v167：舊卷簽章不認內部 section id／1 vs "1"。 -->
+    <script src="../110_teacher_core/feature-exam-job.js?v=169"></script> <!-- v169：listExamTasks 補上 allowWrongRetake／inputCorrectionEnabled，供考試批改清單顯示該任務有沒有開這兩個功能。 --> <!-- v168：listExamTasks 補上每個考試任務自己（含繼承）的 open_at／due_date，不再只回 id/title/jobId。 --> <!-- v167：舊卷簽章不認內部 section id／1 vs "1"。 -->
     <script src="../110_teacher_core/feature-pdf-exam-job.js?v=43"></script> <!-- v43：設錨立刻寫進這份作業；可改可刪。 --> <!-- v42：這份 PDF 考卷可送分／不計分。 --> <!-- v40：確認連下半頁高度。 --> <!-- v39：確認無誤寫入這一組題目頁。 --> <!-- v38：答案清單旁顯示這一組題目 PDF。 --> <!-- v32：已確認後題列不准再紅匡。 --> <!-- v31：答案清單自己捲。 --> <!-- v30：答案清單 Quiz 活頁；編輯區加大。 --> <!-- v29：刪列先記住捲動位置，確認框關掉後不准跳回 Quiz 1。 --> <!-- v28：手動新增一題走 ModalOverlay，加在該大題最後。 --> <!-- v27：格號只編相鄰的同一題。 --> <!-- v21：每一 Quiz 旁「確認無誤」。 --> <!-- v20：缺組仍顯示在清單。 --> <!-- v17：解析後對帳 Quiz 組並提供改用老師定位。 --> <!-- v16：PDF 考卷改走教材夾全域檔，不再上傳到 PDF考卷。 -->
 
     <script src="../110_teacher_core/feature-material-layout-pairing.js?v=162"></script> <!-- v162：教材範本管理畫完立刻帶出目錄／PDF 產生區塊。 --> <!-- v160：總覽列出資料夾裡真實 PDF，不只 meta。 -->
@@ -416,7 +416,7 @@
     <script src="../110_teacher_core/feature-class-material-combinations.js?v=174"></script> <!-- v174：combo_statistics 含三種套餐；Excel 畫卡／出作業 sheet 開口只認 kind=sheet。 -->
     <script src="../110_teacher_core/feature-script-collector.js?v=12"></script> <!-- v12：口說答案／書寫答案標出來，不是兩份沒標的同一格。 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=4"></script> <!-- v4：可接受答案寫進全站這題教材列。 -->
-    <script src="../110_teacher_core/feature-exam-review.js?v=36"></script> <!-- v36：學生卡片依同質性分行（分數／申訴訂正／作答歷程／用時／批改明細），補空白題永遠顯示與錯題修正完成度；任務清單上方補班級名稱＋人數。 --> <!-- v35：學生列表每人卡片補上離開次數／作答用時／空白題數（讀 raw_data.quiz_stats，跟學生自己看到的同一份）。 --> <!-- v34：考試批改清單「進度日」誤用整份作業排週用的 target_date；改成這個考試自己的「開放」(open_at)，截止日改讀任務自己（含繼承）的 due_date，排序改先比截止日。 --> <!-- v33：申訴審核改逐組即決即存＋廣播進度信號，拿掉整批「儲存提交」按鈕。 --> <!-- v32：可接受答案全站；這份卷加送分／不計分。 -->
+    <script src="../110_teacher_core/feature-exam-review.js?v=37"></script> <!-- v37：班級人數改查真實名單（student_enrollments，跟批改列學生同一份），修正 TeacherDB.classes[].students 一律 0 的錯資料；任務清單每筆補是否開了錯題重考／錯題練習徽章。 --> <!-- v36：學生卡片依同質性分行（分數／申訴訂正／作答歷程／用時／批改明細），補空白題永遠顯示與錯題修正完成度；任務清單上方補班級名稱＋人數。 --> <!-- v35：學生列表每人卡片補上離開次數／作答用時／空白題數（讀 raw_data.quiz_stats，跟學生自己看到的同一份）。 --> <!-- v34：考試批改清單「進度日」誤用整份作業排週用的 target_date；改成這個考試自己的「開放」(open_at)，截止日改讀任務自己（含繼承）的 due_date，排序改先比截止日。 --> <!-- v33：申訴審核改逐組即決即存＋廣播進度信號，拿掉整批「儲存提交」按鈕。 --> <!-- v32：可接受答案全站；這份卷加送分／不計分。 -->
     <script src="../110_teacher_core/feature-timeline.js?v=205"></script> <!-- v205：說明同一區段連續範圍要融，跟標題同一把。 --> <!-- v204：同層獨立錄音不准抄上一筆標題。 --> <!-- v203：說明／標題的區段＝A、J，不准倒活頁別名。 --> <!-- v202：標題＝套餐名；區段以外一致才納入區段字母；很亂進說明。 --> <!-- v200：PDF 作業只在教材卡已有答案清單時才帶進作業。 --> <!-- v199：組合層標題已是套餐名時，下一層只留範圍。 -->
     <script src="../110_teacher_core/feature-resource.js?v=45"></script>
     <script src="../110_teacher_core/feature-profile.js?v=42"></script>

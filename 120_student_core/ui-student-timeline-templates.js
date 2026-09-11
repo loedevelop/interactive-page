@@ -80,8 +80,10 @@ window.UIStudentTimelineTemplates = (() => {
         const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
         return `<button type="button" class="${cls}" onclick="${onclick}"${titleAttr}>${label}</button>`;
     };
-    /** 不可點的狀態訊息（已逾期／等老師設定完成）：跟 taskBtn 同一套尺寸／字重／圓角，只換色，不准另開 inline 樣式。 */
-    const taskStatus = (label, variant, title) => {
+    /** 不可點的狀態訊息（已逾期／等老師設定完成）：跟 taskBtn 同一套尺寸／字重／圓角，只換色，不准另開 inline 樣式。
+     * 🚨 命名雷區：renderTaskItem 內部已有 let taskStatus = ''（追蹤繳交狀態），同名會整個函式範圍被
+     * 那個字串變數蓋掉，導致 taskStatus(...) 變成呼叫字串→TypeError。故意取不同名字，不准改回 taskStatus。 */
+    const taskStatusBadge = (label, variant, title) => {
         const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.blocked;
         const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
         return `<div class="${cls}"${titleAttr}>${label}</div>`;
@@ -1875,13 +1877,13 @@ window.UIStudentTimelineTemplates = (() => {
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = taskStatus('⛔ 已逾期，停止收件', 'blocked');
+                            btn = taskStatusBadge('⛔ 已逾期，停止收件', 'blocked');
                         } else if (!studentDriveUrl) {
                             // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = taskStatus('⚠️ 您的專屬資料夾尚未設定', 'blocked');
+                            btn = taskStatusBadge('⚠️ 您的專屬資料夾尚未設定', 'blocked');
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             
@@ -1975,7 +1977,7 @@ window.UIStudentTimelineTemplates = (() => {
                         // 才算完成），沒有另外的「一般作答」步驟，所以要整個取代下面一般考試按鈕，不是並存。
                         const inputPracticeEnabled = !!(task.raw_data && task.raw_data.input_practice_enabled);
                         if (!itemN) {
-                            btn = taskStatus('老師尚未產生線上卷', 'pending');
+                            btn = taskStatusBadge('老師尚未產生線上卷', 'pending');
                         } else if (inputPracticeEnabled) {
                             const practiceSummary = (window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.getInputPracticeSummary === 'function')
                                 ? window.FeatureStudentQuiz.getInputPracticeSummary(course.id, task.id)
@@ -2027,7 +2029,7 @@ window.UIStudentTimelineTemplates = (() => {
                             // 不准再拿 canUpload 擋掉。
                             const startBtnHtml = canUpload
                                 ? taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz ? window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')
-                                : taskStatus(`⛔ 已逾期，停止${hasQuizDone ? '重考' : '作答'}`, 'blocked');
+                                : taskStatusBadge(`⛔ 已逾期，停止${hasQuizDone ? '重考' : '作答'}`, 'blocked');
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
@@ -2053,7 +2055,7 @@ window.UIStudentTimelineTemplates = (() => {
                         const pdfResult = (pdfComp && pdfComp.raw_data) ? pdfComp.raw_data.pdf_quiz_result : null;
                         if (!pdfJob || !pdfJob.pdf_file_id || !pdfItemN) {
                             checkboxHtml = '';
-                            btn = taskStatus('老師尚未設定完成', 'pending');
+                            btn = taskStatusBadge('老師尚未設定完成', 'pending');
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
                             // 學生端改成「每大題提交就批改」，pdfResult.all_submitted===false 代表還在作答中
@@ -2072,7 +2074,7 @@ window.UIStudentTimelineTemplates = (() => {
                             // canUpload；看上次成績永遠不擋。
                             const pdfStartBtnHtml = canUpload
                                 ? taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz ? window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')
-                                : taskStatus(`⛔ 已逾期，停止${pdfResult ? '重考' : '作答'}`, 'blocked');
+                                : taskStatusBadge(`⛔ 已逾期，停止${pdfResult ? '重考' : '作答'}`, 'blocked');
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${pdfScoreHtml}
@@ -2092,13 +2094,13 @@ window.UIStudentTimelineTemplates = (() => {
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = taskStatus('⛔ 已逾期，停止收件', 'blocked');
+                            btn = taskStatusBadge('⛔ 已逾期，停止收件', 'blocked');
                         } else if (!studentDriveUrl) {
                             // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = taskStatus('⚠️ 您的專屬資料夾尚未設定', 'blocked');
+                            btn = taskStatusBadge('⚠️ 您的專屬資料夾尚未設定', 'blocked');
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             

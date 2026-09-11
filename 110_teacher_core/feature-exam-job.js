@@ -2382,7 +2382,9 @@ window.FeatureExamJob = (function () {
                         title: t.title || raw.exam_title || '(未命名考試)',
                         jobId: raw.exam_job_id || (raw.exam_job && raw.exam_job.job_id) || '',
                         openAt: effOpen,
-                        dueDate: effDue
+                        dueDate: effDue,
+                        allowWrongRetake: !!raw.allow_wrong_retake,
+                        inputCorrectionEnabled: !!raw.input_correction_enabled
                     });
                 }
                 if (Array.isArray(t.subTasks)) walk(t.subTasks, effOpen, effDue);

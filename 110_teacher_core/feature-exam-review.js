@@ -323,11 +323,16 @@ window.FeatureExamReview = (function () {
                         openAt: t.openAt || '',
                         dueDate: t.dueDate || '',
                         taskId: t.id,
-                        taskTitle: t.title || '(未命名考試)'
+                        taskTitle: t.title || '(未命名考試)',
+                        allowWrongRetake: !!t.allowWrongRetake,
+                        inputCorrectionEnabled: !!t.inputCorrectionEnabled
                     });
                 });
             });
-            renderTaskListHtml(classId, sortExamTasksNewestFirst(examTasks));
+            // 班級人數＝該班真實學生名單（student_enrollments），跟考卷批改列學生同一份，
+            // 不准借用 window.TeacherDB.classes[].students（那個欄位 classes 資料表沒有這欄，永遠是 []）。
+            const students = await window.ApiQuizReview.fetchClassStudents(classId);
+            renderTaskListHtml(classId, sortExamTasksNewestFirst(examTasks), students.length);
         } catch (err) {
             console.error('[FeatureExamReview] renderReviewPage', err);
             window.ModalOverlay.open({ id: PAGE_MODAL_ID, tier: 'A', contentHtml: wrapPageShell('❌ 載入失敗：' + esc(err.message || err)) });
@@ -342,29 +347,35 @@ window.FeatureExamReview = (function () {
             + '</div>';
     }
 
-    /** 讀 window.TeacherDB.classes 現有的班級名稱／學生人數，只讀不重查 API。 */
-    function classInfoOf(classId) {
+    /** 讀 window.TeacherDB.classes 現有的班級名稱（只讀不重查 API；名稱這欄是真的，人數另外查真實名單）。 */
+    function classNameOf(classId) {
         const cls = (window.TeacherDB && Array.isArray(window.TeacherDB.classes))
             ? window.TeacherDB.classes.find(function (c) { return String(c.id) === String(classId); })
             : null;
-        return {
-            name: (cls && cls.name) || '',
-            studentCount: (cls && Array.isArray(cls.students)) ? cls.students.length : 0
-        };
+        return (cls && cls.name) || '';
     }
 
-    function classHeaderHtml(classId) {
-        const info = classInfoOf(classId);
-        if (!info.name && !info.studentCount) return '';
+    function classHeaderHtml(classId, studentCount) {
+        const name = classNameOf(classId);
+        if (!name && !studentCount) return '';
         return '<div style="margin-bottom:12px; padding:8px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">'
-            + '<span style="font-weight:900; color:#6D28D9;">🏫 ' + esc(info.name || '(未命名班級)') + '</span>'
-            + '<span style="font-weight:800; color:#7C3AED; font-size:0.85rem;">👥 ' + esc(info.studentCount) + ' 位學生</span>'
+            + '<span style="font-weight:900; color:#6D28D9;">🏫 ' + esc(name || '(未命名班級)') + '</span>'
+            + '<span style="font-weight:800; color:#7C3AED; font-size:0.85rem;">👥 ' + esc(studentCount || 0) + ' 位學生</span>'
             + '</div>';
     }
 
-    function renderTaskListHtml(classId, examTasks) {
+    /** 這個考試任務老師是否開了「重考錯題（僅一次）」／「錯題改正練習」，跟該任務自己的 raw_data 同一把鑰匙。 */
+    function examTaskFeatureBadgesHtml(t) {
+        const parts = [];
+        if (t && t.allowWrongRetake) parts.push('<span style="color:#B45309; background:#FFFBEB; border:1px solid #FDE68A; padding:1px 7px; border-radius:6px; font-size:0.72rem; font-weight:800;">🔁 錯題重考</span>');
+        if (t && t.inputCorrectionEnabled) parts.push('<span style="color:#9A3412; background:#FFF7ED; border:1px solid #FDBA74; padding:1px 7px; border-radius:6px; font-size:0.72rem; font-weight:800;">🔧 錯題練習</span>');
+        if (!parts.length) return '';
+        return '<div style="margin-top:4px; display:flex; gap:6px; flex-wrap:wrap;">' + parts.join('') + '</div>';
+    }
+
+    function renderTaskListHtml(classId, examTasks, studentCount) {
         const safeClassId = String(classId).replace(/'/g, "\\'");
-        const classHeader = classHeaderHtml(classId);
+        const classHeader = classHeaderHtml(classId, studentCount);
         let body;
         if (!examTasks.length) {
             body = classHeader + '<div style="padding:20px; text-align:center; color:#94A3B8; font-weight:700;">目前這個班級沒有考試任務。</div>';
@@ -376,6 +387,7 @@ window.FeatureExamReview = (function () {
                     + 'style="text-align:left; padding:12px 14px; border:1px solid #E2E8F0; border-radius:10px; background:#F8FAFC; cursor:pointer; font-weight:800; color:#1E293B;">'
                     + '📝 ' + displayTaskTitle(t.taskTitle)
                     + examTaskTimeHtml(t)
+                    + examTaskFeatureBadgesHtml(t)
                     + '<div style="font-size:0.78rem; color:#94A3B8; font-weight:700; margin-top:2px;">' + esc(t.assignmentTitle) + '</div>'
                     + '</button>';
             }).join('') + '</div>';
