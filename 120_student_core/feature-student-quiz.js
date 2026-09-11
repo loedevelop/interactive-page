@@ -921,6 +921,13 @@ window.FeatureStudentQuiz = (function () {
         }
         const wrongN = (st.wrong_items && st.wrong_items.length) ? st.wrong_items.length : 0;
         if (wrongN > 0) parts.push('最近錯題 ' + wrongN);
+        // 空白（沒填寫）題數：跟老師端考試批改頁同一把鑰匙——details[i] 沒 excluded（送分／不計分
+        // 模式排除的題不算）且 answer 是空字串才算空白，不是「錯」也不是「對」。有作答結果就
+        // 一定列出（含 0 題），不要因為剛好 0 就跟其他「有才顯示」的欄位一樣隱藏。
+        if (qr && Array.isArray(qr.details)) {
+            const blankN = qr.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length;
+            parts.push('空白未填 ' + blankN + ' 題');
+        }
         // 2026-08-13 老師要求先關掉「歷史錯字」相關顯示（目前抓錯機制還不夠準確、沒有參考
         // 意義）：這裡也一併拿掉，不要讓「歷史錯字 N 組」還留在進度列摘要裡（spelling_ledger
         // 底層仍照常累積記錄，只是先不顯示出來）。
@@ -992,6 +999,11 @@ window.FeatureStudentQuiz = (function () {
                     + ' · 嘗試離開累計 ' + esc(stats.leave_count_total) + ' 次'
                     + (stats.last_duration_ms > 0 ? (' · 本次 ' + esc(formatDurationMs(stats.last_duration_ms))) : '')
                     + (stats.total_time_ms > 0 ? (' · 累計 ' + esc(formatDurationMs(stats.total_time_ms))) : '')
+                    // 空白（沒填寫）題數：跟進度列摘要（formatStatsSummaryHtml）同一把鑰匙，details[i]
+                    // 沒 excluded（送分／不計分排除的題不算）且 answer 是空字串才算空白。
+                    + (Array.isArray(result.details)
+                        ? (' · 空白未填 ' + esc(result.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length) + ' 題')
+                        : '')
                 + '</div>' +
                 retakeBannerHtml +
                 inputCorrectionBannerHtml +
