@@ -8,7 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800;900&display=swap" rel="stylesheet">
     
     <!-- v55 終極更新：強制破除快取，釋放最新 UI 狀態與 AI 容錯卡片 -->
-    <link rel="stylesheet" href="../010_css/style.css?v=81">
+    <link rel="stylesheet" href="../010_css/style.css?v=82">
     
     <style>
         body {
@@ -220,7 +220,7 @@
     <script src="../020_js_core/material-pdf-page-map.js?v=1"></script> <!-- v1：課本頁／題號對 PDF 檔案頁；對不到不准猜。 -->
 
     <script src="../120_student_core/ui-audio-templates.js?v=60"></script> <!-- v60：錄音艙只畫對照到的 PDF 檔案頁。 -->
-    <script src="../120_student_core/ui-student-timeline-templates.js?v=168"></script> <!-- v168【重大修復】：新 helper 誤取名 taskStatus，跟 renderTaskItem 內既有 let taskStatus（追蹤繳交狀態）同名撞到，整個函式範圍被字串蓋掉→TypeError 打穿渲染。改名 taskStatusBadge。 --> <!-- v167：錯題改正練習／重考錯題（僅一次）不受期限影響（移除 canUpload 包裹），只看自己的資格；逾期／待老師設定訊息改走中央 task-btn（blocked／pending），不再各自 inline 上色。 --> <!-- v166：exam／pdf_exam 補上期限（canUpload）判斷──過期只擋「開始／再作一次」新提交，不擋看結果，跟 drive／audio_record 同一把鑰匙。之前這兩型完全沒檢查 canUpload，過期後照樣能一直重寫/重考。 --> <!-- v165：組合層底下舊活頁別名 dump 只顯示範圍。 --> <!-- v163：舊錄音標題帶活頁別名時，組合層底下仍只顯示範圍。 -->
+    <script src="../120_student_core/ui-student-timeline-templates.js?v=169"></script> <!-- v169：按鈕永遠同一行（在上），統計摘要（quizScoreHtml／pdfScoreHtml）獨立一行放下面，不再擠在按鈕列裡把按鈕擠到換行。 --> <!-- v168【重大修復】：新 helper 誤取名 taskStatus，跟 renderTaskItem 內既有 let taskStatus（追蹤繳交狀態）同名撞到，整個函式範圍被字串蓋掉→TypeError 打穿渲染。改名 taskStatusBadge。 --> <!-- v167：錯題改正練習／重考錯題（僅一次）不受期限影響（移除 canUpload 包裹），只看自己的資格；逾期／待老師設定訊息改走中央 task-btn（blocked／pending），不再各自 inline 上色。 --> <!-- v166：exam／pdf_exam 補上期限（canUpload）判斷──過期只擋「開始／再作一次」新提交，不擋看結果，跟 drive／audio_record 同一把鑰匙。之前這兩型完全沒檢查 canUpload，過期後照樣能一直重寫/重考。 --> <!-- v165：組合層底下舊活頁別名 dump 只顯示範圍。 --> <!-- v163：舊錄音標題帶活頁別名時，組合層底下仍只顯示範圍。 -->
 
     <script defer src="../120_student_core/feature-student-audio.js?v=64"></script> <!-- v64：依套餐對照表只畫對到的 PDF 檔案頁。 -->
     <script defer src="../120_student_core/feature-student-resource.js?v=56"></script>

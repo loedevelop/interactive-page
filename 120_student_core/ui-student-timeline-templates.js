@@ -2030,15 +2030,18 @@ window.UIStudentTimelineTemplates = (() => {
                             const startBtnHtml = canUpload
                                 ? taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz ? window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')
                                 : taskStatusBadge(`⛔ 已逾期，停止${hasQuizDone ? '重考' : '作答'}`, 'blocked');
+                            // 🌟 按鈕永遠同一行（在上）：作答/逾期／看結果／重考／改正練習＋題數，全部擠在一條 flex 列。
+                            // 統計摘要（quizScoreHtml，離開次數／用時／最近錯題等長文字）獨立一行放在下面，
+                            // 不准跟按鈕擠同一行——它字數多、寬度大，混在一起會把按鈕擠到換行、高度看起來不齊。
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                    ${quizScoreHtml}
                                     ${startBtnHtml}
                                     ${reviewBtn}
                                     ${retakeBtn}
                                     ${correctionBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${itemN} 題</span>
                                 </div>
+                                ${quizScoreHtml ? `<div style="margin-top:6px;">${quizScoreHtml}</div>` : ''}
                             `;
                         }
                     } else if (task.type === 'pdf_exam') {
@@ -2075,13 +2078,14 @@ window.UIStudentTimelineTemplates = (() => {
                             const pdfStartBtnHtml = canUpload
                                 ? taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz ? window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')
                                 : taskStatusBadge(`⛔ 已逾期，停止${pdfResult ? '重考' : '作答'}`, 'blocked');
+                            // 🌟 跟 exam 分支同一把鑰匙：按鈕永遠同一行（在上），成績摘要獨立一行放下面。
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                    ${pdfScoreHtml}
                                     ${pdfStartBtnHtml}
                                     ${pdfReviewBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pdfItemN} 題</span>
                                 </div>
+                                ${pdfScoreHtml ? `<div style="margin-top:6px;">${pdfScoreHtml}</div>` : ''}
                             `;
                         }
                     } else if (task.type === 'drive') {

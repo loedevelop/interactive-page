@@ -127,6 +127,13 @@ button:disabled,
    禁止各任務列自己 inline 上色（曾出現實心綠、線框、橘色三顆並排）。
    停用／完成不准用 opacity，走 --done。 */
 .task-btn {
+    /* 🚨 雷區（2026-09-10 老師實測抓到）：<button> 有瀏覽器原生外觀（-webkit-appearance），
+       會在我們設定的 padding/min-height 之外再加一層原生框，導致跟同一套 class 的 <div>
+       （逾期／待設定訊息，見 taskStatusBadge）明明數值一樣卻長得比較矮。必須 appearance:none
+       拿掉原生外觀，才能讓 <button> 與 <div> 精確同尺寸，不准只加 padding 硬湊。 */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -137,6 +144,7 @@ button:disabled,
     border: 2px solid #0F766E;
     background: #0F766E;
     color: #FFFFFF;
+    font-family: inherit;
     font-size: 0.85rem;
     font-weight: 800;
     line-height: 1.2;
