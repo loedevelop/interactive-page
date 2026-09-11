@@ -22,7 +22,7 @@ alwaysApply: true
 | `skeleton-unit-invariant.mdc` | 錄音「單元骨架」（E 選項）先建結構後補文稿／AI 依 index 抓稿風險；base 範圍手動覆寫會被路徑異動自動蓋掉的坑 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `process-audio-ai/**` |
 | `assignment-title-auto-inherit-invariant.mdc` | 任務／範圍群組標題卡死在舊值（例：怎麼改 base 範圍標題都還是 Unit 10） | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js` |
 | `material-publish-setup-format.mdc` | 教材發布 `_Setup` 合併格式／同活頁多區塊誤填 LAST／last_row_column 沒對齊實際欄位 | `material_templates/**` |
-| `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空／申訴紀錄變 0 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
+| `quiz-accepted-answers-invariant.mdc` | 考試批改：多標準答案改錯層／全班重批漏改或誤改／ModalOverlay 重繪把 state 清空／申訴紀錄變 0／可接受答案只這份卷／送分不計分 | `quiz-paper-builder.js`, `feature-exam-review.js`, `api-quiz-review.js`, `feature-student-quiz.js` |
 | `script-collector-paste-windows-invariant.mdc` | C 貼上多視窗（paste_windows）沒同步進 original_script／collector 誤回寫原始作業 | `ui-timeline-templates.js`, `feature-timeline.js`, `store-assignment-builder.js`, `feature-script-collector.js` |
 | `exam-wrong-retake-invariant.mdc` | 重考錯題（僅一次）判定範圍漂移／合併正確率分母算錯／重考按鈕找不到入口 | `feature-exam-job.js`, `feature-exam-review.js`, `feature-student-quiz.js`, `ui-student-timeline-templates.js` |
 | `button-opacity-readability-invariant.mdc` | 按鈕看不清楚字：`.btn` 沒設預設背景（白字配透明底）／用 opacity 調暗停用態 | `010_css/style.css`, 全站 `.js`（任何 `class="btn"` 或設 `.style.opacity` 的按鈕） |

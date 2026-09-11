@@ -1484,6 +1484,9 @@ window.FeatureStudentPdfQuiz = (function () {
         var sectionKeySet = {};
         sec.items.forEach(function (it) { sectionKeySet[it.key] = true; });
         var sectionPaper = { items: fullPaper.items.filter(function (it) { return sectionKeySet[it.item_id]; }) };
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.loadUniversalAcceptedAnswers === 'function') {
+            await window.QuizPaperBuilder.loadUniversalAcceptedAnswers();
+        }
         var gradeResult = window.QuizPaperBuilder.gradeAnswers(sectionPaper, sectionAnswers);
 
         st.sectionResults[idx] = {

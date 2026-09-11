@@ -82,7 +82,8 @@ BuilderStore.sync 對錄音的 meta_rows_by_stem 只能 merge（錄音存檔用�
 
 複製歷史作業／套用上次設定＝新作業。只繼承輸入（活頁、範圍、題數、範本）。
 不准繼承：quiz_paper、卷號、quiz_paper_signature、exam_job_id、available_count、meta_rows_by_stem
-線上卷條只認這份作業這次成功的 quiz_paper。產生失敗或設定已改＝標「舊卷」，不准看起來像現在的
+線上卷條只認這份作業這次成功的 quiz_paper。產生失敗或出題設定已改＝標「舊卷」，不准看起來像現在的。
+出題設定＝活頁／範圍／題數／範本／亂序。不准把內部 section id、起迄數字／字串差當成設定已改。
 ```
 
 ## 連動

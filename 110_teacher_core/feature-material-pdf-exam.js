@@ -386,7 +386,8 @@ window.FeatureMaterialPdfExam = (function () {
             ? window.PdfExamPaper.bankSectionTabsHtml(groups, g.section, {
                 tabClass: 'mz-pdf-exam-quiz-tab',
                 review: item.split_review,
-                warnedSections: warnedSections
+                warnedSections: warnedSections,
+                materialSelect: true
             })
             : '';
         var secTitle = g.section
@@ -671,6 +672,37 @@ window.FeatureMaterialPdfExam = (function () {
         return -1;
     }
 
+    function persistSectionAnchor(card, item, section, anchor) {
+        if (!item || !section || !window.PdfExamPaper || typeof window.PdfExamPaper.setSectionPageAnchor !== 'function') return;
+        item.split_review = item.split_review || {};
+        window.PdfExamPaper.setSectionPageAnchor(item.split_review, section, anchor);
+        var cap = card && card.querySelector('.pdf-exam-section-paper-cap');
+        saveItem(item).then(function () {
+            if (!cap) return;
+            cap.style.color = '#0F766E';
+            var where = window.PdfExamPaper.describeTeacherAnchor
+                ? window.PdfExamPaper.describeTeacherAnchor(anchor)
+                : '';
+            cap.textContent = anchor
+                ? ('題目 PDF　「' + section + '」錨已記下：' + (where || ('第 ' + anchor.startPage + ' 頁')))
+                : ('題目 PDF　「' + section + '」錨已刪');
+        }).catch(function (err) {
+            if (!cap) return;
+            cap.style.color = '#B91C1C';
+            cap.textContent = '錨還沒寫進資料：' + (err.message || err);
+        });
+    }
+
+    function selectBankSectionFromTab(btn) {
+        if (!btn) return;
+        var quizCard = btn.closest('.mz-pdf-exam-member');
+        var quizItem = getItemById(quizCard && quizCard.getAttribute('data-item-id'));
+        if (!quizCard || !quizItem) return;
+        quizItem.parsed_bank = readBankEdits(quizCard, quizItem);
+        quizItem._bankSection = btn.getAttribute('data-section') || '';
+        refreshMemberBank(quizCard, quizItem, { keepSection: quizItem._bankSection });
+    }
+
     function refreshMemberBank(card, item, status) {
         if (status && status.keepSection) item._bankSection = status.keepSection;
         var wrap = card.querySelector('.mz-pdf-exam-bank-wrap');
@@ -693,7 +725,10 @@ window.FeatureMaterialPdfExam = (function () {
                 sectionPageHints: item.section_page_hints,
                 savedAnchor: window.PdfExamPaper.sectionPageAnchor
                     ? window.PdfExamPaper.sectionPageAnchor(item.split_review, item._bankSection || '')
-                    : null
+                    : null,
+                onAnchorChange: function (anchor) {
+                    persistSectionAnchor(card, item, item._bankSection || '', anchor);
+                }
             });
         }
         var msg = card.querySelector('.mz-pdf-exam-msg');
@@ -939,9 +974,11 @@ window.FeatureMaterialPdfExam = (function () {
                 .select('*')
                 .single();
         }
+        var keepSection = item._bankSection;
         if (res.error) throw res.error;
         var saved = res.data;
         var idx = _items.findIndex(function (it) { return String(it.id) === String(saved.id); });
+        if (keepSection) saved._bankSection = keepSection;
         if (idx >= 0) _items[idx] = saved;
         else _items.push(saved);
         return saved;
@@ -1224,9 +1261,9 @@ window.FeatureMaterialPdfExam = (function () {
                 }).finally(function () { btn.disabled = false; });
             });
         });
-        if (wrap.getAttribute('data-mz-pdf-exam-bound') === '1') return;
-        wrap.setAttribute('data-mz-pdf-exam-bound', '1');
-        wrap.addEventListener('click', function (ev) {
+        if (wrap.getAttribute('data-mz-pdf-exam-bound') !== '1') {
+            wrap.setAttribute('data-mz-pdf-exam-bound', '1');
+            wrap.addEventListener('click', function (ev) {
             var locateBtn = ev.target.closest('.mz-pdf-exam-locate');
             if (locateBtn && wrap.contains(locateBtn)) {
                 var locateCard = locateBtn.closest('.mz-pdf-exam-member');
@@ -1254,12 +1291,7 @@ window.FeatureMaterialPdfExam = (function () {
             }
             var quizTab = ev.target.closest('.mz-pdf-exam-quiz-tab');
             if (quizTab && wrap.contains(quizTab)) {
-                var quizCard = quizTab.closest('.mz-pdf-exam-member');
-                var quizItem = getItemById(quizCard && quizCard.getAttribute('data-item-id'));
-                if (!quizCard || !quizItem) return;
-                quizItem.parsed_bank = readBankEdits(quizCard, quizItem);
-                quizItem._bankSection = quizTab.getAttribute('data-section') || '';
-                refreshMemberBank(quizCard, quizItem, { keepSection: quizItem._bankSection });
+                selectBankSectionFromTab(quizTab);
                 return;
             }
             var reparseBtn = ev.target.closest('.mz-pdf-exam-reparse');
@@ -1363,6 +1395,7 @@ window.FeatureMaterialPdfExam = (function () {
                 refreshMemberBank(card, item, { keepIdx: idx, keepSection: row.section });
             }
         });
+        }
         wrap.querySelectorAll('.mz-pdf-exam-member').forEach(function (card) {
             var item = getItemById(card.getAttribute('data-item-id'));
             if (!item) return;
@@ -1374,7 +1407,10 @@ window.FeatureMaterialPdfExam = (function () {
                     sectionPageHints: item.section_page_hints,
                     savedAnchor: window.PdfExamPaper.sectionPageAnchor
                         ? window.PdfExamPaper.sectionPageAnchor(item.split_review, item._bankSection || '')
-                        : null
+                        : null,
+                    onAnchorChange: function (anchor) {
+                        persistSectionAnchor(card, item, item._bankSection || '', anchor);
+                    }
                 });
             }
         });
@@ -1387,6 +1423,7 @@ window.FeatureMaterialPdfExam = (function () {
         renderFolderHtml: renderFolderHtml,
         renderCreatePanel: renderCreatePanel,
         bind: bind,
+        selectBankSectionFromTab: selectBankSectionFromTab,
         isPdfCombo: isPdfCombo,
         listAssignedForHomework: listAssignedForHomework,
         getAssignedById: getAssignedById,

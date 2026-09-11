@@ -181,6 +181,17 @@ window.UtilsDate = (() => {
         return '♾️ 接受遲交';
     }
 
+    /**
+     * 把「日期＋時間」當成台灣時間（UTC+8，全年無夏令）解析成絕對時間戳。
+     *
+     * 修過的雷（2026-09-10）：舊版直接 `new Date(y, m-1, d, hh, mm)`——這個建構子是用「執行環境
+     * （瀏覽器／伺服器）自己的系統時區」去解讀 y/m/d/hh/mm，不是台灣時間。函式取名 parseTaiwanLocal
+     * 卻沒有真的鎖台灣時區，只要執行環境的系統時區不是 UTC+8，跟 Date.now()（絕對時間，跟時區無關）
+     * 比較就會整批錯位（實測：系統時區 UTC-6 時，開放時間會被誤判成晚了 13 小時才到）。isOpenYet／
+     * isPastDue 都靠這個函式判斷「現在幾點」，全站「開放」「期限」的可見與否都會跟著跑掉。
+     * 全部系統時間都要以台灣時間為準：用 Date.UTC 建構後扣掉固定 8 小時，得到的是不受執行環境時區
+     * 影響的絕對時間戳，不管使用者瀏覽器、伺服器設什麼系統時區，算出來的都是同一個台灣時間。
+     */
     function parseTaiwanLocal(dateStr, timeStr) {
         const date = stampDatePart(dateStr);
         if (!date) return null;
@@ -194,7 +205,9 @@ window.UtilsDate = (() => {
             hh = Number(tp[0]) || 0;
             mm = Number(tp[1]) || 0;
         }
-        return new Date(parts[0], parts[1] - 1, parts[2], hh, mm, 0, 0);
+        const TAIWAN_OFFSET_MS = 8 * 60 * 60 * 1000;
+        const utcMs = Date.UTC(parts[0], parts[1] - 1, parts[2], hh, mm, 0, 0) - TAIWAN_OFFSET_MS;
+        return new Date(utcMs);
     }
 
     function formatStampLabel(value) {

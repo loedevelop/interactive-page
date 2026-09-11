@@ -437,6 +437,28 @@ window.FeaturePdfExamJob = (function () {
         });
     }
 
+    function pdfPaperScoreBtns(pathStr, idx, bk, reviewOnly) {
+        var mode = (window.QuizPaperBuilder && window.QuizPaperBuilder.paperScoreMode)
+            ? window.QuizPaperBuilder.paperScoreMode(bk)
+            : '';
+        var click = reviewOnly
+            ? 'window.FeaturePdfExamJob._toggleReviewScore(' + idx + ','
+            : 'window.FeaturePdfExamJob._toggleBankScore(\'' + pathStr + '\', ' + idx + ',';
+        function btn(want, label) {
+            var on = mode === want;
+            var bg = on ? (want === 'award' ? '#047857' : '#57534E') : '#FFFFFF';
+            var fg = on ? '#FFFFFF' : (want === 'award' ? '#047857' : '#57534E');
+            var bd = on ? bg : (want === 'award' ? '#059669' : '#A8A29E');
+            return '<button type="button" class="btn" title="只這份考卷" onclick="' + click + ' \'' + want + '\')" '
+                + 'style="padding:3px 8px; border:1px solid ' + bd + '; border-radius:6px; background:' + bg + '; color:' + fg + '; font-weight:800; cursor:pointer; font-size:0.72rem;">'
+                + label + '</button>';
+        }
+        return '<span style="display:inline-flex; gap:3px; flex-shrink:0;" title="送分／不計分只這份考卷">'
+            + btn('award', '送分')
+            + btn('exclude', '不計分')
+            + '</span>';
+    }
+
     function renderBankTableHtml(pathStr, job) {
         if (job && Array.isArray(job.parsed_bank) && window.PdfExamPaper && typeof window.PdfExamPaper.normalizeAllItemBlanks === 'function') {
             window.PdfExamPaper.normalizeAllItemBlanks(job.parsed_bank);
@@ -510,6 +532,7 @@ window.FeaturePdfExamJob = (function () {
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'answer_text\', this.value)">' +
                         '<input type="text" value="' + esc(window.PdfExamPaper.formatAcceptedAnswerList(bk.accepted_answers)) + '" placeholder="其他可接受答案（用 || 分隔）" style="flex:1; min-width:110px; padding:6px 8px; font-size:0.9rem; border:1px solid ' + inputBorder + '; border-radius:4px; color:' + inputColor + ';" ' +
                             'onchange="window.FeaturePdfExamJob.updateBankField(\'' + pathStr + '\', ' + idx + ', \'accepted_answers\', this.value)">' +
+                        pdfPaperScoreBtns(pathStr, idx, bk) +
                         '<span style="display:flex; gap:3px; flex-shrink:0; white-space:nowrap;">' +
                             '<button type="button" title="上移" style="' + (canUp ? btnOn : btnOff) + '" ' + (canUp ? 'onclick="window.FeaturePdfExamJob.moveBankRow(\'' + pathStr + '\', ' + idx + ', -1)"' : 'disabled') + '>↑</button>' +
                             '<button type="button" title="下移" style="' + (canDown ? btnOn : btnOff) + '" ' + (canDown ? 'onclick="window.FeaturePdfExamJob.moveBankRow(\'' + pathStr + '\', ' + idx + ', 1)"' : 'disabled') + '>↓</button>' +
@@ -568,7 +591,11 @@ window.FeaturePdfExamJob = (function () {
                 sectionPageHints: job.section_page_hints,
                 savedAnchor: window.PdfExamPaper.sectionPageAnchor
                     ? window.PdfExamPaper.sectionPageAnchor(job.split_review, job._bankSection || '')
-                    : null
+                    : null,
+                onAnchorChange: function (anchor) {
+                    job.split_review = job.split_review || {};
+                    window.PdfExamPaper.setSectionPageAnchor(job.split_review, job._bankSection || '', anchor);
+                }
             });
         }
         var reviewEl = document.getElementById('pdf-exam-split-review-' + pathStr);
@@ -770,6 +797,8 @@ window.FeaturePdfExamJob = (function () {
             } else {
                 bk.item_no = String(value || '').trim() || bk.item_no;
             }
+        } else if (field === 'paper_score_mode' && window.QuizPaperBuilder && typeof window.QuizPaperBuilder.setPaperScoreMode === 'function') {
+            window.QuizPaperBuilder.setPaperScoreMode(bk, value);
         }
         bk._manuallyEdited = true;
         markNeedsRegrade(pathStr, job);
@@ -779,7 +808,7 @@ window.FeaturePdfExamJob = (function () {
             refreshBankTable(pathStr, job, { idx: idx, section: sec });
             return;
         }
-        if (field === 'answer_text' || field === 'item_no') refreshBankTable(pathStr, job, { idx: idx, section: sec });
+        if (field === 'answer_text' || field === 'item_no' || field === 'paper_score_mode') refreshBankTable(pathStr, job, { idx: idx, section: sec });
     }
 
     function siblingIndexInSection(bank, idx, dir) {
@@ -922,7 +951,11 @@ window.FeaturePdfExamJob = (function () {
                         sectionPageHints: lateJob.section_page_hints,
                         savedAnchor: window.PdfExamPaper.sectionPageAnchor
                             ? window.PdfExamPaper.sectionPageAnchor(lateJob.split_review, lateJob._bankSection || '')
-                            : null
+                            : null,
+                        onAnchorChange: function (anchor) {
+                            lateJob.split_review = lateJob.split_review || {};
+                            window.PdfExamPaper.setSectionPageAnchor(lateJob.split_review, lateJob._bankSection || '', anchor);
+                        }
                     });
                 }
             }
@@ -1310,6 +1343,7 @@ window.FeaturePdfExamJob = (function () {
                         'onchange="window.FeaturePdfExamJob._updateReviewAnswer(' + idx + ', \'answer_text\', this.value)">' +
                     '<input type="text" value="' + esc(window.PdfExamPaper.formatAcceptedAnswerList(it.accepted_answers)) + '" placeholder="其他可接受答案（用 || 分隔）" style="flex:1; padding:3px 6px; font-size:0.8rem; border:1px solid #CBD5E1; border-radius:4px;" ' +
                         'onchange="window.FeaturePdfExamJob._updateReviewAnswer(' + idx + ', \'accepted_answers\', this.value)">' +
+                    pdfPaperScoreBtns('', idx, it, true) +
                 '</div>'
             );
         }).join('');
@@ -1369,6 +1403,9 @@ window.FeaturePdfExamJob = (function () {
         if (!it) return;
         if (field === 'answer_text') it.answer_text = value;
         else if (field === 'accepted_answers') it.accepted_answers = window.PdfExamPaper.parseAcceptedAnswerList(value);
+        else if (field === 'paper_score_mode' && window.QuizPaperBuilder && typeof window.QuizPaperBuilder.setPaperScoreMode === 'function') {
+            window.QuizPaperBuilder.setPaperScoreMode(it, value);
+        }
         it._manuallyEdited = true;
         st.job.needs_regrade = true;
         _refreshRegradeWarningInline();
@@ -1495,6 +1532,13 @@ window.FeaturePdfExamJob = (function () {
         insertBankRow: insertBankRow,
         openReview: openReview,
         _updateReviewAnswer: _updateReviewAnswer,
+        _toggleBankScore: function (pathStr, idx, mode) {
+            updateBankField(pathStr, idx, 'paper_score_mode', mode);
+        },
+        _toggleReviewScore: function (idx, mode) {
+            _updateReviewAnswer(idx, 'paper_score_mode', mode);
+            _renderReviewModal();
+        },
         _viewStudentDetail: _viewStudentDetail,
         _saveAndRegradeAll: _saveAndRegradeAll
     };

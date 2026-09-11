@@ -229,7 +229,8 @@ window.BuilderStore = (() => {
         if (!FT || typeof FT.packRangeDescriptionHtml !== 'function') return;
         if (!(t.type === 'audio_record' || t.type === 'exam' || t.type === 'pdf_exam')) return;
         if (!t.raw_data) t.raw_data = {};
-        if (descEl.getAttribute('data-desc-auto') === '0') {
+        if (descEl.getAttribute('data-desc-auto') === '0'
+            && !(FT.titleLooksLikeSheetAliasDump && FT.titleLooksLikeSheetAliasDump(descEl.textContent))) {
             t.raw_data.desc_auto_from_range = false;
             return;
         }

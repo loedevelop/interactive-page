@@ -1112,10 +1112,14 @@ window.TimelineTemplates = (() => {
             : ((FT && typeof FT.bookPackDescriptionPlain === 'function')
                 ? FT.bookPackDescriptionPlain(rows)
                 : '');
-        if (raw.desc_auto_from_range === false && t && t.description) return t.description;
+        if (raw.desc_auto_from_range === false && t && t.description
+            && !(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function' && FT.titleLooksLikeSheetAliasDump(t.description))) {
+            return t.description;
+        }
         const current = String((t && t.description) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
         const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
-        if (generated && (raw.desc_auto_from_range === true || !current || current === genNorm)) {
+        const looksDump = !!(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function' && FT.titleLooksLikeSheetAliasDump(current));
+        if (generated && (raw.desc_auto_from_range === true || !current || current === genNorm || looksDump)) {
             return generated;
         }
         return (t && t.description) || '';
@@ -1986,10 +1990,13 @@ window.TimelineTemplates = (() => {
                     const descRaw = t.raw_data || {};
                     const descPlain = String(t.description || '').replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
                     const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
-                    if (descRaw.desc_auto_from_range === false) {
+                    const looksAliasDumpDesc = !!(window.FeatureTimeline
+                        && typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
+                        && window.FeatureTimeline.titleLooksLikeSheetAliasDump(descPlain));
+                    if (descRaw.desc_auto_from_range === false && !looksAliasDumpDesc) {
                         leafDescHtml = t.description || '';
                         leafDescAuto = '0';
-                    } else if (descRaw.desc_auto_from_range === true || !descPlain || descPlain === genNorm) {
+                    } else if (descRaw.desc_auto_from_range === true || !descPlain || descPlain === genNorm || looksAliasDumpDesc) {
                         leafDescHtml = generatedHtml;
                         leafDescAuto = '1';
                         leafDescFromRange = String(generatedPlain || '').replace(/"/g, '&quot;');

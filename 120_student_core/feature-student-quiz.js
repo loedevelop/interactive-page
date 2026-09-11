@@ -74,6 +74,70 @@ window.FeatureStudentQuiz = (function () {
      * ModalOverlay.open（同一 id 會先 close 觸發舊 onClose）。
      */
     let reviewViewState = null;
+    /**
+     * 申訴審核即時同步：目前這一份考卷的訂閱 handle（AppealProgressSync.subscribe 回傳）。
+     * 「作答檢討」與「重考整體報告」兩個畫面共用同一個 handle——同一時間只會開其中一個
+     * modal，關閉時（closeReview／closeRetakeReport）一律呼叫 stopAppealProgressSync，
+     * 不要留著背景輪詢／頻道一直跑（page-refresh-perf-invariant 精神）。
+     */
+    let appealSyncHandle = null;
+
+    function stopAppealProgressSync() {
+        if (appealSyncHandle && window.AppealProgressSync && typeof window.AppealProgressSync.unsubscribe === 'function') {
+            window.AppealProgressSync.unsubscribe(appealSyncHandle);
+        }
+        appealSyncHandle = null;
+    }
+
+    /**
+     * 只有這個學生對這份考卷送過至少一筆申訴才訂閱（沒申訴過的人看不到這行，也不用跟著輪詢）。
+     * 同一份考卷（assignmentId+taskId）已經在訂閱就不重開；換了別份考卷才先關舊的再開新的。
+     * @param {Function} onProgressUpdate 收到信號後要重新渲染哪個畫面，由呼叫端決定（review 或 retake 報告）
+     */
+    function ensureAppealProgressSync(assignmentId, taskId, hasOwnAppeal, onProgressUpdate) {
+        if (!hasOwnAppeal) { stopAppealProgressSync(); return; }
+        if (appealSyncHandle && appealSyncHandle._assignmentId === assignmentId && appealSyncHandle._taskId === String(taskId)) {
+            appealSyncHandle._onProgressUpdate = onProgressUpdate;
+            return;
+        }
+        stopAppealProgressSync();
+        if (!window.AppealProgressSync || typeof window.AppealProgressSync.subscribe !== 'function') return;
+        getAuthContext().then(function (auth) {
+            const handle = window.AppealProgressSync.subscribe(assignmentId, taskId, auth.classId, function () {
+                if (appealSyncHandle && typeof appealSyncHandle._onProgressUpdate === 'function') {
+                    appealSyncHandle._onProgressUpdate();
+                }
+            });
+            handle._assignmentId = assignmentId;
+            handle._taskId = String(taskId);
+            handle._onProgressUpdate = onProgressUpdate;
+            appealSyncHandle = handle;
+        }).catch(function (err) {
+            console.warn('[FeatureStudentQuiz] ensureAppealProgressSync', err);
+        });
+    }
+
+    /** get_quiz_appeal_progress RPC：全班（該考卷）申訴審核彙總，不含個資／答案內容。 */
+    async function fetchAppealProgress(assignmentId, taskId) {
+        try {
+            if (!window.supabaseClient) return null;
+            const auth = await getAuthContext();
+            const { data, error } = await window.supabaseClient.rpc('get_quiz_appeal_progress', {
+                p_assignment_id: assignmentId,
+                p_task_id: String(taskId),
+                p_class_id: auth.classId
+            });
+            if (error) {
+                console.warn('[FeatureStudentQuiz] fetchAppealProgress', error);
+                return null;
+            }
+            return data || null;
+        } catch (err) {
+            console.warn('[FeatureStudentQuiz] fetchAppealProgress', err);
+            return null;
+        }
+    }
+
     const REVIEW_LIST_KINDS = {
         wrong: {
             id: 'wrong',
@@ -248,13 +312,27 @@ window.FeatureStudentQuiz = (function () {
         return counts;
     }
 
-    function renderAppealSummaryHtml(appealsByItemId) {
+    /**
+     * classProgress：全班（這份考卷）申訴審核彙總，來自 get_quiz_appeal_progress RPC
+     * （{pending, accepted, rejected, total}）——不含任何學生個資／答案內容。只在自己至少
+     * 送過一筆申訴時才會傳進來，讓學生知道老師目前審核到第幾筆，不用等自己這題被審到。
+     */
+    function renderAppealSummaryHtml(appealsByItemId, classProgress) {
         const list = appealsByItemId || {};
         if (!Object.keys(list).length) return '';
         const c = appealStatusCounts(list);
-        return '<div style="margin-bottom:12px; padding:10px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; font-weight:800; color:#5B21B6; font-size:0.85rem;">'
+        let html = '<div style="margin-bottom:12px; padding:10px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; font-weight:800; color:#5B21B6; font-size:0.85rem;">'
             + '🚩 申訴進度：審核中 ' + c.pending + ' · 已接受 ' + c.accepted + ' · 未通過 ' + c.rejected
             + '</div>';
+        if (classProgress && Number(classProgress.total) > 0) {
+            const reviewed = (Number(classProgress.accepted) || 0) + (Number(classProgress.rejected) || 0);
+            const pending = Number(classProgress.pending) || 0;
+            html += '<div style="margin-bottom:12px; padding:10px 12px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; font-weight:800; color:#1D4ED8; font-size:0.85rem;">'
+                + '🚩 全班申訴審核進度：老師已審核 ' + reviewed + ' ／ 共 ' + classProgress.total + ' 筆'
+                + (pending > 0 ? '（尚有 ' + pending + ' 筆待審）' : '（已全部審核完成）')
+                + '</div>';
+        }
+        return html;
     }
 
     /**
@@ -917,7 +995,7 @@ window.FeatureStudentQuiz = (function () {
                 + '</div>' +
                 retakeBannerHtml +
                 inputCorrectionBannerHtml +
-                renderAppealSummaryHtml(appealsByItemId) +
+                renderAppealSummaryHtml(appealsByItemId, opts.classProgress) +
                 renderReviewListKindToggleHtml(listKind) +
                 '<div id="' + wrongCardsBodyId + '" class="student-quiz-sheet__list">' + listHtml + '</div>' +
                 appealSubmitHtml +
@@ -929,6 +1007,7 @@ window.FeatureStudentQuiz = (function () {
     }
 
     function closeReview(reload) {
+        stopAppealProgressSync();
         reviewViewState = null;
         if (window.ModalOverlay) window.ModalOverlay.close(REVIEW_MODAL_ID);
         if (reload) window.location.reload();
@@ -949,17 +1028,21 @@ window.FeatureStudentQuiz = (function () {
         renderReviewFromCache(assignmentId, taskId, false);
     }
 
-    function renderReviewFromCache(assignmentId, taskId, reloadOnClose) {
+    async function renderReviewFromCache(assignmentId, taskId, reloadOnClose) {
         const prev = findCompletion(assignmentId, taskId);
         const raw = (prev && prev.raw_data) ? prev.raw_data : {};
         const stats = readStats(raw);
         const task = findTaskInAssignments(assignmentId, taskId);
+        // 💣 雷區（2026-09-10 修：2026-09-03 commit 4548d7f 把這兩行順序寫反，
+        // fullItems 在宣告之前就被讀取，const 的 TDZ 會直接丟 ReferenceError，
+        // 讓這支函式──也是「作答檢討」唯一的渲染路徑──每次都拋錯，畫面卡在
+        // 「⏳ 讀取最新批改結果…」。fullItems 必須先算出來才能拿去 filter。
+        const fullItems = buildFullReviewItems(task, raw);
         stats.wrong_items = overlayWrongItemsExpected(
             fullItems.filter(function (it) { return !(it && it.ok); }),
             task
         );
         const appealsByItemId = appealsByItemIdFromRaw(raw);
-        const fullItems = buildFullReviewItems(task, raw);
         const qr = raw.quiz_result || {};
         const liveTotal = fullItems.length;
         const liveCorrect = liveTotal
@@ -980,6 +1063,10 @@ window.FeatureStudentQuiz = (function () {
         const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
         const retakeReportReady = !!(retake && retake.done);
         const allowAppeal = !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
+        // 申訴審核即時同步：只有自己送過申訴才查全班彙總進度、才訂閱後續更新（見
+        // ensureAppealProgressSync 的說明）。沒申訴過的學生不用多打這支 RPC。
+        const hasOwnAppeal = !!Object.keys(appealsByItemId).length;
+        const classProgress = hasOwnAppeal ? await fetchAppealProgress(assignmentId, taskId) : null;
         window.ModalOverlay.open({
             id: REVIEW_MODAL_ID,
             tier: 'A',
@@ -992,10 +1079,16 @@ window.FeatureStudentQuiz = (function () {
                 allowAppeal: allowAppeal,
                 inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
                 appealsByItemId: appealsByItemId,
+                classProgress: classProgress,
                 fullItems: fullItems,
                 listKind: 'full',
                 task: task
             })
+        });
+        ensureAppealProgressSync(assignmentId, taskId, hasOwnAppeal, function () {
+            refreshCompletionFromDb(assignmentId, taskId).then(function () {
+                renderReviewFromCache(assignmentId, taskId, reloadOnClose);
+            });
         });
     }
 
@@ -1552,6 +1645,9 @@ window.FeatureStudentQuiz = (function () {
         if (!paper || !Array.isArray(paper.items) || !paper.items.length) {
             return window.showFlash('老師尚未產生線上卷（請先按「產生線上卷」並儲存作業）', 'warning');
         }
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.loadUniversalAcceptedAnswers === 'function') {
+            window.QuizPaperBuilder.loadUniversalAcceptedAnswers();
+        }
 
         const prev = findCompletion(assignmentId, taskId);
         const prevRaw = (prev && prev.raw_data) ? prev.raw_data : {};
@@ -1676,6 +1772,9 @@ window.FeatureStudentQuiz = (function () {
         if (!window.QuizPaperBuilder) return window.showFlash('評分模組未載入', 'error');
 
         const answers = collectAnswers();
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.loadUniversalAcceptedAnswers === 'function') {
+            await window.QuizPaperBuilder.loadUniversalAcceptedAnswers();
+        }
         const result = window.QuizPaperBuilder.gradeAnswers(paper, answers);
         const gradedAt = new Date().toISOString();
 
@@ -1891,6 +1990,9 @@ window.FeatureStudentQuiz = (function () {
         const retakePaper = Object.assign({}, paper, { items: retakeItems });
 
         const answers = collectAnswers(RETAKE_MODAL_ID + '-body');
+        if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.loadUniversalAcceptedAnswers === 'function') {
+            await window.QuizPaperBuilder.loadUniversalAcceptedAnswers();
+        }
         const result = window.QuizPaperBuilder.gradeAnswers(retakePaper, answers);
         const gradedAt = new Date().toISOString();
 
@@ -2011,6 +2113,7 @@ window.FeatureStudentQuiz = (function () {
                         '<div style="font-size:1.3rem; font-weight:900; color:#047857;">' + esc(combined.correct) + ' / ' + esc(combined.total) + '（' + esc(combined.rate) + '%）</div>' +
                     '</div>' +
                 '</div>' +
+                renderAppealSummaryHtml(appealsByItemId, opts.classProgress) +
                 (wrongItems.length ? '<div style="font-weight:900; color:#B91C1C; margin:10px 0 6px;">重考後仍錯的題目</div>' : '') +
                 '<div id="' + wrongCardsBodyId + '" class="student-quiz-sheet__list">' + wrongCards + '</div>' +
                 appealSubmitHtml +
@@ -2018,11 +2121,13 @@ window.FeatureStudentQuiz = (function () {
         );
     }
 
-    function openRetakeReportModal(assignmentId, taskId, originalResult, retake, appealsByItemId) {
+    async function openRetakeReportModal(assignmentId, taskId, originalResult, retake, appealsByItemId) {
         const task = findTaskInAssignments(assignmentId, taskId);
         const title = String((task && task.title) || '線上考試').replace(/<[^>]*>?/gm, '');
         const allowAppeal = !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
         if (!window.ModalOverlay) return;
+        const hasOwnAppeal = !!Object.keys(appealsByItemId || {}).length;
+        const classProgress = hasOwnAppeal ? await fetchAppealProgress(assignmentId, taskId) : null;
         window.ModalOverlay.open({
             id: RETAKE_REPORT_MODAL_ID,
             tier: 'A',
@@ -2030,8 +2135,19 @@ window.FeatureStudentQuiz = (function () {
                 assignmentId: assignmentId,
                 taskId: taskId,
                 allowAppeal: allowAppeal,
-                appealsByItemId: appealsByItemId || {}
+                appealsByItemId: appealsByItemId || {},
+                classProgress: classProgress
             })
+        });
+        ensureAppealProgressSync(assignmentId, taskId, hasOwnAppeal, function () {
+            refreshCompletionFromDb(assignmentId, taskId).then(function () {
+                const freshPrev = findCompletion(assignmentId, taskId);
+                const freshRaw = (freshPrev && freshPrev.raw_data) ? freshPrev.raw_data : {};
+                const freshRetake = freshRaw.quiz_retake;
+                if (freshRetake && freshRetake.done) {
+                    openRetakeReportModal(assignmentId, taskId, freshRaw.quiz_result || originalResult, freshRetake, appealsByItemIdFromRaw(freshRaw));
+                }
+            });
         });
     }
 
@@ -2060,6 +2176,7 @@ window.FeatureStudentQuiz = (function () {
     }
 
     function closeRetakeReport(reload) {
+        stopAppealProgressSync();
         if (window.ModalOverlay) window.ModalOverlay.close(RETAKE_REPORT_MODAL_ID);
         if (reload) window.location.reload();
     }

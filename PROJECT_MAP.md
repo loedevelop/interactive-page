@@ -235,7 +235,14 @@
 │   │   ├── 20260901120000_class_material_pdf_exam_items.sql
 │   │   ├── 20260903220000_preserve_quiz_appeals.sql
 │   │   ├── 20260904090000_assignment_open_at.sql
-│   │   └── 20260904091000_scan_due_reminders_open_at.sql
+│   │   ├── 20260904091000_scan_due_reminders_open_at.sql
+│   │   ├── 20260905010000_material_book_range_units.sql
+│   │   ├── 20260905020000_material_book_range_heading.sql
+│   │   ├── 20260906120000_material_book_combos_unit_word.sql
+│   │   ├── 20260906130000_combo_statistics_all_kinds.sql
+│   │   ├── 20260906140000_material_book_range_items_page.sql
+│   │   ├── 20260906210000_material_book_range_items_speak_written.sql
+│   │   └── 20260907120000_quiz_item_accepted_answers.sql
 │   └── .DS_Store
 ├── teacher
 │   └── index.html

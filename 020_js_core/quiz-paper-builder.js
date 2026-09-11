@@ -677,6 +677,104 @@ window.QuizPaperBuilder = (function () {
         return out;
     }
 
+    /**
+     * 可接受答案鑰匙＝這本教材這頁這題（資料夾＋活頁＋頁＋題號）。
+     * 四個都有才對得到。對不到＝沒有全站這一筆，不准改借別題。
+     */
+    function sourceKeyOf(item) {
+        const s = item && item.source;
+        if (!s) return '';
+        const folder = String(s.material_folder || '').trim().toUpperCase();
+        const sheet = String(s.vbk_name || s.sheet_id || '').trim().toUpperCase();
+        const page = (s.page == null || s.page === '') ? '' : String(s.page).trim();
+        const itemNo = (s.item_no == null || s.item_no === '') ? '' : String(s.item_no).trim();
+        if (!folder || !sheet || !page || !itemNo) return '';
+        return [folder, sheet, page, itemNo].join('\t');
+    }
+
+    function sourceFieldsOf(item) {
+        const s = item && item.source;
+        if (!s) return null;
+        const folder = String(s.material_folder || '').trim().toUpperCase();
+        const sheet = String(s.vbk_name || s.sheet_id || '').trim().toUpperCase();
+        const page = (s.page == null || s.page === '') ? '' : String(s.page).trim();
+        const itemNo = (s.item_no == null || s.item_no === '') ? '' : String(s.item_no).trim();
+        if (!folder || !sheet || !page || !itemNo) return null;
+        return { material_folder: folder, sheet_id: sheet, page: page, item_no: itemNo };
+    }
+
+    let universalAcceptedByKey = {};
+    let universalAcceptedLoaded = false;
+    let universalAcceptedLoadPromise = null;
+
+    function setUniversalAcceptedRows(rows) {
+        const next = {};
+        (rows || []).forEach(function (r) {
+            if (!r) return;
+            const folder = String(r.material_folder || '').trim().toUpperCase();
+            const sheet = String(r.sheet_id || '').trim().toUpperCase();
+            const page = String(r.page || '').trim();
+            const itemNo = String(r.item_no || '').trim();
+            if (!folder || !sheet || !page || !itemNo) return;
+            const k = [folder, sheet, page, itemNo].join('\t');
+            (next[k] = next[k] || []).push(r.answer_text);
+        });
+        universalAcceptedByKey = next;
+        universalAcceptedLoaded = true;
+    }
+
+    function extraAcceptedForItem(item) {
+        const k = sourceKeyOf(item);
+        if (!k) return [];
+        return universalAcceptedByKey[k] || [];
+    }
+
+    function invalidateUniversalAcceptedCache() {
+        universalAcceptedLoaded = false;
+        universalAcceptedLoadPromise = null;
+    }
+
+    async function loadUniversalAcceptedAnswers() {
+        if (universalAcceptedLoaded) return;
+        if (universalAcceptedLoadPromise) return universalAcceptedLoadPromise;
+        if (!window.supabaseClient) return;
+        universalAcceptedLoadPromise = (async function () {
+            const res = await window.supabaseClient
+                .from('quiz_item_accepted_answers')
+                .select('material_folder, sheet_id, page, item_no, answer_text');
+            if (res.error) {
+                console.warn('[QuizPaperBuilder] 載入全站可接受答案失敗', res.error);
+                return;
+            }
+            setUniversalAcceptedRows(res.data || []);
+        })();
+        try {
+            await universalAcceptedLoadPromise;
+        } finally {
+            universalAcceptedLoadPromise = null;
+        }
+    }
+
+    /** 這份考卷：送分＝這題全班算對；不計分＝這題不進分數。空＝照答案判。 */
+    function paperScoreMode(item) {
+        const m = String((item && item.paper_score_mode) || '').trim();
+        if (m === 'award' || m === 'exclude') return m;
+        return '';
+    }
+
+    function setPaperScoreMode(item, mode) {
+        if (!item) return false;
+        const want = String(mode || '').trim();
+        const cur = paperScoreMode(item);
+        if (want === cur || (want !== 'award' && want !== 'exclude')) {
+            if (!cur) return false;
+            delete item.paper_score_mode;
+            return true;
+        }
+        item.paper_score_mode = want;
+        return true;
+    }
+
     function applyColMapAliases(row, colMap) {
         if (!row) return {};
         const out = Object.assign({}, row);
@@ -1084,8 +1182,8 @@ window.QuizPaperBuilder = (function () {
         let allOk = true;
         const subResults = it.sub_answers.map(function (sa) {
             const g = normalizeAnswer(gotObj[sa.key]);
-            const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
-            const ok = isAcceptableAnswer(g, okList);
+                const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
+                const ok = isAcceptableAnswer(g, okList);
             if (!ok) allOk = false;
             return { key: sa.key, label: sa.label, answer: gotObj[sa.key] == null ? '' : String(gotObj[sa.key]), expected: sa.answer_en, ok: ok };
         });
@@ -1209,7 +1307,9 @@ window.QuizPaperBuilder = (function () {
         const map = answersByItemId || {};
         const acceptedAppealIds = acceptedAppealItemIdSet(rawData);
         let correct = 0;
+        let scoredTotal = 0;
         const details = items.map(function (it) {
+            const mode = paperScoreMode(it);
             const got = gotForItem(map, it && it.item_id);
             const isSubAnswer = Array.isArray(it.sub_answers) && it.sub_answers.length > 1;
             const subGrade = isSubAnswer ? gradeSubAnswerItem(it, got) : null;
@@ -1221,18 +1321,26 @@ window.QuizPaperBuilder = (function () {
                     if (String(a.item_id).trim() !== String((it && it.item_id) != null ? it.item_id : '').trim()) return;
                     appealAnswers.push(a.answer);
                 });
-                const okList = [it.answer_en].concat(it.accepted_answers || []).concat(appealAnswers)
+                const okList = [it.answer_en].concat(it.accepted_answers || []).concat(extraAcceptedForItem(it)).concat(appealAnswers)
                     .map(normalizeAnswer).filter(Boolean);
                 return isAcceptableAnswer(gotN, okList);
             })();
-            const ok = matchOk || !!acceptedAppealIds[String((it && it.item_id) != null ? it.item_id : '').trim()];
-            if (ok) correct += 1;
+            const appealOk = !!acceptedAppealIds[String((it && it.item_id) != null ? it.item_id : '').trim()];
+            let ok = matchOk || appealOk;
+            if (mode === 'award') ok = true;
+            const excluded = mode === 'exclude';
+            if (!excluded) {
+                scoredTotal += 1;
+                if (ok) correct += 1;
+            }
             const expected = isSubAnswer ? subGrade.expected : (it.answer_en || '');
             const answer = isSubAnswer ? subGrade.answer : (got == null ? '' : String(got));
             const row = {
                 item_id: it.item_id,
                 seq: it.seq,
                 ok: ok,
+                excluded: excluded,
+                paper_score_mode: mode || '',
                 answer: answer,
                 expected: expected,
                 prompt_zh: it.prompt_zh || '',
@@ -1241,16 +1349,16 @@ window.QuizPaperBuilder = (function () {
                 section_id: it.section_id || ''
             };
             if (isSubAnswer) row.sub_results = subGrade.sub_results;
-            if (!ok) {
+            if (!ok && !excluded) {
                 row.diff = analyzeAnswerDiff(expected, answer);
             }
             return row;
         });
-        const wrongItems = details.filter(function (d) { return !d.ok; });
+        const wrongItems = details.filter(function (d) { return !d.ok && !d.excluded; });
         return {
-            total: items.length,
+            total: scoredTotal,
             correct: correct,
-            score: items.length ? Math.round((correct / items.length) * 1000) / 10 : 0,
+            score: scoredTotal ? Math.round((correct / scoredTotal) * 1000) / 10 : 0,
             details: details,
             wrong_items: wrongItems
         };
@@ -1395,8 +1503,8 @@ window.QuizPaperBuilder = (function () {
 
     /**
      * 💣 雷區（見 .cursor/rules/quiz-accepted-answers-invariant.mdc）：
-     * 多標準答案只改考卷快照層 items[].accepted_answers，不要另開「只改這個學生分數」的
-     * 旁路開關——否則分數會跟 gradeAnswers 的重算結果不一致，之後重考/重批又會被打回原狀。
+     * 可接受答案寫進這題教材列（全站）＋這份卷快照；送分／不計分只寫這份卷。
+     * 不要另開「只改這個學生分數」的旁路——分數永遠等於 gradeAnswers 重算。
      */
 
     /** 新增一個可接受答案（不含主答案本身；去重以 normalizeAnswer 比對）。回傳是否有變動。 */
@@ -1820,6 +1928,14 @@ window.QuizPaperBuilder = (function () {
         addAcceptedAnswer: addAcceptedAnswer,
         removeAcceptedAnswer: removeAcceptedAnswer,
         setPrimaryAnswer: setPrimaryAnswer,
+        sourceKeyOf: sourceKeyOf,
+        sourceFieldsOf: sourceFieldsOf,
+        extraAcceptedForItem: extraAcceptedForItem,
+        setUniversalAcceptedRows: setUniversalAcceptedRows,
+        loadUniversalAcceptedAnswers: loadUniversalAcceptedAnswers,
+        invalidateUniversalAcceptedCache: invalidateUniversalAcceptedCache,
+        paperScoreMode: paperScoreMode,
+        setPaperScoreMode: setPaperScoreMode,
         applyAcceptedAppealsToPaper: applyAcceptedAppealsToPaper,
         mergeQuizAppeals: mergeQuizAppeals,
         prepareCompletionRawDataForSave: prepareCompletionRawDataForSave,

@@ -3,9 +3,8 @@
  * 🎯 職責：老師端「考試批改」——查看學生考卷作答、標示對錯、調整標準答案／分數
  *
  * 💣 雷區（見 .cursor/rules/quiz-accepted-answers-invariant.mdc）：
- * 多標準答案一律改在 quiz_paper.items[].accepted_answers（考卷快照層），
- * 不要另開「只改這個學生分數」的旁路開關；存檔時一律用
- * QuizPaperBuilder.regradeCompletionRawData 重新算分，不要手動兜分數字串。
+ * 可接受答案寫進這題教材列（全站）＋這份卷快照；送分／不計分只寫這份卷。
+ * 存檔時一律用 QuizPaperBuilder.regradeCompletionRawData 重新算分，不要手動兜分。
  */
 window.FeatureExamReview = (function () {
     'use strict';
@@ -132,15 +131,23 @@ window.FeatureExamReview = (function () {
      * 跟「正確答案」同時列出；對上學生這筆的，用正確時的顯示。
      */
     function acceptedPairsHtml(item, studentPlain, removeCall) {
-        const list = (item && item.accepted_answers) || [];
+        const paperList = (item && item.accepted_answers) || [];
+        const extra = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.extraAcceptedForItem === 'function')
+            ? (window.QuizPaperBuilder.extraAcceptedForItem(item) || [])
+            : [];
+        const list = paperList.concat(extra);
         const seen = {};
         const blocks = [];
-        list.forEach(function (a, ai) {
+        list.forEach(function (a) {
             const n = normAns(a);
             if (!n || seen[n]) return;
             seen[n] = true;
-            const removeHtml = removeCall
-                ? ('<a href="javascript:void(0)" onclick="' + removeCall(ai) + '" style="color:#B91C1C; font-weight:900; text-decoration:none; font-size:0.8rem; white-space:nowrap;" title="從清單拿掉">× 移除</a>')
+            let paperIdx = -1;
+            paperList.forEach(function (p, i) {
+                if (paperIdx < 0 && normAns(p) === n) paperIdx = i;
+            });
+            const removeHtml = (removeCall && paperIdx >= 0)
+                ? ('<a href="javascript:void(0)" onclick="' + removeCall(paperIdx) + '" style="color:#B91C1C; font-weight:900; text-decoration:none; font-size:0.8rem; white-space:nowrap;" title="從清單拿掉">× 移除</a>')
                 : '';
             blocks.push('<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-top:8px;">'
                 + '<div style="font-size:1rem; line-height:1.7; flex:1;">' + pairHtmlVsWriting(a, studentPlain, '#2563EB') + '</div>'
@@ -155,6 +162,36 @@ window.FeatureExamReview = (function () {
             + '<span style="font-weight:700; color:#64748B;">（上排學生＝黑／錯深藍　下排這筆＝黑／差異藍）</span></div>'
             + blocks.join('')
             + '</div>';
+    }
+
+    function paperScoreModeBtnsHtml(idx, item, fnName) {
+        const mode = (window.QuizPaperBuilder && window.QuizPaperBuilder.paperScoreMode)
+            ? window.QuizPaperBuilder.paperScoreMode(item)
+            : '';
+        function btn(want, label) {
+            const on = mode === want;
+            const bg = on ? (want === 'award' ? '#047857' : '#57534E') : '#FFFFFF';
+            const fg = on ? '#FFFFFF' : (want === 'award' ? '#047857' : '#57534E');
+            const bd = on ? bg : (want === 'award' ? '#059669' : '#A8A29E');
+            return '<button type="button" class="btn" onclick="window.FeatureExamReview.' + fnName + '(' + idx + ', \'' + want + '\')" '
+                + 'style="padding:5px 12px; border:2px solid ' + bd + '; border-radius:8px; background:' + bg + '; color:' + fg + '; font-weight:800; cursor:pointer;">'
+                + (on ? '● ' : '○ ') + label + '</button>';
+        }
+        return '<div style="margin-top:10px; padding-top:8px; border-top:1px dashed #E2E8F0;">'
+            + '<div style="font-size:0.75rem; font-weight:800; color:#64748B; margin-bottom:6px;">這份考卷</div>'
+            + '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
+            + btn('award', '送分')
+            + btn('exclude', '不計分')
+            + '</div>'
+            + '</div>';
+    }
+
+    function mergeUniversalAcceptedIntoPaper(paper) {
+        const Q = window.QuizPaperBuilder;
+        if (!Q || typeof Q.extraAcceptedForItem !== 'function' || typeof Q.addAcceptedAnswer !== 'function') return;
+        ((paper && paper.items) || []).forEach(function (it) {
+            (Q.extraAcceptedForItem(it) || []).forEach(function (a) { Q.addAcceptedAnswer(it, a); });
+        });
     }
 
     function captureDraftsFromDom(prefix, idx, count) {
@@ -216,16 +253,23 @@ window.FeatureExamReview = (function () {
         return m ? m[1] : '';
     }
 
-    /** 有進度日＝用進度日比新舊；同一天再用截止日。沒有日期的排後面。最新在最上方。 */
+    function stampLabel(value) {
+        if (window.UtilsDate && typeof window.UtilsDate.formatStampLabel === 'function') {
+            return String(window.UtilsDate.formatStampLabel(value) || '').trim();
+        }
+        return dateKey(value);
+    }
+
+    /** 有截止日＝用截止日比新舊；同一天再用開放時間。沒有日期的排後面。最新在最上方。 */
     function sortExamTasksNewestFirst(list) {
         return (list || []).slice().sort(function (a, b) {
-            const da = dateKey(a.targetDate);
-            const db = dateKey(b.targetDate);
+            const da = dateKey(a.dueDate);
+            const db = dateKey(b.dueDate);
             if (da && db && da !== db) return db.localeCompare(da);
             if (db && !da) return 1;
             if (da && !db) return -1;
-            const ua = dateKey(a.dueDate);
-            const ub = dateKey(b.dueDate);
+            const ua = dateKey(a.openAt);
+            const ub = dateKey(b.openAt);
             if (ua && ub && ua !== ub) return ub.localeCompare(ua);
             if (ub && !ua) return 1;
             if (ua && !ub) return -1;
@@ -233,11 +277,15 @@ window.FeatureExamReview = (function () {
         });
     }
 
+    /**
+     * 這裡顯示的是「這個考試自己」的開放／截止（已含往上層繼承），不是整份作業排週用的 target_date。
+     * target_date 只是老師把作業拖放到哪一週的排位日期，跟這題考試何時開放／截止無關，不准拿來當這行的日期。
+     */
     function examTaskTimeHtml(t) {
-        const progress = dateKey(t && t.targetDate);
-        const due = dateKey(t && t.dueDate);
+        const open = stampLabel(t && t.openAt);
+        const due = stampLabel(t && t.dueDate);
         const parts = [];
-        if (progress) parts.push('📅 進度日 ' + progress);
+        if (open) parts.push('🟢 開放 ' + open);
         if (due) parts.push('⏰ 截止日 ' + due);
         if (!parts.length) return '';
         return '<div style="font-size:0.78rem; color:#0F766E; font-weight:800; margin-top:4px;">' + esc(parts.join('　')) + '</div>';
@@ -272,8 +320,8 @@ window.FeatureExamReview = (function () {
                     examTasks.push({
                         assignmentId: a.id,
                         assignmentTitle: a.title || '未命名作業',
-                        targetDate: a.target_date || '',
-                        dueDate: a.due_date || '',
+                        openAt: t.openAt || '',
+                        dueDate: t.dueDate || '',
                         taskId: t.id,
                         taskTitle: t.title || '(未命名考試)'
                     });
@@ -294,13 +342,34 @@ window.FeatureExamReview = (function () {
             + '</div>';
     }
 
+    /** 讀 window.TeacherDB.classes 現有的班級名稱／學生人數，只讀不重查 API。 */
+    function classInfoOf(classId) {
+        const cls = (window.TeacherDB && Array.isArray(window.TeacherDB.classes))
+            ? window.TeacherDB.classes.find(function (c) { return String(c.id) === String(classId); })
+            : null;
+        return {
+            name: (cls && cls.name) || '',
+            studentCount: (cls && Array.isArray(cls.students)) ? cls.students.length : 0
+        };
+    }
+
+    function classHeaderHtml(classId) {
+        const info = classInfoOf(classId);
+        if (!info.name && !info.studentCount) return '';
+        return '<div style="margin-bottom:12px; padding:8px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">'
+            + '<span style="font-weight:900; color:#6D28D9;">🏫 ' + esc(info.name || '(未命名班級)') + '</span>'
+            + '<span style="font-weight:800; color:#7C3AED; font-size:0.85rem;">👥 ' + esc(info.studentCount) + ' 位學生</span>'
+            + '</div>';
+    }
+
     function renderTaskListHtml(classId, examTasks) {
         const safeClassId = String(classId).replace(/'/g, "\\'");
+        const classHeader = classHeaderHtml(classId);
         let body;
         if (!examTasks.length) {
-            body = '<div style="padding:20px; text-align:center; color:#94A3B8; font-weight:700;">目前這個班級沒有考試任務。</div>';
+            body = classHeader + '<div style="padding:20px; text-align:center; color:#94A3B8; font-weight:700;">目前這個班級沒有考試任務。</div>';
         } else {
-            body = '<div style="display:flex; flex-direction:column; gap:8px;">' + examTasks.map(function (t) {
+            body = classHeader + '<div style="display:flex; flex-direction:column; gap:8px;">' + examTasks.map(function (t) {
                 const safeAssignId = String(t.assignmentId).replace(/'/g, "\\'");
                 const safeTaskId = String(t.taskId).replace(/'/g, "\\'");
                 return '<button type="button" onclick="window.FeatureExamReview._openTaskStudentList(\'' + safeClassId + '\', \'' + safeAssignId + '\', \'' + safeTaskId + '\')" '
@@ -325,6 +394,59 @@ window.FeatureExamReview = (function () {
             return window.QuizPaperBuilder.gradeAnswers(paper, raw.quiz_answers, raw);
         }
         return raw.quiz_result || null;
+    }
+
+    /**
+     * 讀出學生自己作答時累積的 raw_data.quiz_stats（離開次數／用時／中途退出次數），
+     * 欄位名稱對照 [120_student_core/feature-student-quiz.js] 的 readStats，只讀不寫、不新建欄位。
+     */
+    function studentQuizStatsOf(raw) {
+        const src = (raw && raw.quiz_stats) ? raw.quiz_stats : {};
+        return {
+            complete_count: Number(src.complete_count) || 0,
+            quit_count: Number(src.quit_count) || 0,
+            leave_count_total: Number(src.leave_count_total) || 0,
+            last_duration_ms: Number(src.last_duration_ms) || 0,
+            total_time_ms: Number(src.total_time_ms) || 0
+        };
+    }
+
+    /**
+     * 讀出「錯題改正練習」完成度。只在老師這個任務有勾 input_correction_enabled 才有意義；
+     * 沒勾＝這個任務沒有這個功能，回 null（不是「還沒完成」）。
+     * 對照 [120_student_core/feature-student-quiz.js] 的 getInputCorrectionSummary：
+     * 錯題清單讀 raw.quiz_stats.wrong_items（overlayWrongItemsExpected 只補顯示用欄位，
+     * 不影響題數，這裡不需要），每題要求次數固定為 task.raw_data.input_correction_count
+     * （該函式呼叫 summarizePracticeProgress 時沒傳 difficultyMap，所以每題同一個次數，
+     * 不分難度），進度讀 raw.input_correction_progress[item_id]._single。只讀不寫。
+     */
+    function correctionStatusOf(raw, task) {
+        const enabled = !!(task && task.raw_data && task.raw_data.input_correction_enabled);
+        if (!enabled) return null;
+        const wrongItems = (raw && raw.quiz_stats && Array.isArray(raw.quiz_stats.wrong_items)) ? raw.quiz_stats.wrong_items : [];
+        if (!wrongItems.length) return { total: 0, done: 0, allDone: true, noWrong: true };
+        const requiredCount = Math.max(1, Number(task.raw_data.input_correction_count) || 1);
+        const progress = (raw && raw.input_correction_progress && typeof raw.input_correction_progress === 'object') ? raw.input_correction_progress : {};
+        let done = 0;
+        wrongItems.forEach(function (it) {
+            const rec = progress[String(it && it.item_id)];
+            const reps = (rec && rec._single) ? Number(rec._single) || 0 : 0;
+            if (reps >= requiredCount) done += 1;
+        });
+        return { total: wrongItems.length, done: done, allDone: done === wrongItems.length, noWrong: false };
+    }
+
+    /** 對照 [120_student_core/feature-student-quiz.js] 的 formatDurationMs，文字要一致。 */
+    function formatDurationMsLabel(ms) {
+        const n = Math.max(0, Math.floor(Number(ms) || 0));
+        if (n < 1000) return '不到 1 秒';
+        const totalSec = Math.round(n / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return h + ' 小時 ' + m + ' 分';
+        if (m > 0) return m + ' 分 ' + s + ' 秒';
+        return s + ' 秒';
     }
 
     function countAcceptedAppeals(raw) {
@@ -374,29 +496,74 @@ window.FeatureExamReview = (function () {
                 const qr = live || (raw && raw.quiz_result);
                 const retake = raw && raw.quiz_retake;
                 const acceptedN = countAcceptedAppeals(raw);
-                let statusHtml;
+                let scoreHtml;
                 if (qr && qr.total != null) {
                     const color = qr.score >= 80 ? '#10B981' : (qr.score >= 50 ? '#F59E0B' : '#EF4444');
-                    statusHtml = '<span style="color:' + color + '; font-weight:900;">' + qr.score + '%</span>'
+                    scoreHtml = '<span style="color:' + color + '; font-weight:900;">' + qr.score + '%</span>'
                         + ' <span style="color:#94A3B8; font-size:0.78rem;">(' + qr.correct + '/' + qr.total + ')</span>';
-                    if (acceptedN > 0) {
-                        statusHtml += ' <span style="color:#047857; font-size:0.78rem; font-weight:800;">申訴成功 ' + acceptedN + ' 題</span>';
-                    }
-                    // 🔁 錯題重考已完成：附上合併正確率（原始＋訂正），方便老師一眼看訂正後結果
-                    if (retake && retake.done && retake.combined) {
-                        statusHtml += ' <span style="color:#B45309; font-size:0.78rem; font-weight:800;">→ 訂正後 '
-                            + retake.combined.rate + '% (' + retake.combined.correct + '/' + retake.combined.total + ')</span>';
-                    } else if (retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length) {
-                        statusHtml += ' <span style="color:#D97706; font-size:0.72rem;">（待重考錯題）</span>';
-                    }
                 } else {
-                    statusHtml = '<span style="color:#CBD5E1;">尚未作答</span>';
+                    scoreHtml = '<span style="color:#CBD5E1;">尚未作答</span>';
                 }
+                // 依同質性分行列出（老師要求，2026-09-10）：申訴／訂正結果、作答歷程、用時、批改明細
+                // 各自一行，不要擠成一整條長字串。每行是否顯示各自看該類是否有資料，跟別行無關。
+                const appealParts = [];
+                if (acceptedN > 0) appealParts.push('<span style="color:#047857; font-weight:800;">申訴成功 ' + acceptedN + ' 題</span>');
+                // 🔁 錯題重考已完成：附上合併正確率（原始＋訂正），方便老師一眼看訂正後結果
+                if (retake && retake.done && retake.combined) {
+                    appealParts.push('<span style="color:#B45309; font-weight:800;">→ 訂正後 '
+                        + retake.combined.rate + '% (' + retake.combined.correct + '/' + retake.combined.total + ')</span>');
+                } else if (retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length) {
+                    appealParts.push('<span style="color:#D97706;">（待重考錯題）</span>');
+                }
+                const appealLineHtml = appealParts.length
+                    ? ('<div style="margin-top:4px; font-size:0.78rem; font-weight:700;">' + appealParts.join('　') + '</div>')
+                    : '';
+                // 學生端這幾個資料（離開次數／花費時間／空白題）跟學生自己看到的同一份 raw_data.quiz_stats，
+                // 不重算、不另建欄位；欄位讀法對照 [120_student_core/feature-student-quiz.js] 的 readStats／formatDurationMs，
+                // 那些是學生自己作答時累積寫進去的，這裡只讀出來顯示，不改寫。
+                const stStats = studentQuizStatsOf(raw);
+                const attemptParts = [];
+                if (stStats.complete_count > 0) attemptParts.push('已作答過 ' + stStats.complete_count + ' 次');
+                if (stStats.quit_count > 0) attemptParts.push('中途退出 ' + stStats.quit_count + ' 次');
+                if (stStats.leave_count_total > 0) attemptParts.push('嘗試離開 ' + stStats.leave_count_total + ' 次');
+                const attemptLineHtml = attemptParts.length
+                    ? ('<div style="margin-top:4px; font-size:0.75rem; color:#64748B; font-weight:700;">' + esc(attemptParts.join(' · ')) + '</div>')
+                    : '';
+                const timeParts = [];
+                if (stStats.last_duration_ms > 0) timeParts.push('本次用時 ' + formatDurationMsLabel(stStats.last_duration_ms));
+                if (stStats.total_time_ms > 0) timeParts.push('累計 ' + formatDurationMsLabel(stStats.total_time_ms));
+                const timeLineHtml = timeParts.length
+                    ? ('<div style="margin-top:2px; font-size:0.75rem; color:#64748B; font-weight:700;">' + esc(timeParts.join(' · ')) + '</div>')
+                    : '';
+                // 批改明細：空白題永遠顯示（含 0 題，讓老師一眼看到「全部有寫」，不是沒資料）；
+                // 錯題修正只在這個任務有勾 input_correction_enabled 才顯示（沒勾＝這功能不存在，不是「未完成」）。
+                const gradingParts = [];
+                if (qr && qr.total != null) {
+                    const blankN = Array.isArray(qr.details)
+                        ? qr.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length
+                        : 0;
+                    gradingParts.push('空白 ' + blankN + ' 題');
+                }
+                const correction = correctionStatusOf(raw, task);
+                if (correction && !correction.noWrong) {
+                    gradingParts.push(correction.allDone
+                        ? ('<span style="color:#047857;">✅ 錯題修正已完成 (' + correction.done + '/' + correction.total + ')</span>')
+                        : ('<span style="color:#D97706;">🔧 錯題修正進行中 (' + correction.done + '/' + correction.total + ')</span>'));
+                }
+                const gradingLineHtml = gradingParts.length
+                    ? ('<div style="margin-top:2px; font-size:0.75rem; color:#64748B; font-weight:700;">' + gradingParts.join(' · ') + '</div>')
+                    : '';
                 const safeStudentId = String(s.id).replace(/'/g, "\\'");
                 return '<button type="button" onclick="window.FeatureExamReview.openReview(\'' + safeClassId + '\', \'' + safeAssignId + '\', \'' + safeTaskId + '\', \'' + safeStudentId + '\')" '
-                    + 'style="display:flex; justify-content:space-between; align-items:center; text-align:left; padding:10px 14px; border:1px solid #E2E8F0; border-radius:10px; background:white; cursor:pointer; width:100%;">'
+                    + 'style="display:flex; flex-direction:column; align-items:stretch; text-align:left; padding:10px 14px; border:1px solid #E2E8F0; border-radius:10px; background:white; cursor:pointer; width:100%;">'
+                    + '<div style="display:flex; justify-content:space-between; align-items:center; width:100%;">'
                     + '<span style="font-weight:800; color:#1E293B;">' + esc(s.name) + '</span>'
-                    + '<span>' + statusHtml + '</span>'
+                    + '<span>' + scoreHtml + '</span>'
+                    + '</div>'
+                    + appealLineHtml
+                    + attemptLineHtml
+                    + timeLineHtml
+                    + gradingLineHtml
                     + '</button>';
             }).join('');
 
@@ -516,6 +683,11 @@ window.FeatureExamReview = (function () {
             }
             const completion = completions.find(function (c) { return String(c.student_id) === String(studentId); }) || null;
             const studentInfo = students.find(function (s) { return String(s.id) === String(studentId); });
+            if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.loadUniversalAcceptedAnswers === 'function') {
+                await window.QuizPaperBuilder.loadUniversalAcceptedAnswers();
+            }
+            const paper = JSON.parse(JSON.stringify(task.raw_data.quiz_paper));
+            mergeUniversalAcceptedIntoPaper(paper);
 
             state = {
                 classId: classId,
@@ -524,8 +696,8 @@ window.FeatureExamReview = (function () {
                 studentId: studentId,
                 studentName: studentInfo ? studentInfo.name : '未知學生',
                 taskTitle: task.title || task.raw_data.exam_title || '(未命名考試)',
-                paper: JSON.parse(JSON.stringify(task.raw_data.quiz_paper)),
-                originalPaperJson: JSON.stringify(task.raw_data.quiz_paper),
+                paper: paper,
+                originalPaperJson: JSON.stringify(paper),
                 completion: completion,
                 answers: (completion && completion.raw_data && completion.raw_data.quiz_answers) || {},
                 showWrongOnly: true,
@@ -589,14 +761,15 @@ window.FeatureExamReview = (function () {
         items.forEach(function (it) {
             if (String(gotPlainOf(it) || '').trim()) attempted += 1;
         });
-        return { correct: g.correct, total: g.total || items.length, attempted: attempted };
+        return { correct: g.correct, total: (g.total != null ? g.total : items.length), attempted: attempted };
     }
 
     function renderModal() {
         state.liveGrade = gradeCurrentStudent();
         const items = state.paper.items || [];
         const live = computeLiveScore();
-        const scorePct = items.length ? Math.round((live.correct / items.length) * 1000) / 10 : 0;
+        const denom = live.total;
+        const scorePct = denom ? Math.round((live.correct / denom) * 1000) / 10 : 0;
         const scoreColor = scorePct >= 80 ? '#10B981' : (scorePct >= 50 ? '#F59E0B' : '#EF4444');
 
         const rowsHtml = items.map(function (_, idx) { return renderItemRow(idx); }).join('');
@@ -718,7 +891,8 @@ window.FeatureExamReview = (function () {
         const alsoCorrectHtml = showAlsoCorrect
             ? '<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:0.85rem; font-weight:700; color:#475569; cursor:pointer;">'
                 + '<input type="checkbox" ' + (isCorrect ? 'checked' : '') + ' onchange="window.FeatureExamReview._toggleAlsoCorrect(' + idx + ', this.checked)"> '
-                + '這個答案也算對'
+                + '可接受答案'
+                + '<span style="font-weight:700; color:#64748B;">（這題以後都算，不限這份考卷）</span>'
                 + '</label>'
             : '';
         const addAnswerHtml = addOtherAcceptedRowHtml(
@@ -730,13 +904,19 @@ window.FeatureExamReview = (function () {
         );
 
         const pendingAccept = showAlsoCorrect && isCorrect;
+        const scoreMode = (window.QuizPaperBuilder && window.QuizPaperBuilder.paperScoreMode)
+            ? window.QuizPaperBuilder.paperScoreMode(item)
+            : '';
+        const scoreMark = scoreMode === 'award'
+            ? ' <span style="color:#047857;">送分</span>'
+            : (scoreMode === 'exclude' ? ' <span style="color:#57534E;">不計分</span>' : '');
         const statusBadge = !hasAnswer
-            ? '<span style="color:#94A3B8;">⚠ 未作答</span>'
+            ? '<span style="color:#94A3B8;">⚠ 未作答</span>' + scoreMark
             : ((appeal && appeal.status === 'accepted')
-                ? '<span style="color:#047857;">申訴成功</span>'
+                ? '<span style="color:#047857;">申訴成功</span>' + scoreMark
                 : (pendingAccept
-                    ? '<span style="color:#B45309;">待確認算對（未儲存）</span>'
-                    : (isCorrect ? '<span style="color:#047857;">✅ 正確</span>' : '<span style="color:#DC2626;">❌ 錯誤</span>')));
+                    ? '<span style="color:#B45309;">待確認算對（未儲存）</span>' + scoreMark
+                    : (isCorrect ? '<span style="color:#047857;">✅ 正確</span>' : '<span style="color:#DC2626;">❌ 錯誤</span>') + scoreMark));
         const appealHtml = appeal
             ? (appeal.status === 'accepted'
                 ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#047857;">✅ 申訴已被接受</div>'
@@ -763,6 +943,7 @@ window.FeatureExamReview = (function () {
                     + '<div style="font-size:1rem; font-weight:800; color:#1E293B; line-height:1.7; white-space:pre-wrap;">' + esc(item.answer_en || '') + '</div></div>'))
             + expectedEditHtml
             + alsoCorrectHtml
+            + paperScoreModeBtnsHtml(idx, item, '_togglePaperScore')
             + appealHtml
             + acceptedPairsHtml(item, gotPlain, function (ai) {
                 return 'window.FeatureExamReview._removeAccepted(' + idx + ',' + ai + ')';
@@ -864,6 +1045,22 @@ window.FeatureExamReview = (function () {
         rerenderAll('qr-row-' + idx);
     }
 
+    function _togglePaperScore(idx, mode) {
+        if (!state) return;
+        const item = state.paper.items[idx];
+        if (!item || !window.QuizPaperBuilder || typeof window.QuizPaperBuilder.setPaperScoreMode !== 'function') return;
+        window.QuizPaperBuilder.setPaperScoreMode(item, mode);
+        rerenderAll('qr-row-' + idx);
+    }
+
+    function _toggleAppealPaperScore(idx, mode) {
+        if (!appealState || appealState._loading) return;
+        const group = appealState.groups[idx];
+        if (!group || !group.item || !window.QuizPaperBuilder || typeof window.QuizPaperBuilder.setPaperScoreMode !== 'function') return;
+        window.QuizPaperBuilder.setPaperScoreMode(group.item, mode);
+        renderAppealReviewHtml('appeal-group-' + idx);
+    }
+
     function _startEditPrimary(idx) {
         if (!state) return;
         state.editingPrimaryIdx = idx;
@@ -893,6 +1090,10 @@ window.FeatureExamReview = (function () {
         window.ModalOverlay.setBusy(MODAL_ID, true);
         if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '儲存中…'; }
         try {
+            const originalPaper = JSON.parse(state.originalPaperJson || '{}');
+            if (window.ApiQuizReview && typeof window.ApiQuizReview.persistUniversalAcceptedDiff === 'function') {
+                await window.ApiQuizReview.persistUniversalAcceptedDiff(originalPaper, state.paper);
+            }
             await window.ApiQuizReview.saveQuizPaperPatch(state.assignmentId, state.taskId, state.paper);
 
             // 目前這位學生一律強制寫入（即使 regrade 判定沒變動，維持跟以前一樣的行為），
@@ -1000,6 +1201,28 @@ window.FeatureExamReview = (function () {
     /** @type {any} 目前開著的申訴審核畫面狀態；跟單生檢視的 state 是分開的，互不影響 */
     let appealState = null;
 
+    /**
+     * 逐組決定存檔成功後，廣播一個「純信號」到 appeal-progress:{assignmentId}:{taskId} 頻道，
+     * 讓學生端（AppealProgressSync）立刻重新查詢，不用等 15 秒輪詢保底才看到。
+     * 只送信號，不帶任何學生個資／答案內容；頻道是純轉發，不落地資料庫。
+     */
+    function broadcastAppealProgress(assignmentId, taskId) {
+        if (!window.supabaseClient || typeof window.supabaseClient.channel !== 'function') return;
+        try {
+            const channel = window.supabaseClient.channel('appeal-progress:' + assignmentId + ':' + taskId);
+            const sendPromise = (typeof channel.httpSend === 'function')
+                ? channel.httpSend('appeal_reviewed', {})
+                : channel.send({ type: 'broadcast', event: 'appeal_reviewed', payload: {} });
+            Promise.resolve(sendPromise)
+                .catch(function (err) { console.warn('[FeatureExamReview] broadcastAppealProgress send failed', err); })
+                .finally(function () {
+                    if (window.supabaseClient.removeChannel) window.supabaseClient.removeChannel(channel);
+                });
+        } catch (err) {
+            console.warn('[FeatureExamReview] broadcastAppealProgress failed', err);
+        }
+    }
+
     function appealForItem(itemId) {
         const list = (state && state.completion && state.completion.raw_data && state.completion.raw_data.quiz_appeals) || [];
         return list.find(function (a) { return a && String(a.item_id) === String(itemId); }) || null;
@@ -1074,13 +1297,19 @@ window.FeatureExamReview = (function () {
         return '';
     }
 
+    /**
+     * 按下「可接受／不可接受」會立刻存檔，不再是「未儲存」狀態，所以這裡不再看
+     * group.decision。唯一還會殘留在畫面、沒隨決定一起存檔的，是老師在「加入清單」
+     * 打的其他可接受答案草稿（見 _addOtherAcceptedForGroup 的說明：這個動作只改畫面，
+     * 要等同一組按下決定才會一起送出）——只有這種情況才算「尚未儲存」。
+     */
     function isAppealDirty() {
         if (!appealState || appealState._loading) return false;
         if (appealState.paper && appealState.originalPaperJson
             && JSON.stringify(appealState.paper) !== appealState.originalPaperJson) {
             return true;
         }
-        return (appealState.groups || []).some(function (g) { return !!g.decision; });
+        return false;
     }
 
     function mountOrPatchAppeal(contentHtml) {
@@ -1092,7 +1321,7 @@ window.FeatureExamReview = (function () {
             tier: 'B',
             contentHtml: contentHtml,
             isDirty: function () { return isAppealDirty(); },
-            unsavedMessage: '申訴審查尚未儲存，確定要關閉嗎？',
+            unsavedMessage: '有新增的可接受答案還沒隨審核決定存檔，確定要關閉嗎？',
             onClose: function () { appealState = null; }
         });
         if (appealState) appealState._overlayBound = true;
@@ -1126,6 +1355,10 @@ window.FeatureExamReview = (function () {
             const studentsById = {};
             students.forEach(function (s) { studentsById[String(s.id)] = s; });
             const paper = JSON.parse(JSON.stringify(task.raw_data.quiz_paper));
+            if (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.loadUniversalAcceptedAnswers === 'function') {
+                await window.QuizPaperBuilder.loadUniversalAcceptedAnswers();
+            }
+            mergeUniversalAcceptedIntoPaper(paper);
             const groups = buildAppealGroups(paper, completions, studentsById);
             groups.forEach(function (g) {
                 g.decision = null;
@@ -1156,17 +1389,19 @@ window.FeatureExamReview = (function () {
         }
     }
 
-    function appealChoiceBtnHtml(idx, decision, current) {
+    function appealChoiceBtnHtml(idx, decision, current, saving) {
         const selected = current === decision;
         const isAccept = decision === 'accepted';
         const label = isAccept ? '可接受' : '不可接受';
         const icon = isAccept ? '✅' : '❌';
         const onBg = isAccept ? '#059669' : '#DC2626';
         const offFg = isAccept ? '#047857' : '#B91C1C';
+        const cursor = saving ? 'wait' : 'pointer';
         const style = selected
-            ? 'padding:8px 16px; border:2px solid ' + onBg + '; border-radius:8px; background:' + onBg + '; color:#fff; font-weight:900; cursor:pointer; min-width:8em;'
-            : 'padding:8px 16px; border:2px solid ' + onBg + '; border-radius:8px; background:#fff; color:' + offFg + '; font-weight:800; cursor:pointer; min-width:8em;';
-        return '<button type="button" aria-pressed="' + (selected ? 'true' : 'false') + '" onclick="window.FeatureExamReview._decideAppeal(' + idx + ', \'' + decision + '\')" style="' + style + '">'
+            ? 'padding:8px 16px; border:2px solid ' + onBg + '; border-radius:8px; background:' + onBg + '; color:#fff; font-weight:900; cursor:' + cursor + '; min-width:8em;' + (saving ? ' opacity:0.7;' : '')
+            : 'padding:8px 16px; border:2px solid ' + onBg + '; border-radius:8px; background:#fff; color:' + offFg + '; font-weight:800; cursor:' + cursor + '; min-width:8em;' + (saving ? ' opacity:0.7;' : '');
+        return '<button type="button" aria-pressed="' + (selected ? 'true' : 'false') + '" ' + (saving ? 'disabled ' : '')
+            + 'onclick="window.FeatureExamReview._decideAppeal(' + idx + ', \'' + decision + '\')" style="' + style + '">'
             + (selected ? '● ' : '○ ') + icon + ' ' + label + '</button>';
     }
 
@@ -1201,11 +1436,18 @@ window.FeatureExamReview = (function () {
             ? alignedPairHtml(item.answer_en || '', gotPlain, '#DC2626')
             : '';
         const decided = group.decision;
-        const decisionNote = decided === 'accepted'
-            ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#047857;">已選可接受（尚未儲存）</div>'
-            : (decided === 'rejected'
-                ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B91C1C;">已選不可接受（尚未儲存）</div>'
-                : '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#7C3AED;">尚未選擇　請點選其中一顆（選中會填滿底色）</div>');
+        const saving = !!group._saving;
+        const saveError = String(group._saveError || '').trim();
+        // 按下「可接受／不可接受」會立刻存檔＋重批全班，不再是「先記畫面、最後才儲存提交」。
+        const decisionNote = saving
+            ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#7C3AED;">⏳ 儲存中…</div>'
+            : (saveError
+                ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B91C1C;">❌ ' + esc(saveError) + '（請重新點選一次）</div>'
+                : (decided === 'accepted'
+                    ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#047857;">✅ 已儲存：可接受</div>'
+                    : (decided === 'rejected'
+                        ? '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B91C1C;">✅ 已儲存：不可接受</div>'
+                        : '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#7C3AED;">尚未選擇　請點選其中一顆（按下就會立刻存檔）</div>')));
         const cardBorder = decided === 'accepted' ? '#86EFAC' : (decided === 'rejected' ? '#FECACA' : '#DDD6FE');
         const cardBg = decided === 'accepted' ? '#F0FDF4' : (decided === 'rejected' ? '#FEF2F2' : '#FAF5FF');
         return '<div id="appeal-group-' + idx + '" style="border:1px solid ' + cardBorder + '; border-radius:10px; padding:12px 14px; margin-bottom:10px; background:' + cardBg + ';">'
@@ -1218,9 +1460,10 @@ window.FeatureExamReview = (function () {
                 : ('<div style="font-size:1rem; font-weight:900; color:#B45309; margin-bottom:6px;">' + esc(group.answerText || '') + '</div>'
                     + '<div style="font-size:1rem; font-weight:800; color:#DC2626; line-height:1.7; white-space:pre-wrap; margin-bottom:6px;">' + (item ? esc(item.answer_en || '') : '') + '</div>'))
             + '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:4px;">'
-                + appealChoiceBtnHtml(idx, 'accepted', decided)
-                + appealChoiceBtnHtml(idx, 'rejected', decided)
+                + appealChoiceBtnHtml(idx, 'accepted', decided, saving)
+                + appealChoiceBtnHtml(idx, 'rejected', decided, saving)
             + '</div>'
+            + (item ? paperScoreModeBtnsHtml(idx, item, '_toggleAppealPaperScore') : '')
             + decisionNote
             + '<div style="font-size:0.75rem; color:#94A3B8; margin:8px 0;">申訴學生：' + studentNames + '</div>'
             + appealNotesHtml(group)
@@ -1235,14 +1478,13 @@ window.FeatureExamReview = (function () {
             + '</div>';
     }
 
+    /**
+     * 決定已經逐組即決即存（見 _decideAppeal），這裡不再需要「儲存提交」——
+     * 只留「關閉」；有未隨決定存檔的其他可接受答案草稿仍靠 isAppealDirty／unsavedMessage 擋一次。
+     */
     function appealFooterHtml() {
-        const dirty = isAppealDirty();
         return '<div style="margin-top:16px; display:flex; justify-content:flex-end; gap:10px; position:sticky; bottom:0; background:white; padding-top:8px;">'
             + '<button type="button" onclick="window.ModalOverlay.requestClose(\'' + PAGE_MODAL_ID + '\')" style="padding:9px 18px; border:1px solid #CBD5E1; border-radius:8px; background:#F1F5F9; font-weight:800; cursor:pointer;">關閉</button>'
-            + '<button type="button" id="appeal-save-btn" onclick="window.FeatureExamReview._saveAppeals()" ' + (dirty ? '' : 'disabled') + ' '
-            + 'style="padding:9px 18px; border:none; border-radius:8px; background:' + (dirty ? '#7C3AED' : '#CBD5E1') + '; color:white; font-weight:900; cursor:' + (dirty ? 'pointer' : 'not-allowed') + ';">'
-            + (dirty ? '💾 儲存提交' : '尚未審查')
-            + '</button>'
             + '</div>';
     }
 
@@ -1269,16 +1511,23 @@ window.FeatureExamReview = (function () {
                 + '<button type="button" onclick="window.FeatureExamReview._regradeWholeTaskFromAppealReview()" style="' + WHOLE_CLASS_REGRADE_BTN_STYLE + '" title="依目前試卷範本重算標準答案（維持原題），再重批全班已交卷學生。">' + WHOLE_CLASS_REGRADE_BTN_HTML + '</button>'
             + '</div>'
             + '<div style="font-size:0.8rem; color:#64748B; font-weight:700; margin-bottom:6px;">' + displayTaskTitle(appealState.taskTitle) + '</div>'
-            + '<div style="font-size:0.78rem; color:#6D28D9; font-weight:700; margin-bottom:10px;">審查完後按一次「儲存提交」才寫入並重批全班。可接受／不可接受只先記在畫面。</div>'
+            + '<div style="font-size:0.78rem; color:#6D28D9; font-weight:700; margin-bottom:10px;">按下「可接受／不可接受」會立刻存檔並重批全班，學生端會同步看到審核進度，不用再按儲存。</div>'
             + errHtml
             + groupsHtml;
         mountOrPatchAppeal(wrapPageShell(body, 820) + appealFooterHtml());
     }
 
-    function _decideAppeal(idx, decision) {
+    /**
+     * 按下「可接受／不可接受」立刻存檔＋重批全班，不再等最後一次「儲存提交」。
+     * 存檔範圍維持全班掃描（regradeAndSaveTask 不加 onlyCompletionIds）：新增可接受答案後，
+     * 其他寫一樣答案但沒申訴過的學生也要一起重批，縮小範圍會漏改（quiz-accepted-answers-invariant）。
+     * 這一組目前累積的其他可接受答案草稿（_addOtherAcceptedForGroup 只改畫面，不隨自己單獨即存）
+     * 也會跟著這次存檔一起送出，因為送的是整份 appealState.paper 快照。
+     */
+    async function _decideAppeal(idx, decision) {
         if (!appealState || appealState._loading) return;
         const group = appealState.groups[idx];
-        if (!group) return;
+        if (!group || group._saving) return;
         if (decision === 'accepted' && !group.item) {
             appealState.errorText = '找不到這一題（可能考卷已改版），無法接受這個申訴';
             renderAppealReviewHtml('appeal-group-' + idx);
@@ -1291,14 +1540,61 @@ window.FeatureExamReview = (function () {
         if (decision === 'accepted' && group.decision !== 'accepted' && group.item) {
             group.addedByAccept = !!window.QuizPaperBuilder.addAcceptedAnswer(group.item, group.answerText);
         }
+        captureAllAppealDrafts();
         group.decision = decision;
+        group._saving = true;
+        group._saveError = '';
         appealState.errorText = '';
         renderAppealReviewHtml('appeal-group-' + idx);
+        try {
+            const paperChanged = JSON.stringify(appealState.paper) !== appealState.originalPaperJson;
+            if (paperChanged) {
+                const originalPaper = JSON.parse(appealState.originalPaperJson || '{}');
+                if (window.ApiQuizReview && typeof window.ApiQuizReview.persistUniversalAcceptedDiff === 'function') {
+                    await window.ApiQuizReview.persistUniversalAcceptedDiff(originalPaper, appealState.paper);
+                }
+                await window.ApiQuizReview.saveQuizPaperPatch(appealState.assignmentId, appealState.taskId, appealState.paper);
+            }
+            const result = await regradeAndSaveTask(appealState.assignmentId, appealState.taskId, appealState.paper, {
+                beforeRegrade: function (c) {
+                    const list = Array.isArray(c.raw_data && c.raw_data.quiz_appeals) ? c.raw_data.quiz_appeals : null;
+                    if (!list) return false;
+                    let mutated = false;
+                    list.forEach(function (a) {
+                        if (!a || a.status !== 'pending' || a.item_id == null) return;
+                        const norm = window.QuizPaperBuilder.normalizeAnswer(a.answer);
+                        if (String(a.item_id) === String(group.itemId) && norm === group.answerNorm) {
+                            a.status = decision;
+                            mutated = true;
+                        }
+                    });
+                    return mutated;
+                }
+            });
+            appealState.originalPaperJson = JSON.stringify(appealState.paper);
+            group._saving = false;
+            group._saveError = '';
+            broadcastAppealProgress(appealState.assignmentId, appealState.taskId);
+            window.showFlash && window.showFlash(
+                '✅ 已儲存' + (result.failCount ? '（' + result.failCount + ' 位寫入失敗，請重試）' : ''),
+                result.failCount ? 'warning' : 'success'
+            );
+            if (window.FeatureProgress && typeof window.FeatureProgress.refresh === 'function') {
+                window.FeatureProgress.refresh(appealState.classId);
+            }
+            renderAppealReviewHtml('appeal-group-' + idx);
+        } catch (err) {
+            console.error('[FeatureExamReview] decideAppeal save', err);
+            group._saving = false;
+            group._saveError = '儲存失敗：' + (err.message || err);
+            renderAppealReviewHtml('appeal-group-' + idx);
+        }
     }
 
     /**
      * 「加入清單」跟這組申訴決定互相獨立：不會動任何申訴的 status，
-     * 純粹是老師想到還有其他寫法也該算對時的捷徑。只先改畫面，儲存提交才寫入。
+     * 純粹是老師想到還有其他寫法也該算對時的捷徑。只先改畫面，等這組（或任一組）
+     * 按下「可接受／不可接受」即決即存時，才跟著那次存檔一起送出（見 _decideAppeal）。
      */
     function _addOtherAcceptedForGroup(idx, row) {
         if (!appealState || appealState._loading) return;
@@ -1347,7 +1643,7 @@ window.FeatureExamReview = (function () {
     async function _backFromAppealReview() {
         if (!appealState) return;
         if (isAppealDirty()) {
-            const ok = await window.ModalOverlay.confirm('申訴審查尚未儲存，確定要離開嗎？');
+            const ok = await window.ModalOverlay.confirm('有新增的可接受答案還沒隨審核決定存檔，確定要離開嗎？');
             if (!ok) return;
         }
         const classId = appealState.classId;
@@ -1355,54 +1651,6 @@ window.FeatureExamReview = (function () {
         const taskId = appealState.taskId;
         appealState = null;
         await openTaskStudentList(classId, assignmentId, taskId);
-    }
-
-    async function _saveAppeals() {
-        if (!appealState || !isAppealDirty()) return;
-        const saveBtn = document.getElementById('appeal-save-btn');
-        window.ModalOverlay.setBusy(PAGE_MODAL_ID, true);
-        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '儲存中…'; }
-        try {
-            const paperChanged = JSON.stringify(appealState.paper) !== appealState.originalPaperJson;
-            if (paperChanged) {
-                await window.ApiQuizReview.saveQuizPaperPatch(appealState.assignmentId, appealState.taskId, appealState.paper);
-            }
-            const decisions = (appealState.groups || []).filter(function (g) { return !!g.decision; });
-            const result = await regradeAndSaveTask(appealState.assignmentId, appealState.taskId, appealState.paper, {
-                beforeRegrade: function (c) {
-                    const list = Array.isArray(c.raw_data && c.raw_data.quiz_appeals) ? c.raw_data.quiz_appeals : null;
-                    if (!list) return false;
-                    let mutated = false;
-                    list.forEach(function (a) {
-                        if (!a || a.status !== 'pending' || a.item_id == null) return;
-                        const norm = window.QuizPaperBuilder.normalizeAnswer(a.answer);
-                        for (let i = 0; i < decisions.length; i++) {
-                            const g = decisions[i];
-                            if (String(a.item_id) === String(g.itemId) && norm === g.answerNorm) {
-                                a.status = g.decision;
-                                mutated = true;
-                                break;
-                            }
-                        }
-                    });
-                    return mutated;
-                }
-            });
-            window.showFlash && window.showFlash(
-                '✅ 已儲存提交' + (result.failCount ? '（' + result.failCount + ' 位寫入失敗，請重試）' : ''),
-                result.failCount ? 'warning' : 'success'
-            );
-            if (window.FeatureProgress && typeof window.FeatureProgress.refresh === 'function') {
-                window.FeatureProgress.refresh(appealState.classId);
-            }
-            window.ModalOverlay.setBusy(PAGE_MODAL_ID, false);
-            await openAppealReview(appealState.classId, appealState.assignmentId, appealState.taskId);
-        } catch (err) {
-            console.error('[FeatureExamReview] saveAppeals', err);
-            window.ModalOverlay.setBusy(PAGE_MODAL_ID, false);
-            appealState.errorText = '儲存失敗：' + (err.message || err);
-            renderAppealReviewHtml();
-        }
     }
 
     /**
@@ -1453,7 +1701,7 @@ window.FeatureExamReview = (function () {
     async function _regradeWholeTaskFromAppealReview() {
         if (!appealState) return;
         if (isAppealDirty()) {
-            appealState.errorText = '還有未儲存的審查，請先按儲存提交';
+            appealState.errorText = '還有新增的可接受答案沒有隨審核決定存檔，請先點選其中一組的可接受／不可接受';
             renderAppealReviewHtml();
             return;
         }
@@ -1487,6 +1735,8 @@ window.FeatureExamReview = (function () {
         _addAcceptedInputRow: _addAcceptedInputRow,
         _removeAccepted: _removeAccepted,
         _toggleAlsoCorrect: _toggleAlsoCorrect,
+        _togglePaperScore: _togglePaperScore,
+        _toggleAppealPaperScore: _toggleAppealPaperScore,
         _startEditPrimary: _startEditPrimary,
         _cancelEditPrimary: _cancelEditPrimary,
         _confirmEditPrimary: _confirmEditPrimary,
@@ -1498,7 +1748,6 @@ window.FeatureExamReview = (function () {
         _addOtherAcceptedForGroup: _addOtherAcceptedForGroup,
         _addAppealAcceptedInputRow: _addAppealAcceptedInputRow,
         _removeAcceptedForGroup: _removeAcceptedForGroup,
-        _saveAppeals: _saveAppeals,
         _backFromAppealReview: _backFromAppealReview,
         _regradeWholeTaskFromAppealReview: _regradeWholeTaskFromAppealReview
     };

@@ -136,12 +136,89 @@ window.ApiQuizReview = (function () {
             });
     }
 
+    async function currentTeacherId() {
+        const { data, error } = await db().auth.getUser();
+        if (error) throw new Error(error.message);
+        return (data && data.user && data.user.id) || '';
+    }
+
+    function acceptedMapOf(item) {
+        const out = {};
+        ((item && item.accepted_answers) || []).forEach(function (a) {
+            const n = window.QuizPaperBuilder.normalizeAnswer(a);
+            if (n && !out[n]) out[n] = String(a).trim();
+        });
+        return out;
+    }
+
+    /**
+     * 這次卷面新增／拿掉的可接受寫法，寫進／移出全站這題教材列。
+     * 沒有活頁＋頁＋題號＝對不到全站鑰匙，只留這份卷，不准改借。
+     */
+    async function persistUniversalAcceptedDiff(originalPaper, paper) {
+        const Q = window.QuizPaperBuilder;
+        if (!Q || typeof Q.sourceFieldsOf !== 'function') return;
+        const teacherId = await currentTeacherId();
+        if (!teacherId) return;
+        const beforeById = {};
+        ((originalPaper && originalPaper.items) || []).forEach(function (it) {
+            if (it && it.item_id != null) beforeById[String(it.item_id)] = it;
+        });
+        const adds = [];
+        const removes = [];
+        ((paper && paper.items) || []).forEach(function (it) {
+            const fields = Q.sourceFieldsOf(it);
+            if (!fields) return;
+            const prev = acceptedMapOf(beforeById[String(it.item_id)]);
+            const next = acceptedMapOf(it);
+            Object.keys(next).forEach(function (n) {
+                if (!prev[n]) adds.push({ fields: fields, answer_text: next[n], answer_norm: n });
+            });
+            Object.keys(prev).forEach(function (n) {
+                if (!next[n]) removes.push({ fields: fields, answer_norm: n });
+            });
+        });
+        for (let i = 0; i < adds.length; i++) {
+            const row = adds[i];
+            const payload = {
+                teacher_id: teacherId,
+                material_folder: row.fields.material_folder,
+                sheet_id: row.fields.sheet_id,
+                page: row.fields.page,
+                item_no: row.fields.item_no,
+                answer_text: row.answer_text,
+                answer_norm: row.answer_norm,
+                updated_at: new Date().toISOString()
+            };
+            const { error } = await db().from('quiz_item_accepted_answers').upsert(payload, {
+                onConflict: 'teacher_id,material_folder,sheet_id,page,item_no,answer_norm'
+            });
+            if (error) throw new Error('寫入全站可接受答案失敗：' + error.message);
+        }
+        for (let j = 0; j < removes.length; j++) {
+            const row = removes[j];
+            const { error } = await db().from('quiz_item_accepted_answers')
+                .delete()
+                .eq('teacher_id', teacherId)
+                .eq('material_folder', row.fields.material_folder)
+                .eq('sheet_id', row.fields.sheet_id)
+                .eq('page', row.fields.page)
+                .eq('item_no', row.fields.item_no)
+                .eq('answer_norm', row.answer_norm);
+            if (error) throw new Error('移除全站可接受答案失敗：' + error.message);
+        }
+        if ((adds.length || removes.length) && Q.invalidateUniversalAcceptedCache) {
+            Q.invalidateUniversalAcceptedCache();
+        }
+    }
+
     return {
         fetchAssignment: fetchAssignment,
         fetchCompletionsForTask: fetchCompletionsForTask,
         fetchClassStudents: fetchClassStudents,
         saveQuizPaperPatch: saveQuizPaperPatch,
         saveCompletionRawData: saveCompletionRawData,
-        batchSaveCompletions: batchSaveCompletions
+        batchSaveCompletions: batchSaveCompletions,
+        persistUniversalAcceptedDiff: persistUniversalAcceptedDiff
     };
 })();

@@ -71,12 +71,20 @@ window.UIStudentTimelineTemplates = (() => {
     const TASK_BTN_VARIANTS = {
         solid: 'task-btn',
         ghost: 'task-btn task-btn--ghost',
-        done: 'task-btn task-btn--done'
+        done: 'task-btn task-btn--done',
+        blocked: 'task-btn task-btn--blocked',
+        pending: 'task-btn task-btn--pending'
     };
     const taskBtn = (label, onclick, variant, title) => {
         const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.solid;
         const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
         return `<button type="button" class="${cls}" onclick="${onclick}"${titleAttr}>${label}</button>`;
+    };
+    /** 不可點的狀態訊息（已逾期／等老師設定完成）：跟 taskBtn 同一套尺寸／字重／圓角，只換色，不准另開 inline 樣式。 */
+    const taskStatus = (label, variant, title) => {
+        const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.blocked;
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
+        return `<div class="${cls}"${titleAttr}>${label}</div>`;
     };
     const taskLink = (label, href, variant, title, extraAttrs) => {
         const cls = TASK_BTN_VARIANTS[variant] || TASK_BTN_VARIANTS.ghost;
@@ -1867,13 +1875,13 @@ window.UIStudentTimelineTemplates = (() => {
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⛔ 已逾期，停止收件</div>`;
+                            btn = taskStatus('⛔ 已逾期，停止收件', 'blocked');
                         } else if (!studentDriveUrl) {
                             // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⚠️ 您的專屬資料夾尚未設定</div>`;
+                            btn = taskStatus('⚠️ 您的專屬資料夾尚未設定', 'blocked');
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             
@@ -1967,7 +1975,7 @@ window.UIStudentTimelineTemplates = (() => {
                         // 才算完成），沒有另外的「一般作答」步驟，所以要整個取代下面一般考試按鈕，不是並存。
                         const inputPracticeEnabled = !!(task.raw_data && task.raw_data.input_practice_enabled);
                         if (!itemN) {
-                            btn = `<div style="color:#92400E; font-size:0.85rem; font-weight:800; background:#FFFBEB; padding:4px 10px; border-radius:6px; border:1px solid #FDE68A;">老師尚未產生線上卷</div>`;
+                            btn = taskStatus('老師尚未產生線上卷', 'pending');
                         } else if (inputPracticeEnabled) {
                             const practiceSummary = (window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.getInputPracticeSummary === 'function')
                                 ? window.FeatureStudentQuiz.getInputPracticeSummary(course.id, task.id)
@@ -2011,10 +2019,19 @@ window.UIStudentTimelineTemplates = (() => {
                                     correctionSummary.allDone ? 'done' : 'ghost'
                                 )
                                 : '';
+                            // ⏰ 期限只擋「開始作答／再作一次」這個會產生新提交的動作，跟 drive／audio_record
+                            // 同一把鑰匙（canUpload）；不擋看結果（reviewBtn 永遠留著）。過期後仍可能是第一次
+                            // 沒寫過（!hasQuizDone），這種情況沒有結果可看，才顯示逾期訊息取代開始按鈕。
+                            // 🔓 錯題改正練習／重考錯題（僅一次）不受期限影響：老師已定案「錯題練習＆錯題重考，
+                            // 不受期限的影響」，這兩顆只看自己的資格（retakeEligible／correctionSummary），
+                            // 不准再拿 canUpload 擋掉。
+                            const startBtnHtml = canUpload
+                                ? taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz ? window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')
+                                : taskStatus(`⛔ 已逾期，停止${hasQuizDone ? '重考' : '作答'}`, 'blocked');
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${quizScoreHtml}
-                                    ${taskBtn(quizBtnLabel, `window.FeatureStudentQuiz && window.FeatureStudentQuiz.openQuiz ? window.FeatureStudentQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')}
+                                    ${startBtnHtml}
                                     ${reviewBtn}
                                     ${retakeBtn}
                                     ${correctionBtn}
@@ -2036,7 +2053,7 @@ window.UIStudentTimelineTemplates = (() => {
                         const pdfResult = (pdfComp && pdfComp.raw_data) ? pdfComp.raw_data.pdf_quiz_result : null;
                         if (!pdfJob || !pdfJob.pdf_file_id || !pdfItemN) {
                             checkboxHtml = '';
-                            btn = `<div style="color:#92400E; font-size:0.85rem; font-weight:800; background:#FFFBEB; padding:4px 10px; border-radius:6px; border:1px solid #FDE68A;">老師尚未設定完成</div>`;
+                            btn = taskStatus('老師尚未設定完成', 'pending');
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="繳交考卷後自動打勾">`;
                             // 學生端改成「每大題提交就批改」，pdfResult.all_submitted===false 代表還在作答中
@@ -2051,10 +2068,15 @@ window.UIStudentTimelineTemplates = (() => {
                             const pdfReviewBtn = (pdfResult && !pdfInProgress)
                                 ? taskBtn('上次成績', `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openPastResult('${safeCourseId}', '${safeTaskId}')`, 'ghost')
                                 : '';
+                            // ⏰ 期限只擋會產生新提交的動作（開始／繼續／再作一次），跟 exam 分支同一把鑰匙
+                            // canUpload；看上次成績永遠不擋。
+                            const pdfStartBtnHtml = canUpload
+                                ? taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz ? window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')
+                                : taskStatus(`⛔ 已逾期，停止${pdfResult ? '重考' : '作答'}`, 'blocked');
                             btn = `
                                 <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                     ${pdfScoreHtml}
-                                    ${taskBtn(pdfBtnLabel, `window.FeatureStudentPdfQuiz && window.FeatureStudentPdfQuiz.openQuiz ? window.FeatureStudentPdfQuiz.openQuiz('${safeCourseId}', '${safeTaskId}') : (window.showFlash && window.showFlash('考卷模組尚未載入，請重整頁面','error'))`, 'solid')}
+                                    ${pdfStartBtnHtml}
                                     ${pdfReviewBtn}
                                     <span style="font-size:0.75rem; color:#64748B; font-weight:700;">${pdfItemN} 題</span>
                                 </div>
@@ -2070,13 +2092,13 @@ window.UIStudentTimelineTemplates = (() => {
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⛔ 已逾期，停止收件</div>`;
+                            btn = taskStatus('⛔ 已逾期，停止收件', 'blocked');
                         } else if (!studentDriveUrl) {
                             // 🌟 這裡刻意不用 disabled：瀏覽器對 disabled checkbox 的 accent-color 會自動變淡，
                     // 導致跟上面「可點擊」的打勾長得不一樣（一個鮮綠、一個灰撲撲）。
                     // 改用 onclick 擋掉互動＋拿掉 tab 焦點，視覺上維持跟其他勾勾一致的鮮綠色。
                     checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1">`;
-                            btn = `<div style="color:#EF4444; font-size:0.85rem; font-weight:800; background:#FEF2F2; padding:4px 10px; border-radius:6px; border:1px solid #FECACA; display:inline-block;">⚠️ 您的專屬資料夾尚未設定</div>`;
+                            btn = taskStatus('⚠️ 您的專屬資料夾尚未設定', 'blocked');
                         } else {
                             checkboxHtml = `<input type="checkbox" class="task-checkbox" style="${checkboxBaseStyle} cursor:not-allowed;" ${checked} onclick="return false;" tabindex="-1" title="上傳成功後將自動打勾">`;
                             

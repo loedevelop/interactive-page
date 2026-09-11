@@ -13,7 +13,8 @@ alwaysApply: false
 ## 不變量
 
 ```
-多標準答案只存在 quiz_paper.items[].accepted_answers（考卷快照層，assignments.tasks JSON 裡）
+可接受答案跟教材題走（老師＋資料夾＋活頁＋頁＋題號），存在 quiz_item_accepted_answers，批改時跟這份卷快照聯集。不是只這份考卷。
+送分／不計分只寫這份考卷 item.paper_score_mode（award／exclude）。送分＝這題全班算對；不計分＝這題不進分數。
 對錯只由 QuizPaperBuilder.gradeAnswers(paper, answers, rawData) 判定（gradeCompletion 是同一條）。
 有 quiz_appeals 且 status=accepted → 這題算對，寫在 gradeAnswers 裡。畫面只讀 details[].ok。
 「申訴成功」是標示，不是第二套計分。禁止老師／學生畫面各自再 if 申訴算對。
@@ -21,9 +22,9 @@ quiz_appeals 有紀錄就留下。送出、接受、駁回、重新批閱都只�
 禁止用 [] 或少一筆的清單整包蓋掉。已接受的不准被舊快取改回 pending。
 寫回 task_completions.raw_data 時，quiz_appeals 只走 QuizPaperBuilder.mergeQuizAppeals
   ／prepareCompletionRawDataForSave；RPC 走 merge_task_completion_raw_data。
-不做「只改這個學生分數」的旁路開關——所有調整都是「改 accepted_answers／answer_en → 用
+不做「只改這個學生分數」的旁路開關——所有調整都是「改可接受答案／answer_en／paper_score_mode → 用
   QuizPaperBuilder.regradeCompletionRawData 重新算分」，分數永遠等於重算結果，不手動兜
-老師勾選「這個答案也算對」或新增答案 → 存檔時自動找同一 (assignment_id, task_id) 下所有
+老師勾選「可接受答案」或新增答案 → 存檔時寫進全站這題教材列，並找同一 (assignment_id, task_id) 下所有
   已作答的 completion 一起重新批改；只寫入真的變動的（regradeCompletionRawData 回傳的
   changed），沒受影響的學生不要動（數千數萬學生規模下，全寫是浪費）
 修改主答案（setPrimaryAnswer）時，舊主答案要自動併入 accepted_answers（除非已存在），
@@ -121,8 +122,7 @@ raw_data = raw_data || { quiz_appeals: [] };
 若要動 `quiz-paper-builder.js`（`gradeAnswers`／`accepted_answers` 相關函式）、
 `feature-exam-review.js`、`api-quiz-review.js`：
 
-1. 新增可接受答案的動作，是不是真的寫進 `quiz_paper.items[].accepted_answers`（考卷層），
-   而不是只塞進某一筆 `task_completions.raw_data`？
+1. 新增可接受答案的動作，是不是真的寫進這題教材列（quiz_item_accepted_answers）＋這份卷快照，而不是只塞進某一筆 task_completions.raw_data？送分／不計分是不是只寫這份卷？
 2. 全班重批是不是只寫「真的變動」的學生，沒受影響的人有沒有被誤觸寫入？
 3. 如果要重繪一個已經開著的 `ModalOverlay`，是不是直接改 DOM，而不是再呼叫一次
    `ModalOverlay.open` 同一個 id（會觸發舊 `onClose`）？

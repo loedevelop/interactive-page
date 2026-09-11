@@ -36,6 +36,20 @@ window.FeatureExamJob = (function () {
     const _genStatusByPath = {};
 
     /**
+     * 💣 雷區（2026-09-10 老師回報：完全沒操作過的考試任務卻顯示「已產生線上卷 120 題」）：
+     * 上面幾個模組層級狀態物件過去都用 pathStr（任務在樹狀結構裡的位置索引，例如 "0-1"）當 key，
+     * 從不隨任務刪除／新增／搬動、或切換到別的作業被清除。任務結構一旦改變，不同的任務會被
+     * 重新分配到同一個 pathStr，畫面就會讀到「上一個佔用這個位置的任務」留下的狀態（例如產生
+     * 成功的訊息、job_id），跟目前這個任務完全無關，即使這個任務從沒被按過「產生試卷」。
+     * 改成用任務自己的穩定 id（task.id，新增任務時就配好、且已經是 recordExamGenerationEvent
+     * 在用的同一個值）當 key——任務本身沒被操作過，就讀不到別的任務留下的狀態。
+     */
+    function stableTaskKey(pathStr, task) {
+        const t = task || getBuilderTaskByPath(pathStr);
+        return (t && t.id) ? ('id:' + String(t.id)) : ('path:' + String(pathStr));
+    }
+
+    /**
      * 試卷 → 段落 → 片段。舊 exam_job.sections 是平的抽題列（現在的片段），
      * 讀取時升成「一個段落包住所有舊列」。
      */
@@ -830,6 +844,7 @@ window.FeatureExamJob = (function () {
                 allow_answer_appeal: (prevSecs[gi] && prevSecs[gi].allow_answer_appeal) !== false
             });
             const sec = emptySection({
+                id: prev && prev.id,
                 shuffle: packShuffleOnPackRow(g.rows && g.rows[0]),
                 allow_answer_appeal: prev.allow_answer_appeal !== false,
                 combination_id: g.comboId || ''
@@ -2342,19 +2357,37 @@ window.FeatureExamJob = (function () {
         return found;
     }
 
+    /**
+     * 這個考試任務自己的開放／截止＝先看任務自己有沒有覆寫，沒有才往上層（群組→整份作業）繼承。
+     * 不准直接拿整份作業層級的 target_date／due_date 套用到底下每一題考試（target_date 只是排週用，跟考試本身的開放／截止無關）。
+     */
     function listExamTasks(assignment) {
         const out = [];
         if (!assignment) return out;
-        walkTasks(assignment.tasks || [], function (t) {
-            if (t && t.type === 'exam') {
-                const raw = t.raw_data || {};
-                out.push({
-                    id: t.id,
-                    title: t.title || raw.exam_title || '(未命名考試)',
-                    jobId: raw.exam_job_id || (raw.exam_job && raw.exam_job.job_id) || ''
-                });
-            }
-        });
+        const U = window.UtilsDate;
+        const inherit = function (own, parent) {
+            return (U && typeof U.inheritStamp === 'function') ? U.inheritStamp(own, parent) : (String(own || '').trim() || String(parent || '').trim());
+        };
+        const rootOpen = (assignment && assignment.open_at) || '';
+        const rootDue = (assignment && assignment.due_date) || '';
+        (function walk(list, parentOpen, parentDue) {
+            (list || []).forEach(function (t) {
+                if (!t) return;
+                const effOpen = inherit(t.open_at, parentOpen);
+                const effDue = inherit(t.due_date, parentDue);
+                if (t.type === 'exam') {
+                    const raw = t.raw_data || {};
+                    out.push({
+                        id: t.id,
+                        title: t.title || raw.exam_title || '(未命名考試)',
+                        jobId: raw.exam_job_id || (raw.exam_job && raw.exam_job.job_id) || '',
+                        openAt: effOpen,
+                        dueDate: effDue
+                    });
+                }
+                if (Array.isArray(t.subTasks)) walk(t.subTasks, effOpen, effDue);
+            });
+        })(assignment.tasks || [], rootOpen, rootDue);
         return out;
     }
 
@@ -3023,8 +3056,9 @@ window.FeatureExamJob = (function () {
         if (task) {
             inheritRangePackIntoExamIfEmpty(pathStr, task);
             const overflow = clampExamJobRanges(task, { notify: false });
-            if (overflow.length && !_rangeClampNotified[pathStr]) {
-                _rangeClampNotified[pathStr] = true;
+            const _rangeClampKey = stableTaskKey(pathStr, task);
+            if (overflow.length && !_rangeClampNotified[_rangeClampKey]) {
+                _rangeClampNotified[_rangeClampKey] = true;
                 if (window.SheetRangeBounds && typeof window.SheetRangeBounds.notifyOverflow === 'function') {
                     window.SheetRangeBounds.notifyOverflow(overflow);
                 }
@@ -3074,7 +3108,7 @@ window.FeatureExamJob = (function () {
                     + (paperNo ? ('｜卷號 ' + paperNo) : '')
                     + (paperAt ? ('｜' + paperAt) : '')));
         const paperHintColor = paperItemCount && !paperStaleReason ? '#134E4A' : '#92400E';
-        const savedGenStatus = _genStatusByPath[pathStr] || null;
+        const savedGenStatus = _genStatusByPath[stableTaskKey(pathStr, task)] || null;
 
         let siblingAudio = null;
         let siblingAudioCount = 0;
@@ -5452,39 +5486,49 @@ window.FeatureExamJob = (function () {
     }
 
     function setGenerateStatus(pathStr, text, tone) {
-        _genStatusByPath[pathStr] = { text: String(text || ''), tone: tone || '' };
+        const key = stableTaskKey(pathStr);
+        _genStatusByPath[key] = { text: String(text || ''), tone: tone || '' };
         const el = document.getElementById('exam-inline-gen-status-' + pathStr);
         if (!el) return;
-        el.textContent = _genStatusByPath[pathStr].text;
-        el.style.cssText = generateStatusBoxStyle(_genStatusByPath[pathStr].text ? _genStatusByPath[pathStr].tone : '');
+        el.textContent = _genStatusByPath[key].text;
+        el.style.cssText = generateStatusBoxStyle(_genStatusByPath[key].text ? _genStatusByPath[key].tone : '');
     }
 
     /**
-     * 依 examJob 的內容算一個簽章，用來判斷「設定有沒有變」——存檔時只有簽章跟上次產生時不一樣
-     * （或根本還沒產生過）才需要重新抽題排版，避免老師隨便改個截止日期、加個備註，
-     * 每次「儲存作業」都白白重打一次 Drive／重新抽題（見 page-refresh-perf-invariant 鐵律）。
+     * 出題設定簽章。只認會改抽題的欄：活頁／範圍／題數／範本／亂序。
+     * 不准放內部 section id（範圍表同步會 newSectionId，那不是老師改設定）。
+     * 起迄／題數一律當字串，避免 1 跟 "1" 被當成兩份設定。
      */
+    function sigText(v) {
+        return v == null || v === '' ? '' : String(v);
+    }
+
     function examJobSignature(examJob) {
         if (!examJob) return '';
         try {
             return JSON.stringify({
-                bank_id: examJob.bank_id || '',
-                layout_profile_id: examJob.layout_profile_id || '',
+                bank_id: sigText(examJob.bank_id),
+                layout_profile_id: sigText(examJob.layout_profile_id),
                 shuffle_sections: examShuffleSectionsOn(examJob.options),
                 sections: normalizeExamSections(examJob.sections, {}).map(function (sec) {
                     sec = sec || {};
                     return {
-                        id: sec.id || '',
-                        material_folder: sec.material_folder || '',
+                        material_folder: sigText(sec.material_folder),
                         shuffle: sec.shuffle !== false,
                         allow_answer_appeal: sec.allow_answer_appeal !== false,
                         segments: (sec.segments || []).map(function (s) {
                             s = s || {};
                             return {
-                                sheet_id: s.sheet_id || '', layout_profile_id: s.layout_profile_id || '',
-                                range_type: s.range_type || '', start: s.start != null ? s.start : '', end: s.end != null ? s.end : '',
-                                count: s.count != null ? s.count : '', lines_per_page: s.lines_per_page || '',
-                                difficulty: s.difficulty || '', include_nums: s.include_nums || '', exclude_nums: s.exclude_nums || ''
+                                sheet_id: sigText(s.sheet_id),
+                                layout_profile_id: sigText(s.layout_profile_id),
+                                range_type: sigText(s.range_type),
+                                start: sigText(s.start),
+                                end: sigText(s.end),
+                                count: sigText(s.count),
+                                lines_per_page: sigText(s.lines_per_page),
+                                difficulty: sigText(s.difficulty),
+                                include_nums: sigText(s.include_nums),
+                                exclude_nums: sigText(s.exclude_nums)
                             };
                         })
                     };
@@ -5530,7 +5574,25 @@ window.FeatureExamJob = (function () {
         const paper = task.raw_data.quiz_paper;
         if (!paper || !Array.isArray(paper.items) || !paper.items.length) return true;
         if (!task.raw_data.quiz_paper_signature) return false;
-        return examJobSignature(examJob) !== task.raw_data.quiz_paper_signature;
+        return examJobSignature(examJob) !== storedExamSignatureCanonical(task.raw_data.quiz_paper_signature);
+    }
+
+    /** 舊簽章可能含 section id、數字起迄；跟現行 examJobSignature 同一把尺再比。 */
+    function storedExamSignatureCanonical(raw) {
+        if (!raw) return '';
+        if (typeof raw !== 'string') return examJobSignature(raw);
+        try {
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== 'object') return raw;
+            return examJobSignature({
+                bank_id: obj.bank_id,
+                layout_profile_id: obj.layout_profile_id,
+                options: { shuffle_sections: obj.shuffle_sections !== false },
+                sections: obj.sections
+            });
+        } catch (_e) {
+            return raw;
+        }
     }
 
     /** 既有卷缺簽章時，只補寫、不重新產生（見 needsExamRegeneration 的雷區說明）。 */

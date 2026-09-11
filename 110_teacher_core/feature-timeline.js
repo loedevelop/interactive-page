@@ -1691,8 +1691,9 @@ window.FeatureTimeline = (() => {
             descEl.setAttribute('data-desc-from-range', generatedPlain);
             return;
         }
-        if (current === genNorm) {
+        if (current === genNorm || titleLooksLikeSheetAliasDump(current)) {
             descEl.setAttribute('data-desc-auto', '1');
+            if (titleLooksLikeSheetAliasDump(current) && generatedHtml) descEl.innerHTML = generatedHtml;
             descEl.setAttribute('data-desc-from-range', generatedPlain);
             return;
         }
@@ -1790,14 +1791,23 @@ window.FeatureTimeline = (() => {
         return lo === hi ? ('p. ' + lo) : ('pp. ' + lo + '~' + hi);
     }
 
+    function comboNameLooksLikeSheetAlias(name) {
+        const s = String(name || '').trim();
+        if (!s) return false;
+        if (/^[A-Za-z0-9]+\.[A-Za-z0-9_-]+$/i.test(s)) return true;
+        return titleLooksLikeSheetAliasDump(s);
+    }
+
     function pickPackComboName(classId, row) {
         const comboId = String((row && (row.comboId || row.combo_id)) || '').trim();
         const combo = (row && row.combo) || resolvePackCombo(classId, comboId);
         if (combo) {
             const named = comboLabelText(combo);
-            if (named) return named;
+            if (named && !comboNameLooksLikeSheetAlias(named)) return named;
         }
-        return String((row && (row.comboLabel || row.combo_label)) || '').trim();
+        const fallback = String((row && (row.comboLabel || row.combo_label)) || '').trim();
+        if (comboNameLooksLikeSheetAlias(fallback)) return '';
+        return fallback;
     }
 
     function pickPackSheetLabel(classId, row) {
@@ -1976,7 +1986,7 @@ window.FeatureTimeline = (() => {
         return labels;
     }
 
-    /** 標題用活頁字母／數字：A.sentence-translation → A。說明仍用完整別名。 */
+    /** 區段＝範圍表那一欄顯示的字母／數字：A.sentence-translation → A。標題與說明同一把。不准用完整活頁別名。 */
     function sheetHeadForTitle(label) {
         const FN = window.MaterialFileNames;
         if (FN && typeof FN.sheetRangeHead === 'function') return FN.sheetRangeHead(label);
@@ -1984,6 +1994,10 @@ window.FeatureTimeline = (() => {
         if (!s) return '';
         const dot = s.indexOf('.');
         return dot > 0 ? s.slice(0, dot) : s;
+    }
+
+    function packSectionHeadForRow(classId, r) {
+        return sheetHeadForTitle(pickPackSheetLabel(classId, r));
     }
 
     function uniqueSheetHeadsForRows(rows, classId) {
@@ -1999,31 +2013,45 @@ window.FeatureTimeline = (() => {
         return heads;
     }
 
-    function formatOneRowRange(r) {
-        const startRaw = String((r && r.start) || '').trim();
-        const endRaw = String((r && r.end) || '').trim();
-        if (!startRaw || !endRaw) return '';
-        const startN = Number(startRaw);
-        const endN = Number(endRaw);
-        if (isNaN(startN) || isNaN(endN)) return '';
-        const lo = Math.min(startN, endN);
-        const hi = Math.max(startN, endN);
-        if (((r && (r.rangeType || r.range_type)) === 'qnum')) {
-            return formatPickedQnumIntervals([{ start: lo, end: hi }]);
-        }
-        return formatPickedPageIntervals([{ start: lo, end: hi }]);
-    }
-
+    /**
+     * 說明＝區段＋範圍。同一區段同一模式：匣內排序，相連／重疊才融，斷層一個 pp.／# 加逗號。
+     * 跟 combinePackRangeLabel 同一把 mergePickedIntervals。不准一列一行、連續還分號。
+     */
     function sheetPackDescriptionLines(rows, classId) {
-        const out = [];
+        const groups = [];
+        const groupIndex = {};
         (rows || []).forEach(function (r) {
             if (isBookPackRow(r)) return;
-            const range = formatOneRowRange(r);
-            if (!range) return;
-            const sheet = pickPackSheetLabel(classId, r);
-            out.push(sheet ? (sheet + ' ' + range) : range);
+            const startRaw = String((r && r.start) || '').trim();
+            const endRaw = String((r && r.end) || '').trim();
+            if (!startRaw || !endRaw) return;
+            const startN = Number(startRaw);
+            const endN = Number(endRaw);
+            if (isNaN(startN) || isNaN(endN)) return;
+            const section = packSectionHeadForRow(classId, r);
+            const mode = ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page';
+            const comboId = String((r && (r.comboId || r.combo_id)) || '').trim();
+            const comboName = pickPackComboName(classId, r);
+            const key = (comboId ? ('id:' + comboId) : ('name:' + String(comboName || '').toUpperCase()))
+                + '\t' + String(section || '').toUpperCase()
+                + '\t' + mode;
+            if (groupIndex[key] == null) {
+                groupIndex[key] = groups.length;
+                groups.push({ section: section, mode: mode, intervals: [] });
+            }
+            groups[groupIndex[key]].intervals.push({
+                start: Math.min(startN, endN),
+                end: Math.max(startN, endN)
+            });
         });
-        return out;
+        return groups.map(function (g) {
+            const merged = mergePickedIntervals(g.intervals);
+            const range = g.mode === 'qnum'
+                ? formatPickedQnumIntervals(merged)
+                : formatPickedPageIntervals(merged);
+            if (!range) return '';
+            return g.section ? (g.section + ' ' + range) : range;
+        }).filter(Boolean);
     }
 
     function packRangeDescriptionPlain(rows, classId) {
@@ -2049,18 +2077,28 @@ window.FeatureTimeline = (() => {
         return [bookHtml, sheetHtml].filter(Boolean).join('<br>');
     }
 
-    /** 舊標題把活頁別名當標題（J.sentence-translation pp. 1~2 ; …）。那不是套餐名，要當自動繼承重算。 */
+    /** 舊標題把活頁別名當標題（J.sentence-translation pp. 1~2 ; …）。同一區段連續範圍卻一行一行分號，也是自動稿，要重算。 */
     function titleLooksLikeSheetAliasDump(text) {
-        const s = String(text || '').replace(/<[^>]*>/g, '').trim();
+        const s = String(text || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
         if (!s) return false;
         if (/[A-Za-z0-9]+\.[A-Za-z0-9_-]+\s*pp?\./i.test(s)) return true;
         if (/[A-Za-z0-9]+\.[A-Za-z0-9_-]+\s*#/i.test(s)) return true;
-        return false;
+        const parts = s.split(/\s*;\s*/).map(function (p) { return p.trim(); }).filter(Boolean);
+        if (parts.length < 2) return false;
+        const labels = {};
+        let i;
+        for (i = 0; i < parts.length; i++) {
+            const m = parts[i].match(/^(.+?)\s+(?:pp?\.\s*\d+(?:\s*[~\-]\s*\d+)?|#\s*\d+(?:\s*[~\-]\s*\d+)?)$/i);
+            if (!m) return false;
+            const lab = m[1].replace(/\s+/g, ' ').trim().toUpperCase();
+            labels[lab] = (labels[lab] || 0) + 1;
+        }
+        return Object.keys(labels).some(function (k) { return labels[k] > 1; });
     }
 
     /**
      * 獨立作業小標題＝套餐名＋（區段以外一致時納入區段）＋範圍。
-     * 區段以外很亂＝標題只留套餐名，明細進說明。組合層標題已是套餐名時 omitComboName＝不重複套餐名。
+     * 區段以外很亂＝標題只留套餐名，明細進說明（區段＋範圍，例：A pp. 1~2 ; J pp. 1~2）。組合層標題已是套餐名時 omitComboName＝不重複套餐名。
      */
     function combinePackRangeLabel(rows, classId, omitComboName) {
         const bookParts = [];
@@ -2717,7 +2755,8 @@ window.FeatureTimeline = (() => {
             const descEl = document.getElementById('node-desc-' + audioPath);
             const descHtml = packRangeDescriptionHtml(packRowsForDesc, builderClassId());
             const descPlain = packRangeDescriptionPlain(packRowsForDesc, builderClassId());
-            if (descEl && descEl.getAttribute('data-desc-auto') !== '0') {
+            if (descEl && (descEl.getAttribute('data-desc-auto') !== '0'
+                || titleLooksLikeSheetAliasDump(descEl.textContent))) {
                 descEl.innerHTML = descHtml || '';
                 descEl.setAttribute('data-desc-auto', '1');
                 descEl.setAttribute('data-desc-from-range', descPlain);
@@ -2762,7 +2801,8 @@ window.FeatureTimeline = (() => {
             const examDescEl = document.getElementById('node-desc-' + examPath);
             const examDescHtml = packRangeDescriptionHtml(packRows, builderClassId());
             const examDescPlain = packRangeDescriptionPlain(packRows, builderClassId());
-            if (examDescEl && examDescEl.getAttribute('data-desc-auto') !== '0') {
+            if (examDescEl && (examDescEl.getAttribute('data-desc-auto') !== '0'
+                || titleLooksLikeSheetAliasDump(examDescEl.textContent))) {
                 examDescEl.innerHTML = examDescHtml || '';
                 examDescEl.setAttribute('data-desc-auto', '1');
                 examDescEl.setAttribute('data-desc-from-range', examDescPlain);
@@ -2783,7 +2823,8 @@ window.FeatureTimeline = (() => {
             const childRows = packRowsForHostPath(childPath);
             const childDescHtml = packRangeDescriptionHtml(childRows, builderClassId());
             const childDescPlain = packRangeDescriptionPlain(childRows, builderClassId());
-            if (childDescEl && childDescEl.getAttribute('data-desc-auto') !== '0') {
+            if (childDescEl && (childDescEl.getAttribute('data-desc-auto') !== '0'
+                || titleLooksLikeSheetAliasDump(childDescEl.textContent))) {
                 childDescEl.innerHTML = childDescHtml || '';
                 childDescEl.setAttribute('data-desc-auto', '1');
                 childDescEl.setAttribute('data-desc-from-range', childDescPlain);
@@ -3530,7 +3571,13 @@ window.FeatureTimeline = (() => {
         refreshRangePackChildTitles(pathStr);
     }
 
+    /**
+     * 組合層底下：錄音改範圍 → 同組合的考試標題跟著這份 pack。
+     * 獨立錄音／考試各自有範圍表。同層隔壁不是組合層 → 不准把標題抄過去
+     * （曾發生：下面新加一筆還沒選套餐、起迄都空，標題卻變成上面那筆的活頁別名＋範圍）。
+     */
     function syncSiblingExamTitleFromRange(audioPathStr, rangeText) {
+        if (!parentRangeGroupPathOf(audioPathStr)) return;
         const bState = window.BuilderStore && window.BuilderStore.getState();
         if (!bState || !Array.isArray(bState.tasks)) return;
         const arr = String(audioPathStr || '').split('-').map(Number).filter(function (n) { return !isNaN(n); });
