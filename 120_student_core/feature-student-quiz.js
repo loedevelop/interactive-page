@@ -286,6 +286,7 @@ window.FeatureStudentQuiz = (function () {
                 item_id: paperItem.item_id,
                 seq: paperItem.seq,
                 ok: d.ok === true,
+                excluded: !!d.excluded,
                 prompt_zh: itemPromptText(paperItem),
                 cloze_stem: (paperItem.quiz_mode === 'cloze' && paperItem.cloze_stem) ? paperItem.cloze_stem : '',
                 section_id: paperItem.section_id || '',
@@ -904,8 +905,10 @@ window.FeatureStudentQuiz = (function () {
         }).join('');
     }
 
-    /** 供進度列摘要 */
-    function formatStatsSummaryHtml(raw) {
+    /** 供進度列摘要。paper 可選：這次修復之前繳交的舊資料沒有存 quiz_result.blank_count，
+     * 有給 paper 就用 raw.quiz_answers 現場重新批改一次算出空白題數（跟老師端考試批改頁
+     * 同一把鑰匙），不用也不能猜；沒給 paper 或算不出來就照舊只認存好的 blank_count。 */
+    function formatStatsSummaryHtml(raw, paper) {
         const st = readStats(raw || {});
         if (!st.attempt_count && !st.complete_count && !st.quit_count) return '';
         const parts = [];
@@ -921,13 +924,18 @@ window.FeatureStudentQuiz = (function () {
         }
         const wrongN = (st.wrong_items && st.wrong_items.length) ? st.wrong_items.length : 0;
         if (wrongN > 0) parts.push('最近錯題 ' + wrongN);
-        // 空白（沒填寫）題數：跟老師端考試批改頁同一把鑰匙——details[i] 沒 excluded（送分／不計分
-        // 模式排除的題不算）且 answer 是空字串才算空白，不是「錯」也不是「對」。有作答結果就
-        // 一定列出（含 0 題），不要因為剛好 0 就跟其他「有才顯示」的欄位一樣隱藏。
-        if (qr && Array.isArray(qr.details)) {
-            const blankN = qr.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length;
-            parts.push('空白未填 ' + blankN + ' 題');
+        // 空白（沒填寫）題數：優先讀繳交時就存好的 quiz_result.blank_count（見 submit()）；
+        // 舊資料沒這欄，退回用 raw.quiz_answers 現場重新批改一次（跟老師端 liveQuizScore
+        // 同一把鑰匙），兩者都是這筆資料自己的正確來源，不是借別筆／別欄。兩者都沒有才不顯示。
+        let blankN = (qr && qr.blank_count != null) ? qr.blank_count : null;
+        if (blankN == null && paper && raw && raw.quiz_answers
+            && window.QuizPaperBuilder && typeof window.QuizPaperBuilder.gradeAnswers === 'function') {
+            const live = window.QuizPaperBuilder.gradeAnswers(paper, raw.quiz_answers, raw);
+            if (live && Array.isArray(live.details)) {
+                blankN = live.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length;
+            }
         }
+        if (blankN != null) parts.push('空白未填 ' + blankN + ' 題');
         // 2026-08-13 老師要求先關掉「歷史錯字」相關顯示（目前抓錯機制還不夠準確、沒有參考
         // 意義）：這裡也一併拿掉，不要讓「歷史錯字 N 組」還留在進度列摘要裡（spelling_ledger
         // 底層仍照常累積記錄，只是先不顯示出來）。
@@ -999,11 +1007,9 @@ window.FeatureStudentQuiz = (function () {
                     + ' · 嘗試離開累計 ' + esc(stats.leave_count_total) + ' 次'
                     + (stats.last_duration_ms > 0 ? (' · 本次 ' + esc(formatDurationMs(stats.last_duration_ms))) : '')
                     + (stats.total_time_ms > 0 ? (' · 累計 ' + esc(formatDurationMs(stats.total_time_ms))) : '')
-                    // 空白（沒填寫）題數：跟進度列摘要（formatStatsSummaryHtml）同一把鑰匙，details[i]
-                    // 沒 excluded（送分／不計分排除的題不算）且 answer 是空字串才算空白。
-                    + (Array.isArray(result.details)
-                        ? (' · 空白未填 ' + esc(result.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length) + ' 題')
-                        : '')
+                    // 空白（沒填寫）題數：跟進度列摘要（formatStatsSummaryHtml）同一把鑰匙，讀繳交時
+                    // 存好的 quiz_result.blank_count，不是 details（DB 沒存這欄）。舊資料沒有就不顯示。
+                    + (result.blank_count != null ? (' · 空白未填 ' + esc(result.blank_count) + ' 題') : '')
                 + '</div>' +
                 retakeBannerHtml +
                 inputCorrectionBannerHtml +
@@ -1060,16 +1066,24 @@ window.FeatureStudentQuiz = (function () {
         const liveCorrect = liveTotal
             ? fullItems.filter(function (it) { return it && it.ok === true; }).length
             : null;
+        // 空白題數：優先用 fullItems（已經現場重新批改過，answer/excluded 都是最新，舊資料
+        // 也能算，不用等重新繳交）；fullItems 算不出來（regrade 失敗）才退回存好的 qr.blank_count。
+        const liveBlankCount = liveTotal
+            ? fullItems.filter(function (it) { return it && !it.excluded && !String(it.answer || '').trim(); }).length
+            : null;
+        const blankCount = liveBlankCount != null ? liveBlankCount : (qr.blank_count != null ? qr.blank_count : null);
         const result = liveTotal
             ? {
                 correct: liveCorrect,
                 total: liveTotal,
-                score: Math.round((liveCorrect / liveTotal) * 1000) / 10
+                score: Math.round((liveCorrect / liveTotal) * 1000) / 10,
+                blank_count: blankCount
             }
             : {
                 correct: qr.correct != null ? qr.correct : '—',
                 total: qr.total != null ? qr.total : '—',
-                score: qr.score != null ? qr.score : '—'
+                score: qr.score != null ? qr.score : '—',
+                blank_count: blankCount
             };
         const retake = raw.quiz_retake || null;
         const retakeEligible = !!(retake && !retake.done && Array.isArray(retake.item_ids) && retake.item_ids.length);
@@ -1679,7 +1693,7 @@ window.FeatureStudentQuiz = (function () {
             console.warn('[FeatureStudentQuiz] persist open', err);
         });
 
-        const statsHtml = formatStatsSummaryHtml(sessionBaseRaw);
+        const statsHtml = formatStatsSummaryHtml(sessionBaseRaw, paper);
         const prevScoreHtml = statsHtml
             ? ('<div style="margin-bottom:10px; padding:8px 10px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;">' + statsHtml + '</div>')
             : '';
@@ -1837,7 +1851,15 @@ window.FeatureStudentQuiz = (function () {
             duration_ms: durationMs
         });
 
-        // 不把全卷 details 塞進 DB（避免 task_completions 過肥）
+        // 不把全卷 details 塞進 DB（避免 task_completions 過肥），但空白題數要在這裡（details
+        // 還在記憶體、沒被丟掉之前）先算好存成 blank_count，跟 wrong_items 同一個做法（存算好的
+        // 結果，不是存整份 details 再叫別的畫面重新regrade）。💣 之前 formatStatsSummaryHtml／
+        // 老師端進度列讀 raw.quiz_result.details 一律讀不到（DB 裡從來沒存這欄），空白題數
+        // 永遠顯示不出來——根因在這裡，不在讀的那一端。
+        const blankCount = (result.details || []).filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length;
+        // 掛回同一個 result 物件，讓繳交後立刻打開的「繳交結果」（下面 buildReviewHtml('繳交結果', result, ...)）
+        // 跟之後回來看的「作答檢討」讀到同一個數字，不是各自算一份。
+        result.blank_count = blankCount;
         const rawPayload = {
             quiz_answers: answers,
             quiz_stats: stats,
@@ -1845,6 +1867,7 @@ window.FeatureStudentQuiz = (function () {
                 score: result.score,
                 correct: result.correct,
                 total: result.total,
+                blank_count: blankCount,
                 wrong_items: stats.wrong_items,
                 display_item_ids: (sessionDisplayOrder || []).slice(),
                 graded_at: gradedAt,

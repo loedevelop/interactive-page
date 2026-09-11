@@ -549,12 +549,15 @@ window.FeatureExamReview = (function () {
                     : '';
                 // 批改明細：空白題永遠顯示（含 0 題，讓老師一眼看到「全部有寫」，不是沒資料）；
                 // 錯題修正只在這個任務有勾 input_correction_enabled 才顯示（沒勾＝這功能不存在，不是「未完成」）。
+                // 空白題數：qr 是 live（regrade 出來，有 .details 但沒 .blank_count）或存好的
+                // raw.quiz_result（有 .blank_count，這次修復之後才存的欄，舊資料沒有）。兩個都是
+                // 這筆資料自己的正確來源，不是借別筆；兩個都沒有（regrade 失敗＋舊資料）才不顯示。
                 const gradingParts = [];
                 if (qr && qr.total != null) {
                     const blankN = Array.isArray(qr.details)
                         ? qr.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length
-                        : 0;
-                    gradingParts.push('空白 ' + blankN + ' 題');
+                        : (raw && raw.quiz_result && raw.quiz_result.blank_count != null ? raw.quiz_result.blank_count : null);
+                    if (blankN != null) gradingParts.push('空白 ' + blankN + ' 題');
                 }
                 const correction = correctionStatusOf(raw, task);
                 if (correction && !correction.noWrong) {
