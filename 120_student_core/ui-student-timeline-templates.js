@@ -1966,7 +1966,7 @@ window.UIStudentTimelineTemplates = (() => {
                             if (window.FeatureStudentQuiz && typeof window.FeatureStudentQuiz.formatStatsSummaryHtml === 'function') {
                                 const summary = window.FeatureStudentQuiz.formatStatsSummaryHtml(quizRaw);
                                 if (summary) {
-                                    quizScoreHtml = `<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:6px 10px; max-width:360px;">${summary}</div>`;
+                                    quizScoreHtml = `<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:6px 10px; width:100%; box-sizing:border-box;">${summary}</div>`;
                                 }
                             } else if (quizRaw.quiz_result) {
                                 const qr = quizRaw.quiz_result;
