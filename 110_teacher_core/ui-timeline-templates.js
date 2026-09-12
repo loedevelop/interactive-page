@@ -1312,18 +1312,18 @@ window.TimelineTemplates = (() => {
         const labelHtml = bookPack
             ? `<input type="hidden" class="paste-window-label" value="${safeLabel}">
                <div class="paste-window-range-label" style="font-weight:900; color:#5B21B6; font-size:0.88rem;">${rangeHead}</div>`
-            : `<input type="text" class="form-control paste-window-label" style="padding:6px; font-size:0.85rem; font-weight:800; color:#7C3AED; max-width:260px;" placeholder="這段標籤（選填，如 Page 2／Ex.3）" value="${safeLabel}">`;
+            : `<input type="text" class="form-control paste-window-label" style="padding:6px; font-size:0.85rem; font-weight:800; color:#7C3AED; max-width:260px;" placeholder="這段標籤（選填，如 Page 2／Ex.3）" value="${safeLabel}" oninput="window.FeatureTimeline.onPasteWindowInput('${pathStr}', ${winIdx}, 'label', this.value)">`;
         return `
             <div class="paste-window-row" data-idx="${winIdx}" style="display:flex; gap:8px; align-items:flex-start; background:white; border:1px solid #CBD5E1; border-radius:8px; padding:12px;">
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
                     ${labelHtml}
                     <div>
                         <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">🎯 口說答案（AI 基準）</div>
-                        <textarea class="form-control paste-window-script" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上口說答案…">${safeWinScript}</textarea>
+                        <textarea class="form-control paste-window-script" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上口說答案…" oninput="window.FeatureTimeline.onPasteWindowInput('${pathStr}', ${winIdx}, 'script', this.value)">${safeWinScript}</textarea>
                     </div>
                     <div>
                         <div style="font-weight:900; color:#334155; margin-bottom:4px; font-size:0.85rem;">👀 書寫答案</div>
-                        <textarea class="form-control paste-window-student" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上書寫答案…">${safeWinStudent}</textarea>
+                        <textarea class="form-control paste-window-student" style="width:100%; min-height:70px; padding:10px; font-size:0.9rem; border-radius:6px; border:1px solid #CBD5E1;" placeholder="貼上書寫答案…" oninput="window.FeatureTimeline.onPasteWindowInput('${pathStr}', ${winIdx}, 'student', this.value)">${safeWinStudent}</textarea>
                     </div>
                 </div>
                 ${removeBtn}

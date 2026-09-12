@@ -388,7 +388,7 @@
     <script src="../110_teacher_core/ui-core.js?v=56"></script> <!-- v56：進教材範本管理立刻畫 PDF／目錄產生區塊，不等教材區。 --> <!-- v55 重整當下第一版側欄改用上次真正渲染的完整快取（含正確圖示，不再是預設 📘）畫，簽章對得起來就不會整個重繪，消除「先變沒選取樣子才跳到正確班級」的閃爍 -->
     <script src="../020_js_core/review-zone.js?v=4"></script> <!-- v4：資料夾鍵走對照中心。v3：教材以 folder|sheet meta 為鍵 -->
     <script src="../110_teacher_core/ui-class-templates.js?v=51"></script>
-    <script src="../110_teacher_core/ui-timeline-templates.js?v=166"></script> <!-- v166：說明用區段（A／J），舊活頁別名 dump 當自動重算。 -->
+    <script src="../110_teacher_core/ui-timeline-templates.js?v=167"></script> <!-- v167：口說／書寫答案／標籤補 oninput 呼叫 onPasteWindowInput，打字即時寫回記憶體，不再靠 sync() 才讀到，見 feature-timeline.js v206 雷區說明。 --> <!-- v166：說明用區段（A／J），舊活頁別名 dump 當自動重算。 -->
     <script src="../110_teacher_core/store-assignment-builder.js?v=106"></script> <!-- v106：舊說明活頁別名 dump 不當手改，存檔改寫成區段。 -->
 
     <!-- 🚀 任務 4&5：老師端批改中樞 -->
@@ -414,10 +414,10 @@
     <script src="../110_teacher_core/feature-material-pdf-exam.js?v=39"></script> <!-- v39：點 Quiz 活頁切換；錨寫進這張卡，可改可刪。 --> <!-- v38：設錨帶進教材卡預覽。 --> <!-- v37：確認連下半頁高度。 --> <!-- v36：確認並儲存寫入這一組題目頁。 --> <!-- v35：答案清單旁顯示這一組題目 PDF。 --> <!-- v29：ownsComboId 讓出作業範圍表認這份 PDF，不准改套 Excel。 --> <!-- v28：每個 Quiz 旁「重新解析」，以 txt 覆寫這一組。 --> <!-- v27：已確認後題列不准再紅匡。 --> <!-- v26：答案清單自己捲，不准跟主頁搶滾輪。 --> <!-- v25：PDF 產生區塊跟目錄同一時間畫，不准目錄搶先。 --> <!-- v24：採用班級收合；群組 PDF／Quiz 活頁；編輯區加大。 --> <!-- v23：刪列停在那一題，不准跳回 Quiz 1。 --> <!-- v22：改題號立刻重編格號（5-3 改成 6 不再留 -3）。 --> <!-- v20：單獨一列不准 5-2；底下多一個 2 不再當第 2 格。 --> <!-- v14：登入未就緒不准假裝 PDF 套餐已載入。 --> <!-- v13：Quiz 旁「確認並儲存」；題號可改；儲存後列順序不接到最後。 --> <!-- v12：每一 Quiz 旁「確認無誤」；解析會切開 /。 --> <!-- v11：出作業範圍表由本模組畫。 --> <!-- v9：PDF 套餐有名稱／採用班級，進出作業下拉。 --> <!-- v8：Quiz 1 沒題號的行仍列出；缺組不准拿掉。 --> <!-- v5：兩份 PDF 試卷範本（預設左到右上到下；警示後可改老師定位）。 --> <!-- v4：答案清單上移／下移／＋上＋下／刪／手動新增，跟 PDF 考同一套。 -->
     <script src="../110_teacher_core/feature-material-book.js?v=36"></script> <!-- v36：口說／書寫欄已上線，存檔不再跳出跑 SQL。 -->
     <script src="../110_teacher_core/feature-class-material-combinations.js?v=174"></script> <!-- v174：combo_statistics 含三種套餐；Excel 畫卡／出作業 sheet 開口只認 kind=sheet。 -->
-    <script src="../110_teacher_core/feature-script-collector.js?v=12"></script> <!-- v12：口說答案／書寫答案標出來，不是兩份沒標的同一格。 -->
+    <script src="../110_teacher_core/feature-script-collector.js?v=13"></script> <!-- v13：教材就是教材，跟班級封存無關——掃描範圍納入封存班級（沿用既有 fetchArchivedClasses／fetchArchivedClassAssignments），搬入區塊寫入權限見 migration 20260912040000。 -->
     <script src="../110_teacher_core/api-quiz-review.js?v=4"></script> <!-- v4：可接受答案寫進全站這題教材列。 -->
     <script src="../110_teacher_core/feature-exam-review.js?v=38"></script> <!-- v38：批改明細空白題數改成 qr.details（live regrade）優先，沒有再退回存好的 raw.quiz_result.blank_count（舊版一律顯示 0，誤導成「全部有寫」）。 --> <!-- v37：班級人數改查真實名單（student_enrollments，跟批改列學生同一份），修正 TeacherDB.classes[].students 一律 0 的錯資料；任務清單每筆補是否開了錯題重考／錯題練習徽章。 --> <!-- v36：學生卡片依同質性分行（分數／申訴訂正／作答歷程／用時／批改明細），補空白題永遠顯示與錯題修正完成度；任務清單上方補班級名稱＋人數。 --> <!-- v35：學生列表每人卡片補上離開次數／作答用時／空白題數（讀 raw_data.quiz_stats，跟學生自己看到的同一份）。 --> <!-- v34：考試批改清單「進度日」誤用整份作業排週用的 target_date；改成這個考試自己的「開放」(open_at)，截止日改讀任務自己（含繼承）的 due_date，排序改先比截止日。 --> <!-- v33：申訴審核改逐組即決即存＋廣播進度信號，拿掉整批「儲存提交」按鈕。 --> <!-- v32：可接受答案全站；這份卷加送分／不計分。 -->
-    <script src="../110_teacher_core/feature-timeline.js?v=205"></script> <!-- v205：說明同一區段連續範圍要融，跟標題同一把。 --> <!-- v204：同層獨立錄音不准抄上一筆標題。 --> <!-- v203：說明／標題的區段＝A、J，不准倒活頁別名。 --> <!-- v202：標題＝套餐名；區段以外一致才納入區段字母；很亂進說明。 --> <!-- v200：PDF 作業只在教材卡已有答案清單時才帶進作業。 --> <!-- v199：組合層標題已是套餐名時，下一層只留範圍。 -->
+    <script src="../110_teacher_core/feature-timeline.js?v=206"></script> <!-- v206【重大修復】：目錄套餐口說／書寫答案存檔後重開變空白。根因是這兩格沒有即時寫回記憶體，任何一次 refreshBuilder({skipSync:true})（非同步套餐配對快取／改範圍套餐下拉）在老師打字打到一半時觸發，就會用舊記憶體整棵樹重繪、把畫面上正在打的字靜默清空，存檔時就存成空字串。新增 onPasteWindowInput 讓這三格打字即時寫回 t.raw_data.paste_windows；另在 maybeRefreshRangePackCombos／onRangePackComboChange 補上 sync()。 --> <!-- v205：說明同一區段連續範圍要融，跟標題同一把。 --> <!-- v204：同層獨立錄音不准抄上一筆標題。 --> <!-- v203：說明／標題的區段＝A、J，不准倒活頁別名。 --> <!-- v202：標題＝套餐名；區段以外一致才納入區段字母；很亂進說明。 --> <!-- v200：PDF 作業只在教材卡已有答案清單時才帶進作業。 --> <!-- v199：組合層標題已是套餐名時，下一層只留範圍。 -->
     <script src="../110_teacher_core/feature-resource.js?v=45"></script>
     <script src="../110_teacher_core/feature-profile.js?v=42"></script>
     <script src="../110_teacher_core/feature-class-members.js?v=41"></script>

@@ -21,6 +21,20 @@ window.FeatureScriptCollector = (function () {
     let _itemsByClass = {};
     let _cardsByKey = {};
     let _status = '';
+    /**
+     * 💣 雷區（2026-09-11 老師：教材就是教材，跟班級有沒有封存不應該有關係）：這裡本來只讀
+     * window.TeacherDB.classes／.assignments，那份清單本來就只包含「目前沒封存」的班級
+     * （fetchAssignments 用 class_staff.deleted_at IS NULL 篩班）。班級一封存，裡面已經貼好、
+     * 分好段的舊文稿就從這個工具完全消失——不是內容被清掉，是掃描範圍本來就沒把封存班算進來。
+     * 這違背這個工具本來的目的（把老師名下所有舊內容收上來、搬進全域教材），所以封存班的作業
+     * 一定要跟現有班一起掃，不是可選項。讀取用既有的 fetchArchivedClasses／
+     * fetchArchivedClassAssignments（跟「封存班瀏覽」共用同一組 RPC，不是另開一條路）；
+     * 搬入區塊／新增區塊的寫入權限見 migration 20260912040000_class_script_blocks_allow_archived_teacher.sql
+     * （只加寬這兩張「收集文稿複本表」，其餘封存班仍不能被一般編輯動到）。
+     */
+    let _archivedClasses = [];
+    let _archivedAssignmentsByClass = {};
+    let _archivedLoaded = false;
 
     function esc(v) {
         return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -185,23 +199,60 @@ window.FeatureScriptCollector = (function () {
         });
     }
 
+    async function loadArchivedScope() {
+        _archivedClasses = [];
+        _archivedAssignmentsByClass = {};
+        if (!window.ApiService || typeof window.ApiService.fetchArchivedClasses !== 'function') {
+            _archivedLoaded = true;
+            return;
+        }
+        try {
+            const rows = await window.ApiService.fetchArchivedClasses();
+            _archivedClasses = (rows || []).map(function (c) {
+                return Object.assign({}, c, { _archived: true });
+            });
+            const results = await Promise.all(_archivedClasses.map(function (c) {
+                return window.ApiService.fetchArchivedClassAssignments(c.id).catch(function () { return []; });
+            }));
+            _archivedClasses.forEach(function (c, idx) {
+                _archivedAssignmentsByClass[uuidKey(c.id)] = results[idx] || [];
+            });
+        } catch (_err) {
+            // 封存功能尚未部署到雲端等情況：現有班照常掃，不擋主流程。
+            _archivedClasses = [];
+            _archivedAssignmentsByClass = {};
+        }
+        _archivedLoaded = true;
+    }
+
+    function listTeacherClasses() {
+        const active = (window.TeacherDB && window.TeacherDB.classes) ? window.TeacherDB.classes.slice() : [];
+        return active.concat(_archivedClasses);
+    }
+
+    function listAllAssignmentsWithClass() {
+        const out = (window.TeacherDB && window.TeacherDB.assignments || []).slice();
+        _archivedClasses.forEach(function (c) {
+            (_archivedAssignmentsByClass[uuidKey(c.id)] || []).forEach(function (a) {
+                out.push(a);
+            });
+        });
+        return out;
+    }
+
     function collectCandidates() {
         const classesById = {};
-        (window.TeacherDB && window.TeacherDB.classes || []).forEach(function (c) {
+        listTeacherClasses().forEach(function (c) {
             if (c && c.id != null) classesById[String(c.id)] = c;
         });
         const out = [];
-        (window.TeacherDB && window.TeacherDB.assignments || []).forEach(function (a) {
+        listAllAssignmentsWithClass().forEach(function (a) {
             const cls = a && a.class_id != null ? classesById[String(a.class_id)] : null;
             if (!cls) return;
             const tasks = Array.isArray(a.tasks) ? a.tasks : (Array.isArray(a.raw_data && a.raw_data.tasks) ? a.raw_data.tasks : []);
             walkTasks(tasks, cls, a, out);
         });
         return out;
-    }
-
-    function listTeacherClasses() {
-        return (window.TeacherDB && window.TeacherDB.classes) ? window.TeacherDB.classes.slice() : [];
     }
 
     async function loadBlocks() {
@@ -663,9 +714,13 @@ window.FeatureScriptCollector = (function () {
                 + bookCardsHtml(mine, classId, b.id)
                 + '</div>';
         }).join('');
+        const archivedBadge = cls._archived
+            ? '<span style="font-size:0.72rem; background:#F1F5F9; color:#64748B; padding:2px 10px; border-radius:999px; font-weight:800;">📦 已封存</span>'
+            : '';
         return '<div class="sc-class" data-class="' + esc(classId) + '" style="background:white; padding:16px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">'
             + '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">'
             + '<h3 style="margin:0; color:var(--primary-dark); flex:1;">🏫 ' + esc(className) + '</h3>'
+            + archivedBadge
             + '<button type="button" class="btn sc-block-add" style="font-size:0.82rem; padding:5px 12px; background:#2563EB; color:white; border:none; border-radius:6px; font-weight:800;">＋ 新增教材區塊</button>'
             + '</div>'
             + (blockHtml || '<div style="font-size:0.8rem; color:#94A3B8; margin-bottom:10px;">尚未建立教材區塊。</div>')
@@ -675,9 +730,17 @@ window.FeatureScriptCollector = (function () {
             + '</div>';
     }
 
+    function classHasContent(cls) {
+        if (!cls._archived) return true;
+        if (blocksOf(cls.id).length) return true;
+        return _candidates.some(function (c) { return uuidKey(c.classId) === uuidKey(cls.id); });
+    }
+
     function paint(container) {
         _cardsByKey = {};
-        const classes = listTeacherClasses();
+        // 封存班沒有任何 C／D／E 文稿、也沒有已搬入的區塊時不畫空殼，避免歷史封存班太多把畫面塞爆；
+        // 現有班（未封存）維持原樣一律顯示。有資料的封存班一定要出現，不是消去法排除。
+        const classes = listTeacherClasses().filter(classHasContent);
         container.innerHTML = `
             <div style="background:white; padding:20px; border-radius:12px; border:2px solid #E2E8F0; margin-bottom:16px;">
                 <h3 style="margin:0 0 6px 0; color:var(--primary-dark);">📥 由下往上收集文稿</h3>
@@ -853,6 +916,7 @@ window.FeatureScriptCollector = (function () {
     }
 
     async function refreshAndPaint(container) {
+        await loadArchivedScope();
         _candidates = collectCandidates();
         await loadBlocks();
         if (window.FeatureMaterialBook && typeof window.FeatureMaterialBook.ensureLoaded === 'function') {

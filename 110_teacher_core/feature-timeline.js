@@ -1265,6 +1265,45 @@ window.FeatureTimeline = (() => {
         return normalizePackRows(host.raw_data);
     }
 
+    /**
+     * 💣 雷區（2026-09-11 老師回報：目錄套餐口說／書寫答案存檔後重開變空白）：根因是
+     * .paste-window-script／.paste-window-student／.paste-window-label 完全沒有即時寫回
+     * 記憶體，只靠特定時機的 BuilderStore.sync() 才會被讀進 t.raw_data.paste_windows。
+     * 全站到處都有 refreshBuilder({skipSync:true})（非同步套餐配對快取回來時、改範圍套餐
+     * 下拉時…），任何一次在老師打字打到一半時觸發，整棵樹就會用「打字之前」的舊記憶體
+     * 重新產生 DOM，把畫面上正在打的字靜默清空，老師沒發現就存檔，DB 存的就是空字串。
+     * 修法：每個視窗欄位都補 oninput 呼叫這裡，直接把整個視窗容器目前的 DOM 值寫回
+     * t.raw_data.paste_windows，跟打字同步、不等 sync()。這樣不管日後哪個角落又新增一次
+     * skipSync 重繪，都不會再吃掉這兩格——不是只補救目前找到的那兩個呼叫點。
+     */
+    function onPasteWindowInput(pathStr, winIdx, field, value) {
+        const t = getTaskNodeByPathStr(pathStr);
+        if (!t) return;
+        if (!t.raw_data) t.raw_data = {};
+        const container = document.getElementById('node-paste-windows-' + pathStr);
+        const rowEls = container ? Array.prototype.slice.call(container.querySelectorAll('.paste-window-row')) : [];
+        if (rowEls.length) {
+            t.raw_data.paste_windows = rowEls.map(function (row) {
+                const labelEl = row.querySelector('.paste-window-label');
+                const scriptEl = row.querySelector('.paste-window-script');
+                const studentEl = row.querySelector('.paste-window-student');
+                return {
+                    label: labelEl ? String(labelEl.value || '').trim() : '',
+                    script: scriptEl ? scriptEl.value : '',
+                    student: studentEl ? studentEl.value : ''
+                };
+            });
+            return;
+        }
+        // 容器讀不到（理論上不會發生，這個 oninput 就是掛在容器裡的欄位上）才退回只補這一格，
+        // 不猜、不借別格。
+        const wins = Array.isArray(t.raw_data.paste_windows) ? t.raw_data.paste_windows.slice() : [];
+        while (wins.length <= winIdx) wins.push({ label: '', script: '', student: '' });
+        wins[winIdx] = Object.assign({ label: '', script: '', student: '' }, wins[winIdx]);
+        wins[winIdx][field] = value;
+        t.raw_data.paste_windows = wins;
+    }
+
     function audioTaskAndPathOfPackHost(pathStr) {
         const group = getTaskNodeByPathStr(pathStr);
         if (!group) return { audio: null, audioPath: '' };
@@ -3346,6 +3385,12 @@ window.FeatureTimeline = (() => {
     }
 
     function onRangePackComboChange(pathStr, blockIdx) {
+        // 💣 雷區（跟 maybeRefreshRangePackCombos 同一個坑）：這裡最後會 refreshBuilder({skipSync:true})
+        // 整棵樹重繪。改某一列的套餐下拉時，老師可能已經在別的區段視窗打了口說／書寫答案（那兩格沒有
+        // oninput 即時寫回記憶體），先 sync() 把畫面上已經打的字寫回去，才不會被這次重繪清空。
+        if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+            window.BuilderStore.sync();
+        }
         const group = getTaskNodeByPathStr(pathStr);
         if (!isPackHostNode(group)) return;
         if (!group.raw_data) group.raw_data = {};
@@ -3518,6 +3563,16 @@ window.FeatureTimeline = (() => {
         _rangePackComboRefreshBusy = true;
         fcmc.prefetchForClass(bState.classId).then(function () {
             _rangePackComboRefreshBusy = false;
+            // 💣 雷區（2026-09-11 老師回報：目錄套餐口說／書寫答案存檔後重開變空白）：
+            // 這個 .then() 是非同步、時間點不可控──可能剛好在老師打字打到一半時才回來。
+            // 口說／書寫答案（.paste-window-script／.paste-window-student）沒有 oninput
+            // 即時寫回記憶體，只靠 sync() 才會被讀進去。以前這裡直接 skipSync 重繪，等於
+            // 拿「打字之前」的舊記憶體整棵樹重新產生 DOM，把畫面上正在打的字靜默清空、
+            // 老師沒發現就按存檔，DB 存的就是空字串。改法：重繪前先 sync() 一次，把畫面上
+            // 已經打的字寫回記憶體，再重繪，資料就不會被吃掉。
+            if (window.BuilderStore && typeof window.BuilderStore.sync === 'function') {
+                window.BuilderStore.sync();
+            }
             if (window.FeatureTimeline && typeof window.FeatureTimeline.refreshBuilder === 'function') {
                 window.FeatureTimeline.refreshBuilder({ skipSync: true });
             }
@@ -5492,6 +5547,11 @@ window.FeatureTimeline = (() => {
                 const onlyBtn = rows[0].querySelector('.btn');
                 if (onlyBtn) onlyBtn.remove();
             }
+        },
+
+        /** 口說／書寫答案／標籤打字即時寫回記憶體，見 onPasteWindowInput 旁的雷區說明。 */
+        onPasteWindowInput: function (pathStr, winIdx, field, value) {
+            return onPasteWindowInput(pathStr, winIdx, field, value);
         },
 
         /** 依目前路徑列重新整理 base 範圍（跟 A 的「依列重算」同角色，供 SSR 模板 oninput／重算鈕呼叫） */
