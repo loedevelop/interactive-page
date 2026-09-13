@@ -44,6 +44,7 @@ window.FeatureStudentQuiz = (function () {
     let lastLeaveAt = 0;
     let visibilityHandler = null;
     let beforeUnloadHandler = null;
+    let pagehideHandler = null;
     let fullscreenHandler = null;
 
     /** 本次作答 session */
@@ -70,13 +71,13 @@ window.FeatureStudentQuiz = (function () {
     let sessionDisplayOrder = [];
     let sessionRetakeDisplayOrder = [];
     /**
-     * 繳交結果／作答檢討：完整考卷 vs 只看錯題。切換時只改清單 DOM，不准再呼叫
+     * 繳交結果／作答結果：完整考卷 vs 只看錯題。切換時只改清單 DOM，不准再呼叫
      * ModalOverlay.open（同一 id 會先 close 觸發舊 onClose）。
      */
     let reviewViewState = null;
     /**
      * 申訴審核即時同步：目前這一份考卷的訂閱 handle（AppealProgressSync.subscribe 回傳）。
-     * 「作答檢討」與「重考整體報告」兩個畫面共用同一個 handle——同一時間只會開其中一個
+     * 「作答結果」與「重考整體報告」兩個畫面共用同一個 handle——同一時間只會開其中一個
      * modal，關閉時（closeReview／closeRetakeReport）一律呼叫 stopAppealProgressSync，
      * 不要留著背景輪詢／頻道一直跑（page-refresh-perf-invariant 精神）。
      */
@@ -90,12 +91,16 @@ window.FeatureStudentQuiz = (function () {
     }
 
     /**
-     * 只有這個學生對這份考卷送過至少一筆申訴才訂閱（沒申訴過的人看不到這行，也不用跟著輪詢）。
+     * 2026-09-12 老師確認（Phase 2.1，決定 3：broadcast_all）：老師任何存檔都全班廣播，不限
+     * 「自己申訴過才訂閱」——只要「作答結果」或「重考報告」視窗開著，就要能被老師的存檔動作
+     * 推進更新（例如老師改了標準答案／accepted_answers，沒申訴過的學生分數也可能變動）。
+     * 拿掉舊版 hasOwnAppeal 才訂閱的限制；效能考量改放在「收到信號後要不要查
+     * fetchAppealProgress（全班申訴彙總）」這件事上——那支 RPC 才是真的只有申訴過的人需要查
+     * （見 renderReviewFromCache／openRetakeReportModal 呼叫端自己依當下 appealsByItemId 決定）。
      * 同一份考卷（assignmentId+taskId）已經在訂閱就不重開；換了別份考卷才先關舊的再開新的。
      * @param {Function} onProgressUpdate 收到信號後要重新渲染哪個畫面，由呼叫端決定（review 或 retake 報告）
      */
-    function ensureAppealProgressSync(assignmentId, taskId, hasOwnAppeal, onProgressUpdate) {
-        if (!hasOwnAppeal) { stopAppealProgressSync(); return; }
+    function ensureAppealProgressSync(assignmentId, taskId, onProgressUpdate) {
         if (appealSyncHandle && appealSyncHandle._assignmentId === assignmentId && appealSyncHandle._taskId === String(taskId)) {
             appealSyncHandle._onProgressUpdate = onProgressUpdate;
             return;
@@ -138,14 +143,75 @@ window.FeatureStudentQuiz = (function () {
         }
     }
 
+    /** 空白未填＝沒被排除計分且答案是空字串。跟頂部摘要「空白未填 N 題」（見
+     * renderReviewFromCache 的 liveBlankCount／formatStatsSummaryHtml 的 blankN）同一把鑰匙，
+     * 不要另開一套判斷，否則分頁清單跟上面數字會對不起來。 */
+    function isBlankReviewItem(item) {
+        return !!(item && !item.excluded && !String(item.answer || '').trim());
+    }
+
+    /**
+     * 用詞統一（2026-09-12 老師要求，跟 [110_teacher_core/feature-exam-review.js] 的
+     * LIST_KIND_LABEL 同一組名稱，兩端畫面盡量一致）：
+     * 「只看錯題」→「全部錯題」；「只看寫錯題」→「書寫錯題」；「只看空白未填題」→「空白未填題」；
+     * 原本單一的「只看申訴題」拆成兩顆連體按鈕：「申訴成功」／「申訴駁回」（各自只篩對應狀態）。
+     */
     const REVIEW_LIST_KINDS = {
         wrong: {
             id: 'wrong',
-            buttonLabel: '只看錯題',
+            buttonLabel: '全部錯題',
             pick: function (ctx) {
                 return (ctx.fullItems || []).filter(function (item) { return !(item && item.ok); });
             },
             emptyHtml: '<div style="color:#047857; font-weight:800; padding:12px;">本次全對，沒有錯題。</div>',
+            withSectionHeads: false
+        },
+        wrong_answered: {
+            id: 'wrong_answered',
+            buttonLabel: '書寫錯題',
+            pick: function (ctx) {
+                return (ctx.fullItems || []).filter(function (item) {
+                    return !!(item && !item.ok && !isBlankReviewItem(item));
+                });
+            },
+            emptyHtml: '<div style="color:#047857; font-weight:800; padding:12px;">沒有「寫了但答錯」的題目。</div>',
+            withSectionHeads: false
+        },
+        blank: {
+            id: 'blank',
+            buttonLabel: '空白未填題',
+            pick: function (ctx) {
+                return (ctx.fullItems || []).filter(function (item) {
+                    return !!(item && !item.ok && isBlankReviewItem(item));
+                });
+            },
+            emptyHtml: '<div style="color:#047857; font-weight:800; padding:12px;">沒有空白未填的題目。</div>',
+            withSectionHeads: false
+        },
+        appealed_accepted: {
+            id: 'appealed_accepted',
+            buttonLabel: '申訴成功',
+            pick: function (ctx) {
+                const map = ctx.appealsByItemId || {};
+                return (ctx.fullItems || []).filter(function (item) {
+                    const a = item && map[String(item.item_id)];
+                    return !!(a && a.status === 'accepted');
+                });
+            },
+            emptyHtml: '<div style="color:#7C3AED; font-weight:800; padding:12px;">目前沒有申訴成功的題目。</div>',
+            withSectionHeads: false
+        },
+        appealed_rejected: {
+            id: 'appealed_rejected',
+            buttonLabel: '申訴駁回',
+            pick: function (ctx) {
+                const map = ctx.appealsByItemId || {};
+                return (ctx.fullItems || []).filter(function (item) {
+                    const a = item && map[String(item.item_id)];
+                    return !!(a && a.status === 'rejected');
+                });
+            },
+            emptyHtml: '<div style="color:#7C3AED; font-weight:800; padding:12px;">目前沒有申訴駁回的題目。</div>',
             withSectionHeads: false
         },
         full: {
@@ -156,6 +222,10 @@ window.FeatureStudentQuiz = (function () {
             withSectionHeads: true
         }
     };
+    const REVIEW_LIST_KIND_ORDER = ['full', 'wrong', 'wrong_answered', 'blank', 'appealed_accepted', 'appealed_rejected'];
+    // 連體按鈕組：畫面上緊貼在一起顯示的分頁（見 renderReviewListKindToggleHtml），
+    // 不是個別獨立按鈕；老師端 LIST_KIND_CONJOINED_PAIRS 同一把鑰匙。
+    const REVIEW_LIST_KIND_CONJOINED_PAIRS = [['appealed_accepted', 'appealed_rejected']];
 
     function orderIndexMap(idList) {
         const map = {};
@@ -222,6 +292,7 @@ window.FeatureStudentQuiz = (function () {
                 if (hit.quiz_mode === 'cloze' && hit.cloze_stem) next.cloze_stem = hit.cloze_stem;
                 if (hit.section_id) next.section_id = hit.section_id;
                 if (hit.source) next.source = hit.source;
+                if (Array.isArray(hit.accepted_answers)) next.accepted_answers = hit.accepted_answers;
             }
             const live = liveExpectedFromPaper(task, item && item.item_id);
             if (live && live !== String(item.expected || '').trim()) {
@@ -294,7 +365,8 @@ window.FeatureStudentQuiz = (function () {
                 expected: expected,
                 answer: d.answer || '',
                 source: paperItem.source || d.source || null,
-                allow_answer_appeal: paperItem.allow_answer_appeal
+                allow_answer_appeal: paperItem.allow_answer_appeal,
+                accepted_answers: Array.isArray(paperItem.accepted_answers) ? paperItem.accepted_answers : []
             };
             item.headline = formatItemHeadline(paperItem, idx + 1);
             return item;
@@ -323,7 +395,7 @@ window.FeatureStudentQuiz = (function () {
         if (!Object.keys(list).length) return '';
         const c = appealStatusCounts(list);
         let html = '<div style="margin-bottom:12px; padding:10px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px; font-weight:800; color:#5B21B6; font-size:0.85rem;">'
-            + '🚩 申訴進度：審核中 ' + c.pending + ' · 已接受 ' + c.accepted + ' · 未通過 ' + c.rejected
+            + '🚩 申訴進度：審核中 ' + c.pending + ' · 已接受 ' + c.accepted + ' · 已駁回 ' + c.rejected
             + '</div>';
         if (classProgress && Number(classProgress.total) > 0) {
             const reviewed = (Number(classProgress.accepted) || 0) + (Number(classProgress.rejected) || 0);
@@ -433,19 +505,72 @@ window.FeatureStudentQuiz = (function () {
         return multiCombo && paperInOrder;
     }
 
+    /** 每顆分頁鈕的主色：申訴成功／申訴駁回沿用全站對錯配色（綠／紅），其餘維持原本 teal。
+     * 跟 [110_teacher_core/feature-exam-review.js] 的 LIST_KIND_COLOR 同一把鑰匙，兩端配色一致。 */
+    function reviewKindButtonColor(id) {
+        if (id === 'appealed_accepted') return { base: '#047857', offBorder: '#86EFAC' };
+        if (id === 'appealed_rejected') return { base: '#DC2626', offBorder: '#FECACA' };
+        return { base: '#0F766E', offBorder: '#99F6E4' };
+    }
+
+    /** 按鈕內文兩行：上面標籤、下面題數（2026-09-12 老師要求，每顆分頁鈕內都要看到題數）。 */
+    function reviewKindButtonInnerHtml(label, count) {
+        return '<span style="display:block; line-height:1.15;">' + esc(label) + '</span>'
+            + '<span style="display:block; line-height:1.15; font-size:0.72em; font-weight:700; margin-top:2px;">' + count + ' 題</span>';
+    }
+
+    /**
+     * 五個分頁鈕＋一組連體按鈕（申訴成功／申訴駁回，見 REVIEW_LIST_KIND_CONJOINED_PAIRS，
+     * 中間無縫接、只有最外側圓角）。題數直接讀該分頁自己的 pick(ctx)，跟畫面上真正會列出的
+     * 題目同一份，不另外計算，不會跟切換後看到的清單對不起來。
+     */
     function renderReviewListKindToggleHtml(kind) {
         const current = REVIEW_LIST_KINDS[kind] ? kind : 'wrong';
-        const buttons = ['full', 'wrong'].map(function (id) {
+        const ctx = reviewViewState || {};
+        const countFor = function (id) {
+            const s = REVIEW_LIST_KINDS[id];
+            return s ? (s.pick(ctx) || []).length : 0;
+        };
+        const singleButtonHtml = function (id) {
             const s = REVIEW_LIST_KINDS[id];
             const on = id === current;
-            const bg = on ? '#0F766E' : '#FFFFFF';
-            const color = on ? '#FFFFFF' : '#0F766E';
-            const border = on ? '1px solid #0F766E' : '1px solid #99F6E4';
-            return '<button type="button" class="btn" style="background:' + bg + '; color:' + color + '; border:' + border + '; padding:6px 12px; font-weight:800;"'
+            const colors = reviewKindButtonColor(id);
+            const bg = on ? colors.base : '#FFFFFF';
+            const color = on ? '#FFFFFF' : colors.base;
+            const border = on ? ('1px solid ' + colors.base) : ('1px solid ' + colors.offBorder);
+            return '<button type="button" style="background:' + bg + '; color:' + color + '; border:' + border
+                + '; border-radius:8px; padding:6px 12px; font-weight:800; cursor:pointer; text-align:center;"'
                 + ' onclick="window.FeatureStudentQuiz.setReviewListKind(\'' + s.id + '\')">'
-                + esc(s.buttonLabel) + '</button>';
+                + reviewKindButtonInnerHtml(s.buttonLabel, countFor(id)) + '</button>';
+        };
+        const conjoinedIds = {};
+        REVIEW_LIST_KIND_CONJOINED_PAIRS.forEach(function (pair) { pair.forEach(function (id) { conjoinedIds[id] = pair; }); });
+        const done = {};
+        const parts = REVIEW_LIST_KIND_ORDER.map(function (id) {
+            if (done[id]) return '';
+            const pair = conjoinedIds[id];
+            if (!pair) {
+                done[id] = true;
+                return singleButtonHtml(id);
+            }
+            pair.forEach(function (pid) { done[pid] = true; });
+            const pairHtml = pair.map(function (pid, idx) {
+                const s = REVIEW_LIST_KINDS[pid];
+                const on = pid === current;
+                const colors = reviewKindButtonColor(pid);
+                const bg = on ? colors.base : '#FFFFFF';
+                const color = on ? '#FFFFFF' : colors.base;
+                const border = on ? ('1px solid ' + colors.base) : ('1px solid ' + colors.offBorder);
+                const radius = idx === 0 ? '8px 0 0 8px' : '0 8px 8px 0';
+                const trim = idx === 0 ? ' border-right-width:0;' : '';
+                return '<button type="button" style="background:' + bg + '; color:' + color + '; border:' + border + ';' + trim
+                    + ' border-radius:' + radius + '; padding:6px 12px; font-weight:800; cursor:pointer; text-align:center;"'
+                    + ' onclick="window.FeatureStudentQuiz.setReviewListKind(\'' + s.id + '\')">'
+                    + reviewKindButtonInnerHtml(s.buttonLabel, countFor(pid)) + '</button>';
+            }).join('');
+            return '<div style="display:inline-flex;">' + pairHtml + '</div>';
         }).join('');
-        return '<div id="' + REVIEW_MODAL_ID + '-kind-toggle" style="display:flex; gap:8px; margin:8px 0 10px; flex-wrap:wrap;">' + buttons + '</div>';
+        return '<div id="' + REVIEW_MODAL_ID + '-kind-toggle" style="display:flex; gap:8px; margin:8px 0 10px; flex-wrap:wrap; align-items:stretch;">' + parts + '</div>';
     }
 
     function renderReviewCardsHtml(items, cardOpts, withSectionHeads) {
@@ -832,11 +957,35 @@ window.FeatureStudentQuiz = (function () {
             return noteHtml('你的說明：', '#047857');
         }
         if (appeal.status === 'rejected') {
-            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#DC2626;">❌ 申訴未通過審核</div>'
+            return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#DC2626;">❌ 申訴駁回</div>'
                 + noteHtml('你的說明：', '#B91C1C');
         }
         return '<div style="margin-top:8px; font-size:0.78rem; font-weight:800; color:#B45309;">🕐 申訴審核中，請等候老師/助教處理</div>'
             + noteHtml('你的說明：', '#6D28D9');
+    }
+
+    /**
+     * 2026-09-12 老師要求：申訴題卡片要能看到「正解」以外，還有哪些寫法也算對（不是只有
+     * 「正確答案」一種）。讀 item.accepted_answers（跟出題／老師端可接受答案同一份鑰匙，
+     * 見 buildFullReviewItems／overlayWrongItemsExpected，皆讀自 quiz_paper.items[].accepted_answers，
+     * 不是另開一份），跟 expected 重複的（主答案本身）不重複列出，沒有其他寫法就不顯示這一段。
+     */
+    function renderOtherAcceptedAnswersHtml(item) {
+        const expected = String((item && item.expected) || '').trim();
+        const list = Array.isArray(item && item.accepted_answers) ? item.accepted_answers : [];
+        const seen = {};
+        const others = [];
+        list.forEach(function (a) {
+            const s = String(a == null ? '' : a).trim();
+            if (!s || s === expected || seen[s]) return;
+            seen[s] = true;
+            others.push(s);
+        });
+        if (!others.length) return '';
+        return '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-top:8px; margin-bottom:2px;">其他可接受的答案</div>'
+            + '<div style="font-size:0.95rem; font-weight:700; color:#0F766E; line-height:1.6; white-space:pre-wrap;">'
+            + esc(others.join('、'))
+            + '</div>';
     }
 
     function renderReviewItemCard(item, opts) {
@@ -850,6 +999,10 @@ window.FeatureStudentQuiz = (function () {
         const bg = ok ? '#F0FDF4' : '#FFF7F7';
         const headColor = ok ? '#047857' : '#B91C1C';
         const mark = (ok && appealedOk) ? '申訴成功' : (ok ? '答對' : '答錯');
+        // 2026-09-12 老師要求：學生答案與正確答案吻合（ok===true）時，「正確答案」標籤與內容
+        // 改灰色（跟「你的答案」label 同一個灰），不要再跟答錯時一樣顯眼的紅色——紅色只保留給
+        // 真的答錯、需要學生注意看正確答案的情況。
+        const expectedColor = ok ? '#64748B' : '#DC2626';
         const cloze = item.cloze_stem
             ? '<div style="margin-top:4px; margin-bottom:8px; color:#0F766E; font-weight:700; white-space:pre-wrap;">' + esc(item.cloze_stem) + '</div>'
             : '';
@@ -866,8 +1019,9 @@ window.FeatureStudentQuiz = (function () {
                 cloze +
                 '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>' +
                 '<div style="font-size:1rem; line-height:1.7; margin-bottom:6px;">' + renderStudentStrikeHtml(ops) + '</div>' +
-                '<div style="font-size:0.75rem; color:#DC2626; font-weight:800; margin-bottom:2px;">正確答案</div>' +
-                '<div style="font-size:1rem; font-weight:800; color:#DC2626; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>' +
+                '<div style="font-size:0.75rem; color:' + expectedColor + '; font-weight:800; margin-bottom:2px;">正確答案</div>' +
+                '<div style="font-size:1rem; font-weight:800; color:' + expectedColor + '; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>' +
+                renderOtherAcceptedAnswersHtml(item) +
                 renderAppealAreaHtml(item, opts) +
             '</div>'
         );
@@ -905,29 +1059,64 @@ window.FeatureStudentQuiz = (function () {
         }).join('');
     }
 
+    /**
+     * 2026-09-12 老師要求：學生端「作答結果」彈窗頂部訊息跟「課程進度」時間軸列的摘要訊息
+     * 統一成同一格式，兩處不准各寫各的字串。這裡是唯一的組字邏輯（single source of truth），
+     * 兩個呼叫端（formatStatsSummaryHtml／buildReviewHtml）各自把手上已有的數字餵進來，
+     * 不重算、不猜——分數／空白題數哪裡的資料照原本各自的鑰匙讀（見兩個呼叫端），這裡只管
+     * 「組出來的文字長什麼樣子」。
+     *
+     * 格式（有完整分數時）：
+     *   第一行：最近作答： {correct}/{total}（{score}%），錯題 {wrongN}（空白未填 {blankN} 題），
+     *           {本次時長} ·（累計 {累計時長}） · 中途退出 {N} 次 · 嘗試離開累計 {N} 次
+     *   第二行：已作答過 {N} 次（或已開啟 {N} 次）
+     * 回傳 { line1, line2 }（皆為已跳過 HTML escape 的純文字片段，呼叫端自行組裝／換行）。
+     */
+    function buildQuizStatsSummaryLines(input) {
+        input = input || {};
+        const lines = { line1: '', line2: '' };
+        if (input.total != null) {
+            const wrongN = input.wrongN != null ? input.wrongN : 0;
+            lines.line1 = '最近作答： ' + esc(input.correct) + '/' + esc(input.total) + '（' + esc(input.score) + '%）'
+                + '，錯題 ' + esc(wrongN)
+                + (input.blankN != null ? '（空白未填 ' + esc(input.blankN) + ' 題）' : '')
+                + (input.lastDurationMs > 0 ? '，' + esc(formatDurationMs(input.lastDurationMs)) : '')
+                + (input.totalTimeMs > 0 ? ' ·（累計 ' + esc(formatDurationMs(input.totalTimeMs)) + '）' : '')
+                + (input.quitCount > 0 ? (' · 中途退出 ' + esc(input.quitCount) + ' 次') : '')
+                + (input.leaveCount > 0 ? (' · 嘗試離開累計 ' + esc(input.leaveCount) + ' 次') : '');
+        }
+        if (input.completeCount > 0) lines.line2 = '已作答過 ' + esc(input.completeCount) + ' 次';
+        else if (input.attemptCount > 0) lines.line2 = '已開啟 ' + esc(input.attemptCount) + ' 次';
+        return lines;
+    }
+
     /** 供進度列摘要。paper 可選：這次修復之前繳交的舊資料沒有存 quiz_result.blank_count，
      * 有給 paper 就用 raw.quiz_answers 現場重新批改一次算出空白題數（跟老師端考試批改頁
      * 同一把鑰匙），不用也不能猜；沒給 paper 或算不出來就照舊只認存好的 blank_count。 */
     function formatStatsSummaryHtml(raw, paper) {
         const st = readStats(raw || {});
         if (!st.attempt_count && !st.complete_count && !st.quit_count) return '';
-        const parts = [];
-        if (st.complete_count > 0) parts.push('已作答過 ' + st.complete_count + ' 次');
-        else if (st.attempt_count > 0) parts.push('已開啟 ' + st.attempt_count + ' 次');
-        if (st.quit_count > 0) parts.push('中途退出 ' + st.quit_count + ' 次');
-        if (st.leave_count_total > 0) parts.push('嘗試離開 ' + st.leave_count_total + ' 次');
-        if (st.last_duration_ms > 0) parts.push('最近作答 ' + formatDurationMs(st.last_duration_ms));
-        if (st.total_time_ms > 0) parts.push('累計 ' + formatDurationMs(st.total_time_ms));
         const qr = (raw && raw.quiz_result) ? raw.quiz_result : null;
-        if (qr && qr.total != null) {
-            parts.push('最近 ' + qr.correct + '/' + qr.total + '（' + qr.score + '%）');
+        if (!qr || qr.total == null) {
+            // 從未完整交過卷（只開過／中途退出，沒有分數可比對）：維持原本的簡短訊息，
+            // 不套用下面「有完整分數」才成立的新格式。
+            const parts = [];
+            if (st.complete_count > 0) parts.push('已作答過 ' + st.complete_count + ' 次');
+            else if (st.attempt_count > 0) parts.push('已開啟 ' + st.attempt_count + ' 次');
+            if (st.quit_count > 0) parts.push('中途退出 ' + st.quit_count + ' 次');
+            if (st.leave_count_total > 0) parts.push('嘗試離開 ' + st.leave_count_total + ' 次');
+            if (st.last_duration_ms > 0) parts.push('最近作答 ' + formatDurationMs(st.last_duration_ms));
+            if (st.total_time_ms > 0) parts.push('累計 ' + formatDurationMs(st.total_time_ms));
+            if (!parts.length) return '';
+            return '<div style="font-size:0.78rem; font-weight:800; color:#334155; line-height:1.45;">'
+                + esc(parts.join(' · '))
+                + '</div>';
         }
         const wrongN = (st.wrong_items && st.wrong_items.length) ? st.wrong_items.length : 0;
-        if (wrongN > 0) parts.push('最近錯題 ' + wrongN);
         // 空白（沒填寫）題數：優先讀繳交時就存好的 quiz_result.blank_count（見 submit()）；
         // 舊資料沒這欄，退回用 raw.quiz_answers 現場重新批改一次（跟老師端 liveQuizScore
         // 同一把鑰匙），兩者都是這筆資料自己的正確來源，不是借別筆／別欄。兩者都沒有才不顯示。
-        let blankN = (qr && qr.blank_count != null) ? qr.blank_count : null;
+        let blankN = (qr.blank_count != null) ? qr.blank_count : null;
         if (blankN == null && paper && raw && raw.quiz_answers
             && window.QuizPaperBuilder && typeof window.QuizPaperBuilder.gradeAnswers === 'function') {
             const live = window.QuizPaperBuilder.gradeAnswers(paper, raw.quiz_answers, raw);
@@ -935,12 +1124,26 @@ window.FeatureStudentQuiz = (function () {
                 blankN = live.details.filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length;
             }
         }
-        if (blankN != null) parts.push('空白未填 ' + blankN + ' 題');
         // 2026-08-13 老師要求先關掉「歷史錯字」相關顯示（目前抓錯機制還不夠準確、沒有參考
         // 意義）：這裡也一併拿掉，不要讓「歷史錯字 N 組」還留在進度列摘要裡（spelling_ledger
         // 底層仍照常累積記錄，只是先不顯示出來）。
+        const lines = buildQuizStatsSummaryLines({
+            correct: qr.correct,
+            total: qr.total,
+            score: qr.score,
+            wrongN: wrongN,
+            blankN: blankN,
+            lastDurationMs: st.last_duration_ms,
+            totalTimeMs: st.total_time_ms,
+            quitCount: st.quit_count,
+            leaveCount: st.leave_count_total,
+            completeCount: st.complete_count,
+            attemptCount: st.attempt_count
+        });
+        const html = [lines.line1, lines.line2].filter(Boolean).join('<br>');
+        if (!html) return '';
         return '<div style="font-size:0.78rem; font-weight:800; color:#334155; line-height:1.45;">'
-            + esc(parts.join(' · '))
+            + html
             + '</div>';
     }
 
@@ -994,23 +1197,29 @@ window.FeatureStudentQuiz = (function () {
                 + '<button type="button" class="btn btn-action" style="background:#B45309; color:white; border:none; padding:6px 12px; font-weight:800;" onclick="window.FeatureStudentQuiz.openInputCorrection(\'' + safeAssign + '\',\'' + safeTask + '\')">開始錯題改正練習</button>'
                 + '</div>')
             : '';
+        // 頂部統計訊息：跟「課程進度」時間軸列（formatStatsSummaryHtml）共用同一份組字邏輯
+        // （buildQuizStatsSummaryLines），不要各自維護一份字串格式。
+        const statsSummaryLines = buildQuizStatsSummaryLines({
+            correct: result.correct,
+            total: result.total,
+            score: result.score,
+            wrongN: wrongItems.length,
+            blankN: result.blank_count,
+            lastDurationMs: stats.last_duration_ms,
+            totalTimeMs: stats.total_time_ms,
+            quitCount: stats.quit_count,
+            leaveCount: stats.leave_count_total,
+            completeCount: stats.complete_count,
+            attemptCount: stats.attempt_count
+        });
+        const statsSummaryHtml = [statsSummaryLines.line1, statsSummaryLines.line2].filter(Boolean).join('<br>');
         return (
             '<div class="student-quiz-sheet">' +
                 '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; flex-shrink:0;">' +
                     '<h3 style="margin:0; font-size:1.1rem; font-weight:900; color:#0F766E;">📋 ' + esc(title) + '</h3>' +
                     '<button type="button" class="btn btn-close" style="padding:4px 10px;" onclick="' + closeAction + '">關閉</button>' +
                 '</div>' +
-                '<div class="student-quiz-sheet__stats">'
-                    + '得分 ' + esc(result.correct) + ' / ' + esc(result.total) + '（' + esc(result.score) + '%）'
-                    + ' · 已作答過 ' + esc(stats.complete_count) + ' 次'
-                    + ' · 中途退出 ' + esc(stats.quit_count) + ' 次'
-                    + ' · 嘗試離開累計 ' + esc(stats.leave_count_total) + ' 次'
-                    + (stats.last_duration_ms > 0 ? (' · 本次 ' + esc(formatDurationMs(stats.last_duration_ms))) : '')
-                    + (stats.total_time_ms > 0 ? (' · 累計 ' + esc(formatDurationMs(stats.total_time_ms))) : '')
-                    // 空白（沒填寫）題數：跟進度列摘要（formatStatsSummaryHtml）同一把鑰匙，讀繳交時
-                    // 存好的 quiz_result.blank_count，不是 details（DB 沒存這欄）。舊資料沒有就不顯示。
-                    + (result.blank_count != null ? (' · 空白未填 ' + esc(result.blank_count) + ' 題') : '')
-                + '</div>' +
+                '<div class="student-quiz-sheet__stats">' + statsSummaryHtml + '</div>' +
                 retakeBannerHtml +
                 inputCorrectionBannerHtml +
                 renderAppealSummaryHtml(appealsByItemId, opts.classProgress) +
@@ -1029,6 +1238,43 @@ window.FeatureStudentQuiz = (function () {
         reviewViewState = null;
         if (window.ModalOverlay) window.ModalOverlay.close(REVIEW_MODAL_ID);
         if (reload) window.location.reload();
+    }
+
+    /**
+     * 💣 雷區（2026-09-12 老師回報「只看錯題，那個每 15 秒重整畫面，怎麼會白痴到重整到
+     * 完整考試」）：申訴審核即時同步（ensureAppealProgressSync）每 15 秒／收到廣播就會
+     * 呼叫 renderReviewFromCache 重繪一次，之前這裡直接呼叫 window.ModalOverlay.open(...)
+     * ——會把整個彈窗的 DOM 拆掉重建，捲軸回到最上面，而且 listKind 每次都寫死 'full'，
+     * 把學生手動切到「只看錯題」的分頁蓋回「完整考卷」。
+     * 這裡改成：彈窗節點已經存在（不管是 loading 佔位還是上一輪的內容）就直接改 innerHTML，
+     * 並且在改之前先記住、改之後還原「外層 overlay 捲軸」與「題目清單捲軸」；沒有節點
+     * （理論上不會發生，保底）才退回呼叫 ModalOverlay.open 建立新的。
+     */
+    /**
+     * 2026-09-12 老師確認（Phase 2.3）：輪詢／收到廣播時要 patch-in-place（換內容、保留捲軸），
+     * 不要整個 ModalOverlay.open() 重建（那樣會讓視窗閃一下、捲動位置歸零）。抽成共用函式，
+     * 「作答結果」（REVIEW_MODAL_ID）跟「重考整體報告」（RETAKE_REPORT_MODAL_ID）共用同一套邏輯，
+     * 不要各寫一份。
+     */
+    function patchOverlayKeepScroll(overlayId, contentHtml) {
+        const overlay = document.getElementById(overlayId);
+        if (!overlay) return false;
+        const overlayTop = overlay.scrollTop;
+        const listEl = overlay.querySelector('.student-quiz-sheet__list');
+        const listTop = listEl ? listEl.scrollTop : 0;
+        overlay.innerHTML = contentHtml;
+        overlay.scrollTop = overlayTop;
+        const listAfter = overlay.querySelector('.student-quiz-sheet__list');
+        if (listAfter) listAfter.scrollTop = listTop;
+        return true;
+    }
+
+    function patchReviewOverlayKeepScroll(contentHtml) {
+        return patchOverlayKeepScroll(REVIEW_MODAL_ID, contentHtml);
+    }
+
+    function patchRetakeReportOverlayKeepScroll(contentHtml) {
+        return patchOverlayKeepScroll(RETAKE_REPORT_MODAL_ID, contentHtml);
     }
 
     async function openReviewFromRaw(assignmentId, taskId) {
@@ -1053,7 +1299,7 @@ window.FeatureStudentQuiz = (function () {
         const task = findTaskInAssignments(assignmentId, taskId);
         // 💣 雷區（2026-09-10 修：2026-09-03 commit 4548d7f 把這兩行順序寫反，
         // fullItems 在宣告之前就被讀取，const 的 TDZ 會直接丟 ReferenceError，
-        // 讓這支函式──也是「作答檢討」唯一的渲染路徑──每次都拋錯，畫面卡在
+        // 讓這支函式──也是「作答結果」唯一的渲染路徑──每次都拋錯，畫面卡在
         // 「⏳ 讀取最新批改結果…」。fullItems 必須先算出來才能拿去 filter。
         const fullItems = buildFullReviewItems(task, raw);
         stats.wrong_items = overlayWrongItemsExpected(
@@ -1093,26 +1339,35 @@ window.FeatureStudentQuiz = (function () {
         // ensureAppealProgressSync 的說明）。沒申訴過的學生不用多打這支 RPC。
         const hasOwnAppeal = !!Object.keys(appealsByItemId).length;
         const classProgress = hasOwnAppeal ? await fetchAppealProgress(assignmentId, taskId) : null;
-        window.ModalOverlay.open({
-            id: REVIEW_MODAL_ID,
-            tier: 'A',
-            contentHtml: buildReviewHtml('作答檢討', result, stats, {
-                reloadOnClose: !!reloadOnClose,
-                assignmentId: assignmentId,
-                taskId: taskId,
-                retakeEligible: retakeEligible,
-                retakeReportReady: retakeReportReady,
-                allowAppeal: allowAppeal,
-                inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
-                appealsByItemId: appealsByItemId,
-                classProgress: classProgress,
-                fullItems: fullItems,
-                listKind: 'full',
-                task: task
-            })
+        // 保留學生目前切到的分頁（完整考卷／只看錯題）：reviewViewState 是「上一輪」渲染留下的
+        // 狀態，這裡要在 buildReviewHtml 覆寫它之前先讀出來；第一次開啟（reviewViewState 還是
+        // null）才用預設 'full'。
+        const keepListKind = REVIEW_LIST_KINDS[reviewViewState && reviewViewState.kind] ? reviewViewState.kind : 'full';
+        const contentHtml = buildReviewHtml('作答結果', result, stats, {
+            reloadOnClose: !!reloadOnClose,
+            assignmentId: assignmentId,
+            taskId: taskId,
+            retakeEligible: retakeEligible,
+            retakeReportReady: retakeReportReady,
+            allowAppeal: allowAppeal,
+            inputCorrectionEnabled: !!(task && task.raw_data && task.raw_data.input_correction_enabled),
+            appealsByItemId: appealsByItemId,
+            classProgress: classProgress,
+            fullItems: fullItems,
+            listKind: keepListKind,
+            task: task
         });
-        ensureAppealProgressSync(assignmentId, taskId, hasOwnAppeal, function () {
-            refreshCompletionFromDb(assignmentId, taskId).then(function () {
+        if (!patchReviewOverlayKeepScroll(contentHtml)) {
+            window.ModalOverlay.open({ id: REVIEW_MODAL_ID, tier: 'A', contentHtml: contentHtml });
+        }
+        // 2026-09-12 老師確認（Phase 2.2）：收到廣播／輪詢信號時，跟開窗當下一樣要連
+        // quiz_paper（assignment.tasks）一起刷新，不能只刷 completion——否則老師剛改的
+        // accepted_answers／標準答案還是舊的，現場重算分數會跟 DB 對不起來。
+        ensureAppealProgressSync(assignmentId, taskId, function () {
+            Promise.all([
+                refreshCompletionFromDb(assignmentId, taskId),
+                refreshAssignmentFromDb(assignmentId)
+            ]).then(function () {
                 renderReviewFromCache(assignmentId, taskId, reloadOnClose);
             });
         });
@@ -1552,6 +1807,10 @@ window.FeatureStudentQuiz = (function () {
             window.removeEventListener('beforeunload', beforeUnloadHandler);
             beforeUnloadHandler = null;
         }
+        if (pagehideHandler) {
+            window.removeEventListener('pagehide', pagehideHandler);
+            pagehideHandler = null;
+        }
         if (visibilityHandler) {
             document.removeEventListener('visibilitychange', visibilityHandler);
             visibilityHandler = null;
@@ -1575,15 +1834,33 @@ window.FeatureStudentQuiz = (function () {
         leftWhileHidden = false;
         updateLeaveBadge();
 
+        // 💣 雷區（Phase 5｜考試批改邏輯修復，2026-09-12 老師確認決定 4）：beforeunload 這個
+        // 事件只代表「使用者嘗試離開」，跳出瀏覽器原生確認對話框之後，使用者按「取消、留下」
+        // 也一樣會先觸發這個 handler——JS 完全沒有辦法知道使用者最後選了離開還是留下。舊版
+        // 在這裡直接呼叫 persistQuitIfNeeded()，等於「按取消、留下」也被算了一次退出，
+        // quit_count／leave_count_total 因此虛報。這裡只負責跳出對話框，真正計入退出次數
+        // 改交給下面的 pagehide（只有頁面真的被卸載才會觸發，使用者選「取消」不會觸發）。
         beforeUnloadHandler = function (e) {
             if (!examGuardOn || allowUnload) return;
-            // 盡力寫 quit（不等待）
-            persistQuitIfNeeded();
             e.preventDefault();
             e.returnValue = LEAVE_MSG;
             return LEAVE_MSG;
         };
         window.addEventListener('beforeunload', beforeUnloadHandler);
+
+        // pagehide：頁面真的要被卸載（關閉分頁／換網址／重新整理）才會觸發；event.persisted
+        // ===true 代表瀏覽器把頁面存進 bfcache（之後可能用 pageshow 復原，不是真的離開），
+        // 這種情況不算退出。💣 已知限制：這裡仍是一般 fetch（透過 window.supabaseClient），
+        // 不是 navigator.sendBeacon——sendBeacon 沒辦法帶 Supabase 需要的 Authorization／apikey
+        // header，要做到頁面卸載瞬間仍保證送達，需要另外設計一個能收 sendBeacon 的輕量端點
+        // （例如自訂 Edge Function），這是比較大的架構改動，尚未與老師討論、這次不動；目前
+        // 維持「盡力寫入」（大多數瀏覽器會讓 pagehide 當下觸發的請求有機會送出）。
+        pagehideHandler = function (event) {
+            if (!examGuardOn || allowUnload) return;
+            if (event && event.persisted) return;
+            persistQuitIfNeeded();
+        };
+        window.addEventListener('pagehide', pagehideHandler);
 
         visibilityHandler = async function () {
             if (!examGuardOn) return;
@@ -1858,7 +2135,7 @@ window.FeatureStudentQuiz = (function () {
         // 永遠顯示不出來——根因在這裡，不在讀的那一端。
         const blankCount = (result.details || []).filter(function (d) { return d && !d.excluded && !String(d.answer || '').trim(); }).length;
         // 掛回同一個 result 物件，讓繳交後立刻打開的「繳交結果」（下面 buildReviewHtml('繳交結果', result, ...)）
-        // 跟之後回來看的「作答檢討」讀到同一個數字，不是各自算一份。
+        // 跟之後回來看的「作答結果」讀到同一個數字，不是各自算一份。
         result.blank_count = blankCount;
         const rawPayload = {
             quiz_answers: answers,
@@ -1925,6 +2202,16 @@ window.FeatureStudentQuiz = (function () {
                     listKind: 'full',
                     task: task
                 })
+            });
+            // 2026-09-12 老師確認（Phase 2.4）：交卷當下開的「繳交結果」視窗也要啟動同步，
+            // 跟 openReviewFromRaw 一致——老師這時就可能已經在改標準答案／批改申訴。
+            ensureAppealProgressSync(assignmentId, taskId, function () {
+                Promise.all([
+                    refreshCompletionFromDb(assignmentId, taskId),
+                    refreshAssignmentFromDb(assignmentId)
+                ]).then(function () {
+                    renderReviewFromCache(assignmentId, taskId, true);
+                });
             });
         } catch (err) {
             sessionSubmitted = false;
@@ -2156,31 +2443,44 @@ window.FeatureStudentQuiz = (function () {
         );
     }
 
-    async function openRetakeReportModal(assignmentId, taskId, originalResult, retake, appealsByItemId) {
+    async function openRetakeReportModal(assignmentId, taskId, originalResult, retake, appealsByItemId, isPollingRefresh) {
         const task = findTaskInAssignments(assignmentId, taskId);
         const title = String((task && task.title) || '線上考試').replace(/<[^>]*>?/gm, '');
         const allowAppeal = !!(task && task.raw_data && task.raw_data.allow_answer_appeal !== false);
         if (!window.ModalOverlay) return;
         const hasOwnAppeal = !!Object.keys(appealsByItemId || {}).length;
         const classProgress = hasOwnAppeal ? await fetchAppealProgress(assignmentId, taskId) : null;
+        const contentHtml = buildRetakeReportHtml(title, originalResult, retake, {
+            assignmentId: assignmentId,
+            taskId: taskId,
+            allowAppeal: allowAppeal,
+            appealsByItemId: appealsByItemId || {},
+            classProgress: classProgress
+        });
+        // 2026-09-12 老師確認（Phase 2.3）：輪詢／收到廣播回來的這次呼叫只 patch-in-place，
+        // 不要整個 ModalOverlay.open() 重建（會閃一下、捲軸歸零）；找不到既有視窗（例如老師
+        // 剛好在這次刷新之間把視窗關了）才靜默放棄，不要意外又把視窗生回來。
+        if (isPollingRefresh) {
+            patchRetakeReportOverlayKeepScroll(contentHtml);
+            return;
+        }
         window.ModalOverlay.open({
             id: RETAKE_REPORT_MODAL_ID,
             tier: 'A',
-            contentHtml: buildRetakeReportHtml(title, originalResult, retake, {
-                assignmentId: assignmentId,
-                taskId: taskId,
-                allowAppeal: allowAppeal,
-                appealsByItemId: appealsByItemId || {},
-                classProgress: classProgress
-            })
+            contentHtml: contentHtml
         });
-        ensureAppealProgressSync(assignmentId, taskId, hasOwnAppeal, function () {
-            refreshCompletionFromDb(assignmentId, taskId).then(function () {
+        // 2026-09-12 老師確認（Phase 2.1／2.2）：拿掉 hasOwnAppeal 訂閱限制；輪詢／收到廣播時
+        // 連 quiz_paper（assignment.tasks）一起刷新，跟「作答結果」同一套邏輯。
+        ensureAppealProgressSync(assignmentId, taskId, function () {
+            Promise.all([
+                refreshCompletionFromDb(assignmentId, taskId),
+                refreshAssignmentFromDb(assignmentId)
+            ]).then(function () {
                 const freshPrev = findCompletion(assignmentId, taskId);
                 const freshRaw = (freshPrev && freshPrev.raw_data) ? freshPrev.raw_data : {};
                 const freshRetake = freshRaw.quiz_retake;
                 if (freshRetake && freshRetake.done) {
-                    openRetakeReportModal(assignmentId, taskId, freshRaw.quiz_result || originalResult, freshRetake, appealsByItemIdFromRaw(freshRaw));
+                    openRetakeReportModal(assignmentId, taskId, freshRaw.quiz_result || originalResult, freshRetake, appealsByItemIdFromRaw(freshRaw), true);
                 }
             });
         });

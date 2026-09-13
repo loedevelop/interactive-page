@@ -1211,8 +1211,17 @@ window.QuizPaperBuilder = (function () {
     /**
      * 申訴列合併：有紀錄就留下。只能追加新題、或把 pending 改成 accepted／rejected。
      * 禁止用空陣列／少一筆的清單蓋掉既有列；已接受的不准被舊快取降回 pending。
+     *
+     * 2026-09-12 老師確認：申訴決定要能「真正反悔」（老師點了可接受，後來想改成不可接受，
+     * 再點一次要真的改掉，不是只改畫面）。上面這條「已接受不准被舊快取降回 pending」的保護，
+     * 若不分情況一律套用，會把老師這次「刻意」的改判也當成舊快取擋回去（因為老師的新決定
+     * 在 rank 上可能比 DB 現有值低，例如 accepted(3)→rejected(2)）。
+     * authoritativeIds（{itemIdString: true}）＝這次呼叫明確知道「這幾個 item_id 的申訴，
+     * incoming 裡的狀態就是老師剛剛在畫面上按的最新決定，不是別處撈出來的舊快取」，只有
+     * 這幾個 item_id 允許跳過等級保護、直接採用 incoming 的狀態；其餘 item_id 仍照原規則
+     * （避免真正的舊快取蓋掉別的已審核申訴）。
      */
-    function mergeQuizAppeals(existing, incoming) {
+    function mergeQuizAppeals(existing, incoming, authoritativeIds) {
         const existingIsArray = Array.isArray(existing);
         const incomingIsArray = Array.isArray(incoming);
         const existingList = existingIsArray ? existing : [];
@@ -1249,7 +1258,8 @@ window.QuizPaperBuilder = (function () {
                 if (!fromIncoming) return;
                 const kept = byId[id];
                 const merged = Object.assign({}, kept, a);
-                if (appealStatusRank(kept && kept.status) > appealStatusRank(a.status)) {
+                const isAuthoritative = !!(authoritativeIds && authoritativeIds[id]);
+                if (!isAuthoritative && appealStatusRank(kept && kept.status) > appealStatusRank(a.status)) {
                     merged.status = kept.status;
                 }
                 byId[id] = merged;
@@ -1272,12 +1282,15 @@ window.QuizPaperBuilder = (function () {
         return [];
     }
 
-    /** 寫回 completion 時：其餘欄位 incoming 覆蓋，quiz_appeals 走 mergeQuizAppeals。 */
-    function prepareCompletionRawDataForSave(prevRaw, incoming) {
+    /**
+     * 寫回 completion 時：其餘欄位 incoming 覆蓋，quiz_appeals 走 mergeQuizAppeals。
+     * authoritativeAppealItemIds：見 mergeQuizAppeals 上方說明，原樣往下傳。
+     */
+    function prepareCompletionRawDataForSave(prevRaw, incoming, authoritativeAppealItemIds) {
         const prev = prevRaw && typeof prevRaw === 'object' ? prevRaw : {};
         const nextIn = incoming && typeof incoming === 'object' ? incoming : {};
         const next = Object.assign({}, prev, nextIn);
-        next.quiz_appeals = mergeQuizAppeals(prev.quiz_appeals, nextIn.quiz_appeals);
+        next.quiz_appeals = mergeQuizAppeals(prev.quiz_appeals, nextIn.quiz_appeals, authoritativeAppealItemIds);
         return next;
     }
 
@@ -1723,7 +1736,7 @@ window.QuizPaperBuilder = (function () {
         const prevResult = src.quiz_result || null;
         const prevScore = prevResult ? prevResult.score : null;
         const prevCorrect = prevResult ? prevResult.correct : null;
-        const changed = prevScore !== result.score || prevCorrect !== result.correct;
+        let changed = prevScore !== result.score || prevCorrect !== result.correct;
 
         /**
          * 💣 雷區（2026-08-12 老師回報「重新批閱之後，錯題編號又對不起來」）：`headline`
@@ -1759,12 +1772,22 @@ window.QuizPaperBuilder = (function () {
             return row;
         });
 
+        // 💣 雷區（Phase 3｜考試批改邏輯修復）：重批只 Object.assign 了 score/correct/total，
+        // 從沒重算 blank_count——老師改了 accepted_answers 或送分模式導致某題從「空白」變
+        // 「已作答」（或反過來），重批完 blank_count 卻還停在重批前的舊數字，跟 wrong_items／
+        // score 對不起來。用跟 submit()（feature-student-quiz.js）同一把鑰匙：details 裡
+        // 沒排除計分（!excluded）且 answer 去空白後是空字串才算空白未填。
+        const blankCount = (result.details || []).filter(function (d) {
+            return d && !d.excluded && !String(d.answer || '').trim();
+        }).length;
+
         const nextRawData = Object.assign({}, src);
         nextRawData.quiz_appeals = mergeQuizAppeals(src.quiz_appeals, src.quiz_appeals);
         nextRawData.quiz_result = Object.assign({}, prevResult || {}, {
             score: result.score,
             correct: result.correct,
             total: result.total,
+            blank_count: blankCount,
             wrong_items: wrongItemsCompact,
             regraded_at: new Date().toISOString()
         });
@@ -1792,18 +1815,34 @@ window.QuizPaperBuilder = (function () {
          * accepted_answers 導致這次重批的 correct 變動，歷史重考報告會留著重批前的舊數字，
          * 跟新分數對不起來。這裡只在 quiz_retake.done 且結果真的變動時才重算 combined；
          * item_ids（重考凍結的題號集合）維持不動，不屬於這次要處理的範圍。
+         *
+         * 💣 雷區（Phase 3｜考試批改邏輯修復）：原本只在 `changed`（原始 quiz_result 的
+         * score/correct 有變）成立時才重算 combined，且拿 `changed` 當唯一依據。萬一
+         * combined 因為某次寫入意外卡在舊值、但這次原始分數剛好沒變，combined 就永遠沒有
+         * 機會被追上。改成：每次都重新算一次 combined，跟舊值逐欄比對；只要不一樣就寫回，
+         * 並把這件事也併入 `changed`（讓外層呼叫端知道這筆真的有變動要存檔），不再只依賴
+         * 原始分數是否變動這一個條件。
          */
-        if (src.quiz_retake && src.quiz_retake.done && src.quiz_retake.result && changed) {
+        if (src.quiz_retake && src.quiz_retake.done && src.quiz_retake.result) {
             const retake = Object.assign({}, src.quiz_retake);
             const retakeCorrect = Number(retake.result.correct) || 0;
             const combinedCorrect = result.correct + retakeCorrect;
             const combinedTotal = result.total;
-            retake.combined = {
+            const nextCombined = {
                 correct: combinedCorrect,
                 total: combinedTotal,
                 rate: combinedTotal > 0 ? Math.round((combinedCorrect / combinedTotal) * 1000) / 10 : 0
             };
-            nextRawData.quiz_retake = retake;
+            const prevCombined = src.quiz_retake.combined || null;
+            const combinedChanged = !prevCombined
+                || prevCombined.correct !== nextCombined.correct
+                || prevCombined.total !== nextCombined.total
+                || prevCombined.rate !== nextCombined.rate;
+            if (combinedChanged) {
+                retake.combined = nextCombined;
+                nextRawData.quiz_retake = retake;
+                changed = true;
+            }
         }
 
         return {

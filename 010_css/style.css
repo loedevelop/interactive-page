@@ -461,15 +461,15 @@ a.task-btn {
     cursor: pointer;
 }
 
-/* 學生作答檢討／重考報告：佔滿可用畫面。題目清單自己捲，上頭統計與底下送出申訴留著。
-   手機／iPad 幾乎全螢幕；電腦最多約 1100×920。禁止再寫死 32vh。 */
+/* 學生作答結果／重考報告：佔滿可用畫面。題目清單自己捲，上頭統計與底下送出申訴留著。
+   寬度固定 90%（不設 max-width 上限），不分手機／iPad／電腦。禁止再寫死 32vh。 */
 .modal-overlay:has(.student-quiz-sheet) {
     padding: 8px;
     align-items: stretch;
     justify-content: center;
 }
 .student-quiz-sheet {
-    width: min(1100px, 100%);
+    width: 90%;
     height: calc(100dvh - 16px);
     max-height: calc(100vh - 16px);
     margin: 0 auto;

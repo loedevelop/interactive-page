@@ -9,6 +9,7 @@
 │   └── style.css
 ├── 020_js_core
 │   ├── api.js
+│   ├── appeal-progress-sync.js
 │   ├── assignment-clone.js
 │   ├── auth-guard.js
 │   ├── config.js
@@ -242,7 +243,9 @@
 │   │   ├── 20260906130000_combo_statistics_all_kinds.sql
 │   │   ├── 20260906140000_material_book_range_items_page.sql
 │   │   ├── 20260906210000_material_book_range_items_speak_written.sql
-│   │   └── 20260907120000_quiz_item_accepted_answers.sql
+│   │   ├── 20260907120000_quiz_item_accepted_answers.sql
+│   │   ├── 20260910130000_quiz_appeal_progress_rpc.sql
+│   │   └── 20260912040000_class_script_blocks_allow_archived_teacher.sql
 │   └── .DS_Store
 ├── teacher
 │   └── index.html

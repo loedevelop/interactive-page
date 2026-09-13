@@ -83,8 +83,12 @@ window.ApiQuizReview = (function () {
      * score 參數保留（呼叫端仍會傳，例如 regradeAndSaveTask 算出的 nextScore）只是為了不用動呼叫端，
      * 但**不會**寫進 task_completions.score——那個欄位不存在，分數本來就已經包在 rawData.quiz_result.score
      * 裡面了（regradeCompletionRawData 寫入的），不需要也不能再多寫一個 top-level 欄位。
+     *
+     * authoritativeAppealItemIds（見 QuizPaperBuilder.mergeQuizAppeals 說明，2026-09-12）：
+     * 老師這次申訴決定明確覆蓋這幾個 item_id 的狀態，即使等級低於 DB 現有值也要採用，讓
+     * 「改判」能真的寫進去，不被等級保護（accepted 不准被 pending 蓋回去）擋住。
      */
-    async function saveCompletionRawData(completionId, rawData, _scoreUnused) {
+    async function saveCompletionRawData(completionId, rawData, _scoreUnused, authoritativeAppealItemIds) {
         const incoming = rawData && typeof rawData === 'object' ? rawData : {};
         const { data: current, error: readErr } = await db()
             .from('task_completions')
@@ -94,7 +98,7 @@ window.ApiQuizReview = (function () {
         if (readErr) throw new Error('儲存批改結果失敗：' + readErr.message);
         const prevRaw = parseJSONB(current && current.raw_data);
         const merged = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.prepareCompletionRawDataForSave === 'function')
-            ? window.QuizPaperBuilder.prepareCompletionRawDataForSave(prevRaw, incoming)
+            ? window.QuizPaperBuilder.prepareCompletionRawDataForSave(prevRaw, incoming, authoritativeAppealItemIds)
             : incoming;
         const { error } = await db().from('task_completions').update({ raw_data: merged }).eq('id', completionId);
         if (error) throw new Error('儲存批改結果失敗：' + error.message);
@@ -104,14 +108,15 @@ window.ApiQuizReview = (function () {
     /**
      * 批次寫回多筆 completion（重新批改全班同任務時用）。逐筆 try/catch 累計成功/失敗，
      * 仿 feature-ai-backfill.js 的批次模式：不用交易，單筆失敗不影響其他人。
+     * authoritativeAppealItemIds：這一整批要一起套用的申訴改判覆蓋名單，原樣往下傳給每一筆。
      */
-    async function batchSaveCompletions(list) {
+    async function batchSaveCompletions(list, authoritativeAppealItemIds) {
         let okCount = 0;
         const errors = [];
         for (let i = 0; i < list.length; i++) {
             const item = list[i];
             try {
-                await saveCompletionRawData(item.id, item.rawData, item.score);
+                await saveCompletionRawData(item.id, item.rawData, item.score, authoritativeAppealItemIds);
                 okCount += 1;
             } catch (err) {
                 errors.push({ id: item.id, student_id: item.student_id, message: err.message || String(err) });
