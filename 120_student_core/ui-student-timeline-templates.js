@@ -2194,13 +2194,22 @@ window.UIStudentTimelineTemplates = (() => {
 
                     let borderBottom = isLastLeaf ? 'none' : '1px solid rgba(0,0,0,0.08)';
 
+                    // 💣 雷區（2026-09-15 老師回報「按鈕排列太醜，vBK-2 應該置上」）：舊版標題列跟按鈕
+                    // 是同一個 flex row 的兩個並排項目、align-items:center。按鈕一多（例如錄音任務
+                    // 已繳交檔案／取代／重新錄製／上傳音檔），按鈕自己的 flex-wrap 只能在「標題讓出的
+                    // 剩餘寬度」內換行，擠成一個歪斜的兩排區塊，標題也被夾在中間垂直置中，看起來很亂。
+                    // 改成：按鈕區塊固定 flex-basis:100%，強制永遠自己獨占一整行（在標題下面，跟下面
+                    // taskDescHtml 同一個 36px 縮排），這樣按鈕永遠拿到「整列寬度」去換行，不會被標題
+                    // 擠成鋸齒狀；標題永遠在最上面一行，不會被按鈕的高度夾到置中。
                     return `
                         <div style="padding:10px 5px; background:transparent; border-bottom:${borderBottom}; transition: 0.2s;">
-                            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                            <div style="display:flex; align-items:flex-start; flex-wrap:wrap; gap:8px;">
                                 <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; line-height: 1.2;">
                                     ${checkboxHtml}${iconHtml}${taskTitleDisplay}${statusBadgeHtml}${localDueHtml}${linkContent}
                                 </div>
-                                ${btn}
+                                <div style="flex:1 1 100%; padding-left:36px;">
+                                    ${btn}
+                                </div>
                             </div>
                             ${taskDescHtml}${aiFeedbackHtml}
                         </div>
