@@ -241,33 +241,22 @@ window.UIStudentTimelineTemplates = (() => {
         });
     };
 
-    const groupIsRangePack = (group) => {
-        if (!group || group.type !== 'group' || !group.raw_data) return false;
-        if (group.raw_data.group_role === 'range') return true;
-        if (String(group.raw_data.pack_combo_id || '').trim()) return true;
-        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
-        return rows.some(function (r) {
-            return !!(String((r && (r.combo_id || r.comboId)) || '').trim()
-                || String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
-                || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
-                || String((r && r.page) || '').trim());
-        });
-    };
+    /**
+     * 2026-09-15 這把鑰匙搬進共用檔 020_js_core/pack-range-label.js（PackRangeLabel.groupIsRangePack），
+     * teacher／student 兩端改成呼叫同一份，不准再各留一份（這裡原本漏比對 meta_file，已經走樣，改用共用版補齊）。
+     */
+    const groupIsRangePack = (group) => !!(window.PackRangeLabel
+        && typeof window.PackRangeLabel.groupIsRangePack === 'function'
+        && window.PackRangeLabel.groupIsRangePack(group));
 
-    const comboNameFromBookConcatTitle = (text) => {
-        const s = String(text || '').replace(/<[^>]*>/g, '').trim();
-        if (!s) return '';
-        const segs = s.split(/\s*[;；]\s*/).filter(Boolean);
-        if (!segs.length) return '';
-        const m = segs[0].match(/^(.+?)\s+\d+\s*\/\s*/);
-        if (!m) return '';
-        const name = String(m[1] || '').trim();
-        if (!name) return '';
-        const ok = segs.every(function (seg) {
-            return seg === name || seg.indexOf(name + ' ') === 0;
-        });
-        return ok ? name : '';
-    };
+    /**
+     * 2026-09-15 這把鑰匙搬進共用檔 020_js_core/pack-range-label.js（PackRangeLabel.comboNameFromBookConcatTitle），
+     * teacher／student 兩端改成呼叫同一份。
+     */
+    const comboNameFromBookConcatTitle = (text) => (window.PackRangeLabel
+        && typeof window.PackRangeLabel.comboNameFromBookConcatTitle === 'function')
+        ? window.PackRangeLabel.comboNameFromBookConcatTitle(text)
+        : '';
 
     const packComboNamesFromGroup = (group) => {
         if (!group || !group.raw_data) return '';
@@ -284,16 +273,14 @@ window.UIStudentTimelineTemplates = (() => {
         return names.join('；') || String(group.raw_data.pack_combo_label || '').trim();
     };
 
-    const rangeGroupTitleIsComboNameLocal = (group) => {
-        const names = packComboNamesFromGroup(group);
-        if (!names) return false;
-        const title = String((group && group.title) || '').replace(/<[^>]*>/g, '').trim();
-        if (!title) return true;
-        const norm = function (s) {
-            return String(s || '').replace(/[／;；]/g, '|').replace(/\s+/g, '').toUpperCase();
-        };
-        return norm(title) === norm(names);
-    };
+    /**
+     * 2026-09-15 老師定案：組合層（範圍群組）底下，套餐名＋範圍只在群組層的「說明」顯示一次
+     * （teacher 端 groupPackSummaryHtml／onGroupDescInput 產出、寫進 task.description）。子任務
+     * （錄音／考試／PDF考）不管群組標題是不是套餐名，自己的標題都不再重複套餐名或範圍──一律
+     * 留空，只靠圖示＋類型標籤辨識。跟 teacher 端 childTitleOmitsComboName 同一把鑰匙：
+     * 只認「是不是範圍套餐群組」，不再比對群組標題文字是否等於套餐名。
+     */
+    const rangeGroupTitleIsComboNameLocal = (group) => groupIsRangePack(group);
 
     const stripLeadingComboNames = (title, namesStr) => {
         let t = String(title || '').replace(/<[^>]*>/g, '').trim();
@@ -362,8 +349,23 @@ window.UIStudentTimelineTemplates = (() => {
         return s.slice(idx).trim();
     };
 
+    /**
+     * 2026-09-15 這裡原本是簡化版（漏掉「同一區段連續範圍卻一行一行分號」判斷），跟
+     * teacher 端 titleLooksLikeSheetAliasDump 已經走樣。改呼叫共用檔完整版，不再各留一份簡化版。
+     */
+    const looksLikeSheetAliasDumpLocal = (text) => !!(window.PackRangeLabel
+        && typeof window.PackRangeLabel.titleLooksLikeSheetAliasDump === 'function'
+        && window.PackRangeLabel.titleLooksLikeSheetAliasDump(text));
+
     const listTitleForPackChild = (task, parentRangeGroup) => {
         const title = String((task && task.title) || '').replace(/<[^>]*>/g, '').trim();
+        const raw0 = (task && task.raw_data) || {};
+        // 跟 teacher 端 listTitleForPackChild 同一把鑰匙：只要在範圍套餐群組底下（不管是
+        // Excel／PDF／目錄哪種套餐），子任務標題一律留空；老師手動打過字（title_auto_from_range
+        // === false）且不是舊活頁別名 dump 殘留，才顯示老師手打的那份。
+        if (groupIsRangePack(parentRangeGroup)) {
+            return (raw0.title_auto_from_range === false && title && !looksLikeSheetAliasDumpLocal(title)) ? title : '';
+        }
         if (task && task.type === 'audio_record' && bookComboNameFromRangeGroup(packHostForBookAudio(task, parentRangeGroup))) {
             return listTitleForBookAudio(task, parentRangeGroup);
         }
@@ -459,11 +461,17 @@ window.UIStudentTimelineTemplates = (() => {
             return String(line).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }).join('<br>');
         if (raw.desc_auto_from_range === false && task && task.description) return task.description;
-        const current = String((task && task.description) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
-        if (generatedHtml && (raw.desc_auto_from_range === true || !current || current === genNorm)) {
-            return generatedHtml;
+        // 目錄套餐（有 units＝每段一行的錄音清單）：這是錄音「錄哪幾段」的功能性提示，不是
+        // 套餐名／範圍摘要，維持照算，不受組合層留空規則影響。
+        if (generatedHtml) {
+            const current = String((task && task.description) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+            const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
+            if (raw.desc_auto_from_range === true || !current || current === genNorm) return generatedHtml;
         }
+        // 2026-09-15 老師定案：Excel／PDF 套餐（非目錄）在範圍套餐群組底下，說明只在群組層
+        // 顯示一次，子任務自己的說明一律留空——不管 task.description 存的是不是還沒被老師
+        // 重新開過 builder 存檔的舊 dump 殘留。跟 teacher 端 leafPackDescriptionHtml 同一把鑰匙。
+        if (groupIsRangePack(parentRangeGroup)) return '';
         return (task && task.description) || '';
     };
 
@@ -2144,6 +2152,12 @@ window.UIStudentTimelineTemplates = (() => {
                     let descHtml = '';
                     if (task.type === 'audio_record') {
                         descHtml = listDescForBookAudio(task, parentRangeGroup) || '';
+                    } else if (groupIsRangePack(parentRangeGroup)
+                        && !((task.raw_data || {}).desc_auto_from_range === false && task.description)) {
+                        // 組合層底下的考試／PDF考／一般任務：說明只在群組層顯示一次，這裡留空
+                        // （除非老師手動在這個子任務自己的說明打過字）——跟 teacher 端
+                        // listDescForPackChild 同一把鑰匙。
+                        descHtml = '';
                     } else if (task.description) {
                         descHtml = String(task.description);
                     }
@@ -2350,6 +2364,38 @@ window.UIStudentTimelineTemplates = (() => {
                                             groupTitle = window.BuilderStore.deriveRangeTitleFromGroup(task) || '';
                                         }
                                         if (!groupTitle) groupTitle = isRangeGroup ? '未命名範圍' : '未命名作業群組';
+                                        // 2026-09-15 老師定案：組合作業（範圍群組）底下，套餐名＋範圍只在
+                                        // 群組層的「說明」顯示一次（teacher 端 groupPackSummaryHtml／
+                                        // onGroupDescInput 產出，寫進 task.description）。子任務標題已經
+                                        // 一律留空（見 listTitleForPackChild），這裡若不顯示群組說明，
+                                        // 範圍資訊會整個從畫面消失──不准丟資料，這裡必須補上。
+                                        // 老師手動改過這個群組自己的說明（desc_auto_from_range===false）
+                                        // 才顯示那份手打內容；否則即時用 PackRangeLabel 算（不等老師重新
+                                        // 開過 builder 存檔，task.description 舊資料還沒補上也看得到）。
+                                        const groupRaw = task.raw_data || {};
+                                        const groupDescStored = task.description ? String(task.description) : '';
+                                        const groupDescStoredPlain = groupDescStored.replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
+                                        const groupDescLooksDump = !!(window.PackRangeLabel
+                                            && typeof window.PackRangeLabel.titleLooksLikeSheetAliasDump === 'function'
+                                            && window.PackRangeLabel.titleLooksLikeSheetAliasDump(groupDescStoredPlain));
+                                        let groupDescFinal = '';
+                                        if (isRangeGroup) {
+                                            if (groupRaw.desc_auto_from_range === false && groupDescStoredPlain && !groupDescLooksDump) {
+                                                groupDescFinal = groupDescStored;
+                                            } else {
+                                                const groupPackRows = Array.isArray(groupRaw.pack_rows) ? groupRaw.pack_rows : [];
+                                                const groupDescGenerated = (window.PackRangeLabel && typeof window.PackRangeLabel.groupPackSummaryHtml === 'function')
+                                                    ? window.PackRangeLabel.groupPackSummaryHtml(groupPackRows, null)
+                                                    : '';
+                                                groupDescFinal = groupDescGenerated || groupDescStored;
+                                            }
+                                        }
+                                        const groupDescClean = groupDescFinal
+                                            ? String(groupDescFinal).replace(/<[^>]*>?/gm, '').trim()
+                                            : '';
+                                        const groupDescHtml = (isRangeGroup && groupDescClean)
+                                            ? `<div class="rt-normalize" style="font-size:0.9rem; color:#64748B; margin-bottom:8px;">${groupDescFinal}</div>`
+                                            : '';
                                         let subTasksHtml = '';
                                         
                                         if (Array.isArray(task.subTasks) && task.subTasks.length > 0) {
@@ -2368,6 +2414,7 @@ window.UIStudentTimelineTemplates = (() => {
                                                 <div style="font-weight:900; color:${lvl.text}; font-size:1.05rem; display:flex; align-items:center; gap:8px; margin-bottom: 8px; flex-wrap:wrap;">
                                                     <span style="font-size:1.2rem;">${groupIcon}</span> <span class="rt-normalize">${groupTitle}</span>
                                                 </div>
+                                                ${groupDescHtml}
                                                 ${subTasksHtml}
                                             </div>
                                         `;

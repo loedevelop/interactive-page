@@ -22,6 +22,7 @@
 │   ├── material-snapshot.js
 │   ├── message-layout-template.js
 │   ├── modal-overlay.js
+│   ├── pack-range-label.js
 │   ├── pdf-exam-paper.js
 │   ├── persona-routing.js
 │   ├── profile-form.js
@@ -245,7 +246,12 @@
 │   │   ├── 20260906210000_material_book_range_items_speak_written.sql
 │   │   ├── 20260907120000_quiz_item_accepted_answers.sql
 │   │   ├── 20260910130000_quiz_appeal_progress_rpc.sql
-│   │   └── 20260912040000_class_script_blocks_allow_archived_teacher.sql
+│   │   ├── 20260912040000_class_script_blocks_allow_archived_teacher.sql
+│   │   ├── 20260916010000_backfill_material_combination_sheets.sql
+│   │   ├── 20260916020000_backfill_material_combination_sheets_v2.sql
+│   │   ├── 20260917020000_fix_overlinked_nongroup_combo_sheets.sql
+│   │   ├── 20260917060000_fix_all_overlinked_combo_sheets.sql
+│   │   └── 20260917110000_diag9_tmp.sql
 │   └── .DS_Store
 ├── teacher
 │   └── index.html

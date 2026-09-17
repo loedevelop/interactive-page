@@ -45,11 +45,11 @@ window.TimelineTemplates = (() => {
         const FT = window.FeatureTimeline;
         if (!FT || typeof FT.parentRangeGroupPathOf !== 'function') return '';
         if (!FT.parentRangeGroupPathOf(pathStr)) return '';
-        if (nodeType === 'audio_record' && typeof FT.packTitleForAudio === 'function') {
-            return FT.packTitleForAudio(pathStr) || '';
+        if (nodeType === 'audio_record' && typeof FT.packTitleForAudioLeaf === 'function') {
+            return FT.packTitleForAudioLeaf(pathStr) || '';
         }
-        if (typeof FT.packRangeLabelForAudio !== 'function') return '';
-        return FT.packRangeLabelForAudio(pathStr) || '';
+        if (typeof FT.packRangeLabelForAudioLeaf !== 'function') return '';
+        return FT.packRangeLabelForAudioLeaf(pathStr) || '';
     }
 
     function packShuffleOnForRender(r) {
@@ -350,6 +350,28 @@ window.TimelineTemplates = (() => {
         };
     }
 
+    /**
+     * 2026-09-16：套餐選了、但查無任何活頁（真異常，根因已在資料庫層修好，這裡只當保底）。
+     * 點警示鈕才彈 popup，不自動彈窗洗畫面。
+     */
+    function showPackNoSheetsWarning(comboLabel) {
+        if (!window.ModalOverlay) return;
+        window.ModalOverlay.open({
+            id: 'range-pack-no-sheets-warning',
+            tier: 'A',
+            contentHtml:
+                '<div style="max-width:420px; width:92vw; background:white; border-radius:14px; padding:22px 20px; box-shadow:0 12px 40px rgba(15,23,42,0.18);">'
+                + '<h3 style="margin:0 0 10px 0; color:#B91C1C;">⚠ 套餐查無活頁</h3>'
+                + '<p style="margin:0 0 12px 0; color:#334155; font-size:0.9rem; line-height:1.6;">'
+                + '「' + escapeHtml(comboLabel || '（未命名）') + '」這份套餐目前查不到任何活頁，無法選區段。'
+                + '請到「教材範本管理」確認這份套餐的資料夾／擷取範本是否還有活頁，或重新套用一次擷取範本。'
+                + '</p>'
+                + '<button type="button" onclick="window.ModalOverlay.close(\'range-pack-no-sheets-warning\')"'
+                + ' style="width:100%; padding:8px 0; border-radius:8px; border:none; background:#0F766E; color:white; font-weight:800; cursor:pointer;">知道了</button>'
+                + '</div>'
+        });
+    }
+
     /** Excel/JSON 套餐自己的範圍表。手動輸入＝目錄表，不准再走這張。 */
     function renderSheetPackTableHtml(ctx) {
         if (ctx && ctx.isManual && window.FeatureMaterialBook && typeof window.FeatureMaterialBook.renderPackTableHtml === 'function') {
@@ -376,7 +398,9 @@ window.TimelineTemplates = (() => {
                     + ' value="' + escapeHtml(row.combo_label || '') + '" placeholder="手動輸入教材"'
                     + ' oninput="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: false })">'
                     + '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">';
-            } else if (isGroup) {
+            } else if (isGroup || ownSheets.length > 1) {
+                // 正型判斷：只要「有超過一本可選」就給下拉，不管有沒有勾群組——這是同一種需求
+                // （勾了群組／沒勾但本來就有多本活頁），不是拿「>1」當錯誤條件消去法。
                 const cur = String(row.meta_file || '').replace(/\.meta\.json$/i, '').toUpperCase();
                 sheetCell = '<select id="range-pack-sheet-' + pathStr + '-' + idx + '" class="form-control range-pack-sheet"'
                     + ' onchange="window.FeatureTimeline && window.FeatureTimeline.onRangePackChange && window.FeatureTimeline.onRangePackChange(\'' + pathStr + '\', { rerender: true, clamp: true })">'
@@ -394,12 +418,18 @@ window.TimelineTemplates = (() => {
                 const file = packSheetMetaValue(only);
                 sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="' + escapeHtml(file) + '">'
                     + '<div>' + escapeHtml(packSheetBlockLabel(only, blockCombo && blockCombo.extractionTemplateName)) + '</div>';
-            } else if (blockCombo && ownSheets.length === 0) {
+            } else if (blockCombo) {
+                // 這裡不該常駐佔一行紅字：套餐真的撈到 0 本活頁是資料庫層異常（根因已在
+                // ensureCombination／material_combination_sheets 補寫修好，2026-09-16），不是這一層
+                // 該處理的正常狀態。只放一顆可點的警示鈕，點了才彈 popup 說明，不自動彈窗洗畫面。
+                const noSheetsLabel = (window.FeatureClassMaterialCombinations
+                    && typeof window.FeatureClassMaterialCombinations.comboLabelText === 'function')
+                    ? window.FeatureClassMaterialCombinations.comboLabelText(blockCombo)
+                    : (blockCombo.label || blockCombo.combo_label || '');
                 sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                    + '<div style="color:#B91C1C; font-weight:800;">這份套餐沒有活頁</div>';
-            } else if (blockCombo && ownSheets.length > 1) {
-                sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
-                    + '<div style="color:#B91C1C; font-weight:800;">這份套餐不是群組，卻有不只一本活頁</div>';
+                    + '<button type="button" onclick="window.TimelineTemplates.showPackNoSheetsWarning(\'' + escapeHtml(noSheetsLabel) + '\')"'
+                    + ' style="background:#FEF2F2; color:#B91C1C; border:1px solid #FECACA; border-radius:6px; padding:3px 8px; font-weight:800; font-size:0.82rem; cursor:pointer;">'
+                    + '⚠ 套餐查無活頁</button>';
             } else {
                 sheetCell = '<input type="hidden" id="range-pack-sheet-' + pathStr + '-' + idx + '" class="range-pack-sheet" value="">'
                     + '<div style="color:#94A3B8;">選套餐或手動輸入教材</div>';
@@ -934,37 +964,23 @@ window.TimelineTemplates = (() => {
         };
     }
 
+    /**
+     * 2026-09-15 這把鑰匙搬進共用檔 020_js_core/pack-range-label.js（PackRangeLabel.groupIsRangePack），
+     * teacher／student 兩端改成呼叫同一份，不准再各留一份（之前 student 端漏比對 meta_file，兩邊已經走樣）。
+     */
     function groupIsRangePack(group) {
-        if (!group || group.type !== 'group' || !group.raw_data) return false;
-        if (group.raw_data.group_role === 'range') return true;
-        if (String(group.raw_data.pack_combo_id || '').trim()) return true;
-        const rows = Array.isArray(group.raw_data.pack_rows) ? group.raw_data.pack_rows : [];
-        return rows.some(function (r) {
-            return !!(String((r && (r.combo_id || r.comboId)) || '').trim()
-                || String((r && (r.primary_unit || r.primaryUnit)) || '').trim()
-                || String((r && (r.secondary_unit || r.secondaryUnit)) || '').trim()
-                || String((r && r.page) || '').trim()
-                || String((r && (r.meta_file || r.metaFile)) || '').trim());
-        });
+        return !!(window.PackRangeLabel && typeof window.PackRangeLabel.groupIsRangePack === 'function'
+            && window.PackRangeLabel.groupIsRangePack(group));
     }
 
     /**
-     * 目錄小標題曾被 combinePackRangeLabel 寫成
-     * 「Azar-1-4th 13 / 8 / … ; Azar-1-4th 13 / 3 / …」。套餐名就是每段開頭重複的那串。
+     * 2026-09-15 這把鑰匙搬進共用檔 020_js_core/pack-range-label.js（PackRangeLabel.comboNameFromBookConcatTitle），
+     * teacher／student 兩端改成呼叫同一份。
      */
     function comboNameFromBookConcatTitle(text) {
-        const s = String(text || '').replace(/<[^>]*>/g, '').trim();
-        if (!s) return '';
-        const segs = s.split(/\s*[;；]\s*/).filter(Boolean);
-        if (!segs.length) return '';
-        const m = segs[0].match(/^(.+?)\s+\d+\s*\/\s*/);
-        if (!m) return '';
-        const name = String(m[1] || '').trim();
-        if (!name) return '';
-        const ok = segs.every(function (seg) {
-            return seg === name || seg.indexOf(name + ' ') === 0;
-        });
-        return ok ? name : '';
+        return (window.PackRangeLabel && typeof window.PackRangeLabel.comboNameFromBookConcatTitle === 'function')
+            ? window.PackRangeLabel.comboNameFromBookConcatTitle(text)
+            : '';
     }
 
     function packComboNamesFromGroup(group) {
@@ -1016,8 +1032,23 @@ window.TimelineTemplates = (() => {
         return s.slice(idx).trim();
     }
 
+    /**
+     * 2026-09-15 老師定案：組合層底下，套餐名＋範圍只在群組自己的「說明」顯示一次
+     * （見群組節點的 node-desc，自動產出＝FeatureTimeline.groupPackSummaryHtml）。
+     * 子任務（錄音／考試／PDF考）自動產出的標題一律不再重複套餐名或範圍，直接留空
+     * ——只靠圖示＋類型標籤（語音錄製／考試出題單）辨識。舊資料若還留著套餐名＋範圍 dump，
+     * 這裡也一律蓋成空白，不用等老師重新存檔。老師若手動在子任務自己標題欄打過別的字
+     * （跟套餐/範圍無關），仍照舊顯示（尊重手動輸入）。
+     */
     function listTitleForPackChild(t, parentRangeGroup) {
         const title = String((t && t.title) || '').replace(/<[^>]*>/g, '').trim();
+        const raw0 = (t && t.raw_data) || {};
+        const looksDumpTitle = !!(window.FeatureTimeline
+            && typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
+            && window.FeatureTimeline.titleLooksLikeSheetAliasDump(title));
+        if (groupIsRangePack(parentRangeGroup)) {
+            return (raw0.title_auto_from_range === false && title && !looksDumpTitle) ? title : '';
+        }
         if (t && t.type === 'audio_record' && bookComboNameFromRangeGroup(packHostForBookAudio(t, parentRangeGroup))) {
             return listTitleForBookAudio(t, parentRangeGroup);
         }
@@ -1095,13 +1126,24 @@ window.TimelineTemplates = (() => {
         return bookName;
     }
 
+    /**
+     * 2026-09-15 老師定案：組合層底下，套餐名＋範圍已在群組自己的「說明」顯示一次
+     * （見群組節點的 node-desc）。子任務自動產出的說明一律留空，不再重複；
+     * 老師若在子任務自己的說明欄手動打過別的字（跟套餐/範圍無關），仍照舊顯示（尊重手動輸入）。
+     */
     function listDescForPackChild(t, parentRangeGroup) {
         const raw = (t && t.raw_data) || {};
+        const FT = window.FeatureTimeline;
+        const looksDumpStored = !!(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function'
+            && FT.titleLooksLikeSheetAliasDump(t && t.description));
+        if (raw.desc_auto_from_range === false && t && t.description && !looksDumpStored) {
+            return t.description;
+        }
+        if (groupIsRangePack(parentRangeGroup)) return '';
         const host = packHostForBookAudio(t, parentRangeGroup);
         const rows = (host && host.raw_data && Array.isArray(host.raw_data.pack_rows))
             ? host.raw_data.pack_rows
             : [];
-        const FT = window.FeatureTimeline;
         const generated = (FT && typeof FT.packRangeDescriptionHtml === 'function')
             ? FT.packRangeDescriptionHtml(rows)
             : ((FT && typeof FT.bookPackDescriptionHtml === 'function')
@@ -1112,10 +1154,6 @@ window.TimelineTemplates = (() => {
             : ((FT && typeof FT.bookPackDescriptionPlain === 'function')
                 ? FT.bookPackDescriptionPlain(rows)
                 : '');
-        if (raw.desc_auto_from_range === false && t && t.description
-            && !(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function' && FT.titleLooksLikeSheetAliasDump(t.description))) {
-            return t.description;
-        }
         const current = String((t && t.description) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
         const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
         const looksDump = !!(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function' && FT.titleLooksLikeSheetAliasDump(current));
@@ -1127,6 +1165,24 @@ window.TimelineTemplates = (() => {
 
     function listDescForBookAudio(t, parentRangeGroup) {
         return listDescForPackChild(t, parentRangeGroup);
+    }
+
+    /**
+     * 組合層（範圍群組）自己的「說明」：套餐名＋範圍，只顯示一次。
+     * 老師手動改過（desc_auto_from_range===false）就照舊字顯示；否則即時用目前 pack_rows 重算，
+     * 不用等重新存檔——舊資料存檔時是空的也能立刻補上。
+     */
+    function groupDescForDisplay(t) {
+        const raw = (t && t.raw_data) || {};
+        const FT = window.FeatureTimeline;
+        const stored = String((t && t.description) || '');
+        const storedPlain = stored.replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
+        const looksDump = !!(FT && typeof FT.titleLooksLikeSheetAliasDump === 'function'
+            && FT.titleLooksLikeSheetAliasDump(storedPlain));
+        if (raw.desc_auto_from_range === false && storedPlain && !looksDump) return stored;
+        const rows = Array.isArray(raw.pack_rows) ? raw.pack_rows : [];
+        const generated = (FT && typeof FT.groupPackSummaryHtml === 'function') ? FT.groupPackSummaryHtml(rows) : '';
+        return generated || stored;
     }
 
     function renderReadOnlyTaskItem(t, effectiveBlockDueDate, effectiveBlockLatePolicy, depth, isLastLeaf, effectiveBlockOpenAt, parentRangeGroup) {
@@ -1181,7 +1237,7 @@ window.TimelineTemplates = (() => {
         if (t.type === 'link') {
             let actualUrlText = (t.url_text || '').trim();
             let actualTitle = listTitleForPackChild(t, parentRangeGroup);
-            if (!actualTitle && !rangeGroupTitleIsComboNameLocal(parentRangeGroup)) {
+            if (!actualTitle && !groupIsRangePack(parentRangeGroup)) {
                 actualTitle = (t.title || '').trim();
             }
 
@@ -1197,7 +1253,7 @@ window.TimelineTemplates = (() => {
                 }
             }
         } else {
-            const omitParent = rangeGroupTitleIsComboNameLocal(parentRangeGroup);
+            const omitParent = groupIsRangePack(parentRangeGroup);
             const shownTitle = listTitleForPackChild(t, parentRangeGroup)
                 || (omitParent ? '' : (t.title || '未命名任務'));
             taskTitleDisplay = `<span class="rt-normalize" style="font-weight:900; color:#334155; font-size:1rem;">${shownTitle || (omitParent ? '' : '未命名任務')}</span>`;
@@ -1270,6 +1326,12 @@ window.TimelineTemplates = (() => {
                 const rangeChip = isRangeGroup
                     ? '<span style="font-size:0.72rem; background:#DBEAFE; color:#1D4ED8; padding:2px 7px; border-radius:999px; font-weight:800;">範圍</span>'
                     : '';
+                // 2026-09-15 老師定案：套餐名＋範圍只在群組層顯示一次（底下子任務不再重複）。
+                const groupDescDisplay = isRangeGroup ? groupDescForDisplay(t) : '';
+                const groupDescCleanCheck = groupDescDisplay ? String(groupDescDisplay).replace(/<[^>]*>?/gm, '').trim() : '';
+                const groupDescHtmlBlock = groupDescCleanCheck !== ''
+                    ? `<div class="rt-normalize" style="font-size:0.85rem; color:#64748B; margin-top:4px; padding-left:26px; white-space:pre-line;">${groupDescDisplay}</div>`
+                    : '';
 
                 html += `
                     <div style="${marginStyle} margin-bottom: 10px; padding: 12px; background: ${lvl.bg}; border: 1px solid ${lvl.border}; border-radius: 8px;">
@@ -1278,6 +1340,7 @@ window.TimelineTemplates = (() => {
                             ${rangeChip}
                             ${gDueBadge} ${gOpenBadge} ${gLateBadge}
                         </div>
+                        ${groupDescHtmlBlock}
                 `;
                 
                 if (t.subTasks && t.subTasks.length > 0) {
@@ -1400,6 +1463,34 @@ window.TimelineTemplates = (() => {
                         if (t.raw_data) t.raw_data.title_auto_from_range = true;
                     }
                 }
+                // 2026-09-15 老師定案：組合層自己的「說明」＝套餐名＋範圍，自動產出但允許老師修改。
+                // 只在這裡顯示一次；底下子任務（錄音／考試／PDF考）不再各自重複。
+                let groupDescHtml = t.description || '';
+                let groupDescAuto = '0';
+                let groupDescFromRange = '';
+                if (isRangeGroup && window.FeatureTimeline && typeof window.FeatureTimeline.groupPackSummaryHtml === 'function') {
+                    const groupDescRows = (typeof window.FeatureTimeline.packRowsForHostPath === 'function')
+                        ? (window.FeatureTimeline.packRowsForHostPath(pathStr) || [])
+                        : [];
+                    const groupGeneratedHtml = window.FeatureTimeline.groupPackSummaryHtml(groupDescRows);
+                    const groupGeneratedPlain = (typeof window.FeatureTimeline.groupPackSummaryPlain === 'function')
+                        ? window.FeatureTimeline.groupPackSummaryPlain(groupDescRows)
+                        : '';
+                    const groupDescRaw = t.raw_data || {};
+                    const groupDescPlain = String(t.description || '').replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
+                    const groupGenNorm = String(groupGeneratedPlain || '').replace(/\s+/g, ' ').trim();
+                    const groupLooksAliasDump = !!(typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
+                        && window.FeatureTimeline.titleLooksLikeSheetAliasDump(groupDescPlain));
+                    if (groupDescRaw.desc_auto_from_range === false && !groupLooksAliasDump) {
+                        groupDescHtml = t.description || '';
+                        groupDescAuto = '0';
+                    } else if (groupDescRaw.desc_auto_from_range === true || !groupDescPlain
+                        || groupDescPlain === groupGenNorm || groupLooksAliasDump) {
+                        groupDescHtml = groupGeneratedHtml;
+                        groupDescAuto = '1';
+                        groupDescFromRange = String(groupGeneratedPlain || '').replace(/"/g, '&quot;');
+                    }
+                }
                 let subTasksHtml = '';
                 if (t.subTasks && t.subTasks.length > 0) {
                     subTasksHtml = `<div style="padding-left: 10px; display:flex; flex-direction:column;">` +
@@ -1449,6 +1540,15 @@ window.TimelineTemplates = (() => {
                             </div>
                         </div>
                         ${rangePackHtml}
+                        ${isRangeGroup ? `
+                        <div style="margin-bottom:15px;">
+                            <label style="font-weight:800; font-size:0.85rem; color:${lvl.text}; display:block; margin-bottom:4px;">📝 說明（套餐名＋範圍，選套餐後自動帶入，可修改；子任務不再各自重複）：</label>
+                            <div id="node-desc-${pathStr}" class="rt-normalize" contenteditable="true" data-placeholder="套餐名＋範圍（選套餐後自動帶入）"
+                                 data-desc-auto="${groupDescAuto}" data-desc-from-range="${groupDescFromRange}"
+                                 oninput="window.FeatureTimeline && window.FeatureTimeline.onGroupDescInput && window.FeatureTimeline.onGroupDescInput('${pathStr}', this)"
+                                 style="width:100%; min-height:36px; font-size:0.9rem; padding:8px 12px; background:white; border:1px solid ${titleBorder}; border-radius:6px; outline:none;">${groupDescHtml || ''}</div>
+                        </div>
+                        ` : ''}
 
                         <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center; background:white; padding:10px 12px; border-radius:6px; border: 1px solid #CBD5E1; margin-bottom:15px;">
                             <div style="display:flex; align-items:center; gap:8px;">
@@ -1584,8 +1684,8 @@ window.TimelineTemplates = (() => {
                     const omitComboTitle = !!(window.FeatureTimeline
                         && typeof window.FeatureTimeline.childTitleOmitsComboName === 'function'
                         && window.FeatureTimeline.childTitleOmitsComboName(pathStr));
-                    let titleFromRange = (window.FeatureTimeline && typeof window.FeatureTimeline.packTitleForAudio === 'function')
-                        ? String(window.FeatureTimeline.packTitleForAudio(pathStr) || '').trim()
+                    let titleFromRange = (window.FeatureTimeline && typeof window.FeatureTimeline.packTitleForAudioLeaf === 'function')
+                        ? String(window.FeatureTimeline.packTitleForAudioLeaf(pathStr) || '').trim()
                         : '';
                     if (!omitComboTitle) {
                         if (!titleFromRange) titleFromRange = concatName;
@@ -1949,14 +2049,19 @@ window.TimelineTemplates = (() => {
                         examRangeHint = window.FeatureExamJob.getExamRangeLabel(pathStr, t) || '';
                     } else if (t.type === 'exam' && window.FeatureExamJob && typeof window.FeatureExamJob.getSiblingAudioRangeLabel === 'function') {
                         examRangeHint = window.FeatureExamJob.getSiblingAudioRangeLabel(pathStr) || '';
-                    } else if (t.type === 'pdf_exam' && FTLeaf && typeof FTLeaf.packRangeLabelForAudio === 'function') {
-                        examRangeHint = FTLeaf.packRangeLabelForAudio(pathStr) || '';
+                    } else if (t.type === 'pdf_exam' && FTLeaf && typeof FTLeaf.packRangeLabelForAudioLeaf === 'function') {
+                        examRangeHint = FTLeaf.packRangeLabelForAudioLeaf(pathStr) || '';
                     }
                     const wasExamTitleAuto = examRaw.title_auto_from_range === true;
                     const looksSheetDumpExam = !!(window.FeatureTimeline
                         && typeof window.FeatureTimeline.titleLooksLikeSheetAliasDump === 'function'
                         && window.FeatureTimeline.titleLooksLikeSheetAliasDump(plainExamTitle));
-                    const examTitleIsAuto = (wasExamTitleAuto || !plainExamTitle || looksSheetDumpExam) && (!!examRangeHint || looksSheetDumpExam);
+                    // 組合層底下：套餐名＋範圍已在群組說明顯示一次，考試自己的標題目標值就是空白
+                    // （examRangeHint 本身就會是空字串），不能因為 examRangeHint 是空就當「沒東西可繼承」而
+                    // 退回顯示舊的完整標題。
+                    const examTitleIsAuto = underCombo
+                        ? (wasExamTitleAuto || !plainExamTitle || looksSheetDumpExam)
+                        : (wasExamTitleAuto || !plainExamTitle || looksSheetDumpExam) && (!!examRangeHint || looksSheetDumpExam);
                     if (examTitleIsAuto) {
                         leafTitleHtml = examRangeHint.replace(/</g, '&lt;');
                         leafTitleAuto = '1';
@@ -1980,13 +2085,18 @@ window.TimelineTemplates = (() => {
                         : ((typeof window.FeatureTimeline.packRowsForAudioPath === 'function')
                             ? (window.FeatureTimeline.packRowsForAudioPath(pathStr) || [])
                             : []);
-                    const generatedHtml = window.FeatureTimeline.packRangeDescriptionHtml(descRows)
-                        || ((t.type === 'audio_record' && typeof window.FeatureTimeline.bookPackDescriptionHtml === 'function')
-                            ? window.FeatureTimeline.bookPackDescriptionHtml(descRows)
+                    // 組合層底下：套餐名＋範圍已在群組說明顯示一次，子任務自己的說明目標值就是空白。
+                    const generatedHtml = underCombo
+                        ? ''
+                        : (window.FeatureTimeline.packRangeDescriptionHtml(descRows)
+                            || ((t.type === 'audio_record' && typeof window.FeatureTimeline.bookPackDescriptionHtml === 'function')
+                                ? window.FeatureTimeline.bookPackDescriptionHtml(descRows)
+                                : ''));
+                    const generatedPlain = underCombo
+                        ? ''
+                        : ((typeof window.FeatureTimeline.packRangeDescriptionPlain === 'function')
+                            ? window.FeatureTimeline.packRangeDescriptionPlain(descRows)
                             : '');
-                    const generatedPlain = (typeof window.FeatureTimeline.packRangeDescriptionPlain === 'function')
-                        ? window.FeatureTimeline.packRangeDescriptionPlain(descRows)
-                        : '';
                     const descRaw = t.raw_data || {};
                     const descPlain = String(t.description || '').replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
                     const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
@@ -2344,6 +2454,7 @@ window.TimelineTemplates = (() => {
         renderPasteWindowRowHtml,
         renderRangePackHtml,
         renderSheetPackTableHtml,
+        showPackNoSheetsWarning,
         listTitleForBookAudio,
         listTitleForPackChild,
         rangeTailFromTitle,

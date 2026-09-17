@@ -237,10 +237,42 @@ window.BuilderStore = (() => {
         const rows = (typeof FT.packRowsForHostPath === 'function')
             ? (FT.packRowsForHostPath(pathStr) || [])
             : ((typeof FT.packRowsForAudioPath === 'function') ? (FT.packRowsForAudioPath(pathStr) || []) : []);
-        const generated = FT.packRangeDescriptionHtml(rows, (bState && bState.classId) || '');
-        const generatedPlain = (typeof FT.packRangeDescriptionPlain === 'function')
-            ? FT.packRangeDescriptionPlain(rows, (bState && bState.classId) || '')
-            : '';
+        // 2026-09-15 老師定案：組合層底下，套餐名＋範圍已在群組自己的說明顯示一次，
+        // 子任務自己的說明目標值就是空白——一律走 leafPackDescriptionHtml/Plain（組合層底下回空）。
+        const generated = (typeof FT.leafPackDescriptionHtml === 'function')
+            ? FT.leafPackDescriptionHtml(pathStr, rows, (bState && bState.classId) || '')
+            : FT.packRangeDescriptionHtml(rows, (bState && bState.classId) || '');
+        const generatedPlain = (typeof FT.leafPackDescriptionPlain === 'function')
+            ? FT.leafPackDescriptionPlain(pathStr, rows, (bState && bState.classId) || '')
+            : ((typeof FT.packRangeDescriptionPlain === 'function')
+                ? FT.packRangeDescriptionPlain(rows, (bState && bState.classId) || '')
+                : '');
+        t.description = generated || '';
+        t.raw_data.desc_auto_from_range = true;
+        descEl.innerHTML = generated || '';
+        descEl.setAttribute('data-desc-auto', '1');
+        descEl.setAttribute('data-desc-from-range', generatedPlain);
+    }
+
+    /**
+     * 組合層（範圍群組）自己的「說明」：套餐名＋範圍，只在這裡存一次。
+     * 老師手動改過（data-desc-auto="0"）就尊重手動輸入；否則跟著範圍表即時重算。
+     */
+    function syncGroupPackDescription(t, pathStr, descEl) {
+        if (!t || !descEl) return;
+        const FT = window.FeatureTimeline;
+        if (!FT || typeof FT.groupPackSummaryHtml !== 'function') return;
+        if (!(t.raw_data && t.raw_data.group_role === 'range')) return;
+        if (!t.raw_data) t.raw_data = {};
+        if (descEl.getAttribute('data-desc-auto') === '0'
+            && !(FT.titleLooksLikeSheetAliasDump && FT.titleLooksLikeSheetAliasDump(descEl.textContent))) {
+            t.raw_data.desc_auto_from_range = false;
+            return;
+        }
+        const rows = (typeof FT.packRowsForHostPath === 'function') ? (FT.packRowsForHostPath(pathStr) || []) : [];
+        const classId = (bState && bState.classId) || '';
+        const generated = FT.groupPackSummaryHtml(rows, classId);
+        const generatedPlain = (typeof FT.groupPackSummaryPlain === 'function') ? FT.groupPackSummaryPlain(rows, classId) : '';
         t.description = generated || '';
         t.raw_data.desc_auto_from_range = true;
         descEl.innerHTML = generated || '';
@@ -255,10 +287,10 @@ window.BuilderStore = (() => {
         const inherit = t.type === 'check' || t.type === 'link' || t.type === 'audio_record'
             || t.type === 'exam' || t.type === 'pdf_exam' || t.type === 'drive';
         if (!inherit) return;
-        if (typeof FT.packRangeLabelForAudio !== 'function') return;
-        const packLabel = (t.type === 'audio_record' && typeof FT.packTitleForAudio === 'function')
-            ? (FT.packTitleForAudio(pathStr) || '')
-            : (FT.packRangeLabelForAudio(pathStr) || '');
+        if (typeof FT.packRangeLabelForAudioLeaf !== 'function') return;
+        const packLabel = (t.type === 'audio_record' && typeof FT.packTitleForAudioLeaf === 'function')
+            ? (FT.packTitleForAudioLeaf(pathStr) || '')
+            : (FT.packRangeLabelForAudioLeaf(pathStr) || '');
         const omitCombo = typeof FT.childTitleOmitsComboName === 'function' && FT.childTitleOmitsComboName(pathStr);
         if (!packLabel && !omitCombo) return;
         if (!t.raw_data) t.raw_data = {};
@@ -359,6 +391,9 @@ window.BuilderStore = (() => {
                             if (titleEl) titleEl.textContent = derived;
                         }
                     }
+                    // 2026-09-15 老師定案：套餐名＋範圍只在群組自己的「說明」顯示一次。
+                    const groupDescEl = document.getElementById(`node-desc-${pathStr}`);
+                    if (groupDescEl) syncGroupPackDescription(t, pathStr, groupDescEl);
                 }
             } else {
                 const urlEl = document.getElementById(`node-url-${pathStr}`);
@@ -426,8 +461,8 @@ window.BuilderStore = (() => {
                                 && !!window.TimelineTemplates.comboNameFromBookConcatTitle(titlePlain))
                             || titleLooksLikeSheetAliasDump(titlePlain);
                         if (shouldAuto) {
-                            const packTitle = (window.FeatureTimeline && typeof window.FeatureTimeline.packTitleForAudio === 'function')
-                                ? (window.FeatureTimeline.packTitleForAudio(pathStr) || '')
+                            const packTitle = (window.FeatureTimeline && typeof window.FeatureTimeline.packTitleForAudioLeaf === 'function')
+                                ? (window.FeatureTimeline.packTitleForAudioLeaf(pathStr) || '')
                                 : '';
                             const omitCombo = window.FeatureTimeline
                                 && typeof window.FeatureTimeline.childTitleOmitsComboName === 'function'
@@ -768,8 +803,10 @@ window.BuilderStore = (() => {
                 // 答案清單、已畫的框）都是直接 mutate task.raw_data.pdf_exam_job，不靠這裡同步。
                 if (t.type === 'pdf_exam') {
                     const FT = window.FeatureTimeline;
-                    const pdfRange = (FT && typeof FT.packRangeLabelForAudio === 'function')
-                        ? (FT.packRangeLabelForAudio(pathStr) || '')
+                    const underComboPdf = !!(FT && typeof FT.parentRangeGroupPathOf === 'function'
+                        && FT.parentRangeGroupPathOf(pathStr));
+                    const pdfRange = (FT && typeof FT.packRangeLabelForAudioLeaf === 'function')
+                        ? (FT.packRangeLabelForAudioLeaf(pathStr) || '')
                         : '';
                     const pdfTitlePlain = titleEl
                         ? String(titleEl.textContent || '').trim()
@@ -783,7 +820,9 @@ window.BuilderStore = (() => {
                     const pdfShouldAuto = !pdfTitlePlain || pdfAutoFlag === '1' || pdfWasAuto
                         || (pdfPrevFrom && pdfTitlePlain === pdfPrevFrom)
                         || titleLooksLikeSheetAliasDump(pdfTitlePlain);
-                    if (pdfShouldAuto && (pdfRange || titleLooksLikeSheetAliasDump(pdfTitlePlain))) {
+                    // 組合層底下：套餐名＋範圍已在群組說明顯示一次，pdfRange 目標值本來就是空白，
+                    // 不能因為 pdfRange 是空就當「沒東西可繼承」而放過舊的完整標題不清。
+                    if (pdfShouldAuto && (pdfRange || titleLooksLikeSheetAliasDump(pdfTitlePlain) || underComboPdf)) {
                         t.title = pdfRange;
                         t.raw_data.title_auto_from_range = true;
                         if (titleEl) {

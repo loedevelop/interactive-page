@@ -783,6 +783,34 @@ window.FeatureClassMaterialCombinations = (function () {
         if (insErr && !/duplicate|unique|conflict/i.test(insErr.message || '')) throw insErr;
     }
 
+    /**
+     * 2026-09-16（雷區修復：Excel/JSON 套餐撈到 0 本活頁）：ensureCombination 過去只有在
+     * 「剛建立套餐、且這次剛好只有 1 本活頁」才會寫入 material_combination_sheets；套餐已存在
+     * 的分支從來沒補寫過。多本活頁的套餐（例如同一本教材一次掃到 2 本以上）因此永遠沒有正確
+     * 關聯表紀錄，combo_statistics／fetch_class_combo_stats 用 LEFT JOIN material_combination_sheets
+     * 撈套餐底下活頁時就會是 0 本——不是「刪除活頁」造成的，是建立當下就沒寫對。
+     * 只補寫，不刪：刪除已經由 material_combination_sheets.material_sheet_id 的
+     * ON DELETE CASCADE 處理（活頁本身被刪就會跟著清掉），這裡不需要、也不准再猜著刪。
+     */
+    async function syncComboSheetLinks(comboId, sheetIds) {
+        const ids = Array.from(new Set((sheetIds || []).filter(Boolean).map(String)));
+        if (!comboId || !ids.length || !window.supabaseClient) return;
+        const { data: existingLinks, error: readErr } = await window.supabaseClient
+            .from('material_combination_sheets')
+            .select('material_sheet_id')
+            .eq('combination_id', comboId);
+        if (readErr) throw readErr;
+        const have = {};
+        (existingLinks || []).forEach(function (l) { have[String(l.material_sheet_id)] = true; });
+        const missing = ids.filter(function (id) { return !have[id]; });
+        if (!missing.length) return;
+        const rows = missing.map(function (id) { return { combination_id: comboId, material_sheet_id: id }; });
+        const { error: insErr } = await window.supabaseClient
+            .from('material_combination_sheets')
+            .insert(rows);
+        if (insErr && !/duplicate|unique|conflict/i.test(insErr.message || '')) throw insErr;
+    }
+
     /** 套餐＝活頁＋擷取＋試卷。同一本活頁可以對很多份。 */
     async function ensureCombination(userId, group, label) {
         const { data: existingList, error: findErr } = await window.supabaseClient
@@ -819,11 +847,11 @@ window.FeatureClassMaterialCombinations = (function () {
                     .eq('id', comboId);
                 if (updErr) throw updErr;
             }
+            await syncComboSheetLinks(comboId, group.sheet_db_ids);
             return comboId;
         }
 
         const ownSheetIds = (group.sheet_db_ids || []).filter(Boolean);
-        const oneSheetId = ownSheetIds.length === 1 ? ownSheetIds[0] : '';
         const stem = String((group.sheet_stem || group.sheetStem || '') || '').trim();
         const extName = templateNameById(group.extraction_template_id) || '';
         const examName = String(group.exam_template_name || group.examTemplateName || '').trim();
@@ -844,12 +872,7 @@ window.FeatureClassMaterialCombinations = (function () {
             .single();
         if (insErr) throw insErr;
         comboId = inserted.id;
-        if (oneSheetId) {
-            const { error: linkInsErr } = await window.supabaseClient
-                .from('material_combination_sheets')
-                .insert({ combination_id: comboId, material_sheet_id: oneSheetId });
-            if (linkInsErr) throw linkInsErr;
-        }
+        await syncComboSheetLinks(comboId, ownSheetIds);
         return comboId;
     }
 

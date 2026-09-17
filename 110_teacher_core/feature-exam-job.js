@@ -3823,8 +3823,8 @@ window.FeatureExamJob = (function () {
         const node = task || getBuilderTaskByPath(examPathStr);
         const FT = window.FeatureTimeline;
         if (isExamUnderComboPack(examPathStr, node)) {
-            const packLabel = (FT && typeof FT.packRangeLabelForAudio === 'function')
-                ? FT.packRangeLabelForAudio(examPathStr)
+            const packLabel = (FT && typeof FT.packRangeLabelForAudioLeaf === 'function')
+                ? FT.packRangeLabelForAudioLeaf(examPathStr)
                 : '';
             if (packLabel) return packLabel;
             if (FT && typeof FT.childTitleOmitsComboName === 'function' && FT.childTitleOmitsComboName(examPathStr)) return '';

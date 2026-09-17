@@ -861,37 +861,36 @@ window.FeatureTimeline = (() => {
         return domRows.some(packRowHasContent) ? domRows : stateRows;
     }
 
-    /** 組合層標題已是套餐名時，下一層不准再寫一次套餐名。 */
-    function rangeGroupTitleIsComboName(group, groupPathStr) {
-        if (!group || !group.raw_data) return false;
-        const names = uniquePackComboNames(normalizePackRows(group.raw_data).map(packRowFromRaw), builderClassId())
-            || String(group.raw_data.pack_combo_label || '').trim();
-        if (!names) return false;
-        let title = String(group.title || '').replace(/<[^>]*>/g, '').trim();
-        if (groupPathStr) {
-            const el = document.getElementById('node-title-' + groupPathStr);
-            if (el) title = String(el.textContent || '').replace(/<[^>]*>/g, '').trim();
-        }
-        if (!title) return group.raw_data.title_auto_from_range !== false;
-        const norm = function (s) {
-            return String(s || '').replace(/[／;；]/g, '|').replace(/\s+/g, '').toUpperCase();
-        };
-        return norm(title) === norm(names);
-    }
-
+    /**
+     * 2026-09-15 老師定案：組合層（範圍群組）底下，套餐名＋範圍只在群組層的「說明」顯示一次
+     * （見 groupPackSummaryHtml／onGroupDescInput）。子任務（錄音／考試／PDF考）不管群組標題
+     * 有沒有被老師改成自訂名稱（例：Vocab），自己的標題都不再重複套餐名或範圍——一律留空，
+     * 只靠圖示＋類型標籤（語音錄製／考試出題單）辨識。不再依賴「群組標題文字是否等於套餐名」判斷。
+     */
     function childTitleOmitsComboName(pathStr) {
-        const parent = parentRangeGroupOf(pathStr);
-        if (!parent) return false;
-        return rangeGroupTitleIsComboName(parent, parentRangeGroupPathOf(pathStr));
+        return !!parentRangeGroupOf(pathStr);
     }
 
-    /** 錄音／考試小標題。組合層已是套餐名 → 只留範圍。獨立作業 → 套餐名＋範圍。 */
+    /**
+     * 套餐名＋範圍的原始值。這支同時餵給兩種完全不同的用途：
+     * 1. 子任務自己的標題（組合層底下老師定案要留空——見下面 packRangeLabelForAudioLeaf）
+     * 2. 錄音「範圍」欄位（node-material-range，功能性資料：AI 批改、學生文稿比對都讀這欄，
+     *    不管子任務標題顯不顯示，這欄都必須是真實範圍文字，不准跟著標題一起被清空）。
+     * 因此本體永遠回真實值，不做任何「組合層底下留空」的判斷；要留空的呼叫點請改用
+     * packRangeLabelForAudioLeaf／packTitleForAudioLeaf。
+     */
     function packRangeLabelForAudio(audioPathStr) {
         return combinePackRangeLabel(
             packRowsForHostPath(audioPathStr),
             builderClassId(),
             childTitleOmitsComboName(audioPathStr)
         );
+    }
+
+    /** 子任務自己的標題專用：組合層底下＝套餐名＋範圍已在群組說明顯示一次，留空。獨立作業 → 套餐名＋範圍。 */
+    function packRangeLabelForAudioLeaf(audioPathStr) {
+        if (parentRangeGroupPathOf(audioPathStr)) return '';
+        return packRangeLabelForAudio(audioPathStr);
     }
 
     function uniquePackComboNames(rows, classId) {
@@ -907,12 +906,22 @@ window.FeatureTimeline = (() => {
         return names.join('；');
     }
 
-    /** 目錄套餐錄音標題：組合層已是套餐名 → 空白（範圍在說明）。Excel／PDF：組合層已是套餐名 → 只留範圍。 */
+    /**
+     * 目錄／Excel／PDF 套餐錄音標題的原始值。同 packRangeLabelForAudio，這支也同時餵給
+     * 「範圍」功能欄位與「子任務標題」兩種用途，本體永遠回真實值，不做留空判斷。
+     * 子任務自己的標題請改用 packTitleForAudioLeaf。
+     */
     function packTitleForAudio(audioPathStr) {
         const source = packRowsForHostPath(audioPathStr);
         const omit = childTitleOmitsComboName(audioPathStr);
         if (packRowsAreOnlyBook(source)) return omit ? '' : uniquePackComboNames(source, builderClassId());
         return combinePackRangeLabel(source, builderClassId(), omit);
+    }
+
+    /** 子任務自己的標題專用：組合層底下＝套餐名＋範圍已在群組說明顯示一次，留空。獨立作業 → 套餐名（＋範圍）。 */
+    function packTitleForAudioLeaf(audioPathStr) {
+        if (parentRangeGroupPathOf(audioPathStr)) return '';
+        return packTitleForAudio(audioPathStr);
     }
 
     function currentPackRangeSpecs(audioPathStr) {
@@ -1188,7 +1197,7 @@ window.FeatureTimeline = (() => {
         const rangeText = (rangeEl && String(rangeEl.value || '').trim()) || label || '';
         if (!incomplete) {
             const titleForInherit = parentRangeGroupPathOf(pathStr)
-                ? packTitleForAudio(pathStr)
+                ? packTitleForAudioLeaf(pathStr)
                 : rangeText;
             if (titleForInherit || childTitleOmitsComboName(pathStr)) {
                 applyInheritedTitleFromRange(pathStr, titleForInherit);
@@ -1693,8 +1702,8 @@ window.FeatureTimeline = (() => {
         if (parentRangeGroupPathOf(pathStr)) {
             const node = getTaskNodeByPathStr(pathStr);
             rangeText = (node && node.type === 'audio_record')
-                ? (packTitleForAudio(pathStr) || '')
-                : (packRangeLabelForAudio(pathStr) || '');
+                ? (packTitleForAudioLeaf(pathStr) || '')
+                : (packRangeLabelForAudioLeaf(pathStr) || '');
             applyInheritedTitleFromRange(pathStr, rangeText);
             return;
         }
@@ -1720,19 +1729,46 @@ window.FeatureTimeline = (() => {
         const node = getTaskNodeByPathStr(pathStr);
         if (!node || !isComboInheritType(node.type)) return;
         const rows = packRowsForHostPath(pathStr);
-        const generatedHtml = packRangeDescriptionHtml(rows, builderClassId());
-        const generatedPlain = packRangeDescriptionPlain(rows, builderClassId());
+        const generatedHtml = leafPackDescriptionHtml(pathStr, rows, builderClassId());
+        const generatedPlain = leafPackDescriptionPlain(pathStr, rows, builderClassId());
         const current = String(descEl.textContent || '').replace(/\s+/g, ' ').trim();
         const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
         if (!current) {
             descEl.setAttribute('data-desc-auto', '1');
-            if (generatedHtml) descEl.innerHTML = generatedHtml;
+            descEl.innerHTML = generatedHtml || '';
             descEl.setAttribute('data-desc-from-range', generatedPlain);
             return;
         }
         if (current === genNorm || titleLooksLikeSheetAliasDump(current)) {
             descEl.setAttribute('data-desc-auto', '1');
-            if (titleLooksLikeSheetAliasDump(current) && generatedHtml) descEl.innerHTML = generatedHtml;
+            if (titleLooksLikeSheetAliasDump(current)) descEl.innerHTML = generatedHtml || '';
+            descEl.setAttribute('data-desc-from-range', generatedPlain);
+            return;
+        }
+        descEl.setAttribute('data-desc-auto', '0');
+    }
+
+    /**
+     * 組合層（範圍群組）自己的「說明」輸入：套餐名＋範圍，自動產出但允許老師修改。
+     * 跟 onNodeDescInput 同一套「留空／等於自動值／舊 dump」判斷準則，只是自動值換成 groupPackSummary。
+     */
+    function onGroupDescInput(pathStr, el) {
+        const descEl = el || document.getElementById('node-desc-' + pathStr);
+        if (!descEl) return;
+        const rows = packRowsForHostPath(pathStr);
+        const generatedHtml = groupPackSummaryHtml(rows, builderClassId());
+        const generatedPlain = groupPackSummaryPlain(rows, builderClassId());
+        const current = String(descEl.textContent || '').replace(/\s+/g, ' ').trim();
+        const genNorm = String(generatedPlain || '').replace(/\s+/g, ' ').trim();
+        if (!current) {
+            descEl.setAttribute('data-desc-auto', '1');
+            descEl.innerHTML = generatedHtml || '';
+            descEl.setAttribute('data-desc-from-range', generatedPlain);
+            return;
+        }
+        if (current === genNorm || titleLooksLikeSheetAliasDump(current)) {
+            descEl.setAttribute('data-desc-auto', '1');
+            if (titleLooksLikeSheetAliasDump(current)) descEl.innerHTML = generatedHtml || '';
             descEl.setAttribute('data-desc-from-range', generatedPlain);
             return;
         }
@@ -1958,11 +1994,18 @@ window.FeatureTimeline = (() => {
         return run[0].label;
     }
 
+    /**
+     * 「區段以外」的判斷鑰匙——2026-09-15 抓到的雷區：以前這裡把 start／end（起迄本身的數值）
+     * 也放進鑰匙比對，導致只要同一套餐底下有兩段「不同」的頁碼（例：61~70 跟 84~88），
+     * 就一定判定成「不一致」，範圍整段被吞掉、只剩套餐名——這正好跟 combinePackRangeLabel
+     * 自己的 test #1／#3（1~2 與 3 要融成 1~3；1~5 與 8~10 要顯示成 1~5, 8~10）互相矛盾：
+     * 「起迄」在這裡該比對的是起迄的**類型**（頁碼／題號，已經是陣列第一格），不是起迄的
+     * **數值**——數值本來就允許不同（那正是要融合／串接的東西）。只留基準／每頁行數／難度／
+     * 必考／排除／題數這些「除了範圍本身以外」的出題設定要一致，起迄數值不應該擋這裡。
+     */
     function packRowExamKey(r) {
         return [
             ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page',
-            String((r && r.start) || '').trim(),
-            String((r && r.end) || '').trim(),
             String((r && r.lines_per_page) || '').trim(),
             String((r && r.difficulty) || '').trim(),
             String((r && (r.include_nums || r.includeNums)) || '').trim(),
@@ -2055,10 +2098,13 @@ window.FeatureTimeline = (() => {
     /**
      * 說明＝區段＋範圍。同一區段同一模式：匣內排序，相連／重疊才融，斷層一個 pp.／# 加逗號。
      * 跟 combinePackRangeLabel 同一把 mergePickedIntervals。不准一列一行、連續還分號。
+     * 區段（活頁別名）只在同一套餐底下真的有「多個不同活頁」需要區分時才加；
+     * 只有一本活頁＝區段固定、不是老師選出來的區分資訊，不准把活頁別名寫進說明。
      */
     function sheetPackDescriptionLines(rows, classId) {
         const groups = [];
         const groupIndex = {};
+        const comboSections = {};
         (rows || []).forEach(function (r) {
             if (isBookPackRow(r)) return;
             const startRaw = String((r && r.start) || '').trim();
@@ -2071,12 +2117,13 @@ window.FeatureTimeline = (() => {
             const mode = ((r && (r.rangeType || r.range_type)) === 'qnum') ? 'qnum' : 'page';
             const comboId = String((r && (r.comboId || r.combo_id)) || '').trim();
             const comboName = pickPackComboName(classId, r);
-            const key = (comboId ? ('id:' + comboId) : ('name:' + String(comboName || '').toUpperCase()))
-                + '\t' + String(section || '').toUpperCase()
-                + '\t' + mode;
+            const comboKey = comboId ? ('id:' + comboId) : ('name:' + String(comboName || '').toUpperCase());
+            if (!comboSections[comboKey]) comboSections[comboKey] = {};
+            if (section) comboSections[comboKey][String(section).toUpperCase()] = true;
+            const key = comboKey + '\t' + String(section || '').toUpperCase() + '\t' + mode;
             if (groupIndex[key] == null) {
                 groupIndex[key] = groups.length;
-                groups.push({ section: section, mode: mode, intervals: [] });
+                groups.push({ comboKey: comboKey, section: section, mode: mode, intervals: [] });
             }
             groups[groupIndex[key]].intervals.push({
                 start: Math.min(startN, endN),
@@ -2089,7 +2136,9 @@ window.FeatureTimeline = (() => {
                 ? formatPickedQnumIntervals(merged)
                 : formatPickedPageIntervals(merged);
             if (!range) return '';
-            return g.section ? (g.section + ' ' + range) : range;
+            const distinctSections = Object.keys(comboSections[g.comboKey] || {}).length;
+            const showSection = g.section && distinctSections > 1;
+            return showSection ? (g.section + ' ' + range) : range;
         }).filter(Boolean);
     }
 
@@ -2114,6 +2163,37 @@ window.FeatureTimeline = (() => {
                 .replace(/>/g, '&gt;');
         }).join(' ; <br>');
         return [bookHtml, sheetHtml].filter(Boolean).join('<br>');
+    }
+
+    /**
+     * 2026-09-15 老師定案：組合層底下的子任務（錄音／考試／PDF考）不再各自重複顯示套餐名／範圍
+     * ——這份說明已經在群組層顯示過一次（見 groupPackSummaryHtml）。子任務自己的「說明」欄一律留空。
+     * 獨立作業（不在組合層底下）維持原樣，不受影響。
+     */
+    function leafPackDescriptionHtml(pathStr, rows, classId) {
+        if (parentRangeGroupPathOf(pathStr)) return '';
+        return packRangeDescriptionHtml(rows, classId);
+    }
+
+    function leafPackDescriptionPlain(pathStr, rows, classId) {
+        if (parentRangeGroupPathOf(pathStr)) return '';
+        return packRangeDescriptionPlain(rows, classId);
+    }
+
+    /**
+     * 組合層（範圍群組）自己的「說明」：套餐名＋範圍，只在這裡自動產出一次。
+     * 不管群組標題有沒有被老師改成自訂名稱，這裡都固定顯示套餐名＋範圍，讓底下子任務不用各自重複。
+     * 跟獨立作業標題同一把 combinePackRangeLabel（omitComboName=false，永遠帶套餐名）。
+     */
+    function groupPackSummaryPlain(rows, classId) {
+        return combinePackRangeLabel(rows, classId, false);
+    }
+
+    function groupPackSummaryHtml(rows, classId) {
+        return String(groupPackSummaryPlain(rows, classId) || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 
     /** 舊標題把活頁別名當標題（J.sentence-translation pp. 1~2 ; …）。同一區段連續範圍卻一行一行分號，也是自動稿，要重算。 */
@@ -2183,9 +2263,14 @@ window.FeatureTimeline = (() => {
                 formatPickedPageIntervals(mergePickedIntervals(page)),
                 formatPickedQnumIntervals(mergePickedIntervals(qnum))
             ].filter(Boolean).join(', ');
-            const consistent = packRowsConsistentExceptSheet(filled);
-            const sheetStr = consistent ? collapseSheetLabelList(uniqueSheetHeadsForRows(filled, classId)) : '';
-            if (consistent && rangeStr) {
+            // 2026-09-15 老師定案：範圍合併只看範圍本身（頁碼／題號連貫與否），跟每頁行數／
+            // 難度／必考／排除／題數這些出考卷專用設定完全無關——這些設定不一致，不准把範圍
+            // 吞掉、只剩套餐名（違反永遠不准丟資料）。相連就合併，不相連就逗號分開列，範圍永遠列出來。
+            // 只有一本活頁＝區段固定，不是老師選出來的區分資訊，不准把活頁別名寫進標題／說明；
+            // 是否列出區段只看「是否真的有多本不同活頁」，跟考試設定是否一致無關。
+            const sheetHeads = uniqueSheetHeadsForRows(filled, classId);
+            const sheetStr = sheetHeads.length > 1 ? collapseSheetLabelList(sheetHeads) : '';
+            if (rangeStr) {
                 const bits = omitComboName
                     ? [sheetStr, rangeStr]
                     : [g.label, sheetStr, rangeStr];
@@ -2783,7 +2868,7 @@ window.FeatureTimeline = (() => {
                 renderMaterialMetaRows(audioPath, _materialMetaOptionsCache[audioPath] || [], refsToSavedRows(refs));
             }
             const audioTitleEl = document.getElementById('node-title-' + audioPath);
-            const audioTitle = packTitleForAudio(audioPath);
+            const audioTitle = packTitleForAudioLeaf(audioPath);
             if (audioTitleEl && audioTitleEl.getAttribute('data-title-auto') !== '0'
                 && (audioTitle || childTitleOmitsComboName(audioPath))) {
                 audioTitleEl.textContent = audioTitle || '';
@@ -2792,8 +2877,8 @@ window.FeatureTimeline = (() => {
             }
             const packRowsForDesc = Array.isArray(pack.rows) ? pack.rows : [];
             const descEl = document.getElementById('node-desc-' + audioPath);
-            const descHtml = packRangeDescriptionHtml(packRowsForDesc, builderClassId());
-            const descPlain = packRangeDescriptionPlain(packRowsForDesc, builderClassId());
+            const descHtml = leafPackDescriptionHtml(audioPath, packRowsForDesc, builderClassId());
+            const descPlain = leafPackDescriptionPlain(audioPath, packRowsForDesc, builderClassId());
             if (descEl && (descEl.getAttribute('data-desc-auto') !== '0'
                 || titleLooksLikeSheetAliasDump(descEl.textContent))) {
                 descEl.innerHTML = descHtml || '';
@@ -2830,7 +2915,7 @@ window.FeatureTimeline = (() => {
                 });
             });
             const examTitleEl = document.getElementById('node-title-' + examPath);
-            const examTitle = packRangeLabelForAudio(examPath);
+            const examTitle = packRangeLabelForAudioLeaf(examPath);
             if (examTitleEl && examTitleEl.getAttribute('data-title-auto') !== '0'
                 && (examTitle || childTitleOmitsComboName(examPath) || titleLooksLikeSheetAliasDump(examTitleEl.textContent))) {
                 examTitleEl.textContent = examTitle || '';
@@ -2838,8 +2923,8 @@ window.FeatureTimeline = (() => {
                 examTitleEl.setAttribute('data-title-from-range', examTitle || '');
             }
             const examDescEl = document.getElementById('node-desc-' + examPath);
-            const examDescHtml = packRangeDescriptionHtml(packRows, builderClassId());
-            const examDescPlain = packRangeDescriptionPlain(packRows, builderClassId());
+            const examDescHtml = leafPackDescriptionHtml(examPath, packRows, builderClassId());
+            const examDescPlain = leafPackDescriptionPlain(examPath, packRows, builderClassId());
             if (examDescEl && (examDescEl.getAttribute('data-desc-auto') !== '0'
                 || titleLooksLikeSheetAliasDump(examDescEl.textContent))) {
                 examDescEl.innerHTML = examDescHtml || '';
@@ -2851,7 +2936,7 @@ window.FeatureTimeline = (() => {
             if (!t || !isComboInheritType(t.type) || t.type === 'audio_record' || t.type === 'exam') return;
             const childPath = groupPathStr + '-' + i;
             const titleEl = document.getElementById('node-title-' + childPath);
-            const childTitle = packRangeLabelForAudio(childPath);
+            const childTitle = packRangeLabelForAudioLeaf(childPath);
             if (titleEl && titleEl.getAttribute('data-title-auto') !== '0'
                 && (childTitle || childTitleOmitsComboName(childPath) || titleLooksLikeSheetAliasDump(titleEl.textContent))) {
                 titleEl.textContent = childTitle || '';
@@ -2860,8 +2945,8 @@ window.FeatureTimeline = (() => {
             }
             const childDescEl = document.getElementById('node-desc-' + childPath);
             const childRows = packRowsForHostPath(childPath);
-            const childDescHtml = packRangeDescriptionHtml(childRows, builderClassId());
-            const childDescPlain = packRangeDescriptionPlain(childRows, builderClassId());
+            const childDescHtml = leafPackDescriptionHtml(childPath, childRows, builderClassId());
+            const childDescPlain = leafPackDescriptionPlain(childPath, childRows, builderClassId());
             if (childDescEl && (childDescEl.getAttribute('data-desc-auto') !== '0'
                 || titleLooksLikeSheetAliasDump(childDescEl.textContent))) {
                 childDescEl.innerHTML = childDescHtml || '';
@@ -2873,6 +2958,22 @@ window.FeatureTimeline = (() => {
                 if (statusEl) statusEl.textContent = packPdfStatusForChildPath(childPath);
             }
         });
+        refreshGroupPackSummaryDom(groupPathStr);
+    }
+
+    /** 組合層自己的「說明」（套餐名＋範圍）跟著範圍表即時重算，除非老師已手動改過。 */
+    function refreshGroupPackSummaryDom(groupPathStr) {
+        const groupDescEl = document.getElementById('node-desc-' + groupPathStr);
+        if (!groupDescEl) return;
+        const rows = packRowsForHostPath(groupPathStr);
+        const summaryHtml = groupPackSummaryHtml(rows, builderClassId());
+        const summaryPlain = groupPackSummaryPlain(rows, builderClassId());
+        if (groupDescEl.getAttribute('data-desc-auto') !== '0'
+            || titleLooksLikeSheetAliasDump(groupDescEl.textContent)) {
+            groupDescEl.innerHTML = summaryHtml || '';
+            groupDescEl.setAttribute('data-desc-auto', '1');
+            groupDescEl.setAttribute('data-desc-from-range', summaryPlain);
+        }
     }
 
     function packRowFromRaw(r) {
@@ -3593,8 +3694,8 @@ window.FeatureTimeline = (() => {
             if (!t || !isComboInheritType(t.type)) return;
             const childPath = groupPathStr + '-' + i;
             const label = (t.type === 'audio_record')
-                ? packTitleForAudio(childPath)
-                : packRangeLabelForAudio(childPath);
+                ? packTitleForAudioLeaf(childPath)
+                : packRangeLabelForAudioLeaf(childPath);
             applyInheritedTitleFromRange(childPath, label);
         });
     }
@@ -3644,20 +3745,13 @@ window.FeatureTimeline = (() => {
             base.push(arr[i]);
             list = node.subTasks || [];
         }
-        const packLabel = parentRangeGroupPathOf(audioPathStr)
-            ? (packRangeLabelForAudio(audioPathStr) || rangeText)
-            : rangeText;
-        if (!packLabel) return;
+        // 2026-09-15：組合層底下子任務標題一律留空（套餐名＋範圍已在群組說明顯示一次），
+        // 不再把錄音的 rangeText 抄進同組考試的標題。
         for (let i = 0; i < (list || []).length; i++) {
             const t = list[i];
             if (!t || !isComboInheritType(t.type)) continue;
             const childPath = base.concat([i]).join('-');
-            let label = packLabel;
-            if (t.type === 'exam' && window.FeatureExamJob
-                && typeof window.FeatureExamJob.getExamRangeLabel === 'function') {
-                label = window.FeatureExamJob.getExamRangeLabel(childPath, t) || packLabel;
-            }
-            applyInheritedTitleFromRange(childPath, label);
+            applyInheritedTitleFromRange(childPath, '');
         }
     }
 
@@ -5245,10 +5339,17 @@ window.FeatureTimeline = (() => {
         buildMaterialRangeLabelFromRows: buildMaterialRangeLabelFromRows,
         packRangeLabelForAudio: packRangeLabelForAudio,
         packTitleForAudio: packTitleForAudio,
+        packRangeLabelForAudioLeaf: packRangeLabelForAudioLeaf,
+        packTitleForAudioLeaf: packTitleForAudioLeaf,
         childTitleOmitsComboName: childTitleOmitsComboName,
         combinePackRangeLabel: combinePackRangeLabel,
         packRangeDescriptionHtml: packRangeDescriptionHtml,
         packRangeDescriptionPlain: packRangeDescriptionPlain,
+        leafPackDescriptionHtml: leafPackDescriptionHtml,
+        leafPackDescriptionPlain: leafPackDescriptionPlain,
+        groupPackSummaryHtml: groupPackSummaryHtml,
+        groupPackSummaryPlain: groupPackSummaryPlain,
+        onGroupDescInput: onGroupDescInput,
         titleLooksLikeSheetAliasDump: titleLooksLikeSheetAliasDump,
         packRowsForHostPath: packRowsForHostPath,
         isComboInheritType: isComboInheritType,
