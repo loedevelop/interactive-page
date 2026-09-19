@@ -853,53 +853,37 @@ window.QuizPaperBuilder = (function () {
          * 正確做法：_Layout 另開 quiz_prompt／quiz_answer（單一輸出公式，用 semantic_key），
          * 專門給線上卷用；沒填才退回舊的 cells[1]/cells[2] 慣例（相容舊 GEPT 教材）。
          */
-        let promptZh;
-        let answerEn;
+        let promptZh = '';
         if (opts.quizPrompt) {
             const promptCells = safeEvalFields(opts.quizPrompt);
             promptZh = promptCells.map(function (c) { return c.text; }).filter(Boolean).join(' ');
         }
 
-        /**
-         * 💣 雷區（2026-08-17）：老師填的結合公式死套（opts.quizAnswer 已是該範本
-         * 實際公式，例如 PIC 的 AO&" "&AP）。禁止發明 quiz_answer／answer_combine_note
-         * 優先序，也禁止用別份範本的 AN&" "&AO 來猜。
-         * skipStoredCombined（重新批改）跳過過期 `_answer_combined_text`。
-         * 禁止用詞性啟發式去改公式。
-         */
-        if (opts.quizAnswer) {
-            const tplCells = safeEvalFields(opts.quizAnswer);
-            answerEn = tplCells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join(' ').trim();
-        }
-        if (!answerEn && opts.skipStoredCombined) {
-            if (row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length) {
-                answerEn = joinAnswerKeys(evalRow);
-            }
-        } else if (!answerEn && row._answer_mode === 'combine' && row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
-            answerEn = String(row._answer_combined_text).trim();
-        } else if (!answerEn && row._answer_mode === 'combine' && Array.isArray(row._answer_keys) && row._answer_keys.length) {
-            answerEn = joinAnswerKeys(evalRow);
-        }
-        if (!promptZh) promptZh = '';
-        if (!answerEn) answerEn = wordFromRow(evalRow) || String(row.script || '').trim();
         let clozeStem = '';
         if (opts.quizMode === 'cloze' && cellsAnswer && cellsAnswer[1]) {
             clozeStem = cellsAnswer[1].text || '';
         }
 
-        // 'separate' 模式的合併預覽字串要靠下面 subAnswers 那段算（逐欄各自的值），這裡先不要
-        // 用單欄 row.answer_en 卡位，否則下面 `if (!answerEn)` 會被誤判成「已經有了」而跳過。
-        if (!answerEn && row._answer_mode !== 'separate') answerEn = wordFromRow(evalRow) || String(row.answer_en || '').trim();
-        if (row._answer_mode !== 'separate') answerEn = finalizeWrittenAnswer(answerEn, evalRow);
-
         /**
-         * 「分開比對」多空格：書寫答案欄數>1且老師選「分開比對」時，_answer_keys 各自
-         * 獨立比對——這裡把每個 _answer_keys 各自的原始值拆成一個 sub_answers 元素，
-         * 一題多個空格、各自獨立比對，跟上面「單一 answer_en 整句比對」是兩條並存的路徑，
-         * 不影響既有教材（沒有 _answer_mode 的列完全走舊路徑）。answer_en 仍會補上一個
-         * 「合併預覽」字串，供舊版只認 answer_en 的畫面（例如老師端答案訂正列表）當退路
-         * 顯示，但實際批改一律用 sub_answers。
+         * 書寫答案標準答案的計算：兩個分支互斥、彼此不相通，不是一串「還沒賦值就試下一個」
+         * 的 fallback 鏈（2026-09-19 老師糾正：那種寫法會讓後面的 fallback 意外蓋掉前面
+         * 分支剛算好的值，只能靠註解警告後面的人「小心被插隊」，是不專業的寫法）。
+         *
+         * 分支一（row._answer_mode === 'separate'）：書寫答案「分開比對」，每個空格各自
+         * 獨立，只讀老師勾選的書寫答案欄（row[key]）本身。這個分支自成一組、獨立回傳，
+         * 不會執行到分支二的任何一行，分支二也不會被分支一影響。
+         *
+         * 分支二（其餘情況：'combine' 或沒有 _answer_mode 的舊教材）：書寫答案結合成一個
+         * 答案，或本來就只有一欄。優先序固定＝
+         *   ① 這份試卷範本自己的 quiz_answer 公式（opts.quizAnswer，例如 PIC 的
+         *      AO&" "&AP）——老師填的結合公式死套，禁止發明優先序、禁止用別份範本的
+         *      公式來猜、禁止用詞性啟發式改公式。
+         *   ② 沒有 quiz_answer 時，'combine' 模式讀這份擷取範本自己算出來的結合值
+         *      （skipStoredCombined 時現算，避免用重新批改前的過期 `_answer_combined_text`；
+         *      否則優先讀已存的 `_answer_combined_text`，沒有才現算 `_answer_keys`）。
+         *   ③ 都沒有時，退回舊教材相容慣例（wordFromRow／row.script／row.answer_en）。
          */
+        let answerEn = '';
         let subAnswers = null;
         if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
             subAnswers = row._answer_keys.map(function (key) {
@@ -907,7 +891,25 @@ window.QuizPaperBuilder = (function () {
                 const precomputed = (row._accepted_answers_by_key && row._accepted_answers_by_key[key]) || [];
                 return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(subAnswerEn), precomputed) };
             });
-            if (!answerEn) answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
+            // 合併預覽字串：只給舊版只認單一 answer_en 的畫面（例如老師端答案訂正列表）顯示用，
+            // 實際批改（gradeAnswers／gradeSubAnswerItem）一律讀 sub_answers，不讀這個字串。
+            answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
+        } else {
+            if (opts.quizAnswer) {
+                const tplCells = safeEvalFields(opts.quizAnswer);
+                answerEn = tplCells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join(' ').trim();
+            }
+            if (!answerEn && row._answer_mode === 'combine') {
+                if (opts.skipStoredCombined) {
+                    if (Array.isArray(row._answer_keys) && row._answer_keys.length) answerEn = joinAnswerKeys(evalRow);
+                } else if (row._answer_combined_text != null && String(row._answer_combined_text).trim() !== '') {
+                    answerEn = String(row._answer_combined_text).trim();
+                } else if (Array.isArray(row._answer_keys) && row._answer_keys.length) {
+                    answerEn = joinAnswerKeys(evalRow);
+                }
+            }
+            if (!answerEn) answerEn = wordFromRow(evalRow) || String(row.script || row.answer_en || '').trim();
+            answerEn = finalizeWrittenAnswer(answerEn, evalRow);
         }
 
         return {
@@ -1585,7 +1587,21 @@ window.QuizPaperBuilder = (function () {
         return String(s || '').trim().toUpperCase();
     }
 
-    function rowMatchesItem(row, item) {
+    /**
+     * 💣 雷區（2026-09-19 老師回報「重新批閱」GEPT-2 整批 50 題「對不到 meta」，
+     * 09/10、09/17 兩份都一樣；老師明確禁止「退而求其次找其他做法」，要精準規則）：
+     * 主鍵永遠是「題號＋頁碼」——在同一份活頁 meta.json 裡，這兩個已經足夠唯一定位一列。
+     * vBK 名稱不是天生必要的第三個鑰匙，它只在「同一份 meta.json 真的塞了不只一本 vBK
+     * 書、題號＋頁碼因此在檔案裡撞號」時才派得上用場，用來從撞號的候選裡挑出正確那一筆。
+     * 舊版把 vBK 名稱寫成「兩邊都要算得出來、還要相同」的強制條件——GEPT-2 這類用字母
+     * A~Z 命名活頁、完全沒有 vBK 概念的教材，itemVbk／rowVbk 永遠是空字串，每一題都會被
+     * 這個條件擋下，變成題號頁碼明明對得上也判定「對不到」。
+     * 改法：先只用題號＋頁碼找候選列。剛好 1 筆＝就是它，不需要也不看 vBK 名稱。
+     * 找到 0 筆＝真的沒有，如實回報。找到 >1 筆（真的撞號）才需要 vBK 名稱去挑出正確那一
+     * 筆；挑不出唯一一筆（沒有 vBK 名稱可用、或 vBK 名稱對不到任何一筆候選）＝真的分辨不出
+     * 是哪一筆，誠實回報找不到，不能用消去法／借用猜一筆湊數。
+     */
+    function rowMatchesItemNoPage(row, item) {
         const src = (item && item.source) || {};
         const itemNo = toNum(src.item_no);
         const ri = toNum(row && row.item_no);
@@ -1593,9 +1609,6 @@ window.QuizPaperBuilder = (function () {
         const page = toNum(src.page);
         const rp = toNum(row && row.page);
         if (isNaN(page) || isNaN(rp) || page !== rp) return false;
-        const itemVbk = normVbkName(src.vbk_name || src.vBK_name || vbkNameOf(src, src.sheet_id));
-        const rowVbk = normVbkName(vbkNameOf(row, row.sheet_id || src.sheet_id));
-        if (!itemVbk || !rowVbk || itemVbk !== rowVbk) return false;
         return true;
     }
 
@@ -1616,9 +1629,17 @@ window.QuizPaperBuilder = (function () {
         }
         pack = pack || {};
         const rows = Array.isArray(pack.rows) ? pack.rows : [];
-        const hit = rows.find(function (r) { return rowMatchesItem(r, item); });
-        if (!hit) return null;
-        return { row: hit, pack: pack, sheetId: sheetId };
+        const candidates = rows.filter(function (r) { return rowMatchesItemNoPage(r, item); });
+        if (!candidates.length) return null;
+        if (candidates.length === 1) return { row: candidates[0], pack: pack, sheetId: sheetId };
+        // 題號＋頁碼在這份檔案裡撞號：真的塞了不只一本 vBK 書，才需要 vBK 名稱來挑。
+        const itemVbk = normVbkName(src.vbk_name || src.vBK_name || vbkNameOf(src, src.sheet_id));
+        if (!itemVbk) return null;
+        const vbkHits = candidates.filter(function (r) {
+            return normVbkName(vbkNameOf(r, (r && r.sheet_id) || src.sheet_id)) === itemVbk;
+        });
+        if (vbkHits.length !== 1) return null;
+        return { row: vbkHits[0], pack: pack, sheetId: sheetId };
     }
 
     /**

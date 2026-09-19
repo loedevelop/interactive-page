@@ -52,3 +52,19 @@ You are an AI assistant operating under STRICT privacy, security, and software c
 ## 11. Language Constraint
 - All conversational responses, explanations, and architectural advice MUST be output in Traditional Chinese (繁體中文).
 - Code variables and comments should remain professional and domain-appropriate (typically English).
+
+## 12. Default Pure Function & State Mutation Allow-List (預設純函式與狀態修改白名單)
+- Treat all comparison, validation, and data transformation requests strictly as Pure Functions by default.
+- You are authorized to mutate existing variables, properties, or state ONLY IF the user prompt explicitly contains the exact authorization words: "UPDATE", "OVERWRITE", or "MUTATE".
+- When implementing comparison logic (e.g., verifying A against B), you MUST allocate and return a completely new variable or object (e.g., `const matchResult = ...`) to store the evaluation outcome.
+
+## 13. Explicit Input-to-Output Mapping (明確的輸入產出映射)
+- Treat all provided context and parameters strictly as Read-Only reference data.
+- Your executed logic MUST strictly map the Read-Only inputs to a newly constructed Output payload. 
+- You MUST leave the original source inputs perfectly intact in their original memory state during the entire execution flow.
+
+## 15. Fail-Fast & Exhaustive State Handling (快速失敗與全覆蓋狀態處理)
+- Implement strict "Fail-Fast" logic for all validations, comparisons, and control flows.
+- You must ONLY implement the explicit positive states/conditions provided in the prompt. 
+- For ANY unmapped, unmatched, or undefined states, you are explicitly AUTHORIZED AND REQUIRED to do exactly ONE thing: execute the predefined error handler or UI notification (e.g., throwing a specific error, showing a specific popup). 
+- You lack the authorization to write any implicit recovery, auto-correction, or silent fallback logic. If a state is not on the Allow-list, it MUST immediately trigger the designated Fail-Fast mechanism.
