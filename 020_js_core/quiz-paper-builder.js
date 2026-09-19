@@ -404,6 +404,53 @@ window.QuizPaperBuilder = (function () {
         return ops;
     }
 
+    function leadingWs(s) {
+        const m = String(s || '').match(/^\s+/);
+        return m ? m[0] : '';
+    }
+
+    function trailingWs(s) {
+        const m = String(s || '').match(/\s+$/);
+        return m ? m[0] : '';
+    }
+
+    /** 逐字對齊畫面上，看不見的「頭尾空白數量差異」用這個字元標記，不是普通文字。 */
+    const WHITESPACE_DIFF_MARK = '▲';
+
+    /**
+     * 💣 雷區（2026-09-19 老師回報附圖「兩排一字不差卻判❌」，追問「哪有 ...from」，
+     * 要求「空白位元的差異，請用傳統三角形顯示」）：
+     * tokenizeWords 用 /\s+/ 切詞、丟棄空字串——這代表整段答案「頭」「尾」多打／少打
+     * 的空白，在逐字對齊畫面上完全隱形（已用 task_completions id=322 blank_2 尾端多一個
+     * 0x20 空白的真實資料查證）。真正判對錯的 isAcceptableAnswer 是比對 normalizeAnswer
+     * 之後的完整字串（不 trim），對這種頭尾空白差異很敏感；但畫面顯示的資訊量比判定用的
+     * 資訊量少，才會出現「兩排看起來一樣卻判錯」。
+     * 這裡不改 tokenizeWords、不改判定邏輯本身，只在「頭」「尾」各自比較兩邊空白的長度，
+     * 長度不同就插入一顆用「▲」表示的標記 op（type 沿用既有 ins／del，顏色跟既有「多打／
+     * 缺漏」同一套，不用另外改 renderAlignedPairHtml／renderAnswerDiffHtml）。
+     * 目前只處理字串最外側的頭尾空白，不處理「兩個詞中間空白數量不同」（例如 "a  b" 對
+     * "a b"）——那需要重寫 tokenizeWords 保留空白段落本身才能一起做，影響範圍更大，
+     * 這裡先不動，留待老師確認是否也要一起處理。
+     */
+    function boundaryWhitespaceOps(expected, got) {
+        const expNorm = normalizeAnswer(expected);
+        const gotNorm = normalizeAnswer(got);
+        const leadExp = leadingWs(expNorm);
+        const leadGot = leadingWs(gotNorm);
+        const trailExp = trailingWs(expNorm);
+        const trailGot = trailingWs(gotNorm);
+        function diffOp(expLen, gotLen) {
+            if (expLen === gotLen) return null;
+            return gotLen > expLen
+                ? { type: 'ins', expected: '', got: WHITESPACE_DIFF_MARK, boundary: true }
+                : { type: 'del', expected: WHITESPACE_DIFF_MARK, got: '', boundary: true };
+        }
+        return {
+            leadOp: diffOp(leadExp.length, leadGot.length),
+            trailOp: diffOp(trailExp.length, trailGot.length)
+        };
+    }
+
     /**
      * 錯題分析：拼錯對（應打／誤打）+ 對齊 ops（供紅線刪除顯示）
      */
@@ -412,9 +459,17 @@ window.QuizPaperBuilder = (function () {
         const act = tokenizeWords(got);
         const expOrig = tokenizeWordsOriginalCase(expected);
         const actOrig = tokenizeWordsOriginalCase(got);
-        const ops = alignTokens(exp, act, expOrig, actOrig);
+        let ops = alignTokens(exp, act, expOrig, actOrig);
+        // 學生真的有打字（不是完全空白未作答）才檢查頭尾空白差異，避免「完全沒作答」
+        // 這種既有的（未作答）畫面被一顆無意義的三角形標記污染。
+        if (String(got == null ? '' : got).trim() !== '') {
+            const b = boundaryWhitespaceOps(expected, got);
+            if (b.leadOp) ops = [b.leadOp].concat(ops);
+            if (b.trailOp) ops = ops.concat([b.trailOp]);
+        }
         const spelling_pairs = [];
         ops.forEach(function (op) {
+            if (op.boundary) return; // 頭尾空白標記只是視覺提示，不算進「拼錯紀錄」
             if (op.type === 'sub') {
                 spelling_pairs.push({
                     expected_word: op.expected,
