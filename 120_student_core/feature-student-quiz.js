@@ -366,7 +366,10 @@ window.FeatureStudentQuiz = (function () {
                 answer: d.answer || '',
                 source: paperItem.source || d.source || null,
                 allow_answer_appeal: paperItem.allow_answer_appeal,
-                accepted_answers: Array.isArray(paperItem.accepted_answers) ? paperItem.accepted_answers : []
+                accepted_answers: Array.isArray(paperItem.accepted_answers) ? paperItem.accepted_answers : [],
+                // 一題多空格逐格對照（見 subResultCardBodyHtml）：跟 wrong_items 同一把鑰匙，
+                // 這裡也要帶出去，否則「查看全部題目」會退回合併成一條字串的舊顯示。
+                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null
             };
             item.headline = formatItemHeadline(paperItem, idx + 1);
             return item;
@@ -898,6 +901,33 @@ window.FeatureStudentQuiz = (function () {
     }
 
     /**
+     * 💣 雷區（2026-09-19 老師回報「答案一跟答案二，禁止直接結合在一起」，同一份 GEPT-2
+     * 題目在老師端出現「兩排一模一樣卻判❌」——根因見 feature-exam-review.js 的
+     * subAnswerPrimaryPairsHtml 上方說明：一題多空格（sub_results）舊版把每格答案 join(' ')
+     * 接成一整條字串再顯示，字串尾端多打的空白會被畫面吃掉、看不出差異。學生端這裡原本
+     * 讀 item.answer／item.expected（同樣是 gradeSubAnswerItem 早就 join 好的合併字串），
+     * 同一個問題在學生端也存在。改成有 item.sub_results（一題多空格才有）就逐格各自顯示
+     * 「你的答案／正確答案」，格與格之間強制換行，不要合併成一條再顯示。
+     */
+    function subResultCardBodyHtml(subResults) {
+        return subResults.map(function (sr, i) {
+            const diff = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.analyzeAnswerDiff === 'function')
+                ? window.QuizPaperBuilder.analyzeAnswerDiff(sr.expected || '', sr.answer || '')
+                : { ops: [] };
+            const ops = (diff && diff.ops) || [];
+            const label = '第 ' + (i + 1) + ' 格（' + esc(sr.label || sr.key || '') + '）';
+            const rowColor = sr.ok ? '#64748B' : '#DC2626';
+            return '<div style="margin-bottom:' + (i < subResults.length - 1 ? '10px' : '0') + ';">'
+                + '<div style="font-size:0.68rem; font-weight:800; color:#94A3B8; margin-bottom:2px;">' + label + '</div>'
+                + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>'
+                + '<div style="font-size:1rem; line-height:1.7; margin-bottom:4px;">' + renderStudentStrikeHtml(ops) + '</div>'
+                + '<div style="font-size:0.75rem; color:' + rowColor + '; font-weight:800; margin-bottom:2px;">正確答案</div>'
+                + '<div style="font-size:1rem; font-weight:800; color:' + rowColor + '; line-height:1.7; white-space:pre-wrap;">' + esc(sr.expected || '') + '</div>'
+                + '</div>';
+        }).join('');
+    }
+
+    /**
      * 💣 雷區（2026-08-13 老師回報「改了對齊演算法／配色，畫面還是舊的，句號還是不見、
      * 還是有那個空格」）：這裡原本「已經有 item.diff.ops 就直接用，不重算」——但
      * item.diff 是很久以前交卷當下用「當時那一版」演算法算好、存進 task_completions.raw_data
@@ -1009,6 +1039,14 @@ window.FeatureStudentQuiz = (function () {
         // 2026-08-13 老師要求先關掉「拼錯紀錄」：目前逐字對齊機制抓出來的拼錯配對還不夠準確、
         // 對學生／老師來說沒有參考意義，先不顯示（renderAnswerDiffHtml 本身的上下對齊已經夠用），
         // 之後演算法夠準了再考慮恢復 renderSpellingPairsHtml(pairs)。
+        // 一題多空格（item.sub_results，見 gradeSubAnswerItem）：逐格各自顯示，不要合併成一條。
+        const isSubAnswerItem = Array.isArray(item.sub_results) && item.sub_results.length > 1;
+        const answerBodyHtml = isSubAnswerItem
+            ? subResultCardBodyHtml(item.sub_results)
+            : ('<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>' +
+                '<div style="font-size:1rem; line-height:1.7; margin-bottom:6px;">' + renderStudentStrikeHtml(ops) + '</div>' +
+                '<div style="font-size:0.75rem; color:' + expectedColor + '; font-weight:800; margin-bottom:2px;">正確答案</div>' +
+                '<div style="font-size:1rem; font-weight:800; color:' + expectedColor + '; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>');
         return (
             '<div style="border:' + border + '; border-radius:10px; padding:12px; margin-bottom:10px; background:' + bg + ';">' +
                 '<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:4px;">' +
@@ -1017,10 +1055,7 @@ window.FeatureStudentQuiz = (function () {
                 '</div>' +
                 '<div style="font-size:0.92rem; font-weight:800; color:#1E293B; margin-bottom:8px; white-space:pre-wrap;">' + esc(item.prompt_zh || '') + '</div>' +
                 cloze +
-                '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>' +
-                '<div style="font-size:1rem; line-height:1.7; margin-bottom:6px;">' + renderStudentStrikeHtml(ops) + '</div>' +
-                '<div style="font-size:0.75rem; color:' + expectedColor + '; font-weight:800; margin-bottom:2px;">正確答案</div>' +
-                '<div style="font-size:1rem; font-weight:800; color:' + expectedColor + '; line-height:1.7; white-space:pre-wrap;">' + esc(item.expected || '') + '</div>' +
+                answerBodyHtml +
                 renderOtherAcceptedAnswersHtml(item) +
                 renderAppealAreaHtml(item, opts) +
             '</div>'
@@ -2163,7 +2198,10 @@ window.FeatureStudentQuiz = (function () {
                 answer: d.answer || '',
                 source: d.source || null,
                 diff: d.diff || null,
-                spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
+                spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
+                // 一題多空格逐格對照（見 subResultCardBodyHtml）：跟 gradeAnswers 的
+                // details[].sub_results 同一把鑰匙，這裡也要帶出去。
+                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null
             };
             const displayNo = displayOrderIdx[String(d.item_id)] || (idx + 1);
             item.headline = headlineFromWrongItem(item, displayNo);
@@ -2387,7 +2425,8 @@ window.FeatureStudentQuiz = (function () {
                 answer: d.answer || '',
                 source: d.source || null,
                 diff: d.diff || null,
-                spelling_pairs: (d.diff && d.diff.spelling_pairs) || []
+                spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
+                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null
             };
             const displayNo = retakeDisplayOrderIdx[String(d.item_id)] || (idx + 1);
             item.headline = headlineFromWrongItem(item, displayNo);

@@ -95,6 +95,38 @@ window.FeatureExamReview = (function () {
         return window.QuizPaperBuilder.renderAnswerDiffHtml((diff && diff.ops) || []);
     }
 
+    /**
+     * 💣 雷區（2026-09-19 老師回報「答案一跟答案二，禁止直接結合在一起」，附圖 7.1-6：
+     * 兩排看起來一字不差卻標示❌錯誤）：一題多空格（分開比對，item.sub_answers.length > 1）
+     * 舊版把每個空格的答案／標準答案各自 join(' ') 接成一整條字串，才丟給 alignedPairHtml
+     * 逐字對齊——這樣做有兩個問題：①老師看不出「這一段」是第幾格的答案，空格 1 尾巴跟
+     * 空格 2 開頭黏在一起，肉眼分不出邊界；②真正決定對錯的 isAcceptableAnswer 是逐格
+     * 精準比對（見 gradeSubAnswerItem），但用來畫面顯示的字詞對齊（tokenizeWords 用
+     * /\s+/ 切詞、丟掉空字串）會把「純粹接在字串尾端的空白」直接吃掉、兩排完全看不出差異
+     * ——等於畫面能顯示的資訊量小於真正拿去判定對錯的資訊量，才會出現「兩排一模一樣卻
+     * 判錯」。修法：每一格各自獨立跑一次 alignedPairHtml（自己跟自己比，不跟別格接起來），
+     * 每一格中間強制換行，讓老師至少能對到「是哪一格」；至於「純空白差異在對齊畫面上仍是
+     * 看不出來」這件事，屬於比對規則本身要不要對每格答案做頭尾空白 trim 的另一個決定，
+     * 這裡不擅自決定，維持現有 normalizeAnswer 不動。
+     */
+    function subAnswerPrimaryPairsHtml(item, rawAnswer, expectedDiffColor) {
+        const subAnswers = (item && Array.isArray(item.sub_answers)) ? item.sub_answers : [];
+        const gotObj = (rawAnswer && typeof rawAnswer === 'object') ? rawAnswer : {};
+        return subAnswers.map(function (sa, i) {
+            const subGotRaw = gotObj[sa.key];
+            const subGot = (subGotRaw == null || typeof subGotRaw === 'object') ? '' : String(subGotRaw);
+            const label = '第 ' + (i + 1) + ' 格（' + esc(sa.label || sa.key) + '）';
+            const body = subGot
+                ? ('<div style="font-size:1rem; line-height:1.7;">' + alignedPairHtml(sa.answer_en, subGot, expectedDiffColor) + '</div>')
+                : '<span style="color:#94A3B8; font-weight:700;">（這格尚未作答）</span>';
+            const marginBottom = (i < subAnswers.length - 1) ? '10px' : '0';
+            return '<div style="margin-bottom:' + marginBottom + ';">'
+                + '<div style="font-size:0.7rem; font-weight:800; color:#94A3B8; margin-bottom:2px;">' + label + '</div>'
+                + body
+                + '</div>';
+        }).join('');
+    }
+
     function normAns(text) {
         const Q = window.QuizPaperBuilder;
         if (Q && typeof Q.normalizeAnswer === 'function') return Q.normalizeAnswer(text);
@@ -1170,9 +1202,12 @@ window.FeatureExamReview = (function () {
             return '<div id="qr-row-' + idx + '" style="display:none;"></div>';
         }
 
-        const primaryPair = hasAnswer
-            ? alignedPairHtml(item.answer_en, gotPlain, '#DC2626')
-            : '';
+        // 一題多空格（分開比對）：每一格各自對齊顯示、中間換行，禁止把答案一／答案二
+        // 直接結合成一整條字串再一起比對／顯示（見 subAnswerPrimaryPairsHtml 上方雷區說明）。
+        const isSubAnswerItem = Array.isArray(item.sub_answers) && item.sub_answers.length > 1;
+        const primaryPair = isSubAnswerItem
+            ? subAnswerPrimaryPairsHtml(item, state && state.answers ? state.answers[item.item_id] : null, '#DC2626')
+            : (hasAnswer ? alignedPairHtml(item.answer_en, gotPlain, '#DC2626') : '');
         const primaryEditing = state.editingPrimaryIdx === idx;
         const expectedEditHtml = primaryEditing
             ? '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:6px 0 10px;">'
