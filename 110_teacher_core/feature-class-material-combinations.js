@@ -912,21 +912,33 @@ window.FeatureClassMaterialCombinations = (function () {
         }
     }
 
+    /**
+     * 2026-09-18（雷區修復：同一顆「儲存設定」指派好幾班，會逐班序列送出，每班各自觸發一次
+     * combo_statistics 全套重算——GEPT-2 這類多班共用套餐的情境，一次存檔卡好幾秒）：
+     * 改成先一次查出這個套餐已指派的班級，篩出真正還沒指派的，再一次 INSERT 全部補上。
+     * 搭配 migration 20260918220000（trg_combo_statistics_class_links 改 statement-level），
+     * 這裡不管一次指派幾班，都只會觸發一次重算。
+     */
     async function assignToClasses(comboId, classIds, userId) {
-        for (const classId of classIds) {
-            const { data: existing, error: findErr } = await window.supabaseClient
-                .from('class_material_combinations')
-                .select('id')
-                .eq('class_id', classId)
-                .eq('material_combination_id', comboId)
-                .maybeSingle();
-            if (findErr) throw findErr;
-            if (existing && existing.id) continue;
-            const { error: insErr } = await window.supabaseClient
-                .from('class_material_combinations')
-                .insert({ class_id: classId, material_combination_id: comboId, assigned_by: userId });
-            if (insErr) throw insErr;
-        }
+        const wanted = Array.from(new Set((classIds || []).filter(Boolean).map(String)));
+        if (!wanted.length) return;
+        const { data: existingRows, error: findErr } = await window.supabaseClient
+            .from('class_material_combinations')
+            .select('class_id')
+            .eq('material_combination_id', comboId)
+            .in('class_id', wanted);
+        if (findErr) throw findErr;
+        const already = {};
+        (existingRows || []).forEach(function (r) { if (r && r.class_id) already[String(r.class_id)] = true; });
+        const missing = wanted.filter(function (cid) { return !already[cid]; });
+        if (!missing.length) return;
+        const rows = missing.map(function (classId) {
+            return { class_id: classId, material_combination_id: comboId, assigned_by: userId };
+        });
+        const { error: insErr } = await window.supabaseClient
+            .from('class_material_combinations')
+            .insert(rows);
+        if (insErr) throw insErr;
     }
 
     async function removeAssignment(id) {
