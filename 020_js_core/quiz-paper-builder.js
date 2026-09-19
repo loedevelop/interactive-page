@@ -1481,16 +1481,58 @@ window.QuizPaperBuilder = (function () {
      * 該有的正確部分」（綠字，只補這一個字，不是整句話重複一次）；對的字下面不重複顯示。
      * 師生兩端共用同一份渲染，避免各自維護一份、之後長歪（曾發生過）。
      */
+    /**
+     * 💣 雷區（2026-09-19 老師糾正：頭尾空白標記「▲」不准自己獨立佔一欄——那樣跟外層
+     * 字與字之間的間距（gap）長得一模一樣，看起來就像多出一個獨立的字，反而更誤導。
+     * 三角形必須直接貼在相鄰那個字的同一個 cell 裡、中間 0 間距（例如 "from▲"，不是
+     * "from　▲"）。這裡把「按 ops 順序組欄位、遇到 op.boundary 就貼進相鄰那一欄」的邏輯
+     * 抽成共用函式，renderAnswerDiffHtml／renderAlignedPairHtml 共用，不要各自維護一份。
+     * @param {Array} ops
+     * @param {(op: any) => string} cellForOp 把「非 boundary」的一個 op 畫成一個 cell 的 HTML
+     * @returns {string[]} 組好的 cell HTML 陣列，boundary 標記已經黏進相鄰 cell、不再獨立
+     */
+    function mergeBoundaryOpsIntoCells(ops, cellForOp) {
+        const cells = [];
+        let pendingLead = null;
+        (ops || []).forEach(function (op) {
+            if (op.boundary) {
+                if (!cells.length && pendingLead === null) {
+                    // 頭：還沒有任何真字欄位，先記著，等第一個真字出現再貼在它左邊。
+                    pendingLead = cellForOp(op);
+                } else if (cells.length) {
+                    // 尾（或前面已經有欄位）：直接貼在目前最後一欄的右邊，中間 0 間距。
+                    const lastIdx = cells.length - 1;
+                    cells[lastIdx] = '<span style="display:inline-flex; align-items:flex-start;">'
+                        + cells[lastIdx] + cellForOp(op) + '</span>';
+                }
+                return;
+            }
+            let cellHtml = cellForOp(op);
+            if (pendingLead != null) {
+                cellHtml = '<span style="display:inline-flex; align-items:flex-start;">' + pendingLead + cellHtml + '</span>';
+                pendingLead = null;
+            }
+            cells.push(cellHtml);
+        });
+        // 理論上不會發生（只有頭尾標記、完全沒有真字），防呆保留避免標記憑空消失。
+        if (pendingLead != null) cells.push(pendingLead);
+        return cells;
+    }
+
     function renderAnswerDiffHtml(ops) {
-        if (!ops || !ops.length) return '<span style="color:#94A3B8;">（未作答）</span>';
+        const list = ops || [];
+        if (!list.length) return '<span style="color:#94A3B8;">（未作答）</span>';
         // 💣 雷區（2026-08-11 老師回報「你的答案一排全是〔缺〕很白痴」）：完全沒作答時，
         // 逐字對齊會把「正確答案」的每一個字都各自標成一個 del（缺漏），排出一整排缺漏標記，
         // 對老師／學生來說毫無資訊量，只要看得出「整題都沒寫」就好，不需要重複每個字都
         // 標一次。只有當「至少有一個字是真的打錯／多打」時，才逐字顯示 del／sub／ins 的完整對齊。
-        if (ops.every(function (op) { return op.type === 'del'; })) {
+        // 判斷「是否全部都是缺漏」只看真字（排除 op.boundary 頭尾空白標記），
+        // 不能讓一個空白標記把「完全未作答」誤判成「有作答」。
+        const meaningful = list.filter(function (op) { return !op.boundary; });
+        if (!meaningful.length || meaningful.every(function (op) { return op.type === 'del'; })) {
             return '<span style="color:#94A3B8;">（未作答）</span>';
         }
-        const cells = ops.map(function (op) {
+        function cellForOp(op) {
             if (op.type === 'match') {
                 return '<span style="display:inline-flex; flex-direction:column; align-items:center;">'
                     + '<span style="color:#1E293B; font-weight:700;">' + escHtml(op.got) + '</span>'
@@ -1512,7 +1554,8 @@ window.QuizPaperBuilder = (function () {
                 ? ('<span style="color:#DC2626; font-weight:800; margin-top:1px;">' + escHtml(op.expected) + '</span>')
                 : '';
             return '<span style="display:inline-flex; flex-direction:column; align-items:center;">' + topHtml + bottomHtml + '</span>';
-        });
+        }
+        const cells = mergeBoundaryOpsIntoCells(list, cellForOp);
         return '<span style="display:inline-flex; flex-wrap:wrap; gap:8px; align-items:flex-start;">' + cells.join('') + '</span>';
     }
 
@@ -1527,7 +1570,10 @@ window.QuizPaperBuilder = (function () {
         const gotBad = '#1E3A8A';
         const expOk = '#1E293B';
         const expBad = opts.expectedDiffColor || '#DC2626';
-        if (!ops || !ops.length || ops.every(function (op) { return op.type === 'del'; })) {
+        const list = ops || [];
+        // 「是否全部都是缺漏」只看真字（排除 op.boundary 頭尾空白標記）。
+        const meaningful = list.filter(function (op) { return !op.boundary; });
+        if (!meaningful.length || meaningful.every(function (op) { return op.type === 'del'; })) {
             return '';
         }
         function wordHtml(text, color) {
@@ -1536,7 +1582,7 @@ window.QuizPaperBuilder = (function () {
             }
             return '<span style="color:' + color + '; font-weight:800; white-space:nowrap;">' + escHtml(text) + '</span>';
         }
-        const cols = ops.map(function (op) {
+        function cellForOp(op) {
             let top;
             let bot;
             if (op.type === 'match') {
@@ -1554,7 +1600,8 @@ window.QuizPaperBuilder = (function () {
             }
             return '<span style="display:inline-flex; flex-direction:column; align-items:center; gap:3px; min-width:1.2em;">'
                 + top + bot + '</span>';
-        });
+        }
+        const cols = mergeBoundaryOpsIntoCells(list, cellForOp);
         return '<span style="display:inline-flex; flex-wrap:wrap; gap:8px 12px; align-items:flex-start;">' + cols.join('') + '</span>';
     }
 
