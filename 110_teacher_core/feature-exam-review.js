@@ -1448,7 +1448,15 @@ window.FeatureExamReview = (function () {
             // 2026-09-12 老師確認（Phase 2.1）：老師「任何存檔」都要廣播全班，不限申訴過的
             // 學生——這裡跟改標準答案／accepted_answers 直接相關，最該廣播的一次存檔。
             broadcastAppealProgress(state.assignmentId, state.taskId);
-            window.ModalOverlay.close(MODAL_ID);
+            // 💣 雷區（2026-09-18 老師回報「申訴儲存後會自動關閉，應該要留在原來的畫面，
+            // 老師可能還要看啊」）：這裡以前存檔成功就直接 ModalOverlay.close(MODAL_ID)，
+            // 老師剛看著這位學生的申訴題、想順便再核對別題或繼續看批改明細，畫面卻被強制
+            // 關掉。改成跟「整班申訴審查」畫面（_decideAppeal）同一套做法：存檔成功留在
+            // 原本的畫面，只把 busy 解除＋局部重繪（isDirty 已經因為 originalPaperJson 剛
+            // 更新過變成 false，footerHtml 會自動把「儲存並重新批改」按鈕換成灰色「沒有
+            // 變更」，不會讓老師誤以為還能重按）。要離開由老師自己按「關閉」或點灰色背景。
+            window.ModalOverlay.setBusy(MODAL_ID, false);
+            rerenderAll();
         } catch (err) {
             console.error('[FeatureExamReview] save', err);
             window.ModalOverlay.setBusy(MODAL_ID, false);
