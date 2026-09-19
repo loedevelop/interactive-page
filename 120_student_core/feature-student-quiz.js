@@ -1255,17 +1255,73 @@ window.FeatureStudentQuiz = (function () {
      * 不要整個 ModalOverlay.open() 重建（那樣會讓視窗閃一下、捲動位置歸零）。抽成共用函式，
      * 「作答結果」（REVIEW_MODAL_ID）跟「重考整體報告」（RETAKE_REPORT_MODAL_ID）共用同一套邏輯，
      * 不要各寫一份。
+     *
+     * 💣 雷區（2026-09-18 老師回報「送出申訴，會把學生的申訴勾勾取消」／「儲存送出，根本沒有
+     * 功用」，seancheng_2026 09/17 考試實測重現）：ensureAppealProgressSync 每 15 秒／收到廣播
+     * 就會呼叫這裡重繪一次。學生勾了「申訴這個答案」的 checkbox、正要打字或按送出，但送出前
+     * 這個輪詢先觸發，把整個 overlay.innerHTML 換成「從資料庫重新算出來的」全新內容——那個當下
+     * 資料庫裡根本還沒有這筆申訴，重繪出來的自然是「還沒勾」的 checkbox，等於學生剛勾好的狀態
+     * 被無聲清空。學生點「送出申訴」時 DOM 上已經沒有勾選，submitAppeals 收集到 0 筆，要嘛跳
+     * 「請先勾選要申訴的題目」（學生沒注意到，以為是存檔沒用），要嘛剛好又勾了一次但下一輪
+     * 又被清掉，看起來就是「明顯儲存送出沒有功用」。
+     * 修法：换血前先把目前「已勾但還沒送出」的 checkbox item_id、以及各題申訴留言欄還沒送出
+     * 的文字記下來；换血後找回同一個 item_id 的 checkbox／留言欄，把勾選狀態與文字寫回去。
+     * 只還原「這個 item 目前還是顯示 checkbox」的情況——如果這次刷新帶回了老師剛審核完的結果
+     * （該 item 已經變成 accepted／rejected／pending 徽章），代表申訴已經真的送出去了，不必也
+     * 不應該再假裝勾著一個不存在的 checkbox。
      */
+    function escapeAttrSelectorValue(v) {
+        return String(v == null ? '' : v).replace(/["\\]/g, '\\$&');
+    }
+
+    function captureUnsavedAppealState(container) {
+        if (!container) return null;
+        const checkedIds = {};
+        Array.prototype.forEach.call(container.querySelectorAll('.quiz-appeal-checkbox:checked'), function (el) {
+            const id = el.getAttribute('data-item-id');
+            if (id != null) checkedIds[String(id)] = true;
+        });
+        const notesById = {};
+        Array.prototype.forEach.call(container.querySelectorAll('.quiz-appeal-note'), function (el) {
+            const id = el.getAttribute('data-item-id');
+            const v = String(el.value || '');
+            if (id != null && v.trim()) notesById[String(id)] = v;
+        });
+        if (!Object.keys(checkedIds).length && !Object.keys(notesById).length) return null;
+        return { checkedIds: checkedIds, notesById: notesById };
+    }
+
+    function restoreUnsavedAppealState(container, state) {
+        if (!container || !state) return;
+        Object.keys(state.checkedIds || {}).forEach(function (id) {
+            const sel = '.quiz-appeal-checkbox[data-item-id="' + escapeAttrSelectorValue(id) + '"]';
+            const cb = container.querySelector(sel);
+            if (cb && !cb.checked) {
+                cb.checked = true;
+                const block = cb.closest ? cb.closest('.quiz-appeal-block') : null;
+                const note = block ? block.querySelector('.quiz-appeal-note') : null;
+                if (note) note.style.display = 'block';
+            }
+        });
+        Object.keys(state.notesById || {}).forEach(function (id) {
+            const sel = '.quiz-appeal-note[data-item-id="' + escapeAttrSelectorValue(id) + '"]';
+            const note = container.querySelector(sel);
+            if (note && !String(note.value || '').trim()) note.value = state.notesById[id];
+        });
+    }
+
     function patchOverlayKeepScroll(overlayId, contentHtml) {
         const overlay = document.getElementById(overlayId);
         if (!overlay) return false;
         const overlayTop = overlay.scrollTop;
         const listEl = overlay.querySelector('.student-quiz-sheet__list');
         const listTop = listEl ? listEl.scrollTop : 0;
+        const pendingAppealState = captureUnsavedAppealState(overlay);
         overlay.innerHTML = contentHtml;
         overlay.scrollTop = overlayTop;
         const listAfter = overlay.querySelector('.student-quiz-sheet__list');
         if (listAfter) listAfter.scrollTop = listTop;
+        restoreUnsavedAppealState(overlay, pendingAppealState);
         return true;
     }
 

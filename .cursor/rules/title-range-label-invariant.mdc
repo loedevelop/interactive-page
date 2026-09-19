@@ -30,7 +30,7 @@ alwaysApply: false
 **2026-09-15 老師再定案（組合作業一致化）：** 組合式作業（範圍套餐群組，`group_role==='range'`）底下，套餐名＋範圍理論上都是同一份，不准在群組標題、每個子任務（錄音／考試／PDF考）自己的標題、每個子任務自己的說明裡各自重複列一次。改成：
 - 套餐名＋範圍只在**群組層自己的「說明」**顯示一次（老師可再手動修改，改過就不再自動蓋回）。
 - 群組底下的子任務（錄音／考試／PDF 考），**不管群組標題現在是不是套餐名**，自己的標題與自己的說明一律留空，只靠圖示＋類型標籤（🎙️語音錄製／📝考試出題單／📄PDF考卷）辨識——不再依賴「群組標題文字是否等於套餐名」這個舊判斷（那條已作廢，見下方「已作廢」）。
-- 區段名稱（Excel 每列的活頁別名，例：`vBK-2_圖字_字`）只有在**這個套餐同時橫跨兩種以上不同區段**時才需要標出來分辨；只有一種區段＝這包資料本來就固定是這一個區段，不是老師從中挑出來的區分資訊，範圍字串不准再加區段前綴。
+- 區段名稱（Excel 每列的活頁別名，例：`vBK-2_圖字_字`）只有在**這個套餐同時橫跨兩種以上不同區段**時才需要標出來分辨；只有一種區段＝這包資料本來就固定是這一個區段，不是老師從中挑出來的區分資訊，範圍字串不准再加區段前綴。（**2026-09-18 已改，見下方「2026-09-18 老師再定案」**：改成看「是不是下拉選單」，不是看「實際選到幾種」。）
 
 ## 不變量
 
@@ -38,7 +38,7 @@ alwaysApply: false
 大標題＝套餐名。空白才帶入。不准黏活頁名。不准把下拉「其他（手動輸入教材）」寫成套餐名。
 組合層（範圍套餐群組）底下：套餐名＋範圍只在**群組自己的說明**顯示一次（groupPackSummaryHtml／onGroupDescInput，可手動改，改過就不再自動蓋回）。子任務（錄音／考試／PDF 考）自己的標題與自己的說明**一律留空**（childTitleOmitsComboName／groupIsRangePack 只認「是不是範圍套餐群組」，不再比對群組標題文字是否等於套餐名）；老師手動在子任務自己的標題／說明打過字（title_auto_from_range／desc_auto_from_range === false，且不是舊活頁別名 dump 殘留）才顯示那份手打內容。
 獨立作業（不在組合層底下）→ 標題仍是套餐名＋範圍。匣＝套餐 × 模式（頁碼／題號）。
-Excel 多區段：只有在**同一套餐橫跨兩種以上不同區段**時，範圍字串才加區段前綴（連續字母收成 J~K）；只有一種區段＝這包資料本來就固定，範圍不加區段前綴、也不進標題（sheetPackDescriptionLines／combinePackRangeLabel 依 distinctSections 判斷）。不准把活頁別名寫進說明。
+Excel 多區段（2026-09-18 老師再定案，取代舊版「依 distinctSections>1 判斷」）：區段字母是否列進說明，改看**這個套餐當初是不是下拉選單**——`isGroup===true` 或可選活頁數 `ownSheets.length>1`（跟 `ui-timeline-templates.js renderSheetPackTableHtml` 判斷要不要畫 `<select>` 同一把鑰匙，`isDropdownComboForGroupRows`）。是下拉→不管實際選到幾種（哪怕只選了同一種、或只有一列）都要顯示選到的是哪一個（連續字母收成 J~K）；不是下拉（只有一本固定活頁，`ownSheets.length===1`）→永遠不顯示，跟考試設定是否一致無關。拿不到套餐快取（student 端舊資料救援用的即時算法）才退回舊 heuristic（看實際選到的種類數 `sheetHeads.length>1`），這條退路只准在真的拿不到快取時生效，不可用來覆蓋老師端已經算得出來的精準結果。不准把活頁別名寫進說明。
 舊標題長得像活頁別名 dump → 當自動繼承重算。錄音／考試／PDF 考／組合層底下同一把 combinePackRangeLabel；「這支值是要餵給子任務標題」與「這支值是要餵給功能性欄位（node-material-range／AI 批改材料範圍）」是兩種不同用途——功能性欄位必須永遠是真實範圍（`packRangeLabelForAudio`／`packTitleForAudio` 本體不做留空判斷），子任務標題才走留空版（`packRangeLabelForAudioLeaf`／`packTitleForAudioLeaf`，組合層底下回空字串）。不准把「留空」寫進本體函式，否則會連功能性欄位一起清空。
 目錄套餐錄音標題：組合層底下＝空白（範圍在群組說明）。獨立作業 → 套餐名。Excel／PDF 組合層底下＝空白（不再是「只留範圍」，範圍也搬到群組說明）。
 獨立錄音／考試＝自己的範圍表。沒填起迄＝沒有標題可繼承。不准把同層上一筆的標題抄過來。只有組合層（group_role=range）底下的考試才跟該組合的 pack 走。
@@ -103,6 +103,13 @@ t.description = FT.groupPackSummaryHtml(rows, classId) || '';
 
 // ✅ 只有同一套餐橫跨兩種以上區段才加區段前綴
 const showSection = g.section && distinctSectionsForThisCombo > 1;
+// （2026-09-18 已作廢，見下方最新版）
+
+// ✅ 2026-09-18：區段字母改看「是不是下拉選單」，不是看實際選到幾種
+const isDropdown = isDropdownComboForGroupRows(classId, filled); // true/false/null
+const sheetStr = isDropdown === true ? collapseSheetLabelList(sheetHeads)
+    : isDropdown === false ? ''
+        : (sheetHeads.length > 1 ? collapseSheetLabelList(sheetHeads) : ''); // null 才退回舊 heuristic
 ```
 
 ## 實測
@@ -115,7 +122,7 @@ const showSection = g.section && distinctSectionsForThisCombo > 1;
 6. 沒填迄的列不進標題
 7. 區段欄（每列「區段」）仍顯示活頁別名（例：AvaLiu-vBK-2）——這是逐列資料表，不受本規則影響
 8. 老師把組合層標題改成不是套餐名（例：Week 3）→ 底下子任務標題仍是留空（不會「恢復」套餐名＋範圍；套餐名＋範圍只在群組自己的說明，跟群組標題文字無關）。老師手動在子任務自己的標題／說明打字 → 尊重那份手打內容，不再蓋回
-9. 同一套餐只有一個區段（例：全部都是 vBK-2_圖字_字）→ 群組說明只顯示 `vBK-2 pp. 61~70, 84~88`，不加區段前綴；同一套餐橫跨兩個以上區段 → 才顯示 `J pp. … ; K pp. …`
+9.（2026-09-18 改）套餐是「非下拉」（`ownSheets.length===1`，只有一本固定活頁，例：全部都是 vBK-2_圖字_字）→ 群組說明只顯示 `vBK-2 pp. 61~70, 84~88`，永遠不加區段字母；套餐是「下拉」（`isGroup===true` 或 `ownSheets.length>1`）→ 不管老師這次實際選了幾種活頁，都要顯示選到的是哪一個：只選了同一個字母（或只有一列）也要顯示（例：`vBK-2 J pp. 1~2`），選了兩個以上不同字母 → 顯示 `J pp. … ; K pp. …`
 10. 舊資料（升級前）子任務標題還是 `vBK-2-圖字-字` 這種活頁別名 dump → teacher／student 讀取時都判定成「自動繼承殘留」，一致顯示留空，不是老師手打的內容
 11. 出作業選「其他（手動輸入教材）」→ 目錄欄，不是 Excel 起迄表
 12. 群組說明同一區段 51～60、83～85、86～87 → `區段 pp. 51~60, 83~87`，不是三行分號
@@ -135,7 +142,7 @@ const showSection = g.section && distinctSectionsForThisCombo > 1;
 3. 獨立考試是否仍是套餐名＋範圍（未省略）？組合層底下子任務標題／說明是否一律留空（不看群組標題文字）？群組自己的說明是否有套餐名＋範圍？
 4. 標題是不是套餐名而不是活頁別名 dump？錄音／考試／PDF 考／組合層底下（teacher 與 student 兩端）是否同一把？
 5. 出作業「其他（手動輸入教材）」是不是目錄欄，而不是 Excel 起迄表？
-6. 區段前綴是否只在「同一套餐橫跨兩種以上區段」才加？只有一種區段時是否已經拿掉？
+6.（2026-09-18 改）區段字母是否改看「是不是下拉選單」（`isGroup` 或 `ownSheets.length>1`），而不是看「實際選到幾種活頁」？下拉但只選了 1 種、或只有 1 列，是否仍然顯示？非下拉（只有一本固定活頁）是否永遠不顯示？拿不到套餐快取（student 端救援）才退回舊 heuristic，且沒有拿舊 heuristic 蓋掉老師端已經算得出來的精準結果？
 7. 「留空」的判斷是否只套用在標題／說明這類展示用途？功能性欄位（node-material-range／AI 批改材料範圍）是否仍是真實值，沒有被一起清空？
 8. `combinePackRangeLabel` 合併範圍時，有沒有拿「每頁行數／難度／必考／排除／題數」這些出考卷專用設定去擋範圍顯示？只要有 → 停，範圍合併只准看範圍本身（頁碼／題號連貫與否）。
 9. `groupIsRangePack`／`comboNameFromBookConcatTitle` 這類判斷用鑰匙，teacher／student 兩端是不是都呼叫 `020_js_core/pack-range-label.js` 同一份？有沒有各自留一份複本？
@@ -178,3 +185,90 @@ const showSection = g.section && distinctSectionsForThisCombo > 1;
 漏比對 `meta_file` 欄位、`looksLikeSheetAliasDumpLocal` 是簡化版（漏掉「同一區段連續範圍卻
 一行一行分號」的偵測），兩邊已經走樣，證實「兩端分開寫、以後要分開改」的維護風險是真的
 會發生，不是假設。
+
+## 2026-09-18 老師再定案：區段字母改用「是不是下拉選單」判斷（取代「實際選到幾種」）
+
+老師原話：「若區段是下拉選單，則在說明的範圍則要列出下拉選單中的值，再整合範圍。若區段不是
+下拉選單，則無需列出區段的名字，只要列出範圍，一樣，也是合適的就整合範圍。」
+
+### 症狀（舊邏輯的落差）
+
+舊邏輯（2026-09-15 版）看的是「這幾列範圍**實際選到的活頁字母，有沒有超過 1 種**」
+（`sheetHeads.length > 1`）。這跟「這個套餐當初是不是下拉選單」是兩個不同的問題：
+一個是「有多本可選」的套餐（`isGroup===true` 或 `ownSheets.length>1`，畫面上是 `<select>`），
+老師只選了 1 種（或只有 1 列）時，舊邏輯會判定「只有一種 → 不顯示」，但老師既然是從下拉裡
+挑出來的，讀者理應知道挑的是哪一本；相反地，只有一本固定活頁（沒有下拉、沒有選擇）時，
+不管這個組合裡有幾列範圍，字母永遠只有一種，舊邏輯本來就會判定不顯示——這種情況剛好跟新
+邏輯結果一致，屬於巧合、不是舊邏輯本身對。
+
+### 不變量（現行版本）
+
+```
+區段字母顯示與否＝看這個套餐當初是不是下拉選單，不是看這幾列實際選到的字母種類數。
+是下拉（isGroup===true 或 ownSheets.length>1，跟 ui-timeline-templates.js
+  renderSheetPackTableHtml 判斷要不要畫 <select> 同一把鑰匙）
+  → 一律顯示選到的字母（哪怕只選了同一種、只有一列），再跟範圍整合
+    （連續字母收成 A~Z；範圍相連合併，不相連逗號分列）。
+不是下拉（ownSheets.length===1，只有一本固定活頁，沒有可選）
+  → 永遠不顯示字母，只列範圍（一樣，相連合併、不相連逗號分列）。
+組合類型作業（範圍套餐群組，錄音＋考試在同一範圍下）：範圍只在群組層自己的說明顯示一次，
+  子任務自己的標題／說明一律留空——這條 2026-09-15 已定案，這次沒有改，一併確認仍成立。
+判斷用鑰匙＝isDropdownComboForGroupRows(classId, rows)：解析該組第一列的 comboId，
+  透過套餐快取（resolvePackCombo）讀 combo.isGroup／combo.ownSheets。
+  回傳 true／false＝精準；回傳 null＝這個呼叫環境沒有套餐快取可用（例如 student 端
+  舊資料救援用的即時算法，本來就讀不到套餐快取），這時才退回舊 heuristic
+  （sheetHeads.length>1）——這條退路只在「真的拿不到快取」時生效，
+  不可拿它覆蓋老師端本來就算得出來的精準結果（老師端存檔當下永遠有快取）。
+```
+
+### 禁止
+
+```javascript
+// ❌ 用「這幾列實際選到的字母種類數」決定要不要顯示（舊邏輯，已作廢）
+const sheetStr = sheetHeads.length > 1 ? collapseSheetLabelList(sheetHeads) : '';
+
+// ❌ 拿不到套餐快取時，直接判定「不是下拉」（會讓 student 端舊資料救援把明明是下拉、
+// 只是老師只選了一種的情況，錯判成非下拉而藏起字母）
+if (!combo) return false; // 應該回 null，交給呼叫端退回舊 heuristic，不可直接論斷
+```
+
+### 正確
+
+```javascript
+// ✅ 判斷用鑰匙：三態（true／false／null），null 才退回舊 heuristic
+function isDropdownComboForGroupRows(classId, rows) {
+    const first = (rows || [])[0];
+    if (!first) return null;
+    const combo = first.combo || resolvePackCombo(classId, String(first.comboId || first.combo_id || '').trim());
+    if (!combo) return null;
+    return !!(combo.isGroup === true || (Array.isArray(combo.ownSheets) && combo.ownSheets.length > 1));
+}
+
+const isDropdown = isDropdownComboForGroupRows(classId, filled);
+const sheetStr = isDropdown === true ? collapseSheetLabelList(sheetHeads)
+    : isDropdown === false ? ''
+        : (sheetHeads.length > 1 ? collapseSheetLabelList(sheetHeads) : '');
+```
+
+### 實測
+
+1. 套餐是下拉（`ownSheets.length>1`），這次範圍表只有 1 列、選了字母 J、頁 1~2 → 說明顯示
+   `套餐名 J pp. 1~2`（不是舊邏輯的 `套餐名 pp. 1~2`，字母不會因為「只選了一種」被藏起來）
+2. 同一套餐是下拉，兩列都選了字母 J（同一個字母）、範圍分別 1~2 與 5~6 → 說明顯示
+   `套餐名 J pp. 1~2, 5~6`（字母仍顯示，範圍照樣合併／分列）
+3. 套餐是下拉，兩列選了不同字母 J、K，各自範圍相連或不相連 → 跟原本行為一致，顯示
+   `套餐名 J pp. … ; K pp. …`
+4. 套餐不是下拉（`ownSheets.length===1`，只有一本固定活頁），兩段不同範圍 61~70、84~88 →
+   說明只顯示 `套餐名 pp. 61~70, 84~88`，永遠不加字母
+5. 組合類型作業（同一範圍群組下錄音＋考試）→ 範圍只在群組說明出現一次（含上面新版字母
+   規則），錄音／考試子任務自己的標題與說明仍一律留空——跟 2026-09-15 版行為一致，沒有改
+6. student 端讀取舊資料、套餐快取不存在（`isDropdownComboForGroupRows` 回 `null`）→ 退回舊
+   heuristic（看實際選到幾種），不會因為拿不到快取就整段報錯或空白
+
+### 改動前自問（本次新增）
+
+1. 是否用「isGroup／ownSheets.length」判斷是不是下拉，而不是用「實際選到幾種」？
+2. 下拉但只選了 1 種（或只有 1 列）時，字母是否仍然顯示？
+3. 拿不到套餐快取時是否回 `null`（交給呼叫端退回舊 heuristic），而不是直接論斷 `false`？
+4. `110_teacher_core/feature-timeline.js` 與 `020_js_core/pack-range-label.js` 兩份 `isDropdownComboForGroupRows`／`combinePackRangeLabel` 是否同步改？
+任一否 → 停。

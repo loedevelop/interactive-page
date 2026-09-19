@@ -285,6 +285,24 @@
         return filled.every(function (r) { return packRowExamKey(r) === key0; });
     }
 
+    /**
+     * 2026-09-18 老師定案：區段名字（活頁字母）該不該列進說明，改成看「這個套餐當初是不是
+     * 下拉選單」（isGroup 或可選活頁數 >1，跟 ui-timeline-templates.js renderSheetPackTableHtml
+     * 判斷是否畫 <select> 同一把鑰匙），不是看「這幾列實際選到的字母種類數」。
+     * 是下拉 → 不管選到幾種（哪怕只選了同一種、或只有一列）都要顯示選到的是哪一個。
+     * 不是下拉（只有一本固定活頁）→ 永遠不顯示，沒有可選就沒有需要標示的資訊。
+     * 回傳 true／false＝精準判斷出來；回傳 null＝這個環境拿不到套餐快取（例如 student 端
+     * 舊資料救援用的即時算法），沒有這筆資訊可用，交給呼叫端退回舊 heuristic，不可猜。
+     */
+    function isDropdownComboForGroupRows(classId, rows) {
+        const first = (rows || [])[0];
+        if (!first) return null;
+        const comboId = String((first.comboId || first.combo_id) || '').trim();
+        const combo = first.combo || resolvePackCombo(classId, comboId);
+        if (!combo) return null;
+        return !!(combo.isGroup === true || (Array.isArray(combo.ownSheets) && combo.ownSheets.length > 1));
+    }
+
     function uniqueSheetLabelsForRows(rows, classId) {
         const seen = {};
         const labels = [];
@@ -392,9 +410,15 @@
             // 難度／必考／排除／題數這些出考卷專用設定完全無關——這些設定不一致，不准把範圍
             // 吞掉、只剩套餐名（違反永遠不准丟資料）。相連就合併，不相連就逗號分開列，範圍永遠列出來。
             // 只有一本活頁＝區段固定，不是老師選出來的區分資訊，不准把活頁別名寫進標題／說明；
-            // 是否列出區段只看「是否真的有多本不同活頁」，跟考試設定是否一致無關。
+            // 2026-09-18 老師再定案：是否列出區段字母，改看「這個套餐當初是不是下拉選單」
+            // （isDropdownComboForGroupRows），不是看「這幾列實際選到的字母種類數」。是下拉→
+            // 不管選到幾種都顯示；不是下拉→永遠不顯示。拿不到套餐快取（student 端舊資料救援）
+            // 才退回舊 heuristic（看實際種類數 >1），不可用來覆蓋老師端已經算得出來的精準結果。
             const sheetHeads = uniqueSheetHeadsForRows(filled, classId);
-            const sheetStr = sheetHeads.length > 1 ? collapseSheetLabelList(sheetHeads) : '';
+            const isDropdown = isDropdownComboForGroupRows(classId, filled);
+            const sheetStr = isDropdown === true ? collapseSheetLabelList(sheetHeads)
+                : isDropdown === false ? ''
+                    : (sheetHeads.length > 1 ? collapseSheetLabelList(sheetHeads) : '');
             if (rangeStr) {
                 const bits = omitComboName
                     ? [sheetStr, rangeStr]

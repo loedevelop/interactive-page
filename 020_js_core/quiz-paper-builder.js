@@ -33,8 +33,26 @@ window.QuizPaperBuilder = (function () {
     }
 
     /**
-     * 批改比對用。只把「同一個標點的不同字形」收成同一個字元
-     * （彎引號→直引號；省略號 …／⋯ → 三個點 ...），其餘一字不改。
+     * 全形→半形，「同一個字元的不同字形」收成同一個字元（不是壓空白、不是去標點）。
+     * 涵蓋範圍：Unicode Fullwidth Forms（U+FF01~FF5E：全形英文字母／數字／!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~，
+     * 含全形逗號，，全形句點．，全形問號？，全形驚嘆號！等）、全形空白（U+3000）、
+     * 中文句號。（U+3002）、中文頓號、（U+3001）。
+     * 2026-09-18 老師回報：學生用中文輸入法作答，英打當下不小心帶出全形標點／全形空白，
+     * 肉眼看起來跟正確答案一模一樣，比對卻判定不對——這是「同一個字元被打成另一種字形」，
+     * 跟彎引號／省略號是同一類問題，不是要放寬比對標準。
+     */
+    function normalizeFullwidthToHalfwidth(ch) {
+        const code = ch.charCodeAt(0);
+        if (code >= 0xFF01 && code <= 0xFF5E) return String.fromCharCode(code - 0xFEE0);
+        if (code === 0x3000) return ' ';
+        if (code === 0x3002) return '.';
+        if (code === 0x3001) return ',';
+        return ch;
+    }
+
+    /**
+     * 批改比對用。只把「同一個標點／字元的不同字形」收成同一個字元
+     * （彎引號→直引號；省略號 …／⋯ → 三個點 ...；全形英數／標點／空白 → 半形），其餘一字不改。
      * 大小寫、空白（含頭尾與連續空白）、其餘標點都要精準：
      * Don't ≠ don't，Don't ≠ Don 't，Don't. ≠ Don't。
      * 禁止壓空白、禁止去掉句尾標點、禁止轉小寫。
@@ -43,7 +61,8 @@ window.QuizPaperBuilder = (function () {
         return String(s == null ? '' : s)
             .replace(/[’‘]/g, "'")
             .replace(/[“”]/g, '"')
-            .replace(/[\u2026\u22EF]/g, '...');
+            .replace(/[\u2026\u22EF]/g, '...')
+            .replace(/[\uFF01-\uFF5E\u3000\u3001\u3002]/g, normalizeFullwidthToHalfwidth);
     }
 
     /**
