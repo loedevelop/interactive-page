@@ -1546,15 +1546,28 @@ window.FeatureStudentQuiz = (function () {
             ? '<div style="margin-top:4px; color:#0F766E; font-weight:700; white-space:pre-wrap;">' + esc(it.cloze_stem) + '</div>'
             : '';
         // 一題多空格（分開比對）：每個空格各自一個輸入框＋小標籤；prevAnswer 這時是 {sub_key: value} 物件
+        // 💣 雷區（2026-09-20「圖二根本沒有 blank 2」）：只畫「真的存在」的格子——這一格自己的
+        // answer_en／accepted_answers 都空＝這一列教材根本沒有這個空格，不給學生看到、不給打字，
+        // 跟 QuizPaperBuilder.isRealSubAnswer／gradeSubAnswerItem／getItemExpectedParts 同一把鑰匙。
+        const QRB = window.QuizPaperBuilder;
+        const realSubAnswers = (Array.isArray(it.sub_answers) && QRB && typeof QRB.isRealSubAnswer === 'function')
+            ? it.sub_answers.filter(QRB.isRealSubAnswer)
+            : (Array.isArray(it.sub_answers) ? it.sub_answers : []);
         let inputsHtml;
-        if (Array.isArray(it.sub_answers) && it.sub_answers.length > 1) {
+        if (realSubAnswers.length > 1) {
             const prevObj = (prevAnswer && typeof prevAnswer === 'object') ? prevAnswer : {};
-            inputsHtml = it.sub_answers.map(function (sa, idx) {
+            inputsHtml = realSubAnswers.map(function (sa, idx) {
                 return '<div style="margin-top:2px;">'
                     + '<label style="font-size:0.7rem; color:#64748B; font-weight:700;">空格 ' + (idx + 1) + '</label>'
                     + '<input ' + subAnswerInputAttrs(it.item_id, sa.key, prevObj[sa.key]) + '>'
                     + '</div>';
             }).join('');
+        } else if (realSubAnswers.length === 1) {
+            // 只剩 1 格真的存在：仍走 sub-answer 輸入框（data-sub-key 保留這一格自己的 key，
+            // 不借用別的欄位／不合併成單一輸入框），collectAnswers 照舊用 data-sub-key 收值。
+            const prevObj = (prevAnswer && typeof prevAnswer === 'object') ? prevAnswer : {};
+            const sa = realSubAnswers[0];
+            inputsHtml = '<input ' + subAnswerInputAttrs(it.item_id, sa.key, prevObj[sa.key]) + '>';
         } else {
             inputsHtml = '<input ' + answerInputAttrs(it.item_id, (typeof prevAnswer === 'string' ? prevAnswer : '')) + '>';
         }
@@ -2694,10 +2707,21 @@ window.FeatureStudentQuiz = (function () {
      *   時從這裡還原，不會讓已經打對的次數歸零。
      */
     function getItemExpectedParts(it) {
-        if (Array.isArray(it.sub_answers) && it.sub_answers.length > 1) {
-            return it.sub_answers.map(function (sa, idx) {
+        // 💣 雷區（2026-09-20「圖二根本沒有 blank 2」）：只練「真的存在」的格子，跟
+        // QuizPaperBuilder.isRealSubAnswer／renderItemRow／gradeSubAnswerItem 同一把鑰匙，不練一個
+        // 空字串的假空格。
+        const QGP = window.QuizPaperBuilder;
+        const realSubAnswers = (Array.isArray(it.sub_answers) && QGP && typeof QGP.isRealSubAnswer === 'function')
+            ? it.sub_answers.filter(QGP.isRealSubAnswer)
+            : (Array.isArray(it.sub_answers) ? it.sub_answers : []);
+        if (realSubAnswers.length > 1) {
+            return realSubAnswers.map(function (sa, idx) {
                 return { key: String(sa.key || ('sub' + idx)), expected: String(sa.answer_en || ''), label: sa.label || ('空格 ' + (idx + 1)) };
             });
+        }
+        if (realSubAnswers.length === 1) {
+            const sa = realSubAnswers[0];
+            return [{ key: String(sa.key || 'sub0'), expected: String(sa.answer_en || ''), label: null }];
         }
         return [{ key: '_single', expected: String(it.answer_en || ''), label: null }];
     }

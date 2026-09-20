@@ -1284,32 +1284,45 @@ window.QuizPaperBuilder = (function () {
      * （answer/expected 是合併後字串，供既有畫面顯示／diff），另外多帶 sub_results 給之後
      * 要做逐空格顯示的畫面用（目前先沿用合併 diff，不逐空格標色）。
      */
+    /**
+     * 這一格自己是否真的存在（有標準答案）：sa.answer_en 跟 sa.accepted_answers 只要有一個
+     * 非空，就是真的有這一格；兩個都空＝這一列教材資料本來就沒有這個空格。這是唯一的鑰匙，
+     * 批改（gradeSubAnswerItem）、學生作答輸入框（renderItemRow）、輸入改正練習
+     * （getItemExpectedParts）、老師端複習畫面（subAnswerPrimaryPairsHtml）都只認這一把，
+     * 不各寫各的（uniform-apply-invariant）。
+     */
+    function isRealSubAnswer(sa) {
+        return !!(sa && (String(sa.answer_en || '').trim() || (Array.isArray(sa.accepted_answers) && sa.accepted_answers.length)));
+    }
+
     function gradeSubAnswerItem(it, got) {
         const gotObj = (got && typeof got === 'object') ? got : {};
         let allOk = true;
         let hasWsIssue = false;
         const subResults = it.sub_answers.map(function (sa) {
-            const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
             /**
              * 💣 雷區（2026-09-20 老師回報「圖二根本沒有 blank 2」＋糾正我第一次改 buildItemFromRow
-             * 結構的做法是消去法）：這一格本身沒有任何標準答案（sa.answer_en 跟 accepted_answers
-             * 都是空的——這一列教材資料這欄本來就是空字串，代表這句沒有這個空格），學生端也不會
-             * 有這格的輸入框，got 自然也是空字串。「''（沒有標準答案）」對「''（沒有輸入）」
-             * 本來就一致，不該套用 isAcceptableAnswer 那條「gotN===''一律判錯」——那條規則是
-             * 為「真的有標準答案、學生卻空著沒寫」設計的。這裡只針對「這一格自己」判斷，不看
+             * 結構的做法是消去法）：這一格本身沒有任何標準答案，代表這一列教材資料這欄本來就沒有
+             * 這個空格。往上游修正後（renderItemRow／getItemExpectedParts 不再畫出這格的輸入框），
+             * 學生端本來就不會有這格的輸入框，但這裡仍要顧到「重新批改舊資料」——舊資料若是在
+             * 上游修正之前送出的，input 框曾經存在過，gotObj[sa.key] 可能真的有學生打的字，不准
+             * 憑空清空（永遠不准丟資料）：answer 老實顯示 gotObj[sa.key]，只是不計分、標記
+             * not_applicable，不套用 isAcceptableAnswer 那條「gotN===''一律判錯」（那條規則是
+             * 為「真的有標準答案、學生卻空著沒寫」設計的）。這裡只針對「這一格自己」判斷，不看
              * 其他格、不看總共幾格有值（不是消去法／不是猜有幾格），每一格各自套同一條規則。
              */
-            if (!okList.length) {
+            if (!isRealSubAnswer(sa)) {
                 return {
                     key: sa.key,
                     label: sa.label,
-                    answer: '',
+                    answer: gotObj[sa.key] == null ? '' : String(gotObj[sa.key]),
                     expected: '',
                     ok: true,
                     not_applicable: true,
                     whitespace_boundary_issue: false
                 };
             }
+            const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
             const g = normalizeAnswer(gotObj[sa.key]);
             const ok = isAcceptableAnswer(g, okList);
             const wsIssue = !ok && isWhitespaceBoundaryOnlyMismatch(g, okList);
@@ -2179,6 +2192,7 @@ window.QuizPaperBuilder = (function () {
         filterRowsForSection: filterRowsForSection,
         gradeAnswers: gradeAnswers,
         gradeCompletion: gradeCompletion,
+        isRealSubAnswer: isRealSubAnswer,
         normalizeAnswer: normalizeAnswer,
         plainQuizAnswer: plainQuizAnswer,
         tokenizeWords: tokenizeWords,

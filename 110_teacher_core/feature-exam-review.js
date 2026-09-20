@@ -113,12 +113,14 @@ window.FeatureExamReview = (function () {
         const subAnswers = (item && Array.isArray(item.sub_answers)) ? item.sub_answers : [];
         const gotObj = (rawAnswer && typeof rawAnswer === 'object') ? rawAnswer : {};
         // 💣 雷區（2026-09-20「圖二根本沒有 blank 2」）：這一格自己的 answer_en／accepted_answers
-        // 都是空的＝這一列教材根本沒有這個空格的標準答案（跟 gradeSubAnswerItem 的
-        // not_applicable 同一把鑰匙，只看這一格自己，不看其他格），整格不顯示——不是「尚未
-        // 作答」，是這一格本來就不存在。
-        const realSubAnswers = subAnswers.filter(function (sa) {
+        // 都是空的＝這一列教材根本沒有這個空格的標準答案。只認 QuizPaperBuilder.isRealSubAnswer
+        // 這一把鑰匙（跟 gradeSubAnswerItem／renderItemRow／getItemExpectedParts 同一份，不各寫
+        // 各的），整格不顯示——不是「尚未作答」，是這一格本來就不存在。
+        const Q = window.QuizPaperBuilder;
+        const isReal = (Q && typeof Q.isRealSubAnswer === 'function') ? Q.isRealSubAnswer : function (sa) {
             return !!(sa && (String(sa.answer_en || '').trim() || (Array.isArray(sa.accepted_answers) && sa.accepted_answers.length)));
-        });
+        };
+        const realSubAnswers = subAnswers.filter(isReal);
         return realSubAnswers.map(function (sa, i) {
             const subGotRaw = gotObj[sa.key];
             const subGot = (subGotRaw == null || typeof subGotRaw === 'object') ? '' : String(subGotRaw);
