@@ -937,19 +937,43 @@ window.QuizPaperBuilder = (function () {
          *      （skipStoredCombined 時現算，避免用重新批改前的過期 `_answer_combined_text`；
          *      否則優先讀已存的 `_answer_combined_text`，沒有才現算 `_answer_keys`）。
          *   ③ 都沒有時，退回舊教材相容慣例（wordFromRow／row.script／row.answer_en）。
+         *
+         * 💣 雷區（2026-09-20 老師回報「圖二根本沒有 blank 2，程式有病嗎」，實測 JayCheng_2026
+         * 09/17 考卷 item 5-44「She tends to go to bed late.」）：`_answer_keys` 是這份擷取
+         * 範本固定的欄位清單（例如 blank_1／blank_2 兩欄），代表「這個範本最多支援幾個空格」，
+         * 不代表「這一列真的用到幾個空格」——查證這一列的 meta 原始資料：
+         * blank_1="She tends to go to bed late"、blank_2=""（空字串，這句本來就只有一個空格，
+         * 不是漏填）。舊寫法只看 `_answer_keys.length > 1` 就無條件把每一欄都當一個 sub_answer，
+         * 空欄位的 answer_en 也是空字串——gradeSubAnswerItem 對這一格跑 isAcceptableAnswer('', [])
+         * 恆為 false，等於憑空生出一個「永遠答不對、也永遠沒得作答」的假空格，把明明整題答對的
+         * blank_1 拖累成整題判錯。精準：只有「這一列真的有值」的欄位才算一個空格；用 row[key]
+         * 是否為空字串來判斷（這是老師教材本身的資料，不是猜的），只留下真正有值的欄位。
+         * activeKeys.length>1＝真的多空格，照舊分開比對；activeKeys.length===1＝其實只有一格，
+         * 直接當單一書寫答案（用這一格自己的值，不借用 row.answer_en 那種整句版本，避免跟
+         * blank_1 原本要比對的內容不一致）；activeKeys.length===0＝這一列雖標了 separate 模式
+         * 卻沒有任何一欄有值，交給下面分支二的舊教材相容 fallback 處理，不在這裡幫它捏造答案。
          */
         let answerEn = '';
         let subAnswers = null;
+        let separateModeHandled = false;
         if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
-            subAnswers = row._answer_keys.map(function (key) {
-                const subAnswerEn = String(row[key] || '').trim();
-                const precomputed = (row._accepted_answers_by_key && row._accepted_answers_by_key[key]) || [];
-                return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(subAnswerEn), precomputed) };
-            });
-            // 合併預覽字串：只給舊版只認單一 answer_en 的畫面（例如老師端答案訂正列表）顯示用，
-            // 實際批改（gradeAnswers／gradeSubAnswerItem）一律讀 sub_answers，不讀這個字串。
-            answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
-        } else {
+            const activeKeys = row._answer_keys.filter(function (key) { return String(row[key] || '').trim() !== ''; });
+            if (activeKeys.length > 1) {
+                subAnswers = activeKeys.map(function (key) {
+                    const subAnswerEn = String(row[key] || '').trim();
+                    const precomputed = (row._accepted_answers_by_key && row._accepted_answers_by_key[key]) || [];
+                    return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(subAnswerEn), precomputed) };
+                });
+                // 合併預覽字串：只給舊版只認單一 answer_en 的畫面（例如老師端答案訂正列表）顯示用，
+                // 實際批改（gradeAnswers／gradeSubAnswerItem）一律讀 sub_answers，不讀這個字串。
+                answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
+                separateModeHandled = true;
+            } else if (activeKeys.length === 1) {
+                answerEn = String(row[activeKeys[0]] || '').trim();
+                separateModeHandled = true;
+            }
+        }
+        if (!separateModeHandled) {
             if (opts.quizAnswer) {
                 const tplCells = safeEvalFields(opts.quizAnswer);
                 answerEn = tplCells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join(' ').trim();
