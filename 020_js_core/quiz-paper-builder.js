@@ -1658,14 +1658,15 @@ window.QuizPaperBuilder = (function () {
 
     /**
      * 老師批改用：同一組欄位上下對齊。
-     * 上排學生答案＝黑、錯處深藍；下排對照句＝黑、差異用 expectedDiffColor（正解紅／其他寫法藍）。
-     * 對得上的字上下都顯示（都黑），方便一眼掃完整句。學生端仍走 renderAnswerDiffHtml。
+     * 對得上的字＝灰色、正常字重（褪到背景，2026-09-20 老師回報「整行看起來很礙眼」：舊版
+     * 對得上的字也用跟差異一樣的粗黑字，整行看起來一樣搶眼，看不出哪裡才是真正的差異）；
+     * 對不上的字才用粗體＋色（上排學生／這筆答案＝深藍，下排對照句差異＝expectedDiffColor，
+     * 正解紅／其他寫法橙）。學生端仍走 renderAnswerDiffHtml，不受這裡影響。
      */
     function renderAlignedPairHtml(ops, opts) {
         opts = opts || {};
-        const gotOk = '#1E293B';
+        const matchColor = '#94A3B8';
         const gotBad = '#1E3A8A';
-        const expOk = '#1E293B';
         const expBad = opts.expectedDiffColor || '#DC2626';
         const list = ops || [];
         // 「是否全部都是缺漏」只看真字（排除 op.boundary 頭尾空白標記）。
@@ -1673,27 +1674,31 @@ window.QuizPaperBuilder = (function () {
         if (!meaningful.length || meaningful.every(function (op) { return op.type === 'del'; })) {
             return '';
         }
-        function wordHtml(text, color) {
+        function wordHtml(text, color, weight) {
             if (text == null || String(text) === '') {
                 return '<span style="display:inline-block; min-width:1.2em; border-bottom:2px solid #CBD5E1;">&nbsp;</span>';
             }
-            return '<span style="color:' + color + '; font-weight:800; white-space:nowrap;">' + escHtml(text) + '</span>';
+            // 頭尾空白標記「▲」這個字符本身的字形設計比一般字母／單字滿版，同樣 font-size
+            // 底下視覺上會比周圍文字大一圈（2026-09-20 老師回報「字體大小要統一」），縮小這個
+            // 記號自己的 font-size，不影響其餘文字的大小。
+            const sizeStyle = (text === WHITESPACE_DIFF_MARK) ? ' font-size:0.75em; vertical-align:middle;' : '';
+            return '<span style="color:' + color + '; font-weight:' + weight + '; white-space:nowrap;' + sizeStyle + '">' + escHtml(text) + '</span>';
         }
         function cellForOp(op) {
             let top;
             let bot;
             if (op.type === 'match') {
-                top = wordHtml(op.got, gotOk);
-                bot = wordHtml(op.expected, expOk);
+                top = wordHtml(op.got, matchColor, 500);
+                bot = wordHtml(op.expected, matchColor, 500);
             } else if (op.type === 'sub') {
-                top = wordHtml(op.got, gotBad);
-                bot = wordHtml(op.expected, expBad);
+                top = wordHtml(op.got, gotBad, 800);
+                bot = wordHtml(op.expected, expBad, 800);
             } else if (op.type === 'ins') {
-                top = wordHtml(op.got, gotBad);
-                bot = wordHtml('', expOk);
+                top = wordHtml(op.got, gotBad, 800);
+                bot = wordHtml('', matchColor, 500);
             } else {
-                top = wordHtml('', gotOk);
-                bot = wordHtml(op.expected, expBad);
+                top = wordHtml('', matchColor, 500);
+                bot = wordHtml(op.expected, expBad, 800);
             }
             return '<span style="display:inline-flex; flex-direction:column; align-items:center; gap:3px; min-width:1.2em;">'
                 + top + bot + '</span>';

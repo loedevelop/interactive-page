@@ -143,31 +143,25 @@ window.FeatureExamReview = (function () {
     }
 
     /**
-     * 學生答案／其他可接受寫法：單生卷與申訴審查同一把。
+     * 其他可接受寫法：單生卷與申訴審查同一把。
      *
-     * 💣 雷區（2026-09-12 老師回報「下方答案是重複的兩筆？？？這是給我看還是給你看？」）：
-     * 舊版「學生這次答案」對上「這筆可接受寫法」完全相同時（申訴接受多半就是直接照學生寫法
-     * 收錄，兩者本來就會一模一樣），還是硬塞成上下兩排——印出兩行一字不差的文字，對老師
-     * 沒有任何資訊量，只是版面雜訊。且完全沒有交代「這筆可接受寫法」跟「正確答案」之間的
-     * 關係，老師看不出這筆寫法是正確答案的哪個變化（例如少了 (s)）。
-     *
-     * 改成兩層、由近到遠一層一層列出，跟老師要求的「應該要能一層一層地往回看」對齊：
-     * ①學生答案／這筆——只有學生這次實際打的文字跟這筆逐字不同才顯示（完全相同時沒有
-     *   資訊量，不重複印一次一模一樣的字）；
-     * ②這筆／正確答案——一律顯示（除非這筆本身文字就跟正確答案完全相同，那也沒有差異
-     *   可看，改顯示一句說明，不是印兩排一樣的字）。
+     * 💣 雷區（2026-09-20 老師回報「分別單獨對比，非常的白癡」，糾正 2026-09-12 那版「學生
+     * 答案／這筆」「這筆／正確答案」逐筆各自兩層對齊比較的做法）：每一筆可接受寫法各自
+     * 拆出兩組逐字對齊比較，一次看好幾筆時版面又長又雜，看不出這些寫法彼此差在哪。改成
+     * 老師要求的做法——先把其他所有可接受的寫法一行一行列出來（就是這筆寫法本身的原始
+     * 文字，不逐字比對、不套色），老師一眼掃完就知道目前登記了哪些寫法；大小寫／標點都
+     * 照原樣顯示（不折疊成同一行、不視為相同），保留各自獨立的「× 移除」。
      */
     function acceptedPairsHtml(item, studentPlain, removeCall) {
+        // studentPlain 保留參數是為了不動兩個呼叫端的呼叫方式；改成純列表後這裡不再用它跟
+        // 逐字比對（不再顯示「學生答案／這筆」那一層），呼叫端仍可傳，這裡單純不使用。
         const paperList = (item && item.accepted_answers) || [];
         const extra = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.extraAcceptedForItem === 'function')
             ? (window.QuizPaperBuilder.extraAcceptedForItem(item) || [])
             : [];
         const list = paperList.concat(extra);
-        const primary = (item && item.answer_en) || '';
-        const primaryN = normAns(primary);
-        const studentTrim = String(studentPlain || '').trim();
         const seen = {};
-        const blocks = [];
+        const lines = [];
         list.forEach(function (a) {
             const n = normAns(a);
             if (!n || seen[n]) return;
@@ -179,38 +173,17 @@ window.FeatureExamReview = (function () {
             const removeHtml = (removeCall && paperIdx >= 0)
                 ? ('<a href="javascript:void(0)" onclick="' + removeCall(paperIdx) + '" style="color:#B91C1C; font-weight:900; text-decoration:none; font-size:0.8rem; white-space:nowrap;" title="從清單拿掉">× 移除</a>')
                 : '';
-            // ①學生答案／這筆：文字逐字相同就沒有資訊量，不印
-            const aTrim = String(a || '').trim();
-            const vsStudentHtml = (studentTrim && studentTrim !== aTrim)
-                ? ('<div style="margin-bottom:6px;">'
-                    + '<div style="font-size:0.72rem; font-weight:800; color:#64748B;">學生答案／這筆'
-                    + '<span style="font-weight:700;">（上排學生＝黑／不同深藍　下排這筆＝黑／不同藍）</span></div>'
-                    + '<div style="font-size:1rem; line-height:1.7;">' + alignedPairHtml(a, studentPlain, '#2563EB') + '</div>'
-                    + '</div>')
-                : '';
-            // ②這筆／正確答案：往回看這筆跟官方標準答案差在哪，跟學生這次答案是什麼無關
-            const isDupOfPrimary = !!(primaryN && n === primaryN);
-            const vsPrimaryHtml = isDupOfPrimary
-                ? '<div style="font-size:0.85rem; font-weight:700; color:#94A3B8;">（跟正確答案文字相同）</div>'
-                : (primary
-                    ? ('<div style="font-size:1rem; line-height:1.7;">' + alignedPairHtml(primary, a, '#B45309') + '</div>')
-                    : ('<div style="font-size:1rem; font-weight:800; color:#1E293B; line-height:1.7; white-space:pre-wrap;">' + esc(a) + '</div>'));
-            blocks.push('<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-top:8px; padding:8px 10px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;">'
-                + '<div style="flex:1;">'
-                    + vsStudentHtml
-                    + '<div style="font-size:0.72rem; font-weight:800; color:#64748B;">這筆／正確答案'
-                    + '<span style="font-weight:700;">（上排這筆＝黑／不同深藍　下排正確答案＝黑／不同橙）</span></div>'
-                    + vsPrimaryHtml
-                + '</div>'
+            lines.push('<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; padding:7px 10px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px;">'
+                + '<div style="font-size:1rem; font-weight:800; color:#1E293B; line-height:1.6; white-space:pre-wrap;">' + esc(a) + '</div>'
                 + removeHtml
                 + '</div>');
         });
-        if (!blocks.length) {
+        if (!lines.length) {
             return '<div style="margin-top:8px; font-size:0.8rem; color:#94A3B8; font-weight:700;">（沒有其他可接受寫法）</div>';
         }
         return '<div style="margin-top:10px; padding-top:8px; border-top:1px dashed #E2E8F0;">'
             + '<div style="font-size:0.75rem; font-weight:800; color:#1E293B; margin-bottom:2px;">其他可接受寫法</div>'
-            + blocks.join('')
+            + lines.join('')
             + '</div>';
     }
 
