@@ -910,14 +910,17 @@ window.FeatureStudentQuiz = (function () {
      * 「你的答案／正確答案」，格與格之間強制換行，不要合併成一條再顯示。
      */
     function subResultCardBodyHtml(subResults) {
-        return subResults.map(function (sr, i) {
+        // 💣 雷區（2026-09-20「圖二根本沒有 blank 2」）：not_applicable＝這一格自己沒有標準答案
+        // （跟老師端 QuizPaperBuilder.gradeSubAnswerItem 同一把鑰匙），整格不顯示，不是「尚未作答」。
+        const realResults = (subResults || []).filter(function (sr) { return sr && !sr.not_applicable; });
+        return realResults.map(function (sr, i) {
             const diff = (window.QuizPaperBuilder && typeof window.QuizPaperBuilder.analyzeAnswerDiff === 'function')
                 ? window.QuizPaperBuilder.analyzeAnswerDiff(sr.expected || '', sr.answer || '')
                 : { ops: [] };
             const ops = (diff && diff.ops) || [];
             const label = '第 ' + (i + 1) + ' 格（' + esc(sr.label || sr.key || '') + '）';
             const rowColor = sr.ok ? '#64748B' : '#DC2626';
-            return '<div style="margin-bottom:' + (i < subResults.length - 1 ? '10px' : '0') + ';">'
+            return '<div style="margin-bottom:' + (i < realResults.length - 1 ? '10px' : '0') + ';">'
                 + '<div style="font-size:0.68rem; font-weight:800; color:#94A3B8; margin-bottom:2px;">' + label + '</div>'
                 + '<div style="font-size:0.75rem; color:#64748B; font-weight:800; margin-bottom:2px;">你的答案</div>'
                 + '<div style="font-size:1rem; line-height:1.7; margin-bottom:4px;">' + renderStudentStrikeHtml(ops) + '</div>'

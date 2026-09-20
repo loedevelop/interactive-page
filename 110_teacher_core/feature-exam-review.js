@@ -112,14 +112,21 @@ window.FeatureExamReview = (function () {
     function subAnswerPrimaryPairsHtml(item, rawAnswer, expectedDiffColor) {
         const subAnswers = (item && Array.isArray(item.sub_answers)) ? item.sub_answers : [];
         const gotObj = (rawAnswer && typeof rawAnswer === 'object') ? rawAnswer : {};
-        return subAnswers.map(function (sa, i) {
+        // 💣 雷區（2026-09-20「圖二根本沒有 blank 2」）：這一格自己的 answer_en／accepted_answers
+        // 都是空的＝這一列教材根本沒有這個空格的標準答案（跟 gradeSubAnswerItem 的
+        // not_applicable 同一把鑰匙，只看這一格自己，不看其他格），整格不顯示——不是「尚未
+        // 作答」，是這一格本來就不存在。
+        const realSubAnswers = subAnswers.filter(function (sa) {
+            return !!(sa && (String(sa.answer_en || '').trim() || (Array.isArray(sa.accepted_answers) && sa.accepted_answers.length)));
+        });
+        return realSubAnswers.map(function (sa, i) {
             const subGotRaw = gotObj[sa.key];
             const subGot = (subGotRaw == null || typeof subGotRaw === 'object') ? '' : String(subGotRaw);
             const label = '第 ' + (i + 1) + ' 格（' + esc(sa.label || sa.key) + '）';
             const body = subGot
                 ? ('<div style="font-size:1rem; line-height:1.7;">' + alignedPairHtml(sa.answer_en, subGot, expectedDiffColor) + '</div>')
                 : '<span style="color:#94A3B8; font-weight:700;">（這格尚未作答）</span>';
-            const marginBottom = (i < subAnswers.length - 1) ? '10px' : '0';
+            const marginBottom = (i < realSubAnswers.length - 1) ? '10px' : '0';
             return '<div style="margin-bottom:' + marginBottom + ';">'
                 + '<div style="font-size:0.7rem; font-weight:800; color:#94A3B8; margin-bottom:2px;">' + label + '</div>'
                 + body

@@ -938,42 +938,33 @@ window.QuizPaperBuilder = (function () {
          *      否則優先讀已存的 `_answer_combined_text`，沒有才現算 `_answer_keys`）。
          *   ③ 都沒有時，退回舊教材相容慣例（wordFromRow／row.script／row.answer_en）。
          *
-         * 💣 雷區（2026-09-20 老師回報「圖二根本沒有 blank 2，程式有病嗎」，實測 JayCheng_2026
-         * 09/17 考卷 item 5-44「She tends to go to bed late.」）：`_answer_keys` 是這份擷取
-         * 範本固定的欄位清單（例如 blank_1／blank_2 兩欄），代表「這個範本最多支援幾個空格」，
-         * 不代表「這一列真的用到幾個空格」——查證這一列的 meta 原始資料：
-         * blank_1="She tends to go to bed late"、blank_2=""（空字串，這句本來就只有一個空格，
-         * 不是漏填）。舊寫法只看 `_answer_keys.length > 1` 就無條件把每一欄都當一個 sub_answer，
-         * 空欄位的 answer_en 也是空字串——gradeSubAnswerItem 對這一格跑 isAcceptableAnswer('', [])
-         * 恆為 false，等於憑空生出一個「永遠答不對、也永遠沒得作答」的假空格，把明明整題答對的
-         * blank_1 拖累成整題判錯。精準：只有「這一列真的有值」的欄位才算一個空格；用 row[key]
-         * 是否為空字串來判斷（這是老師教材本身的資料，不是猜的），只留下真正有值的欄位。
-         * activeKeys.length>1＝真的多空格，照舊分開比對；activeKeys.length===1＝其實只有一格，
-         * 直接當單一書寫答案（用這一格自己的值，不借用 row.answer_en 那種整句版本，避免跟
-         * blank_1 原本要比對的內容不一致）；activeKeys.length===0＝這一列雖標了 separate 模式
-         * 卻沒有任何一欄有值，交給下面分支二的舊教材相容 fallback 處理，不在這裡幫它捏造答案。
+         * 💣 雷區（2026-09-20 老師回報「圖二根本沒有 blank 2，程式有病嗎」＋糾正我第一次的
+         * 修法「用哪一欄有值來反推有幾格」是消去法／會弄丟 blank_1 自己的
+         * `_accepted_answers_by_key`）：`_answer_keys` 是老師在範本編輯器裡明確勾選
+         * 「書寫答案」的欄位清單（見 feature-material-layout-pairing.js 的
+         * `cols.filter(c => c.is_answer)`），是老師自己的宣告，不是猜的、也不該因為某一列
+         * 剛好某欄是空字串就重新推翻這個宣告、改變這一題有幾個 sub_answer——結構原封不動，
+         * 照舊把 `_answer_keys` 每一欄都建成一個 sub_answer。真正該修的是「比對」那一層：
+         * 這一列 blank_2="" 代表這一列根本沒有這個空格的標準答案，學生端也不會有這格的輸入框，
+         * 學生那一格自然也是 ''——「''（沒有標準答案）」對「''（沒有输入）」本來就該算一致，
+         * 不該套用「isAcceptableAnswer 只要 gotN==='' 一律判錯」這條給「真的空著沒寫」設計的
+         * 規則。修法在 gradeSubAnswerItem：這一格的 okList（標準答案＋可接受答案）本身是空的
+         * （代表沒有標準答案），直接判這一格 ok=true、標記 not_applicable，不進入一般比對，
+         * 也不算「尚未作答」；畫面（subAnswerPrimaryPairsHtml／subResultCardBodyHtml）看到
+         * not_applicable 就整格跳過不顯示，不再出現「第 2 格（這格尚未作答）」這種假空格。
          */
         let answerEn = '';
         let subAnswers = null;
-        let separateModeHandled = false;
         if (row._answer_mode === 'separate' && Array.isArray(row._answer_keys) && row._answer_keys.length > 1) {
-            const activeKeys = row._answer_keys.filter(function (key) { return String(row[key] || '').trim() !== ''; });
-            if (activeKeys.length > 1) {
-                subAnswers = activeKeys.map(function (key) {
-                    const subAnswerEn = String(row[key] || '').trim();
-                    const precomputed = (row._accepted_answers_by_key && row._accepted_answers_by_key[key]) || [];
-                    return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(subAnswerEn), precomputed) };
-                });
-                // 合併預覽字串：只給舊版只認單一 answer_en 的畫面（例如老師端答案訂正列表）顯示用，
-                // 實際批改（gradeAnswers／gradeSubAnswerItem）一律讀 sub_answers，不讀這個字串。
-                answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
-                separateModeHandled = true;
-            } else if (activeKeys.length === 1) {
-                answerEn = String(row[activeKeys[0]] || '').trim();
-                separateModeHandled = true;
-            }
-        }
-        if (!separateModeHandled) {
+            subAnswers = row._answer_keys.map(function (key) {
+                const subAnswerEn = String(row[key] || '').trim();
+                const precomputed = (row._accepted_answers_by_key && row._accepted_answers_by_key[key]) || [];
+                return { key: key, label: key, answer_en: subAnswerEn, accepted_answers: mergeAcceptedAnswers(equivalentAcceptedSeed(subAnswerEn), precomputed) };
+            });
+            // 合併預覽字串：只給舊版只認單一 answer_en 的畫面（例如老師端答案訂正列表）顯示用，
+            // 實際批改（gradeAnswers／gradeSubAnswerItem）一律讀 sub_answers，不讀這個字串。
+            answerEn = subAnswers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' ');
+        } else {
             if (opts.quizAnswer) {
                 const tplCells = safeEvalFields(opts.quizAnswer);
                 answerEn = tplCells.map(function (c) { return String(c.text || '').trim(); }).filter(Boolean).join(' ').trim();
@@ -1298,8 +1289,28 @@ window.QuizPaperBuilder = (function () {
         let allOk = true;
         let hasWsIssue = false;
         const subResults = it.sub_answers.map(function (sa) {
-            const g = normalizeAnswer(gotObj[sa.key]);
             const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
+            /**
+             * 💣 雷區（2026-09-20 老師回報「圖二根本沒有 blank 2」＋糾正我第一次改 buildItemFromRow
+             * 結構的做法是消去法）：這一格本身沒有任何標準答案（sa.answer_en 跟 accepted_answers
+             * 都是空的——這一列教材資料這欄本來就是空字串，代表這句沒有這個空格），學生端也不會
+             * 有這格的輸入框，got 自然也是空字串。「''（沒有標準答案）」對「''（沒有輸入）」
+             * 本來就一致，不該套用 isAcceptableAnswer 那條「gotN===''一律判錯」——那條規則是
+             * 為「真的有標準答案、學生卻空著沒寫」設計的。這裡只針對「這一格自己」判斷，不看
+             * 其他格、不看總共幾格有值（不是消去法／不是猜有幾格），每一格各自套同一條規則。
+             */
+            if (!okList.length) {
+                return {
+                    key: sa.key,
+                    label: sa.label,
+                    answer: '',
+                    expected: '',
+                    ok: true,
+                    not_applicable: true,
+                    whitespace_boundary_issue: false
+                };
+            }
+            const g = normalizeAnswer(gotObj[sa.key]);
             const ok = isAcceptableAnswer(g, okList);
             const wsIssue = !ok && isWhitespaceBoundaryOnlyMismatch(g, okList);
             if (!ok) allOk = false;
@@ -1315,7 +1326,7 @@ window.QuizPaperBuilder = (function () {
         });
         return {
             ok: allOk,
-            answer: subResults.map(function (r) { return r.answer; }).filter(Boolean).join(' '),
+            answer: subResults.filter(function (r) { return !r.not_applicable; }).map(function (r) { return r.answer; }).filter(Boolean).join(' '),
             expected: it.sub_answers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' '),
             sub_results: subResults,
             whitespace_boundary_issue: hasWsIssue
