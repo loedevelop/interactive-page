@@ -372,6 +372,19 @@ window.FeatureExamReview = (function () {
             });
             // 班級人數＝該班真實學生名單（student_enrollments），跟考卷批改列學生同一份，
             // 不准借用 window.TeacherDB.classes[].students（那個欄位 classes 資料表沒有這欄，永遠是 []）。
+            // 「▲批改標準待審核」（任務清單層級）：跟 openTaskStudentList 同一把鑰匙，只是這裡要
+            // 一次涵蓋這個班級所有考試任務，用單一查詢（只選兩個布林旗標，不整份 raw_data）算出
+            // 哪些任務有這個狀況，避免逐一任務各打一次查詢（見 page-refresh-perf-invariant 精神）。
+            const assignmentIdsForWs = Array.from(new Set(examTasks.map(function (t) { return t.assignmentId; })));
+            let wsIssueTaskKeys = new Set();
+            try {
+                wsIssueTaskKeys = await window.ApiQuizReview.fetchWhitespaceBoundaryIssueTaskKeys(assignmentIdsForWs);
+            } catch (wsErr) {
+                console.error('[FeatureExamReview] fetchWhitespaceBoundaryIssueTaskKeys', wsErr);
+            }
+            examTasks.forEach(function (t) {
+                t.hasWhitespaceBoundaryIssue = wsIssueTaskKeys.has(String(t.assignmentId) + ':' + String(t.taskId));
+            });
             const students = await window.ApiQuizReview.fetchClassStudents(classId);
             renderTaskListHtml(classId, sortExamTasksNewestFirst(examTasks), students.length);
         } catch (err) {
@@ -429,6 +442,9 @@ window.FeatureExamReview = (function () {
                     + '📝 ' + displayTaskTitle(t.taskTitle)
                     + examTaskTimeHtml(t)
                     + examTaskFeatureBadgesHtml(t)
+                    + (t.hasWhitespaceBoundaryIssue
+                        ? '<div style="margin-top:4px; font-size:0.78rem; color:#B45309; font-weight:900;">▲批改標準待審核</div>'
+                        : '')
                     + '<div style="font-size:0.78rem; color:#94A3B8; font-weight:700; margin-top:2px;">' + esc(t.assignmentTitle) + '</div>'
                     + '</button>';
             }).join('') + '</div>';
@@ -605,6 +621,13 @@ window.FeatureExamReview = (function () {
                     ? ('🚩 申訴題　' + pendingAppealCount + ' 筆待審')
                     : '🚩 申訴題　目前沒有待審')
                 + '</button>';
+            // 「▲批改標準待審核」：跟申訴題同一個位置，但只在真的有這個狀況時才顯示
+            // （不像申訴題永遠顯示「目前沒有待審」，老師要求這裡沒事就不要多一條）。
+            const wsIssueStudentCount = countWhitespaceBoundaryIssueStudents(completions);
+            const wsIssueBarHtml = wsIssueStudentCount > 0
+                ? ('<div style="width:100%; padding:10px 14px; margin-bottom:10px; border:1px solid #FDE68A; border-radius:10px; background:#FFFBEB; color:#B45309; font-weight:900;">'
+                    + '▲批改標準待審核　' + wsIssueStudentCount + ' 位學生</div>')
+                : '';
 
             const rows = students.map(function (s) {
                 const c = byStudent.get(String(s.id));
@@ -675,6 +698,10 @@ window.FeatureExamReview = (function () {
                 const gradingLineHtml = gradingParts.length
                     ? ('<div style="margin-top:2px; font-size:0.75rem; color:#64748B; font-weight:700;">' + gradingParts.join(' · ') + '</div>')
                     : '';
+                // 「▲批改標準待審核」：這位學生的作答卷裡有沒有頭尾空白差異、待老師決定是否過關。
+                const wsIssueLineHtml = wsIssueOfCompletion(qr, raw)
+                    ? '<div style="margin-top:2px; font-size:0.75rem; color:#B45309; font-weight:800;">▲批改標準待審核</div>'
+                    : '';
                 // Phase 5：這個學生底下如果有其他被蓋掉的重複 completion，明確標紅字警示，
                 // 不要靜默用較新那筆蓋過去、讓老師完全不知道資料有異常。
                 const dupList = duplicateCompletionsByStudent.get(String(s.id));
@@ -693,6 +720,7 @@ window.FeatureExamReview = (function () {
                     + attemptLineHtml
                     + timeLineHtml
                     + gradingLineHtml
+                    + wsIssueLineHtml
                     + dupWarningHtml
                     + '</button>';
             }).join('');
@@ -706,6 +734,7 @@ window.FeatureExamReview = (function () {
                 + '</div>'
                 + '<div id="exam-review-page-error" style="display:none; margin-bottom:10px; padding:8px 10px; background:#FEF2F2; color:#B91C1C; font-weight:800; border-radius:8px;"></div>'
                 + appealBtnHtml
+                + wsIssueBarHtml
                 + '<div style="display:flex; flex-direction:column; gap:8px;">' + (rows || '<div style="color:#94A3B8;">此班級沒有學生。</div>') + '</div>';
 
             window.ModalOverlay.open({
@@ -1618,6 +1647,28 @@ window.FeatureExamReview = (function () {
         const taskId = state.taskId;
         window.ModalOverlay.close(MODAL_ID);
         openAppealReview(classId, assignmentId, taskId);
+    }
+
+    /**
+     * 「▲批改標準待審核」（頭尾空白差異，見 QuizPaperBuilder.isWhitespaceBoundaryOnlyMismatch）：
+     * 這位學生是否存在這個狀況。qr 可能是 liveQuizScore 現場重批的結果（帶
+     * has_whitespace_boundary_issue，跟存好的 raw.quiz_result 同一把鑰匙算出來的），也可能就是
+     * 存好的 raw.quiz_result 本身；quiz_retake 目前不做現場重批（跟這支檔案其他地方一致），
+     * 只讀存好的 raw.quiz_retake.result。
+     */
+    function wsIssueOfCompletion(qr, raw) {
+        return !!(qr && qr.has_whitespace_boundary_issue)
+            || !!(raw && raw.quiz_retake && raw.quiz_retake.result && raw.quiz_retake.result.has_whitespace_boundary_issue);
+    }
+
+    /** 跟 countPendingAppeals 同一把鑰匙：算這個任務裡有幾位學生存在「▲批改標準待審核」。 */
+    function countWhitespaceBoundaryIssueStudents(completions) {
+        let n = 0;
+        (completions || []).forEach(function (c) {
+            const raw = c && c.raw_data;
+            if (wsIssueOfCompletion(raw && raw.quiz_result, raw)) n += 1;
+        });
+        return n;
     }
 
     function countPendingAppeals(completions) {

@@ -61,6 +61,33 @@ window.ApiQuizReview = (function () {
     }
 
     /**
+     * 「▲批改標準待審核」（頭尾空白差異，需老師決定是否給過關）：只掃這個班級所有考試任務
+     * 的 completions，抓 has_whitespace_boundary_issue 這個布林旗標（批改當下已經算好、存進
+     * raw_data.quiz_result／raw_data.quiz_retake.result，見 QuizPaperBuilder.gradeAnswers／
+     * submit／submitRetake），用 JSON path 只選這兩個布林值，不整份 raw_data 撈、不重新批改，
+     * 避免拖慢「考試批改」任務清單頁開啟速度（page-refresh-perf-invariant）。
+     * @param {string[]} assignmentIds 這個班級目前所有考試任務所屬的作業 id
+     * @returns {Set<string>} key 是 assignmentId+':'+taskId，代表這個任務至少有一位學生的
+     *   作答卷有這個狀況。
+     */
+    async function fetchWhitespaceBoundaryIssueTaskKeys(assignmentIds) {
+        const ids = Array.from(new Set((assignmentIds || []).map(function (id) { return String(id); }))).filter(Boolean);
+        if (!ids.length) return new Set();
+        const { data, error } = await db()
+            .from('task_completions')
+            .select('assignment_id, task_id, ws1:raw_data->quiz_result->>has_whitespace_boundary_issue, ws2:raw_data->quiz_retake->result->>has_whitespace_boundary_issue')
+            .in('assignment_id', ids)
+            .is('deleted_at', null);
+        if (error) throw new Error('無法讀取批改標準待審核狀態：' + error.message);
+        const out = new Set();
+        (data || []).forEach(function (row) {
+            const flagged = row.ws1 === 'true' || row.ws2 === 'true';
+            if (flagged) out.add(String(row.assignment_id) + ':' + String(row.task_id));
+        });
+        return out;
+    }
+
+    /**
      * 把新的 quiz_paper 寫回 assignments.tasks（只改該任務節點，其餘任務原樣保留）。
      * 用 TaskScriptResolver.patchTaskRawDataInTree 做局部改寫，不需要打開整個作業編輯器。
      */
@@ -220,6 +247,7 @@ window.ApiQuizReview = (function () {
     return {
         fetchAssignment: fetchAssignment,
         fetchCompletionsForTask: fetchCompletionsForTask,
+        fetchWhitespaceBoundaryIssueTaskKeys: fetchWhitespaceBoundaryIssueTaskKeys,
         fetchClassStudents: fetchClassStudents,
         saveQuizPaperPatch: saveQuizPaperPatch,
         saveCompletionRawData: saveCompletionRawData,

@@ -1248,6 +1248,22 @@ window.QuizPaperBuilder = (function () {
     }
 
     /**
+     * 「▲批改標準待審核」判定（2026-09-19 老師要求：頭尾空白差異不准悄悄改判，要標出來給
+     * 老師自己決定是否給過關）：只在「已經判錯」且「去掉頭尾空白後就對得起來」時才成立——
+     * 真正的拼字／用字錯誤（trim 後仍然不同）不算，不能把這個旗標當成第二套放寬的批改標準，
+     * 也不會改變 isAcceptableAnswer 本身的判定結果，純粹是「標記給老師看」用。
+     * @param {string} gotN 已經 normalizeAnswer 過的學生答案
+     * @param {string[]} okList 已經 normalizeAnswer 過的可接受答案清單
+     */
+    function isWhitespaceBoundaryOnlyMismatch(gotN, okList) {
+        if (gotN === '' || isAcceptableAnswer(gotN, okList)) return false;
+        const gotTrim = gotN.trim();
+        if (gotTrim === '') return false;
+        const okListTrim = okList.map(function (s) { return s.trim(); });
+        return isAcceptableAnswer(gotTrim, okListTrim);
+    }
+
+    /**
      * 一題多空格（分開比對）：got 是 { [sub_key]: string } 物件，每個空格各自跟自己的
      * answer_en／accepted_answers 比對，全部空格都對才算這一題對。回傳形狀跟單答案題一致
      * （answer/expected 是合併後字串，供既有畫面顯示／diff），另外多帶 sub_results 給之後
@@ -1256,18 +1272,29 @@ window.QuizPaperBuilder = (function () {
     function gradeSubAnswerItem(it, got) {
         const gotObj = (got && typeof got === 'object') ? got : {};
         let allOk = true;
+        let hasWsIssue = false;
         const subResults = it.sub_answers.map(function (sa) {
             const g = normalizeAnswer(gotObj[sa.key]);
-                const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
-                const ok = isAcceptableAnswer(g, okList);
+            const okList = [sa.answer_en].concat(sa.accepted_answers || []).map(normalizeAnswer).filter(Boolean);
+            const ok = isAcceptableAnswer(g, okList);
+            const wsIssue = !ok && isWhitespaceBoundaryOnlyMismatch(g, okList);
             if (!ok) allOk = false;
-            return { key: sa.key, label: sa.label, answer: gotObj[sa.key] == null ? '' : String(gotObj[sa.key]), expected: sa.answer_en, ok: ok };
+            if (wsIssue) hasWsIssue = true;
+            return {
+                key: sa.key,
+                label: sa.label,
+                answer: gotObj[sa.key] == null ? '' : String(gotObj[sa.key]),
+                expected: sa.answer_en,
+                ok: ok,
+                whitespace_boundary_issue: wsIssue
+            };
         });
         return {
             ok: allOk,
             answer: subResults.map(function (r) { return r.answer; }).filter(Boolean).join(' '),
             expected: it.sub_answers.map(function (sa) { return sa.answer_en; }).filter(Boolean).join(' '),
-            sub_results: subResults
+            sub_results: subResults,
+            whitespace_boundary_issue: hasWsIssue
         };
     }
 
@@ -1346,6 +1373,19 @@ window.QuizPaperBuilder = (function () {
         return noId.concat(order.map(function (id) { return byId[id]; }));
     }
 
+    /**
+     * 這筆 completion（quiz_result／quiz_retake.result 都算）是否存在「▲批改標準待審核」
+     * （頭尾空白差異，已判錯但去掉頭尾空白就對）。師生兩端、任務清單／學生名單／申訴列的
+     * 「有沒有這個狀況」一律呼叫這支，不准各自重新判斷一次。旗標是批改當下（submit／
+     * submitRetake／regradeCompletionRawData）就算好存進 DB 的，這裡純讀取。
+     */
+    function hasWhitespaceBoundaryIssueInRaw(rawData) {
+        if (!rawData) return false;
+        if (rawData.quiz_result && rawData.quiz_result.has_whitespace_boundary_issue) return true;
+        if (rawData.quiz_retake && rawData.quiz_retake.result && rawData.quiz_retake.result.has_whitespace_boundary_issue) return true;
+        return false;
+    }
+
     function readQuizAppeals(rawData) {
         const raw = rawData && rawData.quiz_appeals;
         if (Array.isArray(raw)) return raw;
@@ -1402,6 +1442,7 @@ window.QuizPaperBuilder = (function () {
             const got = gotForItem(map, it && it.item_id);
             const isSubAnswer = Array.isArray(it.sub_answers) && it.sub_answers.length > 1;
             const subGrade = isSubAnswer ? gradeSubAnswerItem(it, got) : null;
+            let singleWsIssue = false;
             const matchOk = isSubAnswer ? subGrade.ok : (function () {
                 const gotN = normalizeAnswer(plainQuizAnswer(got, it));
                 const appealAnswers = [];
@@ -1412,7 +1453,9 @@ window.QuizPaperBuilder = (function () {
                 });
                 const okList = [it.answer_en].concat(it.accepted_answers || []).concat(extraAcceptedForItem(it)).concat(appealAnswers)
                     .map(normalizeAnswer).filter(Boolean);
-                return isAcceptableAnswer(gotN, okList);
+                const okNow = isAcceptableAnswer(gotN, okList);
+                if (!okNow) singleWsIssue = isWhitespaceBoundaryOnlyMismatch(gotN, okList);
+                return okNow;
             })();
             const appealOk = !!acceptedAppealIds[String((it && it.item_id) != null ? it.item_id : '').trim()];
             let ok = matchOk || appealOk;
@@ -1440,16 +1483,22 @@ window.QuizPaperBuilder = (function () {
             if (isSubAnswer) row.sub_results = subGrade.sub_results;
             if (!ok && !excluded) {
                 row.diff = analyzeAnswerDiff(expected, answer);
+                // 💣 雷區（2026-09-19「▲批改標準待審核」）：只有「真的判錯」（!ok && !excluded）
+                // 才標這個旗標——申訴已接受（appealOk）或送分模式（award）已經 ok=true，不算
+                // 待審核；不計分（excluded）本來就不影響分數，也不用標。
+                row.whitespace_boundary_issue = isSubAnswer ? subGrade.whitespace_boundary_issue : singleWsIssue;
             }
             return row;
         });
         const wrongItems = details.filter(function (d) { return !d.ok && !d.excluded; });
+        const hasWhitespaceBoundaryIssue = wrongItems.some(function (d) { return !!d.whitespace_boundary_issue; });
         return {
             total: scoredTotal,
             correct: correct,
             score: scoredTotal ? Math.round((correct / scoredTotal) * 1000) / 10 : 0,
             details: details,
-            wrong_items: wrongItems
+            wrong_items: wrongItems,
+            has_whitespace_boundary_issue: hasWhitespaceBoundaryIssue
         };
     }
 
@@ -1908,7 +1957,8 @@ window.QuizPaperBuilder = (function () {
                 prompt_zh: d.prompt_zh,
                 ops: (d.diff && d.diff.ops) || [],
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
-                sub_results: d.sub_results || null
+                sub_results: d.sub_results || null,
+                whitespace_boundary_issue: !!d.whitespace_boundary_issue
             };
             if (prevHeadline) row.headline = prevHeadline;
             return row;
@@ -1931,6 +1981,7 @@ window.QuizPaperBuilder = (function () {
             total: result.total,
             blank_count: blankCount,
             wrong_items: wrongItemsCompact,
+            has_whitespace_boundary_issue: result.has_whitespace_boundary_issue,
             regraded_at: new Date().toISOString()
         });
 
@@ -2119,6 +2170,7 @@ window.QuizPaperBuilder = (function () {
         setPaperScoreMode: setPaperScoreMode,
         applyAcceptedAppealsToPaper: applyAcceptedAppealsToPaper,
         mergeQuizAppeals: mergeQuizAppeals,
+        hasWhitespaceBoundaryIssueInRaw: hasWhitespaceBoundaryIssueInRaw,
         prepareCompletionRawDataForSave: prepareCompletionRawDataForSave,
         readQuizAppeals: readQuizAppeals,
         regradeCompletionRawData: regradeCompletionRawData,

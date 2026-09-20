@@ -2201,7 +2201,9 @@ window.FeatureStudentQuiz = (function () {
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
                 // 一題多空格逐格對照（見 subResultCardBodyHtml）：跟 gradeAnswers 的
                 // details[].sub_results 同一把鑰匙，這裡也要帶出去。
-                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null
+                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null,
+                // 「▲批改標準待審核」：跟 gradeAnswers 同一把鑰匙原樣帶出去，供老師端彙總顯示。
+                whitespace_boundary_issue: !!d.whitespace_boundary_issue
             };
             const displayNo = displayOrderIdx[String(d.item_id)] || (idx + 1);
             item.headline = headlineFromWrongItem(item, displayNo);
@@ -2240,6 +2242,7 @@ window.FeatureStudentQuiz = (function () {
                 total: result.total,
                 blank_count: blankCount,
                 wrong_items: stats.wrong_items,
+                has_whitespace_boundary_issue: !!result.has_whitespace_boundary_issue,
                 display_item_ids: (sessionDisplayOrder || []).slice(),
                 graded_at: gradedAt,
                 leave_count: leaveCount,
@@ -2426,7 +2429,8 @@ window.FeatureStudentQuiz = (function () {
                 source: d.source || null,
                 diff: d.diff || null,
                 spelling_pairs: (d.diff && d.diff.spelling_pairs) || [],
-                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null
+                sub_results: Array.isArray(d.sub_results) ? d.sub_results : null,
+                whitespace_boundary_issue: !!d.whitespace_boundary_issue
             };
             const displayNo = retakeDisplayOrderIdx[String(d.item_id)] || (idx + 1);
             item.headline = headlineFromWrongItem(item, displayNo);
@@ -2464,6 +2468,7 @@ window.FeatureStudentQuiz = (function () {
                 correct: result.correct,
                 total: result.total,
                 wrong_items: retakeWrongItems,
+                has_whitespace_boundary_issue: !!result.has_whitespace_boundary_issue,
                 duration_ms: durationMs
             },
             combined: {
